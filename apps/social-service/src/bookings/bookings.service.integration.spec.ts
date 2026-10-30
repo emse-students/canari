@@ -1187,6 +1187,24 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       }
     });
 
+    // Owner, 2026-10-30: the forms' "ne detient pas" reaches a space through the same predicate - a
+    // space for people WITHOUT the cotisation is neither listed to a holder nor usable by one.
+    it('keeps a space for non-holders of a cotisation from a holder, listed and read', async () => {
+      const notCotisants = await setup({
+        name: '0008 not cotisants',
+        audience: { notCotisation: { anyTier: true } },
+      });
+      const mine = [notCotisants.space.id];
+      facts.set(BOB, { promo: null, formation: null, cotisationTiers: [], answers: {} });
+      expect(await listedAmong(BOB, mine)).toEqual(mine);
+      await expect(service.getSpace(notCotisants.space.id, as(BOB))).resolves.toBeDefined();
+      facts.set(BOB, { promo: null, formation: null, cotisationTiers: [null], answers: {} });
+      expect(await listedAmong(BOB, mine)).toEqual([]);
+      expect(await refusal(service.getSpace(notCotisants.space.id, as(BOB)))).toEqual({
+        code: 'audience',
+      });
+    });
+
     it("hands the calendar link to the booking's people alone, never for a cancelled one", async () => {
       const { space, resourceIds } = await setup();
       const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {

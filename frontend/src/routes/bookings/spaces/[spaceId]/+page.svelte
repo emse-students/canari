@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
-  import { resolve } from '$app/paths';
-  import { CalendarDays, LayoutDashboard, Link, QrCode } from '@lucide/svelte';
+  import { Bell, CalendarDays } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import SpacePoster from '$lib/components/bookings/SpacePoster.svelte';
+  import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
+  import SpaceBanner from '$lib/components/bookings/booker/SpaceBanner.svelte';
   import EmptyState from '$lib/components/shared/EmptyState.svelte';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import SpaceWeek from '$lib/components/bookings/booker/SpaceWeek.svelte';
@@ -14,9 +13,8 @@
   import { zoneDiffersFromDevice } from '$lib/bookings/grid';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { BOOKINGS_HREF, spaceDashboardHref, spaceHref } from '$lib/bookings/routes';
+  import { BOOKINGS_HREF, spaceHref } from '$lib/bookings/routes';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
-  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import { exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -84,56 +82,16 @@
 </script>
 
 <PageContainer width="tool">
-  <PageHeader
-    title={space?.name ?? m.bookings_page_title()}
-    subtitle={space?.description ?? undefined}
-    crumbs={space
-      ? [
-          { label: m.bookings_page_title(), href: BOOKINGS_HREF },
-          { label: space.name, href: spaceHref(space.id) },
-        ]
-      : undefined}
-  >
-    {#snippet actions()}
-      {#if space}
-        <div class="flex items-center gap-1">
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-            aria-label={m.bookings_space_copy_link()}
-            title={m.bookings_space_copy_link()}
-            onclick={() => space && void copyPublicShareLink(spaceHref(space.id))}
-          >
-            <Link size={18} />
-          </button>
-          <button
-            type="button"
-            class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-            aria-label={m.qr_button()}
-            title={m.qr_button()}
-            onclick={() => (qrOpen = true)}
-          >
-            <QrCode size={18} />
-          </button>
-          {#if space.canManage}
-            <a
-              href={resolve(internalPath(spaceDashboardHref(space.id)))}
-              class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg"
-              aria-label={m.bookings_space_manage()}
-              title={m.bookings_space_manage()}
-            >
-              <LayoutDashboard size={18} />
-            </a>
-          {/if}
-        </div>
-      {/if}
-    {/snippet}
-  </PageHeader>
-
-  {#if space?.poster}
-    <div class="mb-4">
-      <SpacePoster poster={space.poster} alt={m.bookings_poster_alt({ name: space.name })} />
-    </div>
+  {#if space}
+    <Breadcrumb
+      crumbs={[
+        { label: m.bookings_page_title(), href: BOOKINGS_HREF },
+        { label: space.name, href: spaceHref(space.id) },
+      ]}
+    />
+    <SpaceBanner {space} onQr={() => (qrOpen = true)} />
+  {:else}
+    <PageHeader title={m.bookings_page_title()} />
   {/if}
 
   {#if loading}
@@ -169,14 +127,19 @@
       {/if}
 
       {#key space.id}
-        <SpaceWeek {space} bind:nowMs />
+        <SpaceWeek {space} bind:nowMs>
+          {#snippet aside()}
+            <p
+              class="border-cn-border bg-cn-surface text-text-muted flex items-start gap-2 rounded-2xl border p-4 text-xs"
+            >
+              <Bell size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+              {BOOKING_NOTIFICATIONS_LIVE
+                ? m.bookings_space_notification_note()
+                : m.bookings_space_no_notification_note()}
+            </p>
+          {/snippet}
+        </SpaceWeek>
       {/key}
-
-      <p class="text-text-muted text-xs">
-        {BOOKING_NOTIFICATIONS_LIVE
-          ? m.bookings_space_notification_note()
-          : m.bookings_space_no_notification_note()}
-      </p>
     </div>
   {/if}
 </PageContainer>

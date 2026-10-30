@@ -17,6 +17,9 @@
          because Android names a channel once, at creation, from the app's resources. -->
     <string name="notif_channel_call_ongoing_name">Appel en cours</string>
     <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
+    <!-- The ongoing-call notification's microphone action; its label is the state it goes TO. -->
+    <string name="notif_action_call_mute">Couper le micro</string>
+    <string name="notif_action_call_unmute">Réactiver le micro</string>
     <string name="notif_channel_mentions_name">Mentions Canari</string>
     <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
     <string name="notif_channel_reactions_name">Réactions à vos messages</string>
@@ -67,6 +70,8 @@
          on its own, so the notification is re-posted with this line: the reply is kept and retried,
          but the shade must not keep showing "sending" forever. %1$s is the text the user typed. -->
     <string name="notif_reply_pending">%1$s · non envoyé, nouvelle tentative en cours</string>
+    <!-- The ring's title for a caller this phone has never named (the push carries no name). -->
+    <string name="notif_call_unknown_caller">Appel Canari</string>
     <string name="notif_incoming_call">Appel entrant</string>
     <string name="notif_incoming_video_call">Appel vidéo entrant</string>
     <string name="notif_action_answer_call">Répondre</string>

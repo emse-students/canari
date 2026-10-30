@@ -211,9 +211,9 @@ in its row; a space with no poster fetches nothing and keeps a glyph. Control: w
 
 Front only: the painter writes the same `PUT resources/:id/availability`, the stored lines are
 unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint (`WeekPainter`),
-"En clair" (the weekly lines, to read and to type exact times in), the dated lines apart, closures.
+the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) was REMOVED on 2026-10-30** at the owner's request: it duplicated the painted week and was impractical. The painted week is the ONE editor of the week; what that makes impossible is below.
 
-- **One model: the editor's `rows`.** The painter, the templates and the typed lines all edit the
+- **One model: the editor's `rows`.** The painter, the templates and the dated lines all edit the
   same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
   refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
   `weekRunsOf(rows)` and writes `paintRows(...)`.
@@ -223,13 +223,25 @@ unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint
   `fromStoredLines`, so Friday 22:00-24:00 plus Saturday 00:00-02:00 is ONE line again; the days are
   written Monday last because Monday's morning is Sunday night's tail.
 - **One gesture, no brush**: pressing a closed cell opens the rectangle, pressing an open one closes
-  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); the keyboard and
-  screen readers use the typed lines, and each day column is named with its hours.
+  it. A finger paints at once and the painter holds `touch-action: none` (Q-R11); each day column is
+  named with its hours (there is no typed route any more, so no keyboard route either).
 - **A line the editor refuses** (a start equal to its end) is not drawn as a run and is never
-  normalised by a paint or a template: it stays in the typed lines, flagged, until fixed. The
+  normalised by a paint or a template: it is not drawn (and, the typed lines being gone, cannot be edited: see below). The
   painter's gridlines are every hour (strong) and every half hour (faint), the grain of the gesture;
-  its height is clamped (30 to 40 rem). **The keyboard's route is the typed lines below**, said in
-  the hint under the painter.
+  its height is clamped (30 to 40 rem). 
+- **Removed 2026-10-30, and what covers it:** the typed weekly lines are gone, so the painter
+  itself carries the exact route. Each drawn run has a focusable pencil button named "Lundi
+  10:00-12:00" (a press on the run paints, hence a button of its own, outside the gesture); it opens
+  from / to pickers on the space's step, an off-step edge already there being kept. A step space
+  merges the edited run with what it touches (`editRun`); a fixed-slot space edits that one slot and
+  says so when it would overlap another or is a night split in two lines (`editSlot`). The wizard
+  has the same. A weekly line the editor refuses (start = end) is not drawn, so it is LISTED under
+  the painter ("Plages à corriger") with its remove button: never an invisible blocker. Still not
+  possible: creating an off-grain edge from nothing (edit a painted run after). A fixed-slot
+  space's pickers sit on the step its slots need (`slotStep`: 60/30/20/15/10, else 5), so 14:25 is
+  reachable; an end at or before the start is refused aloud, and a pencil is a 28 px
+  `ui-icon-button--sm` at the run's top right: on touching 30-min slots it overlaps the next
+  slot's, the later one winning, so a run that short is reached by keyboard or its upper part.
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
   Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
@@ -519,6 +531,39 @@ poster upload and the poster then carried - control: without `onBusy` that test 
 line of "Evenement ponctuel" held until dated then sent, the focus on each step's heading, the skip
 creating nothing). **Not yet seen** at 390 and 1280, on a phone, or against a running API.
 
+## The Reservations home as cards (2026-10-30)
+
+The owner found the shipped `/bookings` "very ugly and not ergonomic". Gap against the mockup
+(`spaces.html`, #2579): the mockup draws compact rows (thumbnail, name, `association - columns`,
+chevron), "Vos prochaines reservations" as one-line rows with a bell pill, and "Mes espaces" with a
+"Creer un espace" button to the wizard. Shipped before: poster rows with a generic glyph, a full-width
+reminder `Select` and a bordered cancel button per booking, a long notice sentence, the creation form
+inline. Rebuilt toward the mockup AND the reference app the owner likes (big image cards):
+
+- `SpaceList.svelte`: a card per space - banner (`SpacePoster cover`, lazy, or a tinted glyph box),
+  name, `AssociationAvatar` (initials) + association, a column-count chip from two, "Voir le planning".
+  A search (name or association) from four spaces, and a count.
+- `MyBookingCard.svelte`: the date is the title, the reminder is a `Picker` chip, cancel / leave is a
+  quiet text action. The two notice sentences are one short line each.
+- `EditBookingsTab.svelte` (also the association and list tabs): "Creer un espace" opens a `Modal`
+  holding the name form, then the wizard; no inline form.
+
+**Not drawn, because the data is absent** (report, no backend change made): the association's LOGO
+(`ListedSpace` carries `associationId` and `associationName` only - initials stand in), a price, and a
+space/equipment type badge. Each needs a field on `GET bookings/spaces`.
+
+## The bookings polish pass (2026-10-30)
+
+Owner feedback on the desktop screens. Fixed, in `ui/bookings-polish` (on top of the home cards):
+
+- **"Aujourd'hui"** was small orange text squeezed between the arrows and the date, drawn only when the week was away. `WeekBar` now leads with an outlined pill (dimmed and disabled while the week holds today), then the arrows, then the dates - a calendar app's order. The agenda module has no today control to reuse.
+- **Device-aware help.** The grid hint carried "(appui long sur mobile)" to a desktop reader. `lib/bookings/gridHint.ts` picks one of four keys (`bookings_grid_{drag,block}_hint_{pointer,touch}`) from `isCoarsePointerDevice()` / `onCoarsePointerChange` (`utils/pointerDevice.ts`, `(pointer: coarse)`, the app's one predicate). A sweep of both catalogues for "(sur mobile)", "sur ordinateur", "sur telephone" found no other parenthetical of this kind; "cliquez" on the two calendar subtitles and `carte_panel_empty` is still desktop wording, left alone.
+- **Notice under the grid** is the home's short line ("Prevenu d'une annulation, d'un ajout et avant chaque creneau."); the no-notification one says "sur Reservations", not "ici".
+- **Cards, one padding:** `MyBookingCard`, `UpcomingBookings` rows, `SpaceEditor`'s hidden-column panel and `ResourceEditor` are all `p-4` (some were `p-3`, `px-4 py-3`, `p-3 sm:p-4`); rows get the `shadow-sm` of the other cards; the dashboard's empty "A venir" is a dashed card, not loose centred text.
+- **The home follows the mockup (D01), not just its structure.** "Vos prochaines reservations" is ONE card of divider rows (`MyBookingRow`): a 40px tile, "Aujourd'hui - 17:00 - 18:00" on one line (`bookingWhen`), the space and "avec ..." muted below, a bell chip with the time the reminder fires (`reminderTime`). Nothing destructive is in the list: the row opens `MyBookingCard` (private texts, calendar, reminder, cancel or leave) in a modal, and closing it re-reads the list. "Espaces" is ONE card of rows (48px poster or glyph tile, name, "association - N ressources", chevron; the whole row is the link). "Mes espaces" has a "+ Creer un espace" pill that opens the wizard directly (its first step asks the name; the inline name form is gone) and rows with dashboard and settings icons. The count line and the notice paragraph are gone; the notice is one muted line at the page's foot.
+- **The phone week strip has an "Aujourd'hui" pill** beside the dates (`DayStrip`, same dimming rule as the desktop bar).
+- Read at 390 and 1280, dark and light, against fixture data (no gate sees the result).
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
@@ -562,7 +607,6 @@ on 2026-10-15 from the session `canari-77`. Its rules: this session plans (wiki 
 request, no code); the user validates; then work runs in batches as DRAFT pull requests on a branch
 or worktree of its own. **Only Master marks a pull request ready, merges and releases**, after an
 adversarial review. The user is told when a batch is ready and passes it to Master.
-
 
 ## Code anchors, measured 2026-10-15 (read-only exploration, `main` at 990ba8fe9)
 
@@ -1265,3 +1309,7 @@ per account, 60 resources per space, 10 unsent files per space and 30 per accoun
 **Left after WP-B6** (2026-10-18): the device readings of WP-B7 (a real poster and a real file on a
 phone, both phones, a two-client run on one slot), the French user guide, and the bookings rows of
 the cross-client rig (nothing there asserts the module yet).
+
+## The space page and the booking sheet against the mockup (2026-10-30)
+
+The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).

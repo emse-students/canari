@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, type Snippet } from 'svelte';
+  import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
+  import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
   import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
   import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
@@ -58,9 +60,11 @@
     onWeekRead?: (slots: ResourceSlots[], week: string[]) => void;
     /** Called after a sheet changed something (a booking, a block, a cancel). */
     onChanged?: () => void;
+    /** Under "Vos reservations ici" in the side column of the booker's page (`book` mode only). */
+    aside?: Snippet;
   }
 
-  let { space, nowMs = $bindable(), mode = 'book', onWeekRead, onChanged }: Props = $props();
+  let { space, nowMs = $bindable(), mode = 'book', onWeekRead, onChanged, aside }: Props = $props();
 
   type Sheet =
     | {
@@ -107,6 +111,7 @@
       ])
     )
   );
+  const mineRows = $derived(mineHere(mine.values(), space.id, nowMs));
   const weekLabel = $derived(weekAll.length ? formatWeekRange(weekAll) : '');
 
   onMount(() =>
@@ -218,58 +223,68 @@
   }
 </script>
 
-<div class="space-y-4">
-  {#if space.resources.length > 1 && resource}
-    <ColumnSelect
-      resources={space.resources}
-      value={resource.id}
-      counts={freeCounts}
-      onSelect={(id) => (resourceId = id)}
-    />
-  {/if}
+<div class={mode === 'book' ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start' : ''}>
+  <div class="min-w-0 space-y-4">
+    {#if space.resources.length > 1 && resource}
+      <ColumnSelect
+        resources={space.resources}
+        value={resource.id}
+        counts={freeCounts}
+        onSelect={(id) => (resourceId = id)}
+      />
+    {/if}
 
-  {#if slotsError}
-    <p
-      class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm"
-      role="alert"
-    >
-      {slotsError}
-    </p>
-  {:else if resource}
-    {#if narrow}
-      <DayStrip
-        days={week.days}
-        {date}
-        {today}
-        label={weekLabel}
-        onSelect={chooseDate}
-        onPrevious={() => moveWeek(-1)}
-        onNext={() => moveWeek(1)}
-      />
-    {:else}
-      <WeekBar
-        label={weekLabel}
-        away={!weekAll.includes(today)}
-        onPrevious={() => moveWeek(-1)}
-        onNext={() => moveWeek(1)}
-        onToday={() => chooseDate(today)}
-      />
-    {/if}
-    {#if layout.endMin === layout.startMin}
-      <p class="text-text-muted py-8 text-center text-sm">
-        {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+    {#if slotsError}
+      <p
+        class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm"
+        role="alert"
+      >
+        {slotsError}
       </p>
-    {:else}
-      <SpaceGrid
-        {space}
-        {resource}
-        {layout}
-        mode={narrow ? 'day' : 'week'}
-        blockMode={mode === 'block'}
-        {nowMs}
-        onPick={pick}
-      />
+    {:else if resource}
+      {#if narrow}
+        <DayStrip
+          days={week.days}
+          {date}
+          {today}
+          label={weekLabel}
+          onSelect={chooseDate}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          away={date !== today}
+          onToday={() => chooseDate(today)}
+        />
+      {:else}
+        <WeekBar
+          label={weekLabel}
+          away={!weekAll.includes(today)}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          onToday={() => chooseDate(today)}
+        />
+      {/if}
+      {#if layout.endMin === layout.startMin}
+        <p class="text-text-muted py-8 text-center text-sm">
+          {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+        </p>
+      {:else}
+        <SpaceGrid
+          {space}
+          {resource}
+          {layout}
+          mode={narrow ? 'day' : 'week'}
+          blockMode={mode === 'block'}
+          {nowMs}
+          onPick={pick}
+        />
+      {/if}
     {/if}
+  </div>
+  {#if mode === 'book'}
+    <aside class="space-y-3">
+      <MineHereCard bookings={mineRows} />
+      {@render aside?.()}
+    </aside>
   {/if}
 </div>
 

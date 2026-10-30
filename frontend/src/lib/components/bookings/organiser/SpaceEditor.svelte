@@ -1,16 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import {
-    CalendarRange,
-    Columns3,
-    Database,
-    Download,
-    Info,
-    ListChecks,
-    Plus,
-    Trash2,
-    Users,
-  } from '@lucide/svelte';
+  import { Columns3, Download, Plus, Trash2 } from '@lucide/svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
@@ -278,7 +268,7 @@
   }
 </script>
 
-<FormSection title={m.bookings_section_general()} summary={summaries.essentials} icon={Info}>
+<FormSection title={m.bookings_section_general()} summary={summaries.essentials} step={1}>
   <Input
     id="space-name"
     label={m.bookings_field_name()}
@@ -317,7 +307,7 @@
 <FormSection
   title={m.bookings_section_resources()}
   summary={summaries.when}
-  icon={CalendarRange}
+  step={2}
   badge={hidden ? undefined : String(space.resources.length)}
 >
   <div>
@@ -368,7 +358,7 @@
     <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
   {/if}
   {#if hidden}
-    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-3 sm:p-4">
+    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-4">
       <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
       <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
       <div class="min-w-0 flex-1 basis-56">
@@ -452,7 +442,7 @@
   {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_who()} summary={summaries.who} icon={Users}>
+<FormSection title={m.bookings_section_who()} summary={summaries.who} step={3}>
   <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
          empty set of criteria for the editor to fill. -->
   <div class="space-y-3">
@@ -527,7 +517,7 @@
 <FormSection
   title={m.bookings_section_rules()}
   summary={summaries.rules}
-  icon={ListChecks}
+  step={4}
   collapsible
   startOpen={false}
   badge={rulesActive ? m.bookings_rules_badge({ count: rulesActive }) : undefined}
@@ -619,7 +609,7 @@
   title={m.bookings_section_data()}
   summary={summaries.data}
   badge={retentionBadge}
-  icon={Database}
+  step={5}
   collapsible
   startOpen={false}
 >

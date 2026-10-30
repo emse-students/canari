@@ -236,4 +236,12 @@ describe('SpaceWizard', () => {
     expect(onSkip).toHaveBeenCalledWith('Foyer');
     expect(createSpace).not.toHaveBeenCalled();
   });
+
+  it('"Je regle tout moi-meme" with no name makes the NAME FIELD complain, and hands back nothing', () => {
+    const { onSkip } = open(null, '   ');
+    button(m.bookings_wizard_skip()).click();
+    flushSync();
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(m.bookings_problem_required());
+  });
 });

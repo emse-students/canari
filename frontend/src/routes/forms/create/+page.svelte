@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -258,7 +259,7 @@
         goto(resolve(internalPath(returnTo)));
       }
     } catch (e: any) {
-      error = e.message;
+      error = providerRefusalMessage(e) ?? e.message;
     } finally {
       isSubmitting = false;
     }

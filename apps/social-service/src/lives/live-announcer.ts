@@ -69,8 +69,8 @@ export interface ClaimedLive {
  * commit - the trade `PostAnnounceScheduler` documents: a crash between the two loses ONE
  * announcement, where the other order could repeat it.
  *
- * OFF ON PRODUCTION: nothing is sent unless `LIVE_ENABLED` is `true`, whoever calls (the ingest
- * route that claims is itself behind the same switch).
+ * Nothing is sent unless `LIVE_ENABLED` is `true`, whoever calls (the ingest route that claims is
+ * itself behind the same switch, and behind `lives_mode` too).
  *
  * In-app: NO bell row. A live is deleted when it ends (L3), so a row naming it would be a 404 for
  * ever after; the LIVE card at the top of the feed (L5, client-side, still owed) is its in-app face.

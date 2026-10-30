@@ -231,11 +231,19 @@ function liveReading(at: number, sent: number, received: number): RTCStatsReport
       packetsLost: 1,
       packetsReceived: 99,
       jitter: 0.012,
-      audioLevel: 0.25,
+      // An RMS level of 0.25 held since the start: energy = level^2 x seconds.
+      totalAudioEnergy: 0.0625 * (at / 1000),
+      totalSamplesDuration: at / 1000,
       codecId: 'C',
       timestamp: at,
     },
-    { id: 'S', type: 'media-source', kind: 'audio', audioLevel: 0.5 },
+    {
+      id: 'S',
+      type: 'media-source',
+      kind: 'audio',
+      totalAudioEnergy: 0.25 * (at / 1000),
+      totalSamplesDuration: at / 1000,
+    },
     { id: 'C', type: 'codec', mimeType: 'audio/opus' },
   ]);
 }
@@ -278,7 +286,38 @@ describe('buildCallReport', () => {
         'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
         'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=-'
     );
-    expect(snapshot).toEqual({ atMs: 1_000, bytesSent: 4_000, bytesReceived: 8_000 });
+    expect(snapshot).toEqual({
+      atMs: 1_000,
+      bytesSent: 4_000,
+      bytesReceived: 8_000,
+      audioIn: { energy: 0.0625, seconds: 1 },
+      audioOut: { energy: 0.25, seconds: 1 },
+    });
+  });
+
+  it('reads the audio level over the INTERVAL, so a silent instant is not a silent tick', () => {
+    const at = (ms: number, energyIn: number, secondsIn: number) =>
+      report([
+        { id: 'T', type: 'transport', timestamp: ms },
+        {
+          id: 'I',
+          type: 'inbound-rtp',
+          kind: 'audio',
+          totalAudioEnergy: energyIn,
+          totalSamplesDuration: secondsIn,
+          timestamp: ms,
+        },
+      ]);
+    const first = buildCallReport(at(1_000, 0, 1), ctx, null);
+    expect(first.line).toContain('audio_level_in=0.000');
+    // 10 s of voice at RMS 0.1 since: +0.1 energy over +10 s -> sqrt(0.01) = 0.100.
+    const { line } = buildCallReport(at(11_000, 0.1, 11), ctx, first.snapshot);
+    expect(line).toContain('audio_level_in=0.100');
+  });
+
+  it('writes - for an audio level the engine does not count', () => {
+    const { line } = buildCallReport(report([]), ctx, null);
+    expect(line).toContain('audio_level_out=- audio_level_in=-');
   });
 
   it('counts a NON-empty frame too short to be ours as a decrypt failure, an empty one not', () => {
