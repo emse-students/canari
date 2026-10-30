@@ -3452,7 +3452,7 @@ export class CallService {
         `[Call] camera switched to ${get(this.cameraFacing)}${t ? ' (replaceTrack: same sender, same transform)' : ''}`
       );
     } finally {
-      this.endCameraOp();
+      this.endCameraOp(call);
     }
   }
 
@@ -3465,12 +3465,20 @@ export class CallService {
     return { callId: this.currentCallId, stream: this.localStream };
   }
 
+  /** Whether `token` names the call that is up now (no log: `sameCameraCall` is the logged form). */
+  private isCameraCallCurrent(token: {
+    callId: string | null;
+    stream: MediaStream | null;
+  }): boolean {
+    return this.isCallLive(token.callId) && this.localStream === token.stream;
+  }
+
   /** The call a camera operation was started for is still the live one (`cameraCallToken`). */
   private sameCameraCall(
     token: { callId: string | null; stream: MediaStream | null },
     what: string
   ): boolean {
-    if (this.isCallLive(token.callId) && this.localStream === token.stream) return true;
+    if (this.isCameraCallCurrent(token)) return true;
     appendLog(
       `[Call] camera ${what} of call ${token.callId ?? 'none'} resolved after it ended - capture stopped, not adopted`
     );
@@ -3503,8 +3511,13 @@ export class CallService {
     return true;
   }
 
-  /** Releases the camera lock, then applies an OFF that was asked meanwhile (`offPending`). */
-  private endCameraOp(): void {
+  /**
+   * Releases the camera lock, then applies an OFF that was asked meanwhile (`offPending`) - only
+   * for the call the operation was started for: an operation that outlived its call (the call was
+   * hung up, `cleanup` reset the lock, another call began) must not release THAT call's lock.
+   */
+  private endCameraOp(token: { callId: string | null; stream: MediaStream | null }): void {
+    if (!this.isCameraCallCurrent(token)) return;
     this.cameraBusy = false;
     if (!this.offPending) return;
     this.offPending = false;
@@ -3537,7 +3550,9 @@ export class CallService {
     track.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
     track.onended = () => {
       if (!this.localStream?.getVideoTracks().some((t) => t === track)) return;
-      if (!isAppOnScreen()) {
+      // Only a camera HEADED ON is the background pause's (as in the handler): one the user was
+      // already turning off stays off at the return.
+      if (!isAppOnScreen() && this.cameraHeadedOn()) {
         // The OS took the camera of an app already off screen, before the background handler
         // could: the same pause as the handler's, so the return turns it on again.
         this.videoPausedByBackground = true;
@@ -3619,7 +3634,7 @@ export class CallService {
       }
       this.addCameraTransceiver(pc, track);
     } finally {
-      this.endCameraOp();
+      this.endCameraOp(call);
     }
   }
 
@@ -3712,17 +3727,24 @@ export class CallService {
    */
   private async cameraOff(why: string): Promise<void> {
     if (!this.beginCameraOp('off', 'off')) return;
+    const call = this.cameraCallToken();
     try {
       for (const track of this.localStream?.getVideoTracks() ?? []) this.releaseCameraTrack(track);
       await this.sendNoCamera(why);
     } finally {
-      this.cameraBusy = false;
-      // A background pause whose return came while this off was still running: resume now.
-      if (this.videoPausedByBackground && isAppOnScreen() && this.callUp()) {
-        this.videoPausedByBackground = false;
-        appendLog('[Call] foregrounded during the background off - camera on again');
-        void this.cameraOn();
-      }
+      // An off that outlived its call touches nothing of the next one: its lock, its resume.
+      if (this.isCameraCallCurrent(call)) this.finishCameraOff();
+    }
+  }
+
+  /** The end of a current call's `cameraOff`: the lock released, then a deferred background resume. */
+  private finishCameraOff(): void {
+    this.cameraBusy = false;
+    // A background pause whose return came while this off was still running: resume now.
+    if (this.videoPausedByBackground && isAppOnScreen() && this.callUp()) {
+      this.videoPausedByBackground = false;
+      appendLog('[Call] foregrounded during the background off - camera on again');
+      void this.cameraOn();
     }
   }
 

@@ -1684,7 +1684,10 @@ experiment rows of the rig (below) settle it on Chrome 155:
   off the user tapped - in flight, or queued behind an opening camera - never comes back at the
   return; and Android's CAMERA permission dialog pauses the activity, so the pause's off queued
   behind the FIRST camera-on is cancelled at the return instead of turning the camera off right
-  after the grant. A return while the pause's own off still runs is applied when that off ends.
+  after the grant. A return while the pause's own off still runs is applied when that off ends. A
+  camera the OS ends off screen is a pause only when it was headed on, too. And a camera operation
+  that outlives its call (hung up mid-operation, another call begun) releases nothing of the next
+  call: `endCameraOp` and `cameraOff` act only for the call their token names.
 - **720p at 30 fps at most, moved by a quality ladder** since 2026-10-21 (it was a fixed 640x480,
   700 kb/s): [the quality ladder](#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop).
   The rung is on the SENDER's encodings, so it survives a switch.

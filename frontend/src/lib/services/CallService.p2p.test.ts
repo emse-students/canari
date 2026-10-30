@@ -1701,6 +1701,62 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(get(service.isVideoOff)).toBe(false);
       });
 
+      it('the OS ends a camera the user was turning off, off screen: it stays OFF at the return', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        await service.toggleVideo(); // off, done
+        await settle();
+        const release = holdNextReplace(t.sender);
+        const opening = service.toggleVideo(); // on again: the capture is adopted, replaceTrack held
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        await service.toggleVideo(); // the user's off, queued behind the opening ON
+        announce(false); // not headed on: nothing to pause
+        await settle();
+        cam.onended?.(); // the OS takes it in the same replaceTrack await
+        await settle();
+        release();
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        expect(get(service.isVideoOff)).toBe(true);
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it("an OFF that outlives its call does not release the NEXT call's camera lock", async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const releaseOff = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the old call's off, held on replaceTrack(null)
+        await settle();
+        service.endCall();
+        await vi.advanceTimersByTimeAsync(1_500);
+        const next = service.startCall('group-1', false);
+        await settle();
+        const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+        ws.open();
+        ws.deliver({ type: 'Joined', room_id: 'room-2' });
+        await next;
+        const releaseOn = holdNextCapture();
+        const opening = service.toggleVideo(); // the new call's camera, its lock held
+        await settle();
+        const lock = service as unknown as { cameraBusy: boolean };
+        expect(lock.cameraBusy).toBe(true);
+        releaseOff();
+        await off; // the old finally runs now
+        await settle();
+        expect(lock.cameraBusy).toBe(true);
+        releaseOn();
+        await opening;
+        await settle();
+        expect(lock.cameraBusy).toBe(false);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
       it('a camera the OS ends ON screen stays off (another app took it)', async () => {
         const { service, pc } = await androidCall();
         const first = await turnCameraOn(service);
