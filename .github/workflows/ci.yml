@@ -83,6 +83,7 @@ jobs:
       run-frontend-build: ${{ steps.matrix.outputs.frontend_build }}
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
+      run-android-app: ${{ steps.matrix.outputs.android_app }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
       run-miconnect: ${{ steps.matrix.outputs.miconnect }}
     steps:
@@ -115,6 +116,7 @@ jobs:
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
+            echo "android_app=true"  >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
             echo "miconnect=true"    >> "$GITHUB_OUTPUT"
           }
@@ -320,6 +322,28 @@ jobs:
             echo "android=true" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- Android `:app` compile --
+          # What `compile-android-app` reads: the Android project itself, and whatever feeds the
+          # generation of its `tauri.settings.gradle` AND the Rust it checks for the Android target
+          # (the app crate's `build.rs` runs under cargo, so the manifest, the lock, the toolchain,
+          # the crate's sources, `mls-core` it depends on by path, and the native plugins it names),
+          # plus its own script. This is the ONLY pull-request compile for an Android Rust target,
+          # which is why `src/` is here. Narrower than `android` above on purpose: `android-tests`
+          # is a JVM project this job does not build, and it pays minutes of Rust.
+          if has '^frontend/src-tauri/gen/android/' || \
+             has '^frontend/src-tauri/src/' || \
+             has '^frontend/src-tauri/Cargo\.(toml|lock)$' || \
+             has '^frontend/src-tauri/build\.rs$' || \
+             has '^frontend/src-tauri/tauri\.conf\.json$' || \
+             has '^frontend/src-tauri/(plugins|patches)/' || \
+             has '^frontend/mls-core/' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/scripts/android-app-compile\.sh$'; then
+            echo "android_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android_app=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- MLS cross-version compatibility --
@@ -1237,6 +1261,65 @@ jobs:
       - name: Run the Android unit tests
         run: bash .github/scripts/android-unit-tests.sh
 
+  # THE GATE THE CEILING WAS WAITING FOR (2026-10-30). Until now nothing on a pull request configured
+  # the `:app` module, so `lib/ceiling.sh` refused EVERY Gradle update to `gen/android` - the
+  # wrapper, AndroidX and Firebase bumps sat blocked with auto-merge armed. This compiles `:app` for
+  # real: the app crate's build script generates `tauri.settings.gradle` (as `tauri android build`
+  # does), a committed STUB stands in for the `google-services.json` secret, so it runs on a
+  # Dependabot pull request, which gets no secrets. `android-app-compile.sh` holds the whole
+  # account and ASSERTS the Kotlin task executed - a Gradle run matching no task exits 0.
+  compile-android-app:
+    name: Compile Android app
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-android-app == 'true' }}
+    runs-on: ubuntu-24.04
+    # The repository default is write; this job reads a checkout and nothing else.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      # THE WRAPPER JAR IS BINARY CODE a bump of the wrapper replaces (#2564), and this job runs it.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # NO `toolchain:` - the action reads `rust-toolchain.toml` (1.97.0), the same compiler every
+      # other job here uses. `rustflags: ''` for the reason `build-mls-wasm` gives: this action
+      # exports its default `-D warnings` into every later step of the job, and a vendored path
+      # dependency would then compile under our lint bar.
+      #
+      # ITS OWN CACHE, AND THAT IS NOT AN OVERSIGHT. `test-rust` caches the repository-root
+      # `target` (which `frontend/src-tauri` does not even build into) keyed on every lock, for
+      # host-triple artefacts that cannot serve an `aarch64-linux-android` check. Reusing that key
+      # would restore a large directory this job never reads. The Swatinem cache this action
+      # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: aarch64-linux-android
+          cache-workspaces: frontend/src-tauri
+          rustflags: ''
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-app-${{ runner.os }}-
+
+      - name: Compile the Android app module
+        run: bash .github/scripts/android-app-compile.sh
+
   # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS
   # The rig's rules about itself: the two log classifiers and the phase/device declarations. None of
@@ -1568,7 +1651,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

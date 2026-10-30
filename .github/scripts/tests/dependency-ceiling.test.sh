@@ -244,7 +244,9 @@ updated-dependencies:
 FIXTURE
 CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-24.1.1
 export CEILING_HEAD_REF
-check "a Gradle update to the Android app is refused: nothing builds it on a pull request" 1 "$work/gradle.json" "compiles the Android"
+check "a Gradle update to the Android app is judged by compile-android-app, so it is let through" 0 "$work/gradle.json" "firebase-messaging-ktx -> 24.1.1"
+CEILING_HEAD_REF=dependabot/gradle/some/new/directory/com.google.firebase-firebase-messaging-ktx-24.1.1
+check "a Gradle update in a directory no job builds is still refused" 1 "$work/gradle.json" "compiles the Gradle tree"
 CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/android-tests/com.google.firebase-firebase-messaging-ktx-24.1.1
 check "a Gradle update to the JVM test project is the suite's business" 0 "$work/gradle.json" "firebase-messaging-ktx -> 24.1.1"
 unset CEILING_HEAD_REF
