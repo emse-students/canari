@@ -2167,22 +2167,44 @@ playing. What changed:
 
 | Defect | Fix | Where |
 |---|---|---|
-| Every call started on the loudspeaker, and `pickCallOutput` never reads the headsets with the speaker on | The voice STARTS where `callStartsOnSpeaker(video)` says: a VIDEO call on the loudspeaker, an AUDIO call on the earpiece - or a connected headset, which `pickCallOutput` already prefers off the speaker. Read once, when the call first holds the microphone (`CallService.hasVideo` is set before the stream is published); the user's tap on the toggle wins for the rest of the call | `androidCallService.ts`, `CallOverlay.svelte` |
+| Every call started on the loudspeaker, and `pickCallOutput` never reads the headsets with the speaker on | The voice STARTS where `callStartsOnSpeaker(video)` says: a VIDEO call on the loudspeaker, an AUDIO call on the earpiece - or a connected headset, which `pickCallOutput` already prefers off the speaker. Decided when the call first holds the microphone (`CallService.hasVideo` is set before the stream is published), moved to the loudspeaker if video shows later; the user's tap on the toggle wins for the rest of the call | `androidCallService.ts`, `CallOverlay.svelte` |
 | The screen stayed on against the cheek | Android: `PROXIMITY_SCREEN_OFF_WAKE_LOCK` held while the output `CallAudio` APPLIED is the earpiece (`holdsProximityScreenOff`), released with `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` on a move to the speaker or a headset and on every end path; a device without the sensor says so once. iPhone: `UIDevice.proximityMonitoringEnabled` through the `canariProximity` message handler (`canari_ios.mm`), set while the call holds the microphone on the receiver (`iosCallProximity.ts`) | `CallForegroundService.kt`, `canari_ios.mm` |
 | No photo on the ongoing notification | The `CallStyle` person carries the peer's photo: `peerUserId` crosses the bridge, `CanariFirebaseMessagingService.callAvatar` - the SAME `fetchAvatar` every message notification uses (push-secret route, 24 h cache, remembered absence) - runs off the main thread, and the notification is re-posted when it lands; it is never held for the picture | `CallForegroundService.kt` |
 | Music kept playing | `CallAudio.open` requests `AUDIOFOCUS_GAIN_TRANSIENT` with `USAGE_VOICE_COMMUNICATION`; `close` abandons it. A refusal (a phone call holds the focus) is a WARN and the call goes on | `CallForegroundService.kt` |
 | No mute on the notification | A mute / unmute action (`notif_action_call_mute` / `_unmute`, the app's language) sends `ToggleMute` -> `ForwardMute` -> a `mute` event; the page toggles its microphone and its next `update` carries `muted`, so the label shows the CALL's state, never the one a press assumed | `OngoingCall.kt`, `androidCallService.ts` |
 
+**What the review of #2723 added (2026-10-30).**
+- **A headset beats the speaker DEFAULT.** The page sends `speakerChosen` (the user's tap, or only
+  the call's default); `pickCallOutput` prefers a connected headset over a default loudspeaker,
+  never over a tapped one. A video that shows mid-call moves the default to the loudspeaker
+  (`nextSpeakerDefault`), and never back.
+- **The proximity lock follows the screen** (Android): held only with the voice on the earpiece AND
+  the app on screen (`MainActivity` resume / pause re-decide it), renewed from a WANTED field, not
+  from `isHeld` - a lock that timed out at the renewal mark is re-taken.
+- **The iPhone arms the sensor on the RECEIVER route only**: the page asks, and native checks
+  `AVAudioSession.currentRoute.outputs` for `Receiver` on every ask and route change, logging the
+  port types (`outputs=[...] receiver=...`) - AirPods or a speaker the page did not choose keep the
+  screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
+  or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
+  no native hook on the WebContent kill was added.
+- **Audio focus changes are logged** (`audio focus LOSS_TRANSIENT for call=...`), never acted on;
+  holding or muting on a loss is a product decision ([backlog](../../backlog.md)).
+- The mute action draws a microphone, struck while muted.
+
 **The native incoming ring (item 4 of the study) is NOT in this change**: the in-app ring is still
 WebAudio tones at media volume with one 1.8 s vibration (`useNotifications.svelte.ts`), and the
 caller hears no ringback. It is owed as its own pull request ([backlog](../../backlog.md)).
 
-**Owed on BOTH phones** (none of this is proven by a gate - the Kotlin COMPILES, `OngoingCallTest`
-and the vitest suites pass, nothing more): (A) an audio call starts on the EARPIECE - `CallAudio
+**What a gate holds, and what nothing does.** NO CI gate compiles `CallForegroundService.kt`,
+`CallBridge.kt` or `CanariFirebaseMessagingService.kt`: `android-tests` compiles only the pure
+packages (`call/`, `push/`, `gesture/`, `share/`), which is where `OngoingCallTest` holds
+`pickCallOutput`, `holdsProximityScreenOff` and the spec. The whole app's Kotlin was compiled by
+hand on 2026-10-30 (`:app:compileArm64DebugKotlin`, BUILD SUCCESSFUL); the Objective-C of
+`canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;
 a video call on the loudspeaker; (B) a wired, then a Bluetooth headset connected BEFORE the call:
-the voice starts there; (C) the screen goes dark at the cheek on the earpiece and stays lit on the
-speaker - Android `proximity screen-off held`, iPhone `call proximity monitoring asked=1 now=1`;
+the voice starts there, a VIDEO call's too; (C) the screen goes dark at the cheek on the earpiece and stays lit on the
+speaker and in another app - Android `proximity screen-off held`, iPhone `call proximity (...): page=1 outputs=[Receiver] receiver=1 now=1`;
 (D) the caller's photo on the ongoing notification (`caller photo drawn on the call notification`),
 and the name alone for an account with none; (E) music playing before the call pauses for it and
 resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call

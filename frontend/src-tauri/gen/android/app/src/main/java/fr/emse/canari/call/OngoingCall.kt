@@ -24,6 +24,9 @@ package fr.emse.canari.call
  * @property peerUserId the other party's user id, whose photo becomes the CallStyle person's icon;
  *   null when the page names no single other party (the icon is then the platform's default).
  * @property muted the user's own microphone mute, drawn as the notification's mute / unmute action.
+ * @property speakerChosen true when [speaker] is the user's own tap; false when it is only the
+ *   call's DEFAULT (a video call starts on the loudspeaker). A default yields to a connected headset
+ *   ([pickCallOutput]); a choice does not.
  */
 data class OngoingCallSpec(
     val title: String,
@@ -32,6 +35,7 @@ data class OngoingCallSpec(
     val speaker: Boolean,
     val peerUserId: String? = null,
     val muted: Boolean = false,
+    val speakerChosen: Boolean = false,
 ) {
     companion object {
         /**
@@ -45,6 +49,7 @@ data class OngoingCallSpec(
             speaker: Boolean?,
             peerUserId: String?,
             muted: Boolean?,
+            speakerChosen: Boolean?,
         ): SpecResult {
             if (title.isNullOrBlank()) return SpecResult.Refused("title is empty")
             if (text == null) return SpecResult.Refused("text is missing")
@@ -53,9 +58,10 @@ data class OngoingCallSpec(
             }
             if (speaker == null) return SpecResult.Refused("speaker is missing")
             if (muted == null) return SpecResult.Refused("muted is missing")
+            if (speakerChosen == null) return SpecResult.Refused("speakerChosen is missing")
             // A blank id names nobody: the same as none, never a fetch of an empty path.
             val peer = peerUserId?.takeIf { it.isNotBlank() }
-            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker, peer, muted))
+            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker, peer, muted, speakerChosen))
         }
     }
 }
@@ -235,7 +241,10 @@ enum class CallOutput { SPEAKER, EARPIECE, WIRED_HEADSET, USB_HEADSET, BLUETOOTH
 /**
  * Which output carries the voice, from what the system offers (`availableCommunicationDevices`).
  *
- * - [speaker] true: the loudspeaker, if the device has one.
+ * - [speaker] true and [speakerChosen] (the user tapped it): the loudspeaker, if the device has one.
+ * - [speaker] true as a DEFAULT only (a video call starts on the loudspeaker): a connected HEADSET
+ *   first (hearing aid, Bluetooth, wired, USB - never the earpiece), else the loudspeaker. Someone
+ *   wearing a headset when a video call starts means the headset; a default must not override it.
  * - [speaker] false: the most PERSONAL output present - a hearing aid, then a Bluetooth headset (LE
  *   then classic SCO), then a wired or USB headset, then the earpiece. Someone who put a headset on
  *   during a call means it, which is why a device change re-runs this choice
@@ -244,24 +253,33 @@ enum class CallOutput { SPEAKER, EARPIECE, WIRED_HEADSET, USB_HEADSET, BLUETOOTH
  * Null when nothing fits (a tablet with no earpiece asked for the earpiece): the service then
  * clears its choice and the platform's own routing decides, and it says so in the log.
  */
-fun pickCallOutput(available: List<CallOutput>, speaker: Boolean): CallOutput? {
-    if (speaker) return CallOutput.SPEAKER.takeIf { it in available }
+fun pickCallOutput(available: List<CallOutput>, speaker: Boolean, speakerChosen: Boolean = true): CallOutput? {
+    if (speaker) {
+        if (!speakerChosen) HEADSETS.firstOrNull { it in available }?.let { return it }
+        return CallOutput.SPEAKER.takeIf { it in available }
+    }
     return PERSONAL_OUTPUTS.firstOrNull { it in available }
 }
 
 /**
  * Whether the screen goes dark against the cheek: true only while the voice is on the EARPIECE, the
- * one output held to the face. On the loudspeaker or a headset the phone is looked at or pocketed, and
- * a screen that turned off when a hand passed over the sensor would hide the call's own controls. Null
- * (the platform routes) holds nothing: what it chose is not known here.
+ * one output held to the face, AND the app is on screen. On the loudspeaker or a headset the phone is
+ * looked at or pocketed, and a screen that turned off when a hand passed over the sensor would hide
+ * the call's own controls. Off screen (the user is in another app during the call) the screen is that
+ * other app's, which the call must not darken. Null (the platform routes) holds nothing: what it chose
+ * is not known here.
  */
-fun holdsProximityScreenOff(output: CallOutput?): Boolean = output == CallOutput.EARPIECE
+fun holdsProximityScreenOff(output: CallOutput?, appOnScreen: Boolean): Boolean =
+    appOnScreen && output == CallOutput.EARPIECE
 
-private val PERSONAL_OUTPUTS = listOf(
+/** The personal outputs that are not the phone itself: what a speaker DEFAULT yields to. */
+private val HEADSETS = listOf(
     CallOutput.HEARING_AID,
     CallOutput.BLE_HEADSET,
     CallOutput.BLUETOOTH_SCO,
     CallOutput.WIRED_HEADSET,
     CallOutput.USB_HEADSET,
-    CallOutput.EARPIECE,
 )
+
+/** Most personal first: what a call asked off the loudspeaker uses. */
+private val PERSONAL_OUTPUTS = HEADSETS + CallOutput.EARPIECE

@@ -224,6 +224,7 @@ object CallBridge {
                         speaker = if (o.has("speaker")) o.getBoolean("speaker") else null,
                         peerUserId = if (o.isNull("peerUserId")) null else o.getString("peerUserId"),
                         muted = if (o.has("muted")) o.getBoolean("muted") else null,
+                        speakerChosen = if (o.has("speakerChosen")) o.getBoolean("speakerChosen") else null,
                     )
                 }
             } catch (e: JSONException) {

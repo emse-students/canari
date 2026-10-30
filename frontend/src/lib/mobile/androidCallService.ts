@@ -37,6 +37,11 @@ export interface OngoingCallSpec {
   peerUserId: string | null;
   /** The user's own microphone mute: the notification's mute action shows the way back. */
   muted: boolean;
+  /**
+   * Whether `speaker` is the user's own tap (true) or only the call's default (false). A default
+   * loudspeaker yields to a connected headset natively (`pickCallOutput`); a tap does not.
+   */
+  speakerChosen: boolean;
 }
 
 /**
@@ -49,12 +54,25 @@ export function callStartsOnSpeaker(video: boolean): boolean {
   return video;
 }
 
+/**
+ * The call's DEFAULT output as the call goes on: {@link callStartsOnSpeaker} once the call holds the
+ * microphone (`current` null), then the loudspeaker as soon as video shows - an audio call that turns
+ * into a video call is held in front of the face too. Never back to the earpiece when video stops: a
+ * voice that jumped to the ear while the phone is on the table would go unheard. A user's own tap
+ * always wins over this (`speakerChosen`).
+ */
+export function nextSpeakerDefault(current: boolean | null, video: boolean): boolean {
+  if (current === null) return callStartsOnSpeaker(video);
+  return current || video;
+}
+
 /** What {@link ongoingCallSpec} describes, besides the state: the page's facts about the call. */
 export interface OngoingCallFacts {
   title: string;
   peerUserId: string | null;
   connectedAtMs: number | null;
   speaker: boolean;
+  speakerChosen: boolean;
   muted: boolean;
 }
 
@@ -133,8 +151,8 @@ export function ongoingCallSpec(
   facts: OngoingCallFacts
 ): OngoingCallSpec | null {
   if (!micHeld) return null;
-  const { title, peerUserId, connectedAtMs, speaker, muted } = facts;
-  const base = { title, peerUserId, speaker, muted };
+  const { title, peerUserId, connectedAtMs, speaker, speakerChosen, muted } = facts;
+  const base = { title, peerUserId, speaker, speakerChosen, muted };
   switch (kind) {
     case 'ringing':
       return { ...base, text: m.call_ringing_label(), connectedAtMs: null };
@@ -237,7 +255,7 @@ export function openAndroidCallSession(
     if (json === lastSent) return;
     lastSent = json;
     const payload = JSON.stringify({ ...spec, callId });
-    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker} muted=${spec.muted} peer=${spec.peerUserId !== null}`;
+    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker} chosen=${spec.speakerChosen} muted=${spec.muted} peer=${spec.peerUserId !== null}`;
     if (!started) {
       started = true;
       appendLog(`[Call] ongoing-call service start (${facts})`);

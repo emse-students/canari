@@ -82,6 +82,7 @@ class CallForegroundService : Service() {
         private const val EXTRA_SPEAKER = "speaker"
         private const val EXTRA_PEER = "peerUserId"
         private const val EXTRA_MUTED = "muted"
+        private const val EXTRA_SPEAKER_CHOSEN = "speakerChosen"
         private const val EXTRA_REASON = "reason"
         private const val EXTRA_CALL_ID = "callId"
 
@@ -147,13 +148,14 @@ class CallForegroundService : Service() {
             putExtra(EXTRA_SPEAKER, spec.speaker)
             spec.peerUserId?.let { putExtra(EXTRA_PEER, it) }
             putExtra(EXTRA_MUTED, spec.muted)
+            putExtra(EXTRA_SPEAKER_CHOSEN, spec.speakerChosen)
             return this
         }
 
         private fun Intent.spec(): OngoingCallSpec? {
             val title = getStringExtra(EXTRA_TITLE) ?: return null
             val text = getStringExtra(EXTRA_TEXT) ?: return null
-            if (!hasExtra(EXTRA_SPEAKER) || !hasExtra(EXTRA_MUTED)) return null
+            if (!hasExtra(EXTRA_SPEAKER) || !hasExtra(EXTRA_MUTED) || !hasExtra(EXTRA_SPEAKER_CHOSEN)) return null
             val connectedAt = if (hasExtra(EXTRA_CONNECTED_AT)) getLongExtra(EXTRA_CONNECTED_AT, 0L) else null
             return OngoingCallSpec(
                 title,
@@ -162,7 +164,19 @@ class CallForegroundService : Service() {
                 getBooleanExtra(EXTRA_SPEAKER, false),
                 getStringExtra(EXTRA_PEER),
                 getBooleanExtra(EXTRA_MUTED, false),
+                getBooleanExtra(EXTRA_SPEAKER_CHOSEN, false),
             )
+        }
+
+        /**
+         * The activity came on screen or left it (`MainActivity.onResume` / `onPause`, main thread):
+         * the proximity lock follows ([holdsProximityScreenOff]). Null when no call runs.
+         */
+        @Volatile private var screenListener: ((Boolean) -> Unit)? = null
+
+        /** Called by `MainActivity` on resume and pause; a no-op with no call in the foreground. */
+        fun appOnScreenChanged(onScreen: Boolean) {
+            screenListener?.invoke(onScreen)
         }
 
         private fun commandFrom(intent: Intent?): CallServiceCommand? {
@@ -192,7 +206,7 @@ class CallForegroundService : Service() {
 
         /** Never the peer's id either: only whether there is one. */
         private fun describe(spec: OngoingCallSpec): String =
-            "connected=${spec.connectedAtMs != null} speaker=${spec.speaker} muted=${spec.muted} " +
+            "connected=${spec.connectedAtMs != null} speaker=${spec.speaker} chosen=${spec.speakerChosen} muted=${spec.muted} " +
                 "peer=${spec.peerUserId != null}"
     }
 
@@ -205,6 +219,15 @@ class CallForegroundService : Service() {
      * ([holdsProximityScreenOff]). Null on a device without a proximity sensor, which says so once.
      */
     private var proximityLock: PowerManager.WakeLock? = null
+
+    /** The output [CallAudio] last applied, which the proximity lock is re-derived from. */
+    private var output: CallOutput? = null
+
+    /**
+     * Whether the proximity lock SHOULD be held - the wanted state, not `isHeld`: a lock whose
+     * timeout ran out reads not held, and the renewal must re-take it from this field.
+     */
+    private var proximityWanted = false
 
     /** The peer whose photo [avatar] is (or is being fetched for); null when none was asked. */
     private var avatarFor: String? = null
@@ -294,7 +317,9 @@ class CallForegroundService : Service() {
             acquire(WAKE_LOCK_PERIOD_MS)
         }
         main.postDelayed(wakeLockPeriodOver, WAKE_LOCK_PERIOD_MS)
-        audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, ::onOutput).also { it.open(spec.speaker) }
+        screenListener = { onScreen -> main.post { applyProximity("app on screen=$onScreen") } }
+        audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, callId, ::onOutput)
+            .also { it.open(spec.speaker, spec.speakerChosen) }
         loadAvatar(spec.peerUserId)
         val notifications = NotificationManagerCompat.from(this).areNotificationsEnabled()
         Log.i(TAG, "in the foreground: microphone service, wake lock held, notifications shown=$notifications")
@@ -305,7 +330,9 @@ class CallForegroundService : Service() {
         val previous = this.spec
         this.spec = spec
         if (previous == spec) return
-        if (previous?.speaker != spec.speaker) audio?.setSpeaker(spec.speaker, "the page asked")
+        if (previous?.speaker != spec.speaker || previous.speakerChosen != spec.speakerChosen) {
+            audio?.setSpeaker(spec.speaker, spec.speakerChosen, "the page asked")
+        }
         loadAvatar(spec.peerUserId)
         renotify(spec)
     }
@@ -354,19 +381,30 @@ class CallForegroundService : Service() {
         }, "canari-call-avatar").start()
     }
 
-    /**
-     * The output [CallAudio] just applied: the earpiece holds the proximity lock, anything else
-     * releases it. `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` keeps the screen dark until the phone leaves
-     * the cheek, so moving to the speaker with the phone at the ear does not light it there.
-     */
+    /** The output [CallAudio] just applied: the proximity lock follows it. */
     private fun onOutput(output: CallOutput?) {
-        val hold = holdsProximityScreenOff(output)
+        this.output = output
+        applyProximity("voice -> $output")
+    }
+
+    /**
+     * Re-derives the proximity lock from the output AND the app being on screen
+     * ([holdsProximityScreenOff]): held while the voice is on the earpiece with the call's screen in
+     * front, released otherwise - the user in another app keeps a lit screen.
+     * `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` keeps the screen dark until the phone leaves the cheek, so
+     * moving to the speaker with the phone at the ear does not light it there.
+     */
+    private fun applyProximity(why: String) {
+        if (!running) return
+        val hold = holdsProximityScreenOff(output, MainActivity.isInForeground)
+        proximityWanted = hold
         val held = proximityLock?.isHeld == true
         if (hold == held) return
         if (hold) {
             val power = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
                 Log.w(TAG, "no proximity sensor on this device - the screen stays on against the cheek")
+                proximityWanted = false
                 return
             }
             val lock = proximityLock
@@ -376,10 +414,10 @@ class CallForegroundService : Service() {
                 }
             // Bounded by the same renewal period as the call's own lock, released by every exit.
             lock.acquire(WAKE_LOCK_PERIOD_MS)
-            Log.i(TAG, "proximity screen-off held (voice on the earpiece)")
+            Log.i(TAG, "proximity screen-off held ($why)")
         } else {
             proximityLock?.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
-            Log.i(TAG, "proximity screen-off released (voice -> $output)")
+            Log.i(TAG, "proximity screen-off released ($why)")
         }
     }
 
@@ -421,7 +459,8 @@ class CallForegroundService : Service() {
         val lock = wakeLock
         if (running && lock != null) {
             lock.acquire(WAKE_LOCK_PERIOD_MS)
-            proximityLock?.let { if (it.isHeld) it.acquire(WAKE_LOCK_PERIOD_MS) }
+            // From the WANTED state: a lock that timed out at this same mark reads not held.
+            if (proximityWanted) proximityLock?.acquire(WAKE_LOCK_PERIOD_MS)
             renewWakeLockTimer()
             Log.i(TAG, "the call is still up after another ${WAKE_LOCK_PERIOD_MS / 3_600_000} h - wake lock renewed")
         }
@@ -433,12 +472,15 @@ class CallForegroundService : Service() {
 
     private fun release() {
         main.removeCallbacks(wakeLockPeriodOver)
+        screenListener = null
         callId = null
         spec = null
         audio?.close()
         audio = null
         proximityLock?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
         proximityLock = null
+        proximityWanted = false
+        output = null
         avatarFor = null
         avatar = null
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -487,7 +529,14 @@ class CallForegroundService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(NotificationCompat.CallStyle.forOngoingCall(person, hangUp))
-            .addAction(NotificationCompat.Action.Builder(R.drawable.ic_notification, muteLabel, toggleMute).build())
+            .addAction(
+                NotificationCompat.Action.Builder(
+                    // The icon is the microphone's STATE (struck while muted), the label what a press does.
+                    if (spec.muted) R.drawable.ic_call_mic_off else R.drawable.ic_call_mic,
+                    muteLabel,
+                    toggleMute,
+                ).build(),
+            )
             .setContentText(spec.text)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
@@ -535,6 +584,8 @@ class CallForegroundService : Service() {
  */
 private class CallAudio(
     private val manager: AudioManager,
+    /** The call this audio belongs to, for the log lines only. */
+    callId: String,
     /** Told every output actually applied (the proximity lock follows it); null = the platform routes. */
     private val onOutput: (CallOutput?) -> Unit,
 ) {
@@ -542,11 +593,33 @@ private class CallAudio(
         const val TAG = "CallAudio"
     }
 
+    private val call = callId.take(8)
+
+    /**
+     * Focus changes are LOGGED, and change nothing: another call ringing in (`LOSS_TRANSIENT`) or a
+     * player that took the focus for good (`LOSS`) is what a reading of "the voice cut out" must be
+     * able to see. Holding or muting the call on a loss is a product decision, in the backlog.
+     */
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        val what = when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> "GAIN"
+            AudioManager.AUDIOFOCUS_LOSS -> "LOSS"
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "LOSS_TRANSIENT"
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "LOSS_TRANSIENT_CAN_DUCK"
+            else -> "change $change"
+        }
+        if (change == AudioManager.AUDIOFOCUS_GAIN) {
+            Log.i(TAG, "audio focus GAIN for call=$call - the call has it back")
+        } else {
+            Log.w(TAG, "audio focus $what for call=$call - another app's sound takes over; the call goes on as it is")
+        }
+    }
+
     /**
      * THE CALL TAKES THE AUDIO FOCUS, AS A PHONE CALL DOES: music or a video playing when the call
      * starts pauses (or ducks) for its length, and resumes when [close] abandons it. Transient, so the
      * player knows it is getting it back; `USAGE_VOICE_COMMUNICATION`, so the system treats it as a
-     * call. Nothing listens for a LOSS: a call is not paused by another app's sound.
+     * call. A loss is logged by [focusListener], never acted on.
      */
     private val focus: AudioFocusRequest =
         AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -556,11 +629,14 @@ private class CallAudio(
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )
+            .setOnAudioFocusChangeListener(focusListener, Handler(Looper.getMainLooper()))
             .build()
 
     /** Whether THIS class set `MODE_IN_COMMUNICATION` - the only case in which it ever resets it. */
     private var modeSetHere = false
     private var speaker = true
+    /** Whether [speaker] is the user's tap, or only the call's default ([pickCallOutput]). */
+    private var speakerChosen = false
     private var applied: CallOutput? = null
     private var appliedOnce = false
 
@@ -580,7 +656,7 @@ private class CallAudio(
      * `MODE_IN_COMMUNICATION`. Which branch the WebView takes is a reading owed (`dumpsys audio`,
      * calls.md). The OUTPUT is this class's alone.
      */
-    fun open(speaker: Boolean) {
+    fun open(speaker: Boolean, speakerChosen: Boolean) {
         val found = manager.mode
         if (found == AudioManager.MODE_IN_COMMUNICATION) {
             Log.i(TAG, "mode already MODE_IN_COMMUNICATION (set by the page's capture) - left to its owner")
@@ -598,48 +674,49 @@ private class CallAudio(
             Log.w(TAG, "audio focus NOT granted ($granted) - other players keep playing during the call")
         }
         this.speaker = speaker
+        this.speakerChosen = speakerChosen
         route("call started")
         // Called back on the main looper, where every other method here runs.
         manager.registerAudioDeviceCallback(devices, Handler(Looper.getMainLooper()))
     }
 
-    fun setSpeaker(on: Boolean, why: String) {
+    fun setSpeaker(on: Boolean, chosen: Boolean, why: String) {
         speaker = on
+        speakerChosen = chosen
         route(why)
     }
 
     private fun route(why: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val available = manager.availableCommunicationDevices
-            val wanted = pickCallOutput(available.map { classify(it.type) }, speaker)
+            val wanted = pickCallOutput(available.map { classify(it.type) }, speaker, speakerChosen)
             if (appliedOnce && wanted == applied) return
             appliedOnce = true
             applied = wanted
             if (wanted == null) {
                 manager.clearCommunicationDevice()
-                Log.w(TAG, "no ${if (speaker) "speaker" else "personal output"} among ${available.size} device(s) - the platform routes ($why)")
+                Log.w(TAG, "no ${if (speaker) "speaker" else "personal output"} among ${available.size} device(s) - the platform routes ($why, call=$call)")
                 onOutput(null)
                 return
             }
             val device = available.first { classify(it.type) == wanted }
             val ok = manager.setCommunicationDevice(device)
-            if (ok) Log.i(TAG, "voice -> $wanted ($why)") else Log.e(TAG, "setCommunicationDevice($wanted) refused ($why)")
+            if (ok) Log.i(TAG, "voice -> $wanted ($why, call=$call)") else Log.e(TAG, "setCommunicationDevice($wanted) refused ($why, call=$call)")
             onOutput(if (ok) wanted else null)
         } else {
             // API 28-30: speakerphone on or off; a Bluetooth headset would need SCO started, which this
             // service does not do below API 31 - the platform's wired/earpiece choice applies, so the
             // output is read from the platform's own outputs (a wired headset is never the earpiece).
             val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { classify(it.type) }
-            val wanted = if (speaker) CallOutput.SPEAKER else pickCallOutput(
-                outputs.filter { it != CallOutput.BLUETOOTH_SCO && it != CallOutput.BLE_HEADSET },
-                speaker = false,
-            )
+                .filter { it != CallOutput.BLUETOOTH_SCO && it != CallOutput.BLE_HEADSET }
+            val wanted = pickCallOutput(outputs, speaker, speakerChosen)
             if (appliedOnce && wanted == applied) return
             appliedOnce = true
             applied = wanted
+            val speakerphone = wanted == CallOutput.SPEAKER
             @Suppress("DEPRECATION")
-            manager.isSpeakerphoneOn = speaker
-            Log.i(TAG, "speakerphone=$speaker on API ${Build.VERSION.SDK_INT}, voice -> $wanted ($why)")
+            manager.isSpeakerphoneOn = speakerphone
+            Log.i(TAG, "speakerphone=$speakerphone on API ${Build.VERSION.SDK_INT}, voice -> $wanted ($why, call=$call)")
             onOutput(wanted)
         }
     }

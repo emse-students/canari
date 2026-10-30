@@ -48,7 +48,7 @@
   import { m } from '$lib/paraglide/messages';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
-    callStartsOnSpeaker,
+    nextSpeakerDefault,
     hasAndroidCallService,
     ongoingCallSpec,
     openAndroidCallSession,
@@ -185,19 +185,24 @@
   });
 
   /**
-   * Where the voice STARTS ({@link callStartsOnSpeaker}): read once, when the call first holds the
-   * microphone - `CallService.hasVideo` is set before the stream is published - so a camera turned
-   * on later never moves the voice by itself. Null until then.
+   * Where the voice goes BY DEFAULT ({@link nextSpeakerDefault}): decided when the call first holds
+   * the microphone - `CallService.hasVideo` is set before the stream is published - and moved to the
+   * loudspeaker when video shows later. Null until the microphone is held.
    */
   let speakerDefault = $state<boolean | null>(null);
   /** The user's own choice on the toggle, which wins over the default for the rest of the call. */
   let speakerChoice = $state<boolean | null>(null);
   $effect(() => {
-    if (speakerDefault !== null || !call.localStream) return;
-    const video = callService.hasVideo;
-    speakerDefault = callStartsOnSpeaker(video);
+    if (!call.localStream) return;
+    const video = callService.hasVideo || videoShowing;
+    const next = nextSpeakerDefault(speakerDefault, video);
+    if (next === speakerDefault) return;
+    const first = speakerDefault === null;
+    speakerDefault = next;
     appendLog(
-      `[Call] voice starts on the ${speakerDefault ? 'loudspeaker' : 'earpiece or a headset'} (${video ? 'video' : 'audio'} call)`
+      first
+        ? `[Call] voice starts on the ${next ? 'loudspeaker' : 'earpiece or a headset'} (${video ? 'video' : 'audio'} call)`
+        : `[Call] video showed - the default moves to the loudspeaker (user choice=${speakerChoice ?? 'none'})`
     );
   });
   /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
@@ -294,6 +299,8 @@
         peerUserId: primary?.userId ?? null,
         connectedAtMs: call.connectedAt,
         speaker: isSpeakerOn,
+        // A default yields to a connected headset natively; the user's tap does not.
+        speakerChosen: speakerChoice !== null,
         muted: call.isMuted,
       }),
       `kind=${call.kind}`

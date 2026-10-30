@@ -112,24 +112,28 @@ class OngoingCallTest {
 
     @Test
     fun `a description that crossed the bridge is validated and a refusal names the field`() {
-        assertEquals(SpecResult.Valid(spec), OngoingCallSpec.of("Bob", "Appel audio", 1_000L, true, null, false))
+        assertEquals(SpecResult.Valid(spec), OngoingCallSpec.of("Bob", "Appel audio", 1_000L, true, null, false, false))
         assertEquals(
             SpecResult.Valid(OngoingCallSpec("Bob", "Connexion...", null, false, "user-b", true)),
-            OngoingCallSpec.of("Bob", "Connexion...", null, false, "user-b", true),
+            OngoingCallSpec.of("Bob", "Connexion...", null, false, "user-b", true, false),
         )
-        assertEquals(SpecResult.Refused("title is empty"), OngoingCallSpec.of(" ", "x", null, true, null, false))
-        assertEquals(SpecResult.Refused("text is missing"), OngoingCallSpec.of("Bob", null, null, true, null, false))
+        assertEquals(SpecResult.Refused("title is empty"), OngoingCallSpec.of(" ", "x", null, true, null, false, false))
+        assertEquals(SpecResult.Refused("text is missing"), OngoingCallSpec.of("Bob", null, null, true, null, false, false))
         assertEquals(
             SpecResult.Refused("connectedAtMs=0 is not an instant"),
-            OngoingCallSpec.of("Bob", "x", 0L, true, null, false),
+            OngoingCallSpec.of("Bob", "x", 0L, true, null, false, false),
         )
-        assertEquals(SpecResult.Refused("speaker is missing"), OngoingCallSpec.of("Bob", "x", null, null, null, false))
-        assertEquals(SpecResult.Refused("muted is missing"), OngoingCallSpec.of("Bob", "x", null, true, null, null))
+        assertEquals(SpecResult.Refused("speaker is missing"), OngoingCallSpec.of("Bob", "x", null, null, null, false, false))
+        assertEquals(SpecResult.Refused("muted is missing"), OngoingCallSpec.of("Bob", "x", null, true, null, null, false))
+        assertEquals(
+            SpecResult.Refused("speakerChosen is missing"),
+            OngoingCallSpec.of("Bob", "x", null, true, null, false, null),
+        )
     }
 
     @Test
     fun `a blank peer id names nobody, so no photo is fetched for it`() {
-        val valid = OngoingCallSpec.of("Bob", "x", null, false, "  ", false) as SpecResult.Valid
+        val valid = OngoingCallSpec.of("Bob", "x", null, false, "  ", false, false) as SpecResult.Valid
         assertNull(valid.spec.peerUserId)
     }
 
@@ -140,19 +144,40 @@ class OngoingCallTest {
     }
 
     @Test
-    fun `the screen goes dark against the cheek on the earpiece only`() {
-        assertTrue(holdsProximityScreenOff(CallOutput.EARPIECE))
+    fun `the screen goes dark against the cheek on the earpiece only, and only with the call on screen`() {
+        assertTrue(holdsProximityScreenOff(CallOutput.EARPIECE, appOnScreen = true))
+        // The user in another app during the call: that app's screen is not the call's to darken.
+        assertFalse(holdsProximityScreenOff(CallOutput.EARPIECE, appOnScreen = false))
         for (output in CallOutput.values().filter { it != CallOutput.EARPIECE }) {
-            assertFalse("$output", holdsProximityScreenOff(output))
+            assertFalse("$output", holdsProximityScreenOff(output, appOnScreen = true))
         }
-        assertFalse(holdsProximityScreenOff(null))
+        assertFalse(holdsProximityScreenOff(null, appOnScreen = true))
     }
 
     @Test
-    fun `the speaker is the loudspeaker, whatever else is plugged in`() {
+    fun `a speaker the user chose is the loudspeaker, whatever else is plugged in`() {
         val all = CallOutput.values().toList()
-        assertEquals(CallOutput.SPEAKER, pickCallOutput(all, speaker = true))
-        assertNull(pickCallOutput(listOf(CallOutput.EARPIECE), speaker = true))
+        assertEquals(CallOutput.SPEAKER, pickCallOutput(all, speaker = true, speakerChosen = true))
+        assertNull(pickCallOutput(listOf(CallOutput.EARPIECE), speaker = true, speakerChosen = true))
+    }
+
+    @Test
+    fun `a speaker that is only the video DEFAULT yields to a connected headset, never to the earpiece`() {
+        val phone = listOf(CallOutput.SPEAKER, CallOutput.EARPIECE)
+        assertEquals(CallOutput.SPEAKER, pickCallOutput(phone, speaker = true, speakerChosen = false))
+        assertEquals(
+            CallOutput.WIRED_HEADSET,
+            pickCallOutput(phone + CallOutput.WIRED_HEADSET, speaker = true, speakerChosen = false),
+        )
+        assertEquals(
+            CallOutput.BLE_HEADSET,
+            pickCallOutput(phone + CallOutput.BLE_HEADSET + CallOutput.USB_HEADSET, speaker = true, speakerChosen = false),
+        )
+        // The same headset, but the user TAPPED the speaker: the loudspeaker.
+        assertEquals(
+            CallOutput.SPEAKER,
+            pickCallOutput(phone + CallOutput.WIRED_HEADSET, speaker = true, speakerChosen = true),
+        )
     }
 
     @Test

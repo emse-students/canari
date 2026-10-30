@@ -3,6 +3,7 @@
 #import "canari_rust_bridge.h"
 #import "KeyboardMediaBridge.h"
 
+#import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
@@ -389,9 +390,17 @@ static void CanariObserveTheme(void) {
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
 /// near the face only while `UIDevice.proximityMonitoringEnabled` is set, and a WebView never sets it.
 /// The page posts a boolean through `webkit.messageHandlers.canariProximity` (`iosCallProximity.ts`):
-/// true while a call holds the microphone with the voice on the receiver, false on the loudspeaker and
-/// at the call's end. Anything but a boolean is logged and ignored.
+/// true while a call holds the microphone and the page did not put it on the loudspeaker, false
+/// otherwise and at the call's end - and once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the sensor armed. Anything but a boolean is logged and ignored.
+///
+/// THE ROUTE DECIDES, NOT THE PAGE'S TOGGLE: the page's loudspeaker is a best-effort `setSinkId`, and
+/// AirPods or a car take the voice without the page knowing. So monitoring is on only while the page
+/// asks AND the audio session's output is the built-in RECEIVER; every route change re-decides it and
+/// logs the output port types, which is what tells receiver from speaker in a reading.
 @interface CanariProximityHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic) BOOL pageWants;
+- (void)apply:(NSString *)why;
 @end
 @implementation CanariProximityHandler
 - (void)userContentController:(WKUserContentController *)controller
@@ -400,11 +409,28 @@ static void CanariObserveTheme(void) {
     NSLog(@"[CanariIOS] proximity ignored, the page posted something that is not a boolean");
     return;
   }
-  BOOL enabled = [(NSNumber *)message.body boolValue];
+  self.pageWants = [(NSNumber *)message.body boolValue];
+  [self apply:@"the page asked"];
+}
+
+- (void)apply:(NSString *)why {
+  NSArray<AVAudioSessionPortDescription *> *outputs =
+      AVAudioSession.sharedInstance.currentRoute.outputs;
+  NSMutableArray<NSString *> *ports = [NSMutableArray arrayWithCapacity:outputs.count];
+  BOOL onReceiver = NO;
+  for (AVAudioSessionPortDescription *port in outputs) {
+    [ports addObject:port.portType];
+    if ([port.portType isEqualToString:AVAudioSessionPortBuiltInReceiver]) {
+      onReceiver = YES;
+    }
+  }
+  BOOL enabled = self.pageWants && onReceiver;
   UIDevice *device = UIDevice.currentDevice;
   device.proximityMonitoringEnabled = enabled;
   // Read back: a device without a sensor leaves it NO, and that is what the reading should show.
-  NSLog(@"[CanariIOS] call proximity monitoring asked=%d now=%d", enabled, device.proximityMonitoringEnabled);
+  NSLog(@"[CanariIOS] call proximity (%@): page=%d outputs=[%@] receiver=%d now=%d", why,
+        self.pageWants, [ports componentsJoinedByString:@","], onReceiver,
+        device.proximityMonitoringEnabled);
 }
 @end
 
@@ -416,6 +442,18 @@ static void CanariObserveCallProximity(void) {
   }
   handler = [CanariProximityHandler new];
   [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariProximity"];
+  CanariProximityHandler *observer = handler;
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:AVAudioSessionRouteChangeNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification *_Nonnull note) {
+                (void)note;
+                // Silent outside a call: only a page that asks makes a route change worth a line.
+                if (observer.pageWants || UIDevice.currentDevice.proximityMonitoringEnabled) {
+                  [observer apply:@"the audio route changed"];
+                }
+              }];
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 

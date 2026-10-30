@@ -9,6 +9,7 @@ import {
   NATIVE_CALL_EVENT,
   callStartsOnSpeaker,
   hasAndroidCallService,
+  nextSpeakerDefault,
   ongoingCallSpec,
   openAndroidCallSession,
   parseNativeCallEvent,
@@ -65,11 +66,17 @@ const SPEC: OngoingCallSpec = {
   speaker: false,
   peerUserId: 'user-bob',
   muted: false,
+  speakerChosen: false,
 };
 
 /** The page's facts about a call with Bob. */
-function facts(connectedAtMs: number | null, speaker: boolean, muted = false) {
-  return { title: 'Bob', peerUserId: 'user-bob', connectedAtMs, speaker, muted };
+function facts(
+  connectedAtMs: number | null,
+  speaker: boolean,
+  muted = false,
+  speakerChosen = false
+) {
+  return { title: 'Bob', peerUserId: 'user-bob', connectedAtMs, speaker, speakerChosen, muted };
 }
 
 beforeEach(() => {
@@ -80,6 +87,26 @@ describe('callStartsOnSpeaker - where the voice starts', () => {
   it('an audio call starts on the earpiece (or a headset), a video call on the loudspeaker', () => {
     expect(callStartsOnSpeaker(false)).toBe(false);
     expect(callStartsOnSpeaker(true)).toBe(true);
+  });
+});
+
+describe('nextSpeakerDefault - the default as the call goes on', () => {
+  it('starts where callStartsOnSpeaker says', () => {
+    expect(nextSpeakerDefault(null, false)).toBe(false);
+    expect(nextSpeakerDefault(null, true)).toBe(true);
+  });
+
+  it('moves to the loudspeaker when video shows mid-call, and never back when it stops', () => {
+    expect(nextSpeakerDefault(false, true)).toBe(true);
+    expect(nextSpeakerDefault(true, false)).toBe(true);
+    expect(nextSpeakerDefault(false, false)).toBe(false);
+  });
+});
+
+describe('speakerChosen - a default and a tap are told apart natively', () => {
+  it('crosses the bridge as given, so a default yields to a headset and a tap does not', () => {
+    expect(ongoingCallSpec('live', true, facts(42, true))?.speakerChosen).toBe(false);
+    expect(ongoingCallSpec('live', true, facts(42, true, false, true))?.speakerChosen).toBe(true);
   });
 });
 

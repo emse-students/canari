@@ -10,6 +10,7 @@ vi.mock('$lib/utils/sessionLog', () => ({
 
 import {
   callHoldsProximity,
+  releaseIosProximityOfPreviousPage,
   resetIosProximityForTest,
   setIosProximityMonitoring,
 } from './iosCallProximity';
@@ -61,5 +62,32 @@ describe('setIosProximityMonitoring', () => {
     );
     expect(mm).toContain('addScriptMessageHandler:handler name:@"canariProximity"');
     expect(mm).toContain('CanariObserveCallProximity();');
+  });
+
+  it('native arms the sensor only on the receiver route, and re-decides on every route change', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const mm = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_ios.mm'),
+      'utf8'
+    );
+    expect(mm).toContain('AVAudioSessionPortBuiltInReceiver');
+    expect(mm).toContain('BOOL enabled = self.pageWants && onReceiver;');
+    expect(mm).toContain('addObserverForName:AVAudioSessionRouteChangeNotification');
+  });
+});
+
+describe('releaseIosProximityOfPreviousPage', () => {
+  it('posts false at every page load, even when this module believes it already did', () => {
+    const postMessage = vi.fn();
+    vi.stubGlobal('webkit', { messageHandlers: { canariProximity: { postMessage } } });
+    setIosProximityMonitoring(false, 'the call ended');
+    releaseIosProximityOfPreviousPage();
+    expect(postMessage.mock.calls).toEqual([[false], [false]]);
+  });
+
+  it('runs once per page load from the root layout, on iOS', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const layout = readFileSync(resolve(here, '../../routes/+layout.svelte'), 'utf8');
+    expect(layout).toMatch(/if \(isIosTauriRuntime\(\)\) releaseIosProximityOfPreviousPage\(\);/);
   });
 });

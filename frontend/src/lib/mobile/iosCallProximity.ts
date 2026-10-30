@@ -14,8 +14,10 @@ import { appendLog } from '$lib/utils/sessionLog';
 
 /**
  * Whether the call wants the screen dark against the cheek: while it holds the microphone in a state
- * the phone may be at the ear (from the caller's ring to the end), and only with the voice on the
- * RECEIVER - on the loudspeaker the phone is looked at, and a hand over the sensor would hide the call.
+ * the phone may be at the ear (from the caller's ring to the end), and not on the page's loudspeaker -
+ * there the phone is looked at, and a hand over the sensor would hide the call. This is the PAGE'S
+ * half: native arms the sensor only while the audio route's output is the built-in receiver too
+ * (`CanariProximityHandler`), so AirPods or a speaker the page did not choose keep the screen lit.
  */
 export function callHoldsProximity(
   kind: CallStatusKind,
@@ -50,6 +52,17 @@ export function setIosProximityMonitoring(enabled: boolean, why: string): void {
   posted = enabled;
   appendLog(`[Call] proximity screen-off ${enabled ? 'on' : 'off'} (${why})`);
   handler.postMessage(enabled);
+}
+
+/**
+ * Called ONCE per page load on iOS - the twin of Android's `releaseCallServiceOfPreviousPage`. A page
+ * that has just loaded holds no call, but the sensor lives in the PROCESS: a reload or a WebContent
+ * kill mid-call on the receiver would leave it armed, darkening the screen at every hand over it.
+ * Posted whatever this module last sent, since that memory was the previous page's.
+ */
+export function releaseIosProximityOfPreviousPage(): void {
+  posted = null;
+  setIosProximityMonitoring(false, 'a page loaded - no call holds the sensor');
 }
 
 /** Test seam: forgets the last posted value. */
