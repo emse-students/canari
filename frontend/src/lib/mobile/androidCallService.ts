@@ -104,6 +104,8 @@ export type NativeCallEvent = { callId: string } & (
   | { kind: 'hangup' }
   | { kind: 'mute' }
   | { kind: 'foreground' }
+  /** The output the service APPLIED: the loudspeaker or not, null when the platform routes. */
+  | { kind: 'output'; speaker: boolean | null }
 );
 
 /**
@@ -112,7 +114,13 @@ export type NativeCallEvent = { callId: string } & (
  */
 export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
   if (typeof detail !== 'object' || detail === null) return null;
-  const d = detail as { kind?: unknown; reason?: unknown; code?: unknown; callId?: unknown };
+  const d = detail as {
+    kind?: unknown;
+    reason?: unknown;
+    code?: unknown;
+    callId?: unknown;
+    speaker?: unknown;
+  };
   if (typeof d.callId !== 'string' || d.callId === '') return null;
   const callId = d.callId;
   const reason = typeof d.reason === 'string' ? d.reason : '';
@@ -125,6 +133,9 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
       return { callId, kind: 'mute' };
     case 'foreground':
       return { callId, kind: 'foreground' };
+    case 'output':
+      if (d.speaker !== undefined && typeof d.speaker !== 'boolean') return null;
+      return { callId, kind: 'output', speaker: d.speaker ?? null };
     case 'failed':
       if (d.code !== 'off-screen' && d.code !== 'refused') return null;
       return { callId, kind: 'failed', code: d.code, reason };
@@ -217,6 +228,12 @@ export interface AndroidCallHandlers {
    * it, so it is never a button that does nothing.
    */
   onRoute?: (available: boolean) => void;
+  /**
+   * The output the service APPLIED: true on the loudspeaker, false on the earpiece or a headset, null
+   * when the platform routes. A loudspeaker DEFAULT yields to a headset natively, so this - not what
+   * the page asked - is what the speaker toggle shows.
+   */
+  onOutput?: (speaker: boolean | null) => void;
 }
 
 /** Opens the session for one call. `callId` names this call on the bridge; drawn per session. */
@@ -225,7 +242,7 @@ export function openAndroidCallSession(
   handlers: AndroidCallHandlers,
   callId: string = crypto.randomUUID()
 ): AndroidCallSession {
-  const { onHangUp, onMute = () => {}, onRoute = () => {} } = handlers;
+  const { onHangUp, onMute = () => {}, onRoute = () => {}, onOutput = () => {} } = handlers;
   const bridge = host.canariCall;
   if (!bridge) {
     appendLog(
@@ -331,6 +348,12 @@ export function openAndroidCallSession(
         over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
         onHangUp();
+        return;
+      case 'output':
+        appendLog(
+          `[Call] the service routed the voice to ${event.speaker === null ? 'the platform choice' : event.speaker ? 'the loudspeaker' : 'the earpiece or a headset'}`
+        );
+        onOutput(event.speaker);
         return;
       case 'mute':
         // The service stays: only the microphone changes, and the next publish redraws the action.

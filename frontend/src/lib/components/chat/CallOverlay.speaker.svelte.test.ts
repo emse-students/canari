@@ -32,6 +32,7 @@ vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
 }));
 
 import CallOverlay from './CallOverlay.svelte';
+import { m } from '$lib/paraglide/messages';
 import type { CallService, CallState } from '$lib/services/CallService';
 import { callView } from '$lib/stores/callView.svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
@@ -96,7 +97,7 @@ function fakeService(state: CallState, hasVideo: boolean) {
 }
 
 /** Every description the overlay sent the service, in order. */
-const sent: { speaker: boolean; speakerChosen: boolean }[] = [];
+const sent: { speaker: boolean; speakerChosen: boolean; callId: string }[] = [];
 let stopHistory: () => void = () => {};
 const mounted: Record<string, unknown>[] = [];
 
@@ -181,5 +182,49 @@ describe('the voice the Android service is told to route', () => {
     service.isVideoOff.set(true);
     flushSync();
     expect(last()).toMatchObject({ speaker: true, speakerChosen: false });
+  });
+});
+
+describe('the speaker toggle shows the route the service APPLIED', () => {
+  beforeEach(() => {
+    // The toggle is drawn only where the engine could route at all.
+    vi.stubGlobal('AudioContext', class {});
+    if (!('mediaDevices' in navigator)) {
+      Object.defineProperty(navigator, 'mediaDevices', { value: {}, configurable: true });
+    }
+  });
+
+  const routed = (speaker: boolean | null) => {
+    const detail: Record<string, unknown> = { kind: 'output', callId: last().callId };
+    if (speaker !== null) detail.speaker = speaker;
+    window.dispatchEvent(new CustomEvent('canari:call-native', { detail }));
+    flushSync();
+  };
+  const toggle = () => document.querySelector<HTMLButtonElement>('[data-testid="call-speaker"]')!;
+
+  it('a loudspeaker default that yielded to a headset reads the earpiece, and the first tap is the loudspeaker', async () => {
+    const service = fakeService('incall', true);
+    await render(service);
+    micHeld(service, true);
+    expect(last()).toMatchObject({ speaker: true, speakerChosen: false });
+    // Before the service says anything, the toggle shows what the page asked.
+    expect(toggle().getAttribute('aria-label')).toBe(m.call_speaker_label());
+
+    routed(false); // a headset took the voice
+    expect(toggle().getAttribute('aria-label')).toBe(m.call_earpiece_label());
+
+    // The first tap is audible: it asks the loudspeaker, as the user's own choice.
+    toggle().click();
+    flushSync();
+    expect(last()).toMatchObject({ speaker: true, speakerChosen: true });
+  });
+
+  it('an unknown route (the platform routes) falls back to what the page asked', async () => {
+    const service = fakeService('incall', true);
+    await render(service);
+    micHeld(service, true);
+    routed(false);
+    routed(null);
+    expect(toggle().getAttribute('aria-label')).toBe(m.call_speaker_label());
   });
 });

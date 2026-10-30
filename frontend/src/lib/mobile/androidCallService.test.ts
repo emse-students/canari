@@ -413,4 +413,24 @@ describe('parseNativeCallEvent', () => {
     expect(parseNativeCallEvent(null)).toBeNull();
     expect(parseNativeCallEvent('started')).toBeNull();
   });
+
+  it('reads the applied output: true, false, or unknown when the platform routes', () => {
+    const c = { callId: 'c' };
+    expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: true })).toEqual({
+      ...c,
+      kind: 'output',
+      speaker: true,
+    });
+    expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: false })).toEqual({
+      ...c,
+      kind: 'output',
+      speaker: false,
+    });
+    expect(parseNativeCallEvent({ ...c, kind: 'output' })).toEqual({
+      ...c,
+      kind: 'output',
+      speaker: null,
+    });
+    expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: 'yes' })).toBeNull();
+  });
 });
