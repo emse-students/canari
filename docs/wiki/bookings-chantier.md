@@ -520,6 +520,16 @@ inline. Rebuilt toward the mockup AND the reference app the owner likes (big ima
 (`ListedSpace` carries `associationId` and `associationName` only - initials stand in), a price, and a
 space/equipment type badge. Each needs a field on `GET bookings/spaces`.
 
+## The bookings polish pass (2026-10-30)
+
+Owner feedback on the desktop screens. Fixed, in `ui/bookings-polish` (on top of the home cards):
+
+- **"Aujourd'hui"** was small orange text squeezed between the arrows and the date, drawn only when the week was away. `WeekBar` now leads with an outlined pill (dimmed and disabled while the week holds today), then the arrows, then the dates - a calendar app's order. The agenda module has no today control to reuse.
+- **Device-aware help.** The grid hint carried "(appui long sur mobile)" to a desktop reader. `lib/bookings/gridHint.ts` picks one of four keys (`bookings_grid_{drag,block}_hint_{pointer,touch}`) from `isCoarsePointerDevice()` / `onCoarsePointerChange` (`utils/pointerDevice.ts`, `(pointer: coarse)`, the app's one predicate). A sweep of both catalogues for "(sur mobile)", "sur ordinateur", "sur telephone" found no other parenthetical of this kind; "cliquez" on the two calendar subtitles and `carte_panel_empty` is still desktop wording, left alone.
+- **Notice under the grid** is the home's short line ("Prevenu d'une annulation, d'un ajout et avant chaque creneau."); the no-notification one says "sur Reservations", not "ici".
+- **Cards, one padding:** `MyBookingCard`, `UpcomingBookings` rows, `SpaceEditor`'s hidden-column panel and `ResourceEditor` are all `p-4` (some were `p-3`, `px-4 py-3`, `p-3 sm:p-4`); rows get the `shadow-sm` of the other cards; the dashboard's empty "A venir" is a dashed card, not loose centred text.
+- Read at 390 and 1280 against fixture data (no gate sees the result).
+
 ## Decisions taken by Master on 2026-10-27 (user delegated)
 
 The user delegated the sixteen questions the redesign's mockups raised (#2579, Q-R1..Q-R16) to
@@ -563,7 +573,6 @@ on 2026-10-15 from the session `canari-77`. Its rules: this session plans (wiki 
 request, no code); the user validates; then work runs in batches as DRAFT pull requests on a branch
 or worktree of its own. **Only Master marks a pull request ready, merges and releases**, after an
 adversarial review. The user is told when a batch is ready and passes it to Master.
-
 
 ## Code anchors, measured 2026-10-15 (read-only exploration, `main` at 990ba8fe9)
 

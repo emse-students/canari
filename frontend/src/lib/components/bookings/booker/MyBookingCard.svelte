@@ -86,7 +86,7 @@
   }
 </script>
 
-<article class="border-cn-border bg-cn-surface space-y-2 rounded-2xl border p-3 shadow-sm">
+<article class="border-cn-border bg-cn-surface space-y-2 rounded-2xl border p-4 shadow-sm">
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <p class="text-text-main text-base font-bold first-letter:uppercase">
