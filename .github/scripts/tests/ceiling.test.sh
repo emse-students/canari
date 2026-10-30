@@ -271,20 +271,26 @@ done
 echo "the gen/android allowance has a gate behind it:"
 tests_dir="$(dirname "${BASH_SOURCE[0]}")"
 ci_yml="$tests_dir/../../workflows/ci.yml"
-ok_or_fail() { # <description> <exit status of the check>
-  if [ "$2" -eq 0 ]; then echo "  ok   $1"; else echo "  FAIL $1"; failures=$((failures + 1)); fi
+check_that() { # <description> <command...>: ok when the command succeeds
+  local description="$1"; shift
+  if "$@"; then echo "  ok   $description"; else echo "  FAIL $description"; failures=$((failures + 1)); fi
+}
+check_not() { # <description> <command...>: ok when the command FAILS
+  local description="$1"; shift
+  if "$@"; then echo "  FAIL $description"; failures=$((failures + 1)); else echo "  ok   $description"; fi
 }
 # The job's own text: from its key to the next job key at the same indentation.
 job_block="$(awk '/^  compile-android-app:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
-[ -n "$job_block" ]; ok_or_fail "ci.yml carries a compile-android-app job" $?
-grep -qE '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$' <<<"$job_block"
-ok_or_fail "the job runs when the android_app filter says so, and not under some other condition" $?
-grep -qE '^        run: bash \.github/scripts/android-app-compile\.sh$' <<<"$job_block"
-ok_or_fail "the job runs android-app-compile.sh" $?
-[ -x "$tests_dir/../android-app-compile.sh" ]; ok_or_fail "android-app-compile.sh is executable" $?
+job_has() { grep -qE "$1" <<<"$job_block"; }
+check_that "ci.yml carries a compile-android-app job" test -n "$job_block"
+check_that "the job runs when the android_app filter says so, and not under some other condition" \
+  job_has '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$'
+check_that "the job runs android-app-compile.sh" job_has '^        run: bash \.github/scripts/android-app-compile\.sh$'
+check_that "android-app-compile.sh is executable" test -x "$tests_dir/../android-app-compile.sh"
 # The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block is run
 # against a real path of the tree this job exists to watch, and against one it must not fire on.
 filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c=1} c{print} c && /; then$/{exit}' "$ci_yml")"
+# shellcheck disable=SC2317,SC2329  # `has` is called by the `if has ...` text evaluated below
 filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
   (
     CHANGED="$1"
@@ -296,17 +302,13 @@ filter_fires() { # <path>: does the android_app filter fire for a change to that
     fi"
   )
 }
-filter_fires "frontend/src-tauri/gen/android/app/build.gradle.kts"
-ok_or_fail "the filter fires for a change to gen/android" $?
-filter_fires "frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
-ok_or_fail "the filter fires for the Gradle wrapper (the #2564 case)" $?
-filter_fires "frontend/src-tauri/src/lib.rs"
-ok_or_fail "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" $?
-filter_fires "apps/core-service/src/main.ts"
-[ $? -ne 0 ]; ok_or_fail "the filter stays quiet for an unrelated change" $?
+check_that "the filter fires for a change to gen/android" filter_fires "frontend/src-tauri/gen/android/app/build.gradle.kts"
+check_that "the filter fires for the Gradle wrapper (the #2564 case)" filter_fires "frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
+check_that "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" filter_fires "frontend/src-tauri/src/lib.rs"
+check_not "the filter stays quiet for an unrelated change" filter_fires "apps/core-service/src/main.ts"
 # ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
-sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep -q 'compile-android-app'
-ok_or_fail "ci-passed needs compile-android-app" $?
+ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep -q 'compile-android-app'; }
+check_that "ci-passed needs compile-android-app" ci_passed_needs
 
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
