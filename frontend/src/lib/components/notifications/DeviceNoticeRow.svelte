@@ -49,7 +49,11 @@
 </script>
 
 <!-- The geometry of `NotificationRow`: a 56px disc with its badge, a sentence, the amber dot. -->
-<div class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5" data-device-notice>
+<div
+  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5"
+  data-device-notice
+  data-device-notice-key={notice.key}
+>
   <span
     class="bg-cn-border/60 text-text-main flex h-14 w-14 shrink-0 items-center justify-center rounded-full"
     aria-hidden="true"
