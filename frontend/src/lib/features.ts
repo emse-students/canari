@@ -44,19 +44,15 @@ export const CALLS_COMPILED = true;
  * `USE_FULL_SCREEN_INTENT`; `callsCompiled.test.ts` asserts all four agree with this constant, and
  * that it is never on while {@link CALLS_COMPILED} is off (a ring the binary could not answer).
  *
- * **OFF, and it stays off when calls first ship** (owner, 2026-10-21: the first production calls
- * ring an app that is OPEN, over the chat socket, and nothing else). No iPhone has ever registered a
- * PushKit token, no CallKit ring has ever been delivered, the Android ring still carries the
- * caller's name in its payload, and App Review refused `voip` under 2.5.4 on 2026-08-31 for a
- * feature it could not locate.
- *
- * **Turns on when** WP-C5 (the Android ring rebuilt: names from the phone's copy, the full-screen
- * permission on Android 14+, the call permission honoured natively) and WP-C6 (iOS: a VoIP push
- * always reports a CallKit call, the answer path behind the PIN) are built and their K6/K7/K8
- * readings pass on both bench phones - the four switches above in ONE commit
- * (`docs/wiki/frontend/modules/calls.md`).
+ * **ON since the owner's decision of 2026-10-30: the native incoming-call screen ships in 1.5.2**
+ * (full screen, even on a locked phone). The first production calls (2026-10-22) rang an OPEN app
+ * only. Turned on with the rest of WP-C5 (the Android ring's names from the phone's own copy, never
+ * the payload; the full-screen permission read on Android 14+; the caller's photo) - the four
+ * switches above in ONE commit. What only a phone proves - K6/K7/K8 on the Mi 9T and the iPhone -
+ * is owed BEFORE the stable, and App Review answers `voip` for the first time
+ * (`docs/wiki/frontend/modules/calls.md`, "The native ring ships").
  */
-export const CALLS_NATIVE_RING_COMPILED = false;
+export const CALLS_NATIVE_RING_COMPILED = true;
 
 /**
  * In-app 1:1 calling: the call buttons, the in-app ring, and the peer-to-peer WebRTC path behind
@@ -67,8 +63,8 @@ export const CALLS_NATIVE_RING_COMPILED = false;
  * `VITE_DEPLOY_ENVIRONMENT=development`, and that is the whole test. Production builds never set it
  * (unset MEANS production, `deployEnvironment.ts`), so a stable can only call once
  * {@link CALLS_COMPILED} is flipped (it is, since 2026-10-22). What is on is the in-app half only:
- * the invite rings an OPEN app over the chat socket; a killed or backgrounded phone is not rung,
- * because the native ring is {@link CALLS_NATIVE_RING_COMPILED}'s and stays off.
+ * the invite rings an OPEN app over the chat socket; a killed or backgrounded phone is rung by the
+ * native ring, which is {@link CALLS_NATIVE_RING_COMPILED}'s (on since 2026-10-30).
  *
  * The expression is `CALLS_COMPILED` alone in effect; video follows it ({@link CALLS_VIDEO_ENABLED}).
  */

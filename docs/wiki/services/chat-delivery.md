@@ -1885,9 +1885,10 @@ opened the app.
   `interruptionLevel = .timeSensitive` (app-alive path and NSE), which needs the
   `com.apple.developer.usernotifications.time-sensitive` entitlement - without it iOS silently
   downgrades to `.active`.
-- **NSE** (`NotificationService.swift`): `call_invite` → ringtone + time-sensitive banner with
-  the accept deep link; `call_control` with `callEnded` → blank passive content + removes any
-  delivered notification whose `userInfo["canariCallId"]` matches.
+- **NSE** (`NotificationService.swift`): a decrypted `call_invite` → blank passive content, never a
+  ring (since 2026-10-30: the ring is the server's `call_ring` alone, [calls](../frontend/modules/calls.md));
+  `call_control` with `callEnded` → blank passive content + removes any delivered notification
+  whose `userInfo["canariCallId"]` matches.
 
 #### Unified rich notification grouping (WP-XP-7)
 

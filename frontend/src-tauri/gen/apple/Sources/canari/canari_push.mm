@@ -2662,13 +2662,14 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // the app becomes active - the in-app call UI takes over from there.
 
 /// Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
-/// 2026-10-21; callsCompiled.test.ts asserts it), which holds the native ring - PushKit and CallKit -
-/// off until it has been run on hardware (WP-C6, K6/K7/K8). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
-/// at process start, and there is nothing to ask. The two must be flipped in the same commit,
-/// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
-/// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
-/// silent failure rather than a feature.
-static const BOOL kCanariCallsEnabled = NO;
+/// 2026-10-21; callsCompiled.test.ts asserts it), which compiles the native ring - PushKit and
+/// CallKit - into the build; ON since the owner's decision of 2026-10-30 (it ships in 1.5.2, its
+/// hardware readings K6/K7/K8 owed on calls.md). It is duplicated rather than read from JS because
+/// this code runs BEFORE the webview exists - a PushKit registry is installed at process start, and
+/// there is nothing to ask. The two move in the same commit, together with the `voip`
+/// UIBackgroundModes entry of Info.plist: without that entry PKPushRegistry can never obtain a
+/// token, so installing it here would be a permanent silent failure rather than a feature.
+static const BOOL kCanariCallsEnabled = YES;
 
 static NSString *const kVoipTokenFileName = @"voip_token.txt";
 static NSString *const kPendingCallAcceptFileName = @"pending_call_accept.json";
@@ -2786,16 +2787,33 @@ static void CanariEnsureCallProvider(void) {
   [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
 }
 
+/// The caller's name for the CallKit screen, from THIS PHONE'S copy of names (`display_names.json`,
+/// under the same owner rule as a mention, decision 6 of 2026-10-18), never from the push. A caller
+/// the phone has never named shows the neutral "Canari call" - a person it shares no conversation
+/// with is not somebody it should name.
+static NSString *CanariCallerDisplayName(NSString *callerId) {
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSDictionary *names = CanariLoadMentionNames(ctx.userId.lowercaseString);
+  id name = callerId.length > 0 ? names[callerId.lowercaseString] : nil;
+  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
+  NSLog(@"[CanariCallKit] caller named=%d", known);
+  return known ? (NSString *)name : CanariLocalized(@"notif.call.unknown_caller");
+}
+
 /// Reports an incoming call to CallKit (full-screen system ring). Deduped per callId (the VoIP
-/// push and the decrypted MLS invite may both arrive); auto-ends as unanswered after 60s.
-static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerName,
-                                     NSString *groupName, BOOL hasVideo) {
+/// push and the FCM `call_ring` may both arrive); auto-ends as unanswered after 60s. A decrypted
+/// MLS `call_invite` never comes here: the server's `call_ring` is the only ring.
+///
+/// The caller is named from this phone's own copy (`CanariCallerDisplayName`), never from the
+/// frame: since the native ring shipped (2026-10-30) the `call_ring` FCM data carries ids only, and
+/// one path naming the caller one way keeps the two rings of the same call identical.
+static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerId,
+                                     BOOL hasVideo) {
   if (callId.length == 0) {
     return;
   }
-  // ONE choke point for four callers (VoIP push, legacy FCM ring, decrypted MLS invite, the bogus
-  // -id path): a peer on an older build can still ring this device, and raising a system call UI
-  // for a call the webview will refuse to join is worse than no ring at all.
+  // The switch is checked here, at the FCM `call_ring`'s ring: raising a system call UI for a
+  // call the webview will refuse to join is worse than no ring at all.
   if (!kCanariCallsEnabled) {
     NSLog(@"[CanariCallKit] calls disabled - not reporting incoming call %@", callId);
     return;
@@ -2815,10 +2833,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
     };
 
     CXCallUpdate *update = [[CXCallUpdate alloc] init];
-    NSString *display = callerName.length > 0 ? callerName : @"Canari";
-    if (groupName.length > 0 && ![groupName isEqualToString:callerName]) {
-      display = [NSString stringWithFormat:@"%@ - %@", display, groupName];
-    }
+    NSString *display = CanariCallerDisplayName(callerId);
     update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
     update.localizedCallerName = display;
     update.hasVideo = hasVideo;
@@ -2852,19 +2867,6 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
   });
 }
 
-/// The caller's name for the CallKit screen, from THIS PHONE'S copy of names (`display_names.json`,
-/// under the same owner rule as a mention, decision 6 of 2026-10-18), never from the push. A caller
-/// the phone has never named shows the neutral "Canari call" - a person it shares no conversation
-/// with is not somebody it should name.
-static NSString *CanariCallerDisplayName(NSString *callerId) {
-  CanariPushContext *ctx = CanariLoadPushContext();
-  NSDictionary *names = CanariLoadMentionNames(ctx.userId.lowercaseString);
-  id name = callerId.length > 0 ? names[callerId.lowercaseString] : nil;
-  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
-  NSLog(@"[CanariCallKit] caller named=%d", known);
-  return known ? (NSString *)name : CanariLocalized(@"notif.call.unknown_caller");
-}
-
 /// Reports a VoIP-pushed call to CallKit, SYNCHRONOUSLY and on EVERY path (Apple's contract, see
 /// `didReceiveIncomingPushWithPayload`). Must run on the main queue - the PushKit registry's.
 ///
@@ -2872,7 +2874,7 @@ static NSString *CanariCallerDisplayName(NSString *callerId) {
 ///   capped at `kCallRingTimeoutSec`: the window is the server's, so the phone does not keep ringing
 ///   for a call nobody can answer any more. A push that arrives past it (APNs held it while the phone
 ///   was off) is reported and ended at once - a flash, and the only thing Apple allows.
-/// - A call already reported for `callId` (the MLS invite rang first) is reported AGAIN under the
+/// - A call already reported for `callId` (the FCM `call_ring` rang first) is reported AGAIN under the
 ///   same UUID: CallKit refuses it as a duplicate, which still honours the contract, and nothing
 ///   new rings.
 /// - Audio only (`hasVideo = NO`) until the video lot decides how the native ring announces video.
@@ -2883,6 +2885,14 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
     // Unreachable by construction: the registry is installed only when the ring is compiled. The
     // report is still made, because the contract holds whatever this build believes.
     NSLog(@"[CanariCallKit] ERROR voip push on a build without the native ring - reported and ended");
+    ringUntilMs = 0;
+  } else if (canari_ios_is_in_foreground()) {
+    // AN OPEN APP ALREADY RINGS: the in-app overlay got the invite over the socket. CallKit on top
+    // would ring the same call twice. Apple still requires the report, so it is reported and ended
+    // at once - the past-deadline branch below, the one thing the contract allows.
+    NSLog(@"[CanariCallKit] call=%@ voip push with the app in the foreground - the in-app overlay "
+          @"rings; reported and ended",
+          callId);
     ringUntilMs = 0;
   }
   NSUUID *existing = g_ringingCalls[callId];
@@ -2907,27 +2917,35 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
 
   long long nowMs = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   long long remainingMs = ringUntilMs - nowMs;
+  // A call NOT TO RING (deadline passed, or rung in-app) is ended INSIDE the report's completion:
+  // ending it before CallKit has taken the report races the report itself.
+  BOOL endAtOnce = remainingMs <= 0;
   [g_callProvider reportNewIncomingCallWithUUID:uuid
                                          update:update
                                      completion:^(NSError *_Nullable error) {
                                        if (error == nil) {
-                                         NSLog(@"[CanariCallKit] ringing call=%@ (voip, %lld ms left)",
-                                               callId, remainingMs);
-                                         return;
+                                         NSLog(@"[CanariCallKit] %@ call=%@ (voip, %lld ms left)",
+                                               endAtOnce ? @"reported" : @"ringing", callId,
+                                               remainingMs);
+                                       } else {
+                                         NSLog(@"[CanariCallKit] voip report refused call=%@ "
+                                               @"duplicate=%d: %@",
+                                               callId, existing != nil, CanariErrorReason(error));
+                                         if (existing == nil) {
+                                           [g_ringingCalls removeObjectForKey:callId];
+                                           [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
+                                         }
                                        }
-                                       NSLog(@"[CanariCallKit] voip report refused call=%@ "
-                                             @"duplicate=%d: %@",
-                                             callId, existing != nil, CanariErrorReason(error));
-                                       if (existing == nil) {
-                                         [g_ringingCalls removeObjectForKey:callId];
-                                         [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
+                                       if (endAtOnce) {
+                                         NSLog(@"[CanariCallKit] call=%@ voip push not to ring "
+                                               @"(deadline passed, or rung in-app) - reported and "
+                                               @"ended",
+                                               callId);
+                                         CanariEndCallKitCall(callId, CXCallEndedReasonRemoteEnded);
                                        }
                                      }];
-  if (remainingMs <= 0) {
-    NSLog(@"[CanariCallKit] call=%@ voip push past its answer deadline - reported and ended",
-          callId);
-    CanariEndCallKitCall(callId, CXCallEndedReasonRemoteEnded);
-    return;
+  if (endAtOnce) {
+    return;  // the completion ends it
   }
   if (existing != nil) {
     return;  // the first report armed its own end
@@ -3112,15 +3130,12 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, senderId, inlineProto);
     }
 
-    // Call signaling over MLS (WP-XP-5, app running in background). Invite -> CallKit ring
-    // (fallback for pre-WP-XP-5 callers that never hit POST /api/calls/ring; deduped per callId
-    // with the VoIP push). Control -> never a message notification; hangup/answered also ends an
-    // active CallKit ring.
+    // Call signaling over MLS (WP-XP-5, app running in background): never a message notification,
+    // and NEVER A RING. The one native ring is the server's `call_ring` (VoIP or FCM), because only
+    // the server applies calls_mode, the per-conversation permission, the video rule and blocks; a
+    // decrypted invite rang past all four. Control: hangup/answered also ends an active CallKit ring.
     if (decrypted != nil && [decrypted.type isEqualToString:@"call_invite"]) {
-      NSString *callId = decrypted.callId.length > 0
-                             ? decrypted.callId
-                             : [NSString stringWithFormat:@"mls-%@", groupId];
-      CanariReportIncomingCall(groupId, callId, senderName, groupName, decrypted.hasVideo);
+      NSLog(@"[CanariPush] call_invite over MLS: not a ring - the server's call_ring is the only one");
       return;
     }
     if (decrypted != nil && [decrypted.type isEqualToString:@"call_control"]) {
@@ -3343,12 +3358,10 @@ static void CanariHandleFcmData(NSDictionary *data) {
     }
     NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
     NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
-    NSString *callerName =
-        [data[@"callerName"] isKindOfClass:[NSString class]] ? data[@"callerName"] : @"";
-    NSString *groupName =
-        [data[@"groupName"] isKindOfClass:[NSString class]] ? data[@"groupName"] : @"";
+    // Ids only, as the VoIP push (decision 6): the name is this phone's to give.
+    NSString *callerId = [data[@"callerId"] isKindOfClass:[NSString class]] ? data[@"callerId"] : @"";
     if (callId.length > 0) {
-      CanariReportIncomingCall(groupId, callId, callerName, groupName,
+      CanariReportIncomingCall(groupId, callId, callerId,
                                [data[@"hasVideo"] isEqualToString:@"true"]);
     }
     return;
@@ -3581,7 +3594,7 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
  * - an MLS `message` frame (never a Welcome) whose sender is ME: my own read receipt or own-device
  *   copy from another device - clear that conversation's notification. Decided on the cleartext
  *   `senderId`, so no frame is decrypted to learn it carries nothing.
- * - `call_ring_end`: end a CallKit ring (a no-op while calls are held off).
+ * - `call_ring_end`: end the CallKit ring of that call (a no-op when none rings for it).
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
