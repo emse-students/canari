@@ -75,7 +75,10 @@ export class FormOptionDto {
   @IsNotEmpty()
   label: string;
 
-  @IsNumber()
+  /** The option's price supplement in CENTS (the client sends `Math.round(euros * 100)`, the service
+   * passes it straight to Stripe as a `unit_amount`), so a fractional value would be a fractional
+   * cent - integer only. */
+  @IsInt()
   priceModifier: number;
 
   @IsString()

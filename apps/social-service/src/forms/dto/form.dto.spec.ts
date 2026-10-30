@@ -20,6 +20,15 @@ const buildForm = (type: string, basePrice: number): CreateFormDto =>
 const buildItem = (type: string): FormItemDto =>
   plainToInstance(FormItemDto, { label: 'Q', required: false, type });
 
+/** A single_choice item carrying one option, to drive the nested FormOptionDto validation. */
+const buildItemWithOption = (priceModifier: number): FormItemDto =>
+  plainToInstance(FormItemDto, {
+    label: 'Q',
+    required: false,
+    type: 'single_choice',
+    options: [{ label: 'A', priceModifier }],
+  });
+
 describe('FormItemDto.type allowlist', () => {
   it('accepts every canonical question type', () => {
     for (const type of SUPPORTED_QUESTION_TYPES) {
@@ -53,6 +62,18 @@ describe('CreateFormDto.basePrice is integer cents', () => {
 
   it('rejects a negative value', () => {
     expect(failedProps(buildForm('short_text', -1))).toEqual(['basePrice']);
+  });
+});
+
+describe('FormOptionDto.priceModifier is integer cents', () => {
+  it('accepts an integer number of cents', () => {
+    expect(failedProps(buildItemWithOption(250))).toEqual([]);
+    expect(failedProps(buildItemWithOption(0))).toEqual([]);
+  });
+
+  it('rejects a fractional value - there is no fractional cent', () => {
+    // The failure is reported on the nested `options` property of the item.
+    expect(failedProps(buildItemWithOption(2.5))).toEqual(['options']);
   });
 });
 
