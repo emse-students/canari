@@ -512,10 +512,12 @@ the server nothing - the stale token is cleared by the next `410`; a `refresh-to
 `ApnsVoipService` (chat-delivery) is the one direct-APNs sender: HTTP/2, an ES256 provider JWT from
 an APNs AUTH KEY (`.p8`), topic `fr.emse.canari.voip`, priority 10, `apns-expiration` = the ring's
 answer deadline. **What exists**: the sender, its five variables (`APNS_VOIP_KEY_P8`, `_KEY_ID`,
-`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` and both serve workflows, and the
+`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` AND `docker-compose.dev.yml` (dev's was
+missing until 2026-10-30: the secrets were rendered but never forwarded, so the service logged
+`APNS_VOIP_* is not configured` and a locked iPhone on dev was not rung; `compose-wiring.test.sh` no
+longer allowlists it) and both serve workflows, and the
 three production secrets (repository secrets, set 2026-07-23 - names read, never values). **What is
-missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads (absent on 2026-10-22, so dev
-cannot ring a VoIP device), and any proof that the production key still signs (no VoIP push was ever
+missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads must EXIST as repository secrets (absent on 2026-10-22; a missing secret makes dev warn and not ring), and any proof that the production key still signs (no VoIP push was ever
 sent). A key is team-wide: no VoIP certificate is needed with token auth. **`APNS_VOIP_SANDBOX`
 stays unset on dev too**: a TestFlight build is signed `aps-environment production` and its tokens
 belong to the production gateway; only an Xcode debug build needs the sandbox.
