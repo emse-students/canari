@@ -630,7 +630,7 @@ afterwards. The `confirm` callback reached Canari's route and verified with the 
 same day, two Businesses were created through the onboarding in production; neither is validated yet.
 
 **What the enrolment screen does not say yet, and owes** (found by that run; the work package is in
-[backlog](../../backlog.md#enrolment-through-canari---the-screen-owes-the-path-to-validation-2026-10-23)):
+[backlog](../../backlog.md#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)):
 
 - After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
   link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
