@@ -387,6 +387,17 @@ discover_cargo_files() {
   printf '%s\n' "${files[@]}" | LC_ALL=C sort -u
 }
 
+# `--code <version>` PRINTS THE BAND AND WRITES NOTHING. The band is the one total order over every
+# version this project releases (alpha.N < stable < next patch's alpha.1), so the landing of a
+# pre-release's version on `main` (`.github/scripts/land-release.sh`) asks it here rather than
+# restating the formula - a second copy of it is how the two would one day disagree.
+if [ "${1:-}" = '--code' ]; then
+  [ -n "${2:-}" ] || usage
+  parse_version "$2"
+  echo "$VERSION_CODE"
+  exit 0
+fi
+
 RAW_VERSION="${1:-}"
 [ -n "$RAW_VERSION" ] || usage
 parse_version "$RAW_VERSION"

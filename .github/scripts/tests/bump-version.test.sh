@@ -208,6 +208,21 @@ for bad in "" "0.15" "0.15.0.1" "0.15.0-beta.1" "0.15.0-alpha" "0.15.0-alpha.0" 
   fi
 done
 
+printf '\n--code PRINTS THE BAND AND WRITES NOTHING\n'
+# The landing of a pre-release on `main` orders versions by this number, so it must be the same
+# number the bump writes, and asking for it must not touch a manifest.
+make_sandbox "$SANDBOX/run"
+assert_eq "--code 0.15.0-alpha.2 is the band the bump writes" \
+  "$(bash "$SANDBOX/run/scripts/bump-app-version.sh" --code 0.15.0-alpha.2)" "1500002"
+assert_eq "--code 0.15.0 ranks the stable above its alphas" \
+  "$(bash "$SANDBOX/run/scripts/bump-app-version.sh" --code v0.15.0)" "1500099"
+assert_eq "--code leaves every manifest alone" "$(read_json frontend/package.json .version)" "0.0.0"
+if bash "$SANDBOX/run/scripts/bump-app-version.sh" --code not-a-version >/dev/null 2>&1; then
+  fail "--code accepted a version it cannot parse"
+else
+  ok "--code refuses a version it cannot parse"
+fi
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf '%d assertion(s) FAILED (%d passed)\n' "$failures" "$checks"

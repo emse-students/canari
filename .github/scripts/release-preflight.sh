@@ -11,7 +11,8 @@
 # THE FIVE QUESTIONS, in the order that makes a refusal cheapest to read:
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
-#   2. Is the released commit on `main`?  - everything downstream reads the trunk
+#   2. Is the released commit on `main`?  - it reached the trunk through a pull request; where
+#                                           `main` points NOW is not asked (nothing pushes there)
 #   3. Did the tests pass ON THAT COMMIT? - "if the tests are green" was written nowhere at all
 #   4. Has dev already served it?         - stable releases only, and the reason this file exists
 #   5. Are the release notes written?     - stable releases only; Apple REFUSES a submission
@@ -73,56 +74,23 @@ case "$KIND" in
 esac
 
 # -- 2 -------------------------------------------------------------------------------------------
-step 'the released commit is on main, and the bump can still push (a stable: main contains it)'
-# base = the released commit, head = main. `identical` or `ahead` both mean main contains it.
-ON_MAIN="$(gh api "repos/$REPO/compare/$TARGET_SHA...main" --jq '.status' 2>/dev/null)" || ON_MAIN=""
+step 'the released commit is on main'
+# NO RELEASE PUSHES TO `main` ANY MORE (2026-10-30): every bump goes to `release/vX.Y.Z`, so `main`
+# moving on after the cut is the ordinary case and refuses nothing. Containment is the whole
+# question; `classify_on_main` carries why.
+ON_MAIN_STATUS="$(gh api "repos/$REPO/compare/$TARGET_SHA...main" --jq '.status' 2>/dev/null)" || ON_MAIN_STATUS=""
+ON_MAIN="$(classify_on_main "$ON_MAIN_STATUS")"
 case "$ON_MAIN" in
-  identical|ahead)
-    if [ "$KIND" = 'stable' ]; then
-      # A STABLE DOES NOT PUSH TO `main` (2026-10-02). It is built on the latest pre-release's commit
-      # and pushed to `release/vX.Y.Z`; its changelog reaches `main` through a landing commit that
-      # re-reads the head and retries. `main` having moved on is therefore the ordinary case, and
-      # the question below - can a fast-forward still happen - has nobody asking it.
-      ok "it is the latest pre-release's commit and main contains it ($ON_MAIN) - main may move on freely"
-      ON_MAIN_DONE=1
-    fi
-    [ -n "${ON_MAIN_DONE:-}" ] || {
-    # THE SECOND HALF OF THIS GATE, and it exists because the first half passing was not enough.
-    # `main` containing the commit is what "on main" means, but the bump pushes a commit built ON
-    # the released commit, and that push fast-forwards only while `main` has not moved. The
-    # released tree's own version tells the harmless no-op apart from the release that would die at
-    # its second job; the preflight has that tree checked out, so the fact is free.
-    TREE_VERSION="$(node -p "require('./frontend/package.json').version" 2>/dev/null)" || TREE_VERSION=''
-    case "$(classify_main_position "$ON_MAIN" "$TREE_VERSION" "$VERSION")" in
-      'pushable head')
-        ok 'it is main HEAD, so the bump commit fast-forwards'
-        ;;
-      'pushable noop')
-        ok "main has moved past it, but the tree already carries $VERSION - the bump writes nothing and pushes nothing"
-        ;;
-      'unpushable '*)
-        refuse "main has moved past ${TARGET_SHA:0:8}, and this release still has to bump $TREE_VERSION -> $VERSION"
-        hint 'The bump commits ON the released commit and pushes it to main, which is a fast-forward'
-        hint 'only while main still points there. Something merged after this commit, so the push'
-        hint 'would be rejected and the release would stop at its second job. Publish the release'
-        hint 'from the current main instead - or, for a stable, publish a pre-release at that commit'
-        hint 'first so dev serves it and the fourth gate is satisfied too.'
-        ;;
-      *)
-        refuse 'could not tell whether the bump would be able to push to main'
-        hint 'An undecidable answer is not permission. The released tree must state a version in'
-        hint 'frontend/package.json - it is the file that decides what kind of release this is.'
-        ;;
-    esac
-    }
+  'on-main '*)
+    ok "main contains ${TARGET_SHA:0:8} (${ON_MAIN#on-main }) - main may move on freely, the bump goes to release/v${VERSION%%-*}"
     ;;
-  behind|diverged)
-    refuse "main does not contain ${TARGET_SHA:0:8} - the compare says $ON_MAIN"
-    hint 'Everything downstream reads main. A commit the trunk does not carry has not been through a'
-    hint 'pull request, and the bump would push a history nobody reviewed.'
+  'off-main '*)
+    refuse "main does not contain ${TARGET_SHA:0:8} - the compare says ${ON_MAIN#off-main }"
+    hint 'A commit the trunk does not carry has not been through a pull request, and the release'
+    hint 'would build and ship a history nobody reviewed.'
     ;;
   *)
-    refuse 'could not compare the released commit against main'
+    refuse "could not compare the released commit against main - ${ON_MAIN#undecidable }"
     hint 'An unreadable answer is not permission. If it persists, the API or the token is the'
     hint 'problem, and no release should be started on a guess.'
     ;;
@@ -185,8 +153,9 @@ else
         ;;
       'uncovered diverged '*)
         refuse "dev is at ${DEV_SHA:0:8} and neither commit contains the other - ${COVER#uncovered diverged }"
-        hint 'Both markers are supposed to name commits on main, so one was written from a history'
-        hint 'that is no longer reachable. Do not release until that is understood.'
+        hint 'The marker names a BUMP commit, which lives on a release branch since 2026-10-30, so dev'
+        hint 'serving an OLDER pre-release reads as diverged rather than behind. Either way dev never'
+        hint 'served this code: publish a pre-release at this commit first, then the stable.'
         ;;
       *)
         refuse "could not tell whether dev has served this commit - ${COVER#undecidable }"

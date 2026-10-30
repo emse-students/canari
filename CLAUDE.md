@@ -120,7 +120,7 @@ GitHub release body through ONE implementation. Check it before tagging:
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z`, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
 sequence is two releases:
 
 ```sh
@@ -130,12 +130,11 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 ```
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
-version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
+version parses; `main` contains the commit (merging after the cut is free: every bump pushes
+`release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
-rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
-SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head
-(three pre-releases for one stable, 2026-09-24, [backlog](docs/wiki/backlog.md)); dev has served it
+rerun`, which needs no new tag** (2026-09-07); dev has served it
 (stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
