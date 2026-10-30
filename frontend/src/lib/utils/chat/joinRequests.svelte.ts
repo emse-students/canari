@@ -148,6 +148,22 @@ function raiseDeviceAsk(key: string, userId: string, ask: JoinApprovalRequest): 
   );
 }
 
+/**
+ * Whether the ask about ONE unseen device of a member is on screen right now, under `fingerprint` -
+ * the one fact an automatic adder needs to know its decision about that device is still standing
+ * (`askAboutUnseenDevice` in `actions.ts`). An ask answered, settled by a sweep or reset is not
+ * shown, so the next request about the device is decided and raised again: nothing is stranded.
+ */
+export function isDeviceAskShown(
+  groupId: string,
+  userId: string,
+  deviceId: string,
+  fingerprint: string
+): boolean {
+  const entry = requests.get(keyOf(groupId, userId, { kind: 'device', deviceId }));
+  return entry?.keyFingerprint === fingerprint;
+}
+
 /** What one entry IS, for a sweep: its ask's identity, or - from a server older than it - its key. */
 function tokenOf(key: string, entry: JoinRequest): string {
   return entry.askId ?? `key:${key}|${entry.keyFingerprint ?? ''}`;

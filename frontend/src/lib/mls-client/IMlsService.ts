@@ -47,6 +47,23 @@ export type { DistributionScope };
 export type { IncomingDeliveryMeta };
 
 /**
+ * What the server did with a `welcome_request` (`POST mls/welcome-request`).
+ *
+ * - `forwarded`: relayed to ONE online member (`target`), on that member's screen only - nothing
+ *   keeps it once that member closes the app, so the requester keeps asking on its cadence.
+ * - `stored`: no member was online (`no_peer_online`), so the server kept it for every member's next
+ *   connection (`pending_welcome`, `pending_welcome_notify`, 24 h) and woke them by push - drained
+ *   to a member's screen at its next connection, and no more durable than a forwarded ask once
+ *   there, so the requester keeps asking on its cadence too.
+ * - `null`: no answer - a transport failure, a non-2xx, or a body naming neither. Nothing is known
+ *   to have been put.
+ */
+export type WelcomeRequestAnswer =
+  | { status: 'forwarded'; target: string }
+  | { status: 'stored' }
+  | null;
+
+/**
  * One device's seat in a key group, served by chat-delivery WITH the group's base and read AFTER it
  * (`GET internal/mls/distribution-groups/:scope/:scopeId?deviceId=`). The order is the guarantee: an
  * Add stores the base for its epoch and its newcomers' `pending` seats in one transaction and holds
@@ -1702,10 +1719,10 @@ export interface IMlsService {
   endBulkIngest(handle: BulkIngestHandle): Promise<void>;
 
   /**
-   * Announce to all online members of `groupId` that this device needs a Welcome.
-   * Called once per pending group on connect, after KeyPackage publication.
+   * Asks a member of `groupId` to Welcome this device, and says what the server did with the ask
+   * ({@link WelcomeRequestAnswer}), which the requester logs - no answer makes the ask durable.
    */
-  sendWelcomeRequest(groupId: string): Promise<void>;
+  sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer>;
 
   /**
    * Ask one online member to republish `groupId`'s external-join base.
