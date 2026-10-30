@@ -1106,19 +1106,7 @@ jobs:
           bun run check
           bun run format:check
 
-      # `test:coverage` runs the exact same suite as `test` (coverage only instruments and
-      # reports, it does not change which tests exist), so a plain run first caught nothing a
-      # failure here would not - it only doubled the frontend suite's wall-clock cost every run.
-      - name: Run Vitest with coverage
-        working-directory: frontend
-        run: bun run test:coverage
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: frontend-coverage
-          path: frontend/coverage/
+      # THE VITEST SUITE RUNS IN `test-frontend-shards`, below.
 
       # THE PRODUCTION FRONTEND IS BUILT ON `main`, AND ON A PULL REQUEST THAT TOUCHES WHAT THE BUILD
       # CONSUMES (dependencies, build config, the serving image: `frontend_build` in `changes`), NOT
@@ -1140,6 +1128,57 @@ jobs:
       - name: Assert what the build carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+
+  # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
+  # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
+  # and the build stay in `test-frontend`; the suite is split with vitest's own `--shard=i/N`, which
+  # partitions the test FILES deterministically. Each shard repeats the ~1.5 min setup (dependencies,
+  # wasm, protobuf) rather than sharing an artefact. Coverage is uploaded per shard; no threshold is
+  # enforced anywhere. `CI passed` needs this job and `ci-passed-gate.test.mjs` fails if it stops.
+  test-frontend-shards:
+    name: Test Frontend (shard ${{ matrix.shard }}/4)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-frontend == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Sync SvelteKit
+        working-directory: frontend
+        run: bun run sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Run Vitest shard with coverage
+        working-directory: frontend
+        run: bun run test:coverage --shard=${{ matrix.shard }}/4
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: frontend-coverage-${{ matrix.shard }}
+          path: frontend/coverage/
 
   # =================================================================================================
   # THE ANDROID UNIT TESTS, WHICH HAD NEVER RUN ON ANY MACHINE
@@ -1529,7 +1568,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

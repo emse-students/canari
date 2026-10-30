@@ -187,6 +187,15 @@ calls it. The release does not reuse the artefact: each estate bakes its own `VI
 (`build.yml`), which `main`'s build has none of. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
 
+**THE FRONTEND SUITE IS FOUR SHARDS (2026-10-30).** Measured: `test-frontend` was 14.9 min, 13.3 of
+them `vitest run --coverage`, the whole critical path of a pull request (median 14 min). The suite now
+runs as `test-frontend-shards`, a 4-way matrix on `vitest --shard=i/4` (a deterministic split by
+file); `test-frontend` keeps lint, type-check, format and the push-only build. Each shard repeats the
+dependency/wasm/protobuf setup (about 1.5 min) instead of sharing an artefact, and uploads
+`frontend-coverage-<i>`; no coverage threshold exists. `CI passed` needs the shard job by name
+(`ci-passed-gate.test.mjs` enforces it). Raise N in `ci.yml` (the matrix and the `/4`) if a shard
+drifts past ~5 min.
+
 ### Build and deploy an estate (`build.yml`, `serve-dev.yml`, `serve-prod.yml`)
 
 **IT HAS NO TRIGGER AT ALL: it is `workflow_call` only, and `release.yml` is its one caller**
