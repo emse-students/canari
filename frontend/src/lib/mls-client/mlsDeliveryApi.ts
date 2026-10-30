@@ -1153,11 +1153,18 @@ export class MlsDeliveryApi {
         }
         throw e;
       }
-      // AN ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the one that
-      // tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must also be
-      // the one that clears it: the raw fetch reaches no `trackedFetch`, and a flag only ever set
-      // would hold every later barrier, and demote every later gateway fault, after a long outage.
-      connectivity.notifyServerReachable();
+      // THE GATEWAY'S ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the
+      // one that tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must
+      // also be the one that clears it: the raw fetch reaches no `trackedFetch`, and a flag only ever
+      // set would hold every later barrier, and demote every later gateway fault, after a long outage.
+      //
+      // WHO ANSWERED FIRST: an edge page (a captive portal's `511`, a WAF's HTML `403`) proves nothing
+      // about the server, so it does not clear the flag. Nor does it SET it: a non-2xx edge page is
+      // an answer of the edge, typed as such everywhere else (`SendEdgeRefusedError`, the origin a
+      // `SendServerError` carries) and never a transport failure - only a 2xx that is not the API's
+      // JSON is (`NotFromApiError`, thrown above), because only that one could be misread as data.
+      // A 2xx page reaching this line is the gateway's by construction.
+      if (page.ok || page.origin === 'gateway') connectivity.notifyServerReachable();
       // THE 401 RULE, OUTSIDE THE LADDER: whatever the renewal or the resend throws (a dead cookie, a
       // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
       // too big, and the resend has its own stall timer.
@@ -1168,7 +1175,13 @@ export class MlsDeliveryApi {
           where: 'GET /api/mls/messages',
         });
       }
-      if (!page.ok) break;
+      if (!page.ok) {
+        // Every swallowed branch logs: the pull stops here and keeps the pages already handed on.
+        console.warn(
+          `[PENDING] page answered ${page.status} by the ${page.origin} - the pull stops here, the next one asks again`
+        );
+        break;
+      }
       const batch = page.body;
       if (!Array.isArray(batch) || batch.length === 0) break;
 
