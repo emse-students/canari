@@ -192,10 +192,10 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
-            class="ui-icon-button border-cn-border text-text-main rounded-xl border disabled:opacity-40"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border aria-disabled:opacity-40"
             aria-label={m.bookings_sheet_length_less()}
-            disabled={count <= 1}
-            onclick={() => (count -= 1)}
+            aria-disabled={count <= 1}
+            onclick={() => count > 1 && (count -= 1)}
           >
             <Minus size={16} />
           </button>
@@ -208,10 +208,10 @@
           </span>
           <button
             type="button"
-            class="ui-icon-button border-cn-border text-text-main rounded-xl border disabled:opacity-40"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border aria-disabled:opacity-40"
             aria-label={m.bookings_sheet_length_more()}
-            disabled={count >= run.length}
-            onclick={() => (count += 1)}
+            aria-disabled={count >= run.length}
+            onclick={() => count < run.length && (count += 1)}
           >
             <Plus size={16} />
           </button>
@@ -317,18 +317,21 @@
           aria-labelledby="booking-reminder-label"
         >
           {#each reminderOptions(reminderFromValue(reminder)) as option (option.value)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={reminder === option.value}
-              onclick={() => (reminder = option.value)}
-              class="rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors {reminder ===
+            <label
+              class="has-[:focus-visible]:ring-cn-yellow cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors has-[:focus-visible]:ring-2 {reminder ===
               option.value
                 ? 'bg-cn-yellow text-cn-ink border-cn-yellow'
                 : 'border-cn-border text-text-main hover:bg-cn-border/30'}"
             >
+              <input
+                type="radio"
+                class="sr-only"
+                name="booking-reminder"
+                value={option.value}
+                bind:group={reminder}
+              />
               {option.label}
-            </button>
+            </label>
           {/each}
         </div>
       </div>
