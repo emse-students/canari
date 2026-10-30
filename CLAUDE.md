@@ -21,7 +21,7 @@
 | What is open, and what rule holds everywhere | this file |
 | The constraint for the area I am about to touch | [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md) |
 | How something works, in depth | `docs/wiki/` - **search it before reading source** ([index](docs/wiki/index.md)) |
-| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
+| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) + one file per new entry in [backlog.d/](docs/wiki/backlog.d/README.md) |
 | A question the code cannot answer, parked deliberately | [docs/wiki/open-questions.md](docs/wiki/open-questions.md) |
 | The story of a defect that shipped | `CHANGELOG.md` |
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
@@ -68,7 +68,7 @@
 - COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
 - DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**). User guides in `docs/user-guide/` (French). Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
 - WIKI IS PREFERRED: update the relevant wiki page alongside code changes - stale wiki is worse than none. Keep `apps/*/README.md` synced with its wiki counterpart. Cross-link freely.
-- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17). Reasoning, measurements and what was refuted go on the wiki page it points at. A long entry is not a thorough one, it is one nobody reads - and that records nothing.
+- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17). Reasoning, measurements and what was refuted go on the wiki page it points at. A long entry is not a thorough one, it is one nobody reads - and that records nothing. **A NEW BACKLOG ENTRY IS THE SAME: its own file in `docs/wiki/backlog.d/`, never a new heading in `backlog.md`** (2026-10-30, [README](docs/wiki/backlog.d/README.md)).
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
 - **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The installed set is in the private operations notes (WHERE THINGS LIVE); the rule is in [durable-rules](docs/wiki/durable-rules.md).
@@ -212,7 +212,7 @@ REACHED is in the private operations notes (WHERE THINGS LIVE).
 
 Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
 (correctness), **P3** (hygiene). Nothing is parked since 2026-08-18: anything new goes into the queue
-below, its substance into [backlog](docs/wiki/backlog.md), and BOTH copies are deleted the day it
+below, its substance into a [backlog.d/](docs/wiki/backlog.d/README.md) file, and BOTH copies are deleted the day it
 ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.

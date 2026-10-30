@@ -20,6 +20,12 @@ entry outright when it ships** - the rule goes to [durable-rules](durable-rules.
 `CHANGELOG.md`, the mechanism to the wiki page that entry points at. An entry describing its own fix
 is an entry nobody trusts to be current.
 
+**A NEW ENTRY IS ITS OWN FILE IN [`backlog.d/`](backlog.d/README.md), NEVER A NEW HEADING HERE**
+(2026-10-30): this file was the one nearly every pull request edited, and two of them adding an
+entry conflict. The backlog is this file AND that directory, read together; every rule on this
+page holds for both. A heading added or retitled here is refused by
+`.github/scripts/tests/backlog-fragments.test.mjs` - move the entry to a fragment instead.
+
 **NOTHING FIXED BELONGS IN THIS FILE.** Where a fix is in the tree and only its measurement is
 missing, it gets ONE LINE in the table at the top and no entry of its own - a fixed thing mixed in
 with open work is how a queue stops being readable (user, 2026-08-30). Where an entry keeps an open
