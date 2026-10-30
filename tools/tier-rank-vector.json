@@ -1,0 +1,11 @@
+[
+  { "name": "priced named", "variantKey": "avec", "amountCents": 3000, "priceMatrix": null, "allowCustomAmount": false, "rank": 3000 },
+  { "name": "priced base", "variantKey": null, "amountCents": 1500, "priceMatrix": null, "allowCustomAmount": false, "rank": 1500 },
+  { "name": "unpriced base ranks lowest", "variantKey": null, "amountCents": null, "priceMatrix": null, "allowCustomAmount": false, "rank": 0 },
+  { "name": "zero-cent base ranks 0", "variantKey": null, "amountCents": 0, "priceMatrix": null, "allowCustomAmount": false, "rank": 0 },
+  { "name": "unpriced named is unrankable", "variantKey": "libre", "amountCents": null, "priceMatrix": null, "allowCustomAmount": false, "rank": null },
+  { "name": "free-amount base is unrankable", "variantKey": null, "amountCents": null, "priceMatrix": null, "allowCustomAmount": true, "rank": null },
+  { "name": "free-amount with a stored amount is unrankable", "variantKey": null, "amountCents": 500, "priceMatrix": null, "allowCustomAmount": true, "rank": null },
+  { "name": "gridded base is unrankable", "variantKey": null, "amountCents": null, "priceMatrix": { "dimensions": [] }, "allowCustomAmount": false, "rank": null },
+  { "name": "gridded named is unrankable", "variantKey": "grille", "amountCents": 9000, "priceMatrix": { "dimensions": [] }, "allowCustomAmount": false, "rank": null }
+]

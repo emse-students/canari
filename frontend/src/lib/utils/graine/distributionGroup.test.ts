@@ -903,10 +903,25 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
 
 /**
  * TWO DOORS, NEVER BOTH (channel-encryption section 20). An admitter's Welcome is on its way when
- * `sendWelcome` has written this device's `pending` seat and queued it; joining by external commit
- * on top would write this device's leaf a second time - the GRP-4 duplicate-leaf race.
+ * its Add has written this device's `pending` seat; joining by external commit on top would write
+ * this device's leaf a second time - the GRP-4 duplicate-leaf race.
+ *
+ * THE QUESTION IS THE JOIN'S, asked of the seat served with the base it builds on
+ * (`BaseMlsService.externalJoin`, `welcomeOwed: 'ask'`); the loader says what the join answered. It
+ * used to ask here, of a roster read BEFORE that base, and an Add landing between the two reads was
+ * joined over (11 of 11 kept rig consoles, 2026-10-25..29).
  */
 describe('a seat for a device that holds nothing - the admitter Welcome may be the door', () => {
+  const owed = (reading: string | null) =>
+    makeMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue(
+          reading === null
+            ? { joined: false, reason: 'seat_unreadable' }
+            : { joined: false, reason: 'welcome_owed', reading }
+        ),
+    });
   const seated = () =>
     makeChannels({
       getDistributionGroup: vi.fn().mockResolvedValue({
@@ -918,56 +933,37 @@ describe('a seat for a device that holds nothing - the admitter Welcome may be t
       }),
     });
 
-  beforeEach(() => {
-    setGraineRuntime({
-      storage: {} as never,
-      deviceKey: () => 'k',
-      userId: 'me',
-      mlsService: {} as never,
-    });
-  });
-  afterEach(() => setGraineRuntime(null));
-
-  it('waits for a Welcome that is queued, and joins nothing', async () => {
+  it('waits for a Welcome the join found owed, and says the admitter is the door', async () => {
     const lines: string[] = [];
-    const mls = makeMls({
-      getDeviceMemberships: vi
-        .fn()
-        .mockResolvedValue([
-          { groupId: 'g-1', status: 'pending', welcomeQueued: true, addInFlight: false },
-        ]),
-    });
+    const mls = owed('welcome-queued');
 
     expect(await run(mls, seated(), (m) => lines.push(m))).toBe(false);
-    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
-    expect(lines.some((l) => l.includes("the admitter's Welcome is the door"))).toBe(true);
+    expect(lines).toContain(
+      "[GRAINE] community ws-1: a Welcome is owed to this device (welcome-queued) - not joining by external commit, the admitter's Welcome is the door"
+    );
+    expect(lines.some((l) => l.includes('could not join'))).toBe(false);
   });
 
-  it('serves itself when the seat is one nothing follows', async () => {
-    const mls = makeMls({
-      getDeviceMemberships: vi
-        .fn()
-        .mockResolvedValue([
-          { groupId: 'g-1', status: 'pending', welcomeQueued: false, addInFlight: false },
-        ]),
-    });
+  it('says an unreadable seat is no door, in words of its own and not as an owed Welcome', async () => {
+    const lines: string[] = [];
+    expect(await run(owed(null), seated(), (m) => lines.push(m))).toBe(false);
+    expect(lines).toContain(
+      '[GRAINE] community ws-1: whether a Welcome is owed to this device could not be read with the base - joining nothing this pass, so two doors are never opened at once'
+    );
+    expect(lines.some((l) => l.includes('a Welcome is owed to this device ('))).toBe(false);
+    expect(lines.some((l) => l.includes('could not join'))).toBe(false);
+  });
 
-    expect(await run(mls, seated())).toBe(true);
+  it('asks the join, not its own earlier read, even when the roster it read named no seat', async () => {
+    // The race itself: the roster `ref` carries predates the Add, so it names nobody - and the join,
+    // reading the seat after its base, still finds the Welcome owed.
+    const lines: string[] = [];
+    const mls = owed('add-in-flight');
+
+    expect(await run(mls, makeChannels(), (m) => lines.push(m))).toBe(false);
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens neither door when the seat could not be read', async () => {
-    const mls = makeMls({ getDeviceMemberships: vi.fn().mockRejectedValue(new Error('503')) });
-
-    expect(await run(mls, seated())).toBe(false);
-    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
-  });
-
-  it('does not ask at all on an ordinary first join, where the server names no seat', async () => {
-    const mls = makeMls({ getDeviceMemberships: vi.fn() });
-
-    expect(await run(mls, makeChannels())).toBe(true);
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes('(add-in-flight)'))).toBe(true);
   });
 });
 
@@ -1099,16 +1095,19 @@ describe('a held key group whose own leaf is gone', () => {
   });
 
   it('waits for a Welcome owed to it rather than opening a second door', async () => {
+    // The dead tree goes first, so the owed Welcome installs; the JOIN asks the seat served with its
+    // base and stands down - no separate read of the seat here.
     const mls = makeHeldMls({
       isGroupActive: vi.fn().mockResolvedValue(false),
-      getDeviceMemberships: vi
+      ensureDistributionGroup: vi
         .fn()
-        .mockResolvedValue([{ groupId: 'g-1', status: 'pending', welcomeQueued: true }]),
+        .mockResolvedValue({ joined: false, reason: 'welcome_owed', reading: 'welcome-queued' }),
     });
 
     expect(await run(mls, seated())).toBe(false);
-    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
-    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
   });
 
   it('keeps an ACTIVE held group on the branch that joins nothing', async () => {

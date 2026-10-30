@@ -71,7 +71,8 @@ export class PaidNotGrantedScheduler {
     }
     this.logger.error(
       `${TAG} count=${count}: purchase(s) paid for, NOT delivered and not closed (a tier not ` +
-        'granted, a deleted product, an erased buyer, a form granting a tier that it did not grant) - ' +
+        'granted, a deleted product, an erased buyer, a form granting a tier that it did not grant - ' +
+        'among them a tier already held when the payment landed: refund it, do not grant by hand) - ' +
         'check what each buyer holds now, then refund or grant ' +
         "by hand and record the outcome in the association's purchases"
     );
