@@ -51,6 +51,8 @@ for (const t of [
   '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
   '`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`',
   '`[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`',
+  '`[LIVE] viewer ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks, at ${this.last}`',
+  "this.summarise('playing')",
 ]) ok(`livePlayer.ts still writes ${t.slice(1, 60)}...`, SOURCE.includes(t));
 
 // ── the order of a viewer's lines ────────────────────────────────────────────────────────────────
@@ -152,6 +154,9 @@ ok("... and the line of the build before the ranges (no ranges) stays dirt", !fo
 const HELD = `debug: [LIVE] viewer ${S}: waiting at 55.56 with 2.63 s buffered ahead [40.11-58.19] - the engine's own wait`;
 const HELD_END_MS = (ms) => `debug: [LIVE] viewer ${S}: the engine's own wait at 55.56 ended by itself after 309 ms, now at 55.74: held about ${ms} ms (budget 500 ms)`;
 const HELD_END = HELD_END_MS(129);
+const VIEWER_SUMMARY = (why) => `log: [LIVE] viewer ${S} (${why}): 30 segments played, 0 skipped, 2 seeks, at 29`;
+ok('the summary while playing and at the end is forgiven on a viewer (LIVE-STALL-1, 1.5.1-alpha.9)', forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('playing')) && forgiven('LIVE-STALL-1', 'W4', VIEWER_SUMMARY('ended')));
+ok('COUNTER: a summary on `stopped` or `unavailable` stays dirt', !forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('stopped')) && !forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('unavailable')));
 ok("the engine's own wait and its end are forgiven on a viewer, NOT on the broadcaster", forgiven('LIVE-STALL-1', 'W4', HELD) && forgiven('LIVE-STALL-1', 'W4', HELD_END) && !forgiven('LIVE-STALL-1', 'A1', HELD));
 const heldRun = (...tail) => stallsOf([JOINED, GAP(3960, 4500), ...tail.map((l) => l.slice(7))]);
 ok("... and a hold under the budget is neither a stall nor an unreadable line: it passes", (() => { const st = heldRun(HELD, HELD_END); return st.stallsAfter === 0 && st.unread.length === 0 && stallFacts('W4', st).every(([o]) => o); })());
