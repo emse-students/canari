@@ -205,8 +205,18 @@
         : `[Call] video showed - the default moves to the loudspeaker (user choice=${speakerChoice ?? 'none'})`
     );
   });
-  /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
+  /** Where the page ASKS the voice to go: the loudspeaker (true) or the earpiece (false). */
   let isSpeakerOn = $derived(speakerChoice ?? speakerDefault ?? false);
+  /**
+   * Android: the output the service APPLIED (true = loudspeaker), null until it says or when the
+   * platform routes. A loudspeaker DEFAULT yields to a headset natively, so the asked route alone
+   * would read "speaker on" over a headset and the first tap would change nothing audible.
+   */
+  let routedSpeaker = $state<boolean | null>(null);
+  /** What the toggle shows and inverts: the applied route when known, else the asked one. */
+  let speakerShown = $derived(
+    androidRouteAvailable && routedSpeaker !== null ? routedSpeaker : isSpeakerOn
+  );
   let speakerSupported = $derived(
     typeof navigator !== 'undefined' &&
       'mediaDevices' in navigator &&
@@ -288,6 +298,7 @@
         onHangUp: () => callService.endCall(),
         onMute: () => callService.toggleMute(),
         onRoute: (available) => (androidRouteAvailable = available),
+        onOutput: (speaker) => (routedSpeaker = speaker),
       })
     : null;
   $effect(() => () => androidCall?.dispose());
@@ -772,18 +783,18 @@
         <div class="flex items-start justify-center gap-2 sm:gap-6">
           {#if speakerRoutable && speakerSupported}
             {#snippet speakerIcon()}
-              {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
+              {#if speakerShown}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}
             {@render control(
               'call-speaker',
               speakerDisabled
                 ? m.call_route_unavailable_label()
-                : isSpeakerOn
+                : speakerShown
                   ? m.call_speaker_label()
                   : m.call_earpiece_label(),
-              isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
-              () => (speakerChoice = !isSpeakerOn),
-              isSpeakerOn ? 'on' : 'neutral',
+              speakerShown ? m.call_speaker_label() : m.call_earpiece_label(),
+              () => (speakerChoice = !speakerShown),
+              speakerShown ? 'on' : 'neutral',
               speakerIcon,
               speakerDisabled
             )}

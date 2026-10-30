@@ -101,9 +101,10 @@ object CallBridge {
      * Sends one event about [callId] to the page. `detail` is built with [JSONObject], whose
      * `toString()` is valid JavaScript, so no field is spliced into the script as text. A null
      * [callId] (a description that could not be read at all) is sent without one, and the page logs
-     * the event as unreadable - loud on both sides, as such a defect should be.
+     * the event as unreadable - loud on both sides, as such a defect should be. [speaker] is the
+     * `output` event's applied route: absent when the platform routes and nothing is known.
      */
-    fun emit(kind: String, callId: String?, reason: String? = null, code: String? = null) {
+    fun emit(kind: String, callId: String?, reason: String? = null, code: String? = null, speaker: Boolean? = null) {
         val view = webView
         if (view == null) {
             Log.i(TAG, "event $kind (${reason ?: "-"}) not delivered: no page is attached")
@@ -113,6 +114,7 @@ object CallBridge {
         if (callId != null) detail.put("callId", callId)
         if (reason != null) detail.put("reason", reason)
         if (code != null) detail.put("code", code)
+        if (speaker != null) detail.put("speaker", speaker)
         val script = "window.dispatchEvent(new CustomEvent('$EVENT',{detail:$detail}))"
         view.post { view.evaluateJavascript(script, null) }
     }

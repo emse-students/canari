@@ -74,6 +74,22 @@ describe('setIosProximityMonitoring', () => {
     expect(mm).toContain('BOOL enabled = self.pageWants && onReceiver;');
     expect(mm).toContain('addObserverForName:AVAudioSessionRouteChangeNotification');
   });
+
+  it('a route change that moved neither the outputs nor the state writes no line', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const mm = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_ios.mm'),
+      'utf8'
+    );
+    const apply = mm.slice(mm.indexOf('- (void)apply:(NSString *)why {'));
+    const skip = apply.indexOf('if (routeChange && [state isEqualToString:self.lastLogged])');
+    const log = apply.indexOf('NSLog(@"[CanariIOS] call proximity');
+    // The sensor is applied first, then the line is skipped, never the other way round.
+    expect(apply.indexOf('device.proximityMonitoringEnabled = enabled;')).toBeLessThan(skip);
+    expect(skip).toBeGreaterThan(0);
+    expect(log).toBeGreaterThan(skip);
+    expect(apply).toContain('self.lastLogged = state;');
+  });
 });
 
 describe('releaseIosProximityOfPreviousPage', () => {

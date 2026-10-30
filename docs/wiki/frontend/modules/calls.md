@@ -2299,13 +2299,17 @@ playing. What changed:
 - **A headset beats the speaker DEFAULT.** The page sends `speakerChosen` (the user's tap, or only
   the call's default); `pickCallOutput` prefers a connected headset over a default loudspeaker,
   never over a tapped one. A video that shows mid-call moves the default to the loudspeaker
-  (`nextSpeakerDefault`), and never back.
+  (`nextSpeakerDefault`), and never back. **The toggle shows the route APPLIED** (follow-up): the
+  service emits an `output` event (`speaker` true / false, absent when the platform routes) each
+  time it applies one, and the overlay shows that over what it asked - so a loudspeaker default that
+  yielded to a headset reads "earpiece" and the first tap is the loudspeaker, audibly.
 - **The proximity lock follows the screen** (Android): held only with the voice on the earpiece AND
   the app on screen (`MainActivity` resume / pause re-decide it), renewed from a WANTED field, not
   from `isHeld` - a lock that timed out at the renewal mark is re-taken.
 - **The iPhone arms the sensor on the RECEIVER route only**: the page asks, and native checks
   `AVAudioSession.currentRoute.outputs` for `Receiver` on every ask and route change, logging the
-  port types (`outputs=[...] receiver=...`) - AirPods or a speaker the page did not choose keep the
+  port types (`outputs=[...] receiver=...`) - a route change that moved neither the ports nor the
+  state writes no line (iOS posts several per switch) - AirPods or a speaker the page did not choose keep the
   screen lit. Every page boot posts `false` once (`releaseIosProximityOfPreviousPage`), so a reload
   or a WebContent kill mid-call never leaves the sensor armed. The navigation delegate is wry's, so
   no native hook on the WebContent kill was added.

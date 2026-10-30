@@ -400,6 +400,10 @@ static void CanariObserveTheme(void) {
 /// logs the output port types, which is what tells receiver from speaker in a reading.
 @interface CanariProximityHandler : NSObject <WKScriptMessageHandler>
 @property(nonatomic) BOOL pageWants;
+/// The outputs and the monitoring state of the last line written: a route change that moves
+/// neither (iOS posts several per route switch, and some for a category change alone) is not
+/// worth another.
+@property(nonatomic, copy) NSString *lastLogged;
 - (void)apply:(NSString *)why;
 @end
 @implementation CanariProximityHandler
@@ -428,9 +432,16 @@ static void CanariObserveTheme(void) {
   UIDevice *device = UIDevice.currentDevice;
   device.proximityMonitoringEnabled = enabled;
   // Read back: a device without a sensor leaves it NO, and that is what the reading should show.
-  NSLog(@"[CanariIOS] call proximity (%@): page=%d outputs=[%@] receiver=%d now=%d", why,
-        self.pageWants, [ports componentsJoinedByString:@","], onReceiver,
-        device.proximityMonitoringEnabled);
+  NSString *state = [NSString stringWithFormat:@"page=%d outputs=[%@] receiver=%d now=%d",
+                                               self.pageWants, [ports componentsJoinedByString:@","],
+                                               onReceiver, device.proximityMonitoringEnabled];
+  // A page's ask is always written; a route change only when it moved the outputs or the state.
+  BOOL routeChange = [why isEqualToString:@"the audio route changed"];
+  if (routeChange && [state isEqualToString:self.lastLogged]) {
+    return;
+  }
+  self.lastLogged = state;
+  NSLog(@"[CanariIOS] call proximity (%@): %@", why, state);
 }
 @end
 
