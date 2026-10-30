@@ -71,11 +71,11 @@ import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
-  matchesCondition,
   needsProfile,
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
+import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
   pricedQuestionIds,
   pricingViewFor,
@@ -465,10 +465,18 @@ export class FormsService {
 
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
   private assertMaySubmit(form: Form, facts: PricingFacts): void {
-    if (!form.submitCondition) return;
-    if (matchesCondition(form.submitCondition, facts)) return;
-    this.logger.debug(`[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)}`);
-    throw new ForbiddenException('This form is not open to you.');
+    const code = submitRefusalCode(form.submitCondition, facts);
+    if (code === null) return;
+    this.logger.debug(
+      `[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)} code=${code}`
+    );
+    throw new ForbiddenException({
+      code,
+      message:
+        code === FORM_COTISATION_HELD
+          ? 'This form is for people who do not hold this cotisation, and you already hold it.'
+          : 'This form is not open to you.',
+    });
   }
 
   /**
@@ -863,11 +871,15 @@ export class FormsService {
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
    * user who will be told they are not a member. Answers `failed` ONLY when a retry could succeed
-   * (the grant threw), which is what `fulfilPayment` releases its claim on; `not-granted` when the
-   * tier was refused as not a rise over the one held (`grantCotisantIfARise`) - final, not retried.
+   * (the grant threw - the tier lock or a read included), which is what `fulfilPayment` releases its
+   * claim on; `not-granted` when the locked grant refused it (`grantCotisantIfARise`: the tier held
+   * already, not a rise, or a tier the form's `notCotisation` excludes held) - final, not retried.
    */
   private async grantCotisationIfConfigured(
-    form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    form: Pick<
+      Form,
+      'grantsCotisation' | 'cotisationVariantKey' | 'associationId' | 'submitCondition'
+    >,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
@@ -881,14 +893,16 @@ export class FormsService {
       return 'granted';
     }
     try {
-      // Ranked under the buyer's tier lock, so a paid form never swaps out a dearer tier by the XOR;
-      // unlike a settlement, it renews the tier when that very tier is held (`grantCotisantIfARise`).
+      // Decided under the buyer's tier lock, so a shop settlement committed while the payment was
+      // in flight is seen: never a renewal of the tier held (its price taken twice), never a held
+      // tier the form is for people WITHOUT (`notCotisation`), never a move down by the XOR.
       const outcome = await this.userTagService.grantCotisantIfARise(
         form.associationId,
         userId,
         grantedBy,
         form.cotisationVariantKey,
-        metadata
+        metadata,
+        form.submitCondition?.notCotisation ?? null
       );
       return 'granted' in outcome ? 'granted' : 'not-granted';
     } catch (e) {
@@ -930,6 +944,7 @@ export class FormsService {
         grantsCotisation: true,
         cotisationVariantKey: true,
         associationId: true,
+        submitCondition: true,
       },
     });
     if (!form) {
@@ -1002,8 +1017,11 @@ export class FormsService {
    * Whether the tier a paid form grants was delivered, as its purchase record must say
    * (`receivedStatus`). `grant` is the decision THIS call took, when it took one. When it took none -
    * a replay whose grant was claimed by an earlier run, or a late payment that landed with no seat
-   * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
-   * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
+   * and so ran no grant - the answer is read from DURABLE state: without a seat nothing was granted,
+   * otherwise the form's tier is delivered only when its held tag names THIS answer
+   * (`metadata.submissionId`, written by the grant). A tier merely held - bought in the shop, so
+   * the locked grant refused to renew it - is not this payment's delivery, and the refund it is owed
+   * survives a record write that failed and was replayed. A form that grants no tier,
    * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
    * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
    * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
@@ -1017,7 +1035,7 @@ export class FormsService {
   ): Promise<boolean> {
     if (!form.grantsCotisation || !form.associationId || !submission.userId) return true;
     if (grant === 'granted') return true;
-    // Refused as not a rise: `grantCotisantIfARise` logged it at ERROR already.
+    // Refused under the tier lock (`grantCotisantIfARise`): logged at ERROR there already.
     if (grant === 'not-granted') return false;
     const tier = form.cotisationVariantKey ?? 'base';
     if (!seatGiven) {
@@ -1027,21 +1045,23 @@ export class FormsService {
       );
       return false;
     }
-    const holds = await this.userTagService.holdsCotisationTier(
+    const delivered = await this.userTagService.holdsTierDeliveredBy(
       submission.userId,
       form.associationId,
-      form.cotisationVariantKey
+      form.cotisationVariantKey,
+      submission.id
     );
-    if (holds) {
+    if (delivered) {
       this.logger.debug(
-        `[Forms] submission ${submission.id}: tier ${tier} held at record time - recorded paid`
+        `[Forms] submission ${submission.id}: tier ${tier} held as this answer's delivery - recorded paid`
       );
       return true;
     }
     this.logger.error(
-      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
-        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
-        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
+      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held as this ` +
+        `answer's delivery at record time (grant ${grant ?? 'decided by another run'}) - recorded ` +
+        'paid_not_granted; if it is held, it was held already when the payment landed: refund, do ' +
+        'not grant by hand'
     );
     return false;
   }
@@ -1115,6 +1135,12 @@ export class FormsService {
     /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
     hiddenItemIds: string[];
     maySubmit: boolean;
+    /**
+     * Why `submitCondition` excludes this person, typed - the code `submit` would refuse them with -
+     * or null. `maySubmit` stays the answer an older client reads; this only lets a newer one say
+     * WHY (`FORM_COTISATION_HELD`: they already hold the cotisation the form is for people without).
+     */
+    refusalCode: SubmitRefusalCode | null;
   }> {
     const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
@@ -1124,6 +1150,7 @@ export class FormsService {
         pricing: null,
         hiddenItemIds: [],
         maySubmit: false,
+        refusalCode: null,
       };
 
     // Check global capacity independently of per-user state
@@ -1139,15 +1166,15 @@ export class FormsService {
     // is reported the same way rather than shown as a form with no price.
     const noCombinationAvailable =
       !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
-    const maySubmit =
-      (!form.submitCondition || matchesCondition(form.submitCondition, facts)) &&
-      !noCombinationAvailable;
+    // The same classification `submit` refuses with, so the page and the 403 are one fact.
+    const refusalCode = submitRefusalCode(form.submitCondition, facts);
+    const maySubmit = refusalCode === null && !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
 
     if (form.allowMultipleSubmissions)
-      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };
+      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit, refusalCode };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
     // registry that knows no answer. The status is always `free`: an anonymous form takes no money.
@@ -1160,6 +1187,7 @@ export class FormsService {
         pricing,
         hiddenItemIds,
         maySubmit,
+        refusalCode,
       };
     }
 
@@ -1186,6 +1214,7 @@ export class FormsService {
       pricing,
       hiddenItemIds,
       maySubmit,
+      refusalCode,
     };
   }
 

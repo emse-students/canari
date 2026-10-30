@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -271,7 +272,7 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = e.message;
+      error = providerRefusalMessage(e) ?? e.message;
     } finally {
       isSubmitting = false;
     }

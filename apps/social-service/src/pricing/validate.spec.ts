@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  AUDIENCE_COTISATION_BOTH_MODES,
   FIRST_PROMO_YEAR,
   parseAudienceCondition,
   parsePriceMatrix,
@@ -59,6 +60,49 @@ describe('criteria validation', () => {
 
     it('refuses a condition with no criterion at all, which would apply to everybody', () => {
       expect(() => parseAudienceCondition({}, ctx, 'submitCondition')).toThrow(BadRequestException);
+    });
+  });
+
+  // Owner, 2026-10-30: "ne detient pas", validated exactly as "detient" is.
+  describe('a cotisation criterion NOT held', () => {
+    const tiered: CriteriaContext = { tierKeys: [null, 'bde'], questions: new Map() };
+    const parse = (raw: unknown, c: CriteriaContext = tiered) =>
+      parseAudienceCondition(raw, c, 'submitCondition');
+
+    it('accepts a tier the association sells, and anyTier', () => {
+      expect(parse({ notCotisation: { variantKeys: ['bde', null] } })).toEqual({
+        notCotisation: { variantKeys: ['bde', null] },
+      });
+      expect(parse({ notCotisation: { anyTier: true } })).toEqual({
+        notCotisation: { anyTier: true },
+      });
+    });
+
+    it('refuses a tier the association does not sell, and an empty list', () => {
+      expect(() => parse({ notCotisation: { variantKeys: ['nope'] } })).toThrow(
+        BadRequestException
+      );
+      expect(() => parse({ notCotisation: { variantKeys: [] } })).toThrow(BadRequestException);
+    });
+
+    it('refuses it on an association with no cotisation', () => {
+      expect(() => parse({ notCotisation: { anyTier: true } }, ctx)).toThrow(BadRequestException);
+    });
+
+    // One criterion, one mode: the pair is a contradiction or a roundabout spelling of one side.
+    // What a 1.5.1 editor sends when a manager ticks a held tier on a "does not hold" condition: it
+    // spreads `notCotisation` through and adds `cotisation`. Refused with a CODE, never prose only.
+    it('refuses it beside a cotisation that must be held, typed', () => {
+      let thrown: unknown;
+      try {
+        parse({ cotisation: { anyTier: true }, notCotisation: { variantKeys: ['bde'] } });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      expect((thrown as BadRequestException).getResponse()).toMatchObject({
+        code: AUDIENCE_COTISATION_BOTH_MODES,
+      });
     });
   });
 

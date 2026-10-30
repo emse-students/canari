@@ -457,10 +457,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       const { checkoutId } = await products.createCheckoutSession(ASSO, TIER_A, buyer);
       await (products as any).settlePaidCheckout(checkoutId);
       expect(await heldTags(buyer)).toEqual([TAG_A]);
-      // A form's ranked grant (the same tier: a renewal), then a manual one, then a revocation.
-      expect(await tagService.grantCotisantIfARise(ASSO, buyer, 'form', 'a', {})).toHaveProperty(
-        'granted'
-      );
+      // A form's ranked grant (the same tier: refused, never a renewal paid twice), then a manual
+      // one, then a revocation.
+      expect(await tagService.grantCotisantIfARise(ASSO, buyer, 'form', 'a', {})).toEqual({
+        refused: 'held',
+      });
       const granted = await tagService.grantCotisant(ASSO, buyer, 'manager', 'b');
       await tagService.revoke(granted.id, ASSO);
       expect(await heldTags(buyer)).toEqual([]);

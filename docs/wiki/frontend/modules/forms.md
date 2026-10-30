@@ -341,6 +341,60 @@ refuses it (`parseAudienceCondition`), but that refusal is a developer sentence 
 not what a manager should read for having flipped a switch and stopped. So `forms/audience.ts`
 catches it before the request, naming the form or the question it belongs to.
 
+### A cotisation NOT held: `notCotisation` (owner, 2026-10-30)
+
+A form, or one question, can be reserved to people who do **not** hold a given cotisation - the
+creator picks the tier ("BDE" in a `dated` association is this academic year's tag, so "not
+BDE 2026-2027"), and nobody pays it twice. The editor's cotisation criterion has a mode, "Detient la
+cotisation" / "Ne detient pas la cotisation" (`cotisationModeOf` / `withCotisationMode` in
+`frontend/src/lib/forms/audience.ts`); the tiers ticked are kept when the mode flips.
+
+- **Its own key, `notCotisation`, same shape as `cotisation`** (`anyTier` = holds no tier of the
+  association at all). Not a `negate` flag inside `cotisation`: a 1.5.1 editor rebuilds
+  `cotisation` from its checkboxes and would DROP the flag, silently turning "not a cotisant" into
+  "cotisant"; it spreads an unknown key through untouched. `parseAudienceCondition` refuses the two
+  keys together - one criterion, one mode - and validates the tiers exactly as for `cotisation`.
+- **The server is the only judge, as for every profile criterion.** No client evaluates promo,
+  formation or cotisation: `GET /forms/:id/check` answers `maySubmit` and `hiddenItemIds`, so a 1.5.1
+  client shows a holder the form as closed and the question as hidden without knowing the key exists.
+- **The refusal is typed** (`forms/submit-refusal.ts`): `submit` and the file upload answer
+  `403 { code: 'FORM_COTISATION_HELD' }` to a holder, `403 { code: 'FORM_NOT_OPEN_TO_YOU' }` for any
+  other failed criterion. `failedCriterion` (`pricing/audience.ts`) names the criterion that failed,
+  `notCotisation` first, and `matchesCondition` is `failedCriterion(...) === null`. The check carries
+  the same code as `refusalCode`, which is how the fill page says "Vous detenez deja cette cotisation"
+  rather than "Ce formulaire ne vous est pas destine".
+- **Re-judged when the money lands, INSIDE the locked grant, on a form that GRANTS a cotisation.**
+  `fulfilPayment` (online and cash alike) hands the form's `notCotisation` to
+  `UserTagService.grantCotisantIfARise`, which decides under the buyer's tier lock - so a shop
+  settlement that committed while the form's payment was in flight is SEEN. It refuses a held tier
+  of that set (`EXCLUDED_TIER_HELD`) and, on every granting form, the very tier already held
+  (`held`): the old rule renewed it, taking its price twice from a holder - the same case submit
+  refuses as `FORM_TIER_ALREADY_HELD`, now judged again when the money lands. No path wanted that
+  renewal (paid forms are the rule's only caller); the one held tag still answered `granted` is
+  this answer's own delivery (`metadata.submissionId`), a replay that writes nothing. A refusal is
+  recorded `paid_not_granted` - the existing refund-owed marker the purchases tab and the hourly
+  report show, closed by a manager; no new mechanism. A throw of the lock or a read releases the
+  grant claim (`failed`) for a replay, never a refusal on a read that failed.
+- **A replay reaches the same verdict from durable state.** When the record write failed and is
+  replayed (`grant === null`), `formTierDelivered` asks whether the tier is held AS THIS ANSWER'S
+  DELIVERY (`holdsTierDeliveredBy`: the tag names this `submissionId`), not merely held - a tier
+  bought in the shop is held but not delivered, and its refund stays owed. The manager hint
+  (`target-held`), the hourly line and the buyer's status say it: already held when the payment
+  landed - refund, do not grant by hand.
+- **A form that grants nothing keeps the seat it sold**, holder or not: it took no cotisation's
+  price, so nothing was paid twice, and refusing the seat after the money would turn an admitted,
+  paid answer into a refund for a rule whose only purpose is not charging a cotisation twice.
+- **A 1.5.1 editor sends both keys** when a manager ticks a held tier on a "ne detient pas"
+  condition (it spreads `notCotisation` through and adds `cotisation`): refused
+  `400 { code: 'AUDIENCE_COTISATION_BOTH_MODES' }`, worded by a newer client through Paraglide; the
+  older one shows the English sentence, which says to update the app.
+- **Old forms are unchanged**: an absent key is no constraint, and no stored row carries it.
+- Booking spaces share the editor and the predicate, so a space's audience gets the mode too.
+
+Tests: `pricing/audience.spec.ts`, `pricing/validate.spec.ts`, `forms/submit-refusal.spec.ts`,
+`forms/forms.service.matrix.spec.ts` ("a form for people who do NOT hold a cotisation"),
+`frontend/src/lib/forms/audience.test.ts`.
+
 ## Cotisations: a form names a TIER, never a tag
 
 This is the rule the whole cotisation surface turns on, and it is the one thing to read before
