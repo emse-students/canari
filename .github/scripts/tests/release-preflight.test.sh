@@ -209,6 +209,62 @@ currency 'current' 1.5.2-alpha.1 'a tag the band cannot parse orders nothing' \
 currency 'undecidable no tag was listed' 1.5.2-alpha.1 'an empty tag list is unreadable, never permission'
 currency 'undecidable 1.5.2-rc.1 has no store band' 1.5.2-rc.1 'a version with no store band is refused' \
   v1.5.2-rc.1
+currency 'undecidable v1.5.1-alpha.5 itself is not in the tag list, so the list is incomplete' \
+  1.5.1-alpha.5 "a list missing the release's own tag is partial, never permission" \
+  v1.5.0 v1.5.1-alpha.4
+
+# A PAGINATION THAT FAILS AFTER PAGE ONE. Refs come back in name order, so `v1.10.*` sits on an
+# earlier page than `v1.5.*` and a lost page can hold the higher release. The real preflight runs
+# against a stub `gh` whose tag listing prints a partial page and then fails: it must refuse, and
+# say why, rather than classify what arrived.
+STUB="$(mktemp -d)"
+cat > "$STUB/gh" <<'STUBGH'
+#!/usr/bin/env bash
+case "$*" in
+  *matching-refs*) printf 'v1.5.1-alpha.5\n'; echo 'HTTP 502: page 2 lost' >&2; exit 1 ;;
+  *compare*)       printf 'identical\n' ;;
+  *check-runs*)    printf 'success\n' ;;
+  *)               exit 1 ;;
+esac
+STUBGH
+chmod +x "$STUB/gh"
+PARTIAL="$(PATH="$STUB:$PATH" VERSION=1.5.1-alpha.5 TARGET_SHA=0123456789abcdef REPO=o/r \
+  bash "$HERE/../release-preflight.sh" 2>&1)"
+PARTIAL_EXIT=$?
+rm -rf "$STUB"
+if [ "$PARTIAL_EXIT" -ne 0 ] && printf '%s' "$PARTIAL" | grep -q 'REFUSE  could not tell whether a newer release exists - the tag list could not be read'; then
+  pass 'a tag listing that fails after page one refuses the release'
+else
+  fail "a failed tag listing was not refused (exit $PARTIAL_EXIT): $PARTIAL"
+fi
+if printf '%s' "$PARTIAL" | grep -q 'page 2 lost'; then
+  pass "and the refusal carries gh's own error"
+else
+  fail "the refusal dropped gh's error: $PARTIAL"
+fi
+
+# When the newer tag is this version's own STABLE, no alpha of it can follow: the hint names the next
+# patch's first pre-release.
+STUB="$(mktemp -d)"
+cat > "$STUB/gh" <<'STUBGH'
+#!/usr/bin/env bash
+case "$*" in
+  *matching-refs*) printf 'v1.5.1\nv1.5.1-alpha.6\n' ;;
+  *compare*)       printf 'identical\n' ;;
+  *check-runs*)    printf 'success\n' ;;
+  *)               exit 1 ;;
+esac
+STUBGH
+chmod +x "$STUB/gh"
+AFTER_STABLE="$(PATH="$STUB:$PATH" VERSION=1.5.1-alpha.6 TARGET_SHA=0123456789abcdef REPO=o/r \
+  bash "$HERE/../release-preflight.sh" 2>&1)"
+rm -rf "$STUB"
+if printf '%s' "$AFTER_STABLE" | grep -q 'gh release create v1.5.2-alpha.1 --prerelease'; then
+  pass "after this version's stable shipped, the refusal names the next patch's alpha.1"
+else
+  fail "the refusal after the stable does not name v1.5.2-alpha.1: $AFTER_STABLE"
+fi
+
 # And the gate is WIRED: a classifier nobody calls protects nothing.
 GATE2B="$(sed -n "/^if \[ \"\$KIND\" = 'prerelease' \]; then/,/^fi/p" "$HERE/../release-preflight.sh")"
 for needle in 'matching-refs/tags/v' 'classify_prerelease_currency' 'scripts/bump-app-version.sh' 'cut a NEW pre-release'; do

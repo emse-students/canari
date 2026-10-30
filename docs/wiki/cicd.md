@@ -929,7 +929,11 @@ stable would then be refused at gate 4 (`diverged`). So a pre-release also answe
 `classify_prerelease_currency`: every `v*` tag (`matching-refs/tags/v`) is ordered by the store band
 (`bump-app-version.sh --codes`, the one implementation; a tag the band cannot parse never reached a
 store and orders nothing), and the release is refused when the latest pre-release of its version,
-or any tag at all, carries a higher build number - including this version's own stable. **A rerun
+or any tag at all, carries a higher build number - including this version's own stable (the
+refusal then names the next patch's `alpha.1`). **A partial list is refused, never classified**:
+refs come back in name order, so `v1.10.*` precedes `v1.5.*` and a lost page can hold the higher
+release - the listing's exit is read (the script has no `set -e`, a pipe would hide it) and a list
+missing the release's own tag is `undecidable`. **A rerun
 therefore rescues gate 3 only while nothing newer shipped**; after that the refusal says to cut a
 new pre-release at the current head, numbered above the newest. A stable does not ask it: it
 resolves the latest pre-release of its version itself.

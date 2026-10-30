@@ -102,9 +102,25 @@ esac
 # points at it` half used to refuse a stale pre-release by accident; `classify_prerelease_currency`
 # carries why it is now asked on purpose (a rerun of a refused alpha after a later one shipped).
 if [ "$KIND" = 'prerelease' ]; then
-  CURRENCY="$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref | sub("^refs/tags/"; "")' 2>/dev/null \
-    | classify_prerelease_currency "$VERSION" "$HERE/../../scripts/bump-app-version.sh")"
+  # THE LIST IS CAPTURED FIRST AND ITS EXIT READ. Refs come back in NAME order, so `v1.10.*` sorts
+  # before `v1.5.*` and the higher release can sit on a later page: a pagination that failed after
+  # page one would hand the classifier a partial list, and it would answer `current` on missing
+  # evidence. This script has no `set -e`, so a pipe would have ignored the failure.
+  if TAGS="$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref | sub("^refs/tags/"; "")' 2>&1)"; then
+    CURRENCY="$(printf '%s\n' "$TAGS" | classify_prerelease_currency "$VERSION" "$HERE/../../scripts/bump-app-version.sh")"
+  else
+    CURRENCY="undecidable the tag list could not be read: $(printf '%s' "$TAGS" | tail -3 | tr '\n' ' ')"
+  fi
   case "$CURRENCY" in
+    "superseded v${VERSION%%-*}")
+      # This version's own STABLE shipped, so no alpha of it can follow: the next one is the next
+      # patch's first.
+      CORE="${VERSION%%-*}"
+      refuse "v$CORE, the stable of this version, has already been released"
+      hint 'Both stores refuse a build number lower than one they already took, and a rerun re-reads'
+      hint "the same tag. Cut the next patch's first pre-release at the current head of main instead:"
+      hint "gh release create v${CORE%.*}.$(( ${CORE##*.} + 1 ))-alpha.1 --prerelease"
+      ;;
     current)
       ok "no release carries a higher store build number than $VERSION"
       ;;

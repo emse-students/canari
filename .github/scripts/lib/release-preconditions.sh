@@ -176,10 +176,17 @@ classify_prerelease_currency() {
     tag="${tag%$'\r'}"
     [ -n "$tag" ] && tags+=("$tag")
   done
-  # The release's own tag is in this list whenever it was published, so an empty one is an
-  # unreadable answer, never a repository with nothing in it.
+  # The release's own tag is in this list whenever it was published, so an empty list, or one
+  # without it, is an unreadable or partial answer - never a repository with nothing newer in it.
   if [ "${#tags[@]}" -eq 0 ]; then
     printf 'undecidable no tag was listed\n'
+    return 0
+  fi
+  for tag in "${tags[@]}"; do
+    [ "$tag" = "v$want" ] && break
+  done
+  if [ "$tag" != "v$want" ]; then
+    printf 'undecidable v%s itself is not in the tag list, so the list is incomplete\n' "$want"
     return 0
   fi
 
