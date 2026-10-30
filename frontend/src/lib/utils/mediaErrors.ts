@@ -122,9 +122,11 @@ export function isRetryableMediaFailure(cause: MediaFailureCause): boolean {
 /**
  * The one log line of a media that could not be shown, at the level its cause deserves.
  *
- * A purge or a 404 is the server's ANSWER about an object, expected and permanent: a `warn`. Every
- * other cause is a failure of this path and is logged as one. The cause leads the line so a log
- * read in the field separates them without opening the error.
+ * A purge or a 404 is the server's ANSWER about an object, expected and permanent: a `warn`. A
+ * request that got NO answer (`unreachable`, typed at the throw as `MediaUnreachableError`) is the
+ * expected state of an absent link, not a failure of this path: a `warn` naming what is owed - the
+ * card's Retry - without a stack. Every other cause is a failure of this path and is logged as one.
+ * The cause leads the line so a log read in the field separates them without opening the error.
  */
 export function logMediaFailure(
   where: string,
@@ -133,7 +135,13 @@ export function logMediaFailure(
   err: unknown
 ): void {
   const line = `[${where}] media not shown (${cause})`;
-  if (isRetryableMediaFailure(cause)) console.error(line, mediaId, err);
+  if (cause === 'unreachable') {
+    console.warn(
+      `${line} - the media service got no answer, Retry draws it again`,
+      mediaId,
+      String(err)
+    );
+  } else if (isRetryableMediaFailure(cause)) console.error(line, mediaId, err);
   else console.warn(line, mediaId, err);
 }
 

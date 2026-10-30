@@ -45,7 +45,8 @@ vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
   return { ...actual, reconcileAllGroups: reconcileAllGroupsMock };
 });
 
-import { initializeConnection } from './initializeConnection';
+import { initializeConnection, openGatewayConnection } from './initializeConnection';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('initializeConnection (realistic connect + membership sync)', () => {
   beforeEach(() => {
@@ -116,7 +117,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       isDistributionGroup: vi.fn().mockReturnValue(false),
       getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       registerDistributionGroup: vi.fn(),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi.fn().mockResolvedValue([
         { groupId: 'g-in-wasm', name: 'InWasm', isGroup: true },
         { groupId: 'g-not-in-wasm', name: 'NotInWasm', isGroup: true },
@@ -221,7 +222,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       forgetGroup: vi.fn(),
       // Asked by the audit, which never owes one for a distribution group.
       isDistributionGroup: vi.fn().mockReturnValue(false),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi.fn().mockResolvedValue([
         {
           groupId: 'g-deleted',
@@ -272,7 +273,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue([]),
       forgetGroup: vi.fn(),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       getUserGroups: vi
         .fn()
         .mockResolvedValue([{ groupId: 'g-live', name: 'Live', isGroup: true }]),
@@ -315,6 +316,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       getDeviceId: vi.fn().mockReturnValue('d'),
     };
     const log = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u',
@@ -327,9 +330,47 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       onStrandedSeat: vi.fn().mockResolvedValue(undefined),
       log,
     });
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/Gateway inaccessible/));
+    // One line, accusing: the link was not known down, so the gateway should have answered.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      '[WS] Gateway connection failed:',
+      'Error: gateway down'
+    );
     expect(mls.generateKeyPackage).not.toHaveBeenCalled();
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  // Production 1.5.1: a socket that could not open on an absent link logged twice, once at ERROR.
+  it('says a gateway the link could not reach once, as the expected state, never at error', async () => {
+    getIsTabLeaderMock.mockReturnValue(true);
+    const mls = {
+      connect: vi
+        .fn()
+        .mockRejectedValue(new TransportFailureError('failed to lookup address information')),
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      onDisconnect: vi.fn(),
+    };
+    const log = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
+
+    const opened = await openGatewayConnection({
+      mlsService: mls as any,
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      log,
+    } as any);
+
+    expect(opened).toBe(false);
+    expect(consoleError).not.toHaveBeenCalled();
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('Gateway'));
+    expect(lines.filter((l) => l.includes('failed'))).toEqual([
+      expect.stringContaining('the link is down'),
+    ]);
+    consoleError.mockRestore();
   });
 
   /**

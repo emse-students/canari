@@ -1,4 +1,9 @@
-import { assertAnsweredByApi, NotFromApiError } from '$lib/utils/apiJson';
+import {
+  assertAnsweredByApi,
+  NotFromApiError,
+  responseOrigin,
+  type ResponseOrigin,
+} from '$lib/utils/apiJson';
 
 /**
  * A request abandoned because NOTHING arrived for a while - never because it took a while.
@@ -44,10 +49,16 @@ export class BodyInterruptedError extends Error {
   }
 }
 
-/** A 2xx carries the parsed body; anything else carries only its status, and its body is dropped. */
+/**
+ * A 2xx carries the parsed body; anything else carries only its status and WHO ANSWERED
+ * ({@link responseOrigin}, read from the head), and its body is dropped. A 2xx is always the
+ * gateway's: one that is not throws `NotFromApiError` instead. The origin is what lets a caller tell
+ * the server's refusal (an answer: the server is reachable) from an edge page in front of it - a
+ * captive portal's `511`, a WAF's HTML `403` - which proves nothing about the server.
+ */
 export type ProgressDeadlineResult<T> =
   | { ok: true; status: number; body: T }
-  | { ok: false; status: number };
+  | { ok: false; status: number; origin: ResponseOrigin };
 
 /**
  * Fetches `url` and parses its JSON body under a PROGRESS deadline.
@@ -120,7 +131,7 @@ export async function fetchJsonUnderProgressDeadline<T>(
       // Nothing here reads a non-2xx body, and an unread one holds the connection open until it is
       // collected. Cancelling is not a failure path, so a refusal to cancel is not one either.
       await res.body?.cancel().catch(() => {});
-      return { ok: false, status: res.status };
+      return { ok: false, status: res.status, origin: responseOrigin(res) };
     }
     // WHO ANSWERED, from the head: a 2xx that is not the API's JSON (a captive portal's page) is no
     // answer - `NotFromApiError`, a transport failure - and never a body to parse and halve on.

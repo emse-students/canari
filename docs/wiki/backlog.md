@@ -27,6 +27,50 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - `trackedFetch` counts an edge page (a portal's 511, the WAF's HTML 403) as proof the server is reachable, for every REST call and the probe
+
+**The rule it breaks:** a captive portal must never prove reachability. `trackedFetch` calls
+`answered()` on ANY response, so a portal's `511` or the WAF's HTML `403` clears `isOffline`,
+fires the reconnect listeners (outbox flush, owed archive replays) and ends the reachability
+probe, all on the say-so of something that is not the server.
+
+**Why the pull alone was not changed further:** the pending pull and the history batch now clear
+`isOffline` only on the gateway's answer, and leave it as it was on an edge page
+([section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+Making the pull also MARK the server down on an edge page would flip-flop: the probe, which goes
+through `trackedFetch`, would get the same edge page, call it reachable, and undo the mark, with a
+reconnect edge each round.
+
+**Fix shape:** require a gateway answer (`responseOrigin(res) === 'gateway'`) in `trackedFetch` and
+in the probe, in ONE change, so that every route reads an edge page the same way. Measure it on
+dev, because it changes reachability for the whole app.
+
+## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
+
+One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). The
+catch-up fan-out and the transport failures logged as errors are fixed on
+`fix/catchup-transport-failure` ([offline-and-weak-network section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+These are the lines of the same log that fix does NOT cover, each with its count:
+
+- **P2 - `[QUEUE] delivery ... arrived twice` is back: 31 lines** (`BaseMlsService.ts`, `REPEAT_MEANS`,
+  ~line 2219). The ack-before-pull ordering (`ackInFlight`, CHANGELOG) was recorded as closing it; on
+  this log the ack landed before the pull and the pull still listed the row. Read which cell of
+  `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
+  cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
+- **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
+  ([architecture](frontend/architecture.md)) reached from the salon send path: a `$derived` read
+  after its owner was destroyed. Name the component whose effect outlives the send first.
+- **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
+  600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
+  rejection says why, read it from the log line before touching the code.
+- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
+  An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
+  decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
+  and say it at the level of what it is; any other rejection keeps the warn.
+- **Raised to P2: the boot restore's absent-conversation refusals** - see
+  [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
+  **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
+
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
 
 **Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
@@ -555,7 +599,20 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
   accusing. Pair the change with a test that a conversation's self-entry still logs at error.
 
-## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29)
+## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29) - CAUSE NAMED, the key-group spelling FIXED in `fix/welcome-redelivery-cause`; delete at the stable
+
+- **Named 2026-10-30, from the kept rig consoles: neither a lost ack nor a second mint.** On 11 of
+  11 key-group occurrences (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29), the Welcome's
+  `qId` is delivered once. In each case, `externalJoin succeeded` for the same group follows within
+  200 ms, and every member applies an external commit with `removes=1`.
+- The device had judged its seat on a roster read made before an admitter's Add. It then built on
+  the base that Add stored, and the admitter's Welcome found the group already built. The dev
+  containers had been redeployed, so the server logs were gone.
+- The fix judges the seat inside the join, from the seat the server serves with each attempt's base
+  (`welcomeOwed: 'ask'`, [channel-encryption](protocols/channel-encryption.md)).
+- The CONVERSATION spelling (`[WELCOME] <group>... already held`, the cold-start item below) is not
+  covered by this reading, and stays open.
+- Rerun SALON-REVOKE-COMMIT and the RM rows after the deploy: the line must be absent.
 
 - The handler logs the redelivery and drops it as idempotent. There are two spellings in
   `setupMessageHandler.ts`: the conversation one (`[WELCOME] <group>… already held - redelivered
@@ -585,6 +642,27 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
   same device), and make the request depend on a durable "already asked for this device and key",
   not on the read.
+- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
+  closes with the server row below. Delete this entry when both have shipped.
+  - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
+    once. Only a reset of every group's throttle does that, and its one caller is the session setup
+    (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
+    is read from the code, not proven.
+  - The member says its decision once per (group, device, key, epoch) while the ask is shown
+    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
+    about once a minute per group, and logs what the server did with each ask.
+  - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
+    REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
+    device until a reload. Stopping the re-ask waits for the server row below.
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
+
+- Today a further device of a member with no seat has no durable ask. The requester re-asks on its
+  cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
+- The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
+  and let every member's pending sweep re-raise it. The requester then stops asking once the row
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -597,6 +675,9 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   per-read class: no budget in the rig.
 - Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
   repeat of the same ask with that one decision.
+- FIXED in `fix/join-request-once` (2026-10-30), not shipped; delete this entry at the stable. Each
+  line is said once per asking device and key group, keyed on what it was decided on: which sessions
+  were withheld and why (`sayAnswerDecisionOnce` in `utils/graine/frameHandler.ts`).
 
 ## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -1355,7 +1436,12 @@ then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because
 destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
 trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
 
-## P3 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+## P2 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+
+**RAISED FROM P3 ON PRODUCTION NUMBERS (2026-10-30).** One `1.5.1` log of the owner's Pixel: **425
+absent-conversation refusals, and up to 124 unacked frames in ONE boot** - every one a second
+handling, and the gap healer holding later frames of its group until the re-pull lands. Not a dev
+campaign's corner any more: the size of the cost is the size of the backlog a phone comes back to.
 
 **Deferred past 1.4.1 on purpose.** The fix reorders Welcome and commit handling relative to the
 restore; a hang there would stop a device receiving anything, so it needs its own plan, review and

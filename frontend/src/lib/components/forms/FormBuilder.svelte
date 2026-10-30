@@ -546,6 +546,7 @@
                     placeholder="0.00"
                     bind:value={opt.priceModifier}
                     step="0.01"
+                    min="0"
                   />
                 </div>
               {/if}
@@ -581,6 +582,7 @@
                     type="number"
                     bind:value={opt.priceModifier}
                     step="0.01"
+                    min="0"
                     placeholder="0.00"
                     class={fieldClass}
                   />

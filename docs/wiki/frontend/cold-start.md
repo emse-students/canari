@@ -18,7 +18,7 @@ document's navigation started - so nothing below is inferred.**
 
 | milestone | boot 1 (first load of `0.18.8`) | boot 2 (reload) |
 | --- | ---: | ---: |
-| the application's first word (`[A] token->refresh`) | 923 | **534** |
+| the application's first word (`[A] token->refresh`; from 2026-10-30 `[A] refresh→ ... (no token in memory)`) | 923 | **534** |
 | `Initialised in WEB mode (WASM)` | 1089 | **695** |
 | `MLS state loaded from IndexedDB` | 1255 | 856 |
 | `load_or_create` returns (7 617 611 B of state) | 1482 | 1092 |
@@ -624,7 +624,7 @@ produced the prediction this section answers.
 
 | milestone (offset from navigation) | 2026-09-17, `v0.18.9`, cache DISABLED | 2026-09-18, `v0.18.12` |
 | --- | ---: | ---: |
-| the application's first word (`[A] token->refresh`) | 600 | 696 |
+| the application's first word (`[A] token->refresh`; from 2026-10-30 `[A] refresh→ ... (no token in memory)`) | 600 | 696 |
 | `MLS ready - syncing messages in background` | 1180 | **1015** |
 | **`[WS] Connected to Chat Gateway`** | **1342** | **1092** |
 | of which: first word -> `MLS ready` | **580** | **319** |
