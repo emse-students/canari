@@ -1816,6 +1816,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
         /**
+         * The other party's photo for the ONGOING-CALL notification (`CallForegroundService`): the
+         * same [fetchAvatar] every message notification uses - its cache, its push-secret route, its
+         * remembered absence - opened to a second caller rather than copied. It does network I/O, so
+         * the caller runs it OFF the main thread.
+         */
+        fun callAvatar(context: Context, userId: String): Bitmap? {
+            Log.d(TAG, "callAvatar: for ${userId.take(8)}")
+            return context.fetchAvatar(userId)
+        }
+
+        /**
          * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
          *
          * Extracted from [fetchAvatar] when the association logo became a second caller. The cache
