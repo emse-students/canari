@@ -3243,7 +3243,7 @@ phone processes it in the background with the app shut; a community newcomer now
 | Welcome authorization | `sendWelcome` in `apps/chat-delivery-service/src/services/messaging.service.ts`, through `memberOfGroupKind` | It asked `dm_group_members`, which names nobody for a key group (section 16), so every such Welcome would have been a 403. Now an ACTIVE device row - the one helper the replay (`getCommitsSince`) also uses |
 | The newcomer, foreground | `handleDistributionWelcome` in `setupMessageHandler.ts` | `getGroupMeta` names the kind (it now carries `distributionWorkspaceId` / `distributionChannelId`); registers the seed carrier BEFORE installing, installs, promotes the row. No conversation row. A failed install is ACKed and nothing else: the queued Welcome is gone, so the device's own load joins |
 | The newcomer, app killed | `processReceivedWelcomeBackground` (Android, unchanged) | Installs the Welcome and calls `membership-active` |
-| One door at a time | `externalJoin(groupId, { welcomeOwed: 'ask' })` from `ensureDistributionGroup` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`); `ensureDistributionGroupFor` logs the `welcome_owed` outcome | The seat is read on EVERY attempt, AFTER the base that attempt builds on. A device whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
+| One door at a time | `externalJoin(groupId, { welcomeOwed: 'ask' })` from `ensureDistributionGroup` + `readWelcomeOwedFromSeat` (`utils/chat/welcomeOwed.ts`); the seat is SERVED WITH THE BASE (`DistributionSeat`: chat-delivery `GET internal/mls/distribution-groups/:scope/:scopeId?userId=&deviceId=`, passed through social-service's two `distribution-group` routes as `?deviceId=`); `ensureDistributionGroupFor` logs the `welcome_owed` and `seat_unreadable` outcomes | ONE read per attempt carries the base and this device's seat, the seat read server-side AFTER the base. A device whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining (`welcome_owed`); no seat served, or an add lock the server could not read (`addInFlight` absent, never `false`), is `seat_unreadable` and opens neither door this pass |
 
 **Why two admitters, or an admitter and the newcomer's own join, cannot both land.** Two admitters
 are serialised by the add-lock, taken before the tree is read. The external commit takes no lock and
@@ -3266,8 +3266,13 @@ admitter's Welcome, arriving tens of milliseconds later, found the group built a
 a redelivery and never a second mint: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5,
 SALON-REVOKE-COMMIT, 2026-10-25..29) the Welcome's `qId` appears once, and `externalJoin succeeded`
 for the same group follows within 200 ms. The question now lives inside the join
-(`welcomeOwed: 'ask'`), after each attempt's base; the idempotent drop stays as the witness that
-would show it again.
+(`welcomeOwed: 'ask'`), and the answer comes IN THE SAME RESPONSE as each attempt's base:
+chat-delivery reads the device's seat after the base and serves both, so no seat can be older than
+the base it is judged against and the join costs no extra round trip. A separate seat read after the
+base was the first version (one more request per attempt, and a second failure mode); it was dropped
+in review before merging. The idempotent drop stays as the witness that would show the race again.
+The loader's own pre-read on a held-but-evicted group went the same way: it forgets the dead tree
+and lets the join's served seat decide, so an owed Welcome installs on a group no longer held.
 
 **When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
 The first run measured the losing side: the newcomer's two live web clients joined by their own
@@ -3997,9 +4002,9 @@ and only because the server was further ahead (on the PC it was not, for three d
 **Held is now three questions, and the second one is asked everywhere it matters**:
 
 - **The loader** (`joinDistributionGroup`) reads `isGroupActive` on a held group. Held but inactive is
-  stale: it forgets the tree and joins, **unless a Welcome may be owed to this device**
-  (`readWelcomeOwedForThisDevice`), which is the only other way back in and which a second join
-  would race.
+  stale: it forgets the tree and joins, and **the join stands down when a Welcome is owed to this
+  device** (the seat served with its base, section 20 "One door at a time"), which is the only other
+  way back in and which a second join would race.
 - **The frame path and both replays** tell a new verdict, `evicted`, ONCE per group until it is
   forgotten (`tellEvictedOnce`), since a queued burst is one eviction. The frame is still
   acknowledged: its epoch belongs to a leaf this device no longer holds, and the seeds come back

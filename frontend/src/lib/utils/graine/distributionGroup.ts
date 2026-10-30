@@ -12,11 +12,6 @@ import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repai
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import {
-  isWelcomeOwed,
-  readWelcomeOwedFromRow,
-  type WelcomeOwedReading,
-} from '$lib/utils/chat/welcomeOwed';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -251,17 +246,9 @@ async function joinDistributionGroup(
   // already in the tree, so a device that joined twice evicted its first leaf, and the state left
   // on disk may be that first one. Production 2026-09-28: the user's PC held such a state for
   // Mineurchestre for three days, took this branch as "held" on every load, and read nothing. A
-  // Welcome owed to the device is still the door (the Welcome handler knows "held but EVICTED").
+  // Welcome owed to the device is still the door, and the join below asks it of the seat served WITH
+  // its base (`welcomeOwed: 'ask'`) - the dead tree is forgotten first, so that Welcome installs.
   const evictedLocally = holdsTheGroup && !(await mlsService.isGroupActive(ref.groupId));
-  if (evictedLocally) {
-    const reading = await readWelcomeOwedForThisDevice(mlsService, ref.groupId, scope, log);
-    if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
-      log(
-        `[GRAINE] ${scopeLabel(scope)}: this device's leaf is gone from its distribution group, and a Welcome is owed or could not be ruled out - waiting for it rather than joining a second time`
-      );
-      return false;
-    }
-  }
 
   if (holdsTheGroup && !serverForgotThisDevice && !evictedLocally) {
     // HELD IS NOT CURRENT, and the server has just said which epoch is. `ref.activeEpoch` was read on
@@ -317,13 +304,14 @@ async function joinDistributionGroup(
   if (staleForgotten || outcome.joined) await persistDistributionTreeChange(mlsService, scope, log);
 
   if (!outcome.joined && outcome.reason === 'welcome_owed') {
-    const { reading } = outcome;
     log(
-      reading === null
-        ? `[GRAINE] ${scopeLabel(scope)}: whether a Welcome is owed to this device could not be read - joining nothing this pass, so two doors are never opened at once`
-        : isWelcomeOwed(reading)
-          ? `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${reading}) - not joining by external commit, the admitter's Welcome is the door`
-          : `[GRAINE] ${scopeLabel(scope)}: this device's seat waits for a member's admission - not joining by external commit, a member's Add is the door`
+      `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${outcome.reading}) - not joining by external commit, the admitter's Welcome is the door`
+    );
+    return false;
+  }
+  if (!outcome.joined && outcome.reason === 'seat_unreadable') {
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: whether a Welcome is owed to this device could not be read with the base - joining nothing this pass, so two doors are never opened at once`
     );
     return false;
   }
@@ -380,42 +368,6 @@ async function republishStaleBase(
   await republishBaseIfStale(mlsService, ref, (message) =>
     log(`[GRAINE] ${scopeLabel(scope)}: ${message}`)
   );
-}
-
-/**
- * Reads whether an admitter owes this device a Welcome into `groupId`.
- *
- * `null` when the question could not be put - no session wired, the read threw, or the row did not
- * answer it - and the caller then opens NEITHER door this pass: guessing is exactly the move that
- * writes a leaf twice.
- */
-async function readWelcomeOwedForThisDevice(
-  mlsService: IMlsService,
-  groupId: string,
-  scope: DistributionScope,
-  log: (message: string) => void
-): Promise<WelcomeOwedReading | null> {
-  if (!isGraineReady()) {
-    log(`[GRAINE] ${scopeLabel(scope)}: no Graine runtime - cannot ask whether a Welcome is owed`);
-    return null;
-  }
-  const { userId } = requireGraineRuntime('read whether a Welcome is owed');
-  try {
-    const rows = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
-    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
-    if (reading === null) {
-      // AN ANOMALY, AND IT ACCUSES: every deployed server writes both facts on a pending row.
-      console.error(
-        `[GRAINE] ${scopeLabel(scope)}: this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
-      );
-    }
-    return reading;
-  } catch (e) {
-    log(
-      `[GRAINE] ${scopeLabel(scope)}: could not read this device's membership rows: ${String(e)}`
-    );
-    return null;
-  }
 }
 
 /**

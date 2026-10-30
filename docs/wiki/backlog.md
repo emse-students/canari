@@ -564,8 +564,8 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - The device had judged its seat on a roster read made before an admitter's Add. It then built on
   the base that Add stored, and the admitter's Welcome found the group already built. The dev
   containers had been redeployed, so the server logs were gone.
-- The fix reads the seat inside the join, after each attempt's base (`welcomeOwed: 'ask'`,
-  [channel-encryption](protocols/channel-encryption.md)).
+- The fix judges the seat inside the join, from the seat the server serves with each attempt's base
+  (`welcomeOwed: 'ask'`, [channel-encryption](protocols/channel-encryption.md)).
 - The CONVERSATION spelling (`[WELCOME] <group>... already held`, the cold-start item below) is not
   covered by this reading, and stays open.
 - Rerun SALON-REVOKE-COMMIT and the RM rows after the deploy: the line must be absent.

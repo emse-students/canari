@@ -52,6 +52,16 @@ import { MessagingService, type ActivationOutcome } from '../services/messaging.
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
+
+/**
+ * The asking device's seat in a key group, served WITH the base (`getDistributionGroup`): `none`
+ * (no row), `active`, or `pending` with `welcomeQueued` and - when the add lock was read -
+ * `addInFlight`.
+ */
+export type DistributionSeat =
+  | { status: 'none' | 'active' }
+  | { status: 'pending'; welcomeQueued: boolean; addInFlight?: boolean };
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -442,13 +452,15 @@ export class InternalController {
     @Param('scope') scope: string,
     @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string,
-    @Query('userId') userId?: string
+    @Query('userId') userId?: string,
+    @Query('deviceId') deviceId?: string
   ): Promise<{
     groupId: string;
     groupInfo: string | null;
     baseEpoch: number | null;
     activeEpoch: number;
     memberDevices?: string[];
+    seat?: DistributionSeat;
   } | null> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
@@ -469,14 +481,24 @@ export class InternalController {
     const asked = String(userId ?? '')
       .trim()
       .toLowerCase();
-    const memberDevices = asked
-      ? (
-          await this.deviceGroupRepo.find({
-            where: { groupId: group.id, userId: asked },
-            select: { deviceId: true },
-          })
-        ).map((row) => row.deviceId)
+    const rows = asked
+      ? await this.deviceGroupRepo.find({
+          where: { groupId: group.id, userId: asked },
+          select: { deviceId: true, status: true },
+        })
       : undefined;
+    const memberDevices = rows?.map((row) => row.deviceId);
+
+    // THE ASKING DEVICE'S OWN SEAT, READ AFTER THE BASE ABOVE - the order is the guarantee. An Add
+    // writes its newcomers' `pending` seats and stores the base for the epoch it creates in one
+    // transaction, and holds the add lock until its Welcomes are queued; so a base that already
+    // carries an Add is answered with that Add's seat (`welcomeQueued` or `addInFlight`), and a
+    // joiner never builds on it as if nobody owed it a Welcome (channel-encryption section 20).
+    const askingDevice = String(deviceId ?? '').trim();
+    const seat =
+      asked && askingDevice && rows
+        ? await this.distributionSeatOf(group.id, askingDevice, rows)
+        : undefined;
 
     // `published` ALONE WAS A LIE THE CLIENT ACTED ON. It answered "is there a base", never "is
     // that base usable", and a base behind `activeEpoch` is refused by the commit gate every time
@@ -485,7 +507,10 @@ export class InternalController {
     this.logger.log(
       `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}` +
         ` base=${info?.baseEpoch ?? 'none'} active=${group.activeEpoch}` +
-        (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '')
+        (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '') +
+        (seat
+          ? ` seat=${seat.status}${seat.status === 'pending' ? `(welcome=${seat.welcomeQueued},adding=${seat.addInFlight ?? 'unknown'})` : ''}`
+          : '')
     );
     return {
       groupId: group.id,
@@ -493,6 +518,35 @@ export class InternalController {
       baseEpoch: info?.baseEpoch ?? null,
       activeEpoch: group.activeEpoch,
       ...(memberDevices ? { memberDevices } : {}),
+      ...(seat ? { seat } : {}),
+    };
+  }
+
+  /**
+   * One device's seat in a key group, in the terms the client's one-door reading takes
+   * (`readWelcomeOwedFromRow`): `none`, `active`, or `pending` with the two facts. `addInFlight` is
+   * left out when the add lock could not be read - unknown, never `false`.
+   */
+  private async distributionSeatOf(
+    groupId: string,
+    deviceId: string,
+    rows: Array<{ deviceId: string; status: 'pending' | 'active' }>
+  ): Promise<DistributionSeat> {
+    const row = rows.find((r) => r.deviceId === deviceId);
+    if (!row) return { status: 'none' };
+    if (row.status !== 'pending') return { status: row.status };
+    const facts = await readPendingMembershipFacts(
+      this.queuedMessageRepo,
+      this.redis,
+      deviceId,
+      [groupId],
+      this.logger
+    );
+    const addInFlight = addInFlightOf(facts, groupId);
+    return {
+      status: 'pending',
+      welcomeQueued: facts.welcomed.has(groupId),
+      ...(addInFlight === undefined ? {} : { addInFlight }),
     };
   }
 

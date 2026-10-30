@@ -171,6 +171,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  DistributionSeat,
   DistributionGapListener,
   DistributionGapVerdict,
   DistributionGroupStore,
@@ -188,7 +189,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { readWelcomeOwedFromRow, type WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
+import { isWelcomeOwed, readWelcomeOwedFromSeat } from '$lib/utils/chat/welcomeOwed';
 import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
@@ -6681,7 +6682,13 @@ export abstract class BaseMlsService implements IMlsService {
    * problem and send the next reader to entirely the wrong place.
    */
   protected groupInfoChannel(groupId: string): {
-    fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
+    /** `seat` is served by a key group's transport only - see {@link DistributionSeat}. */
+    fetch(): Promise<{
+      groupInfo: string;
+      baseEpoch: number;
+      activeEpoch: number;
+      seat?: DistributionSeat;
+    } | null>;
     publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
   } {
     const scope = this.distributionScopeByGroup.get(groupId);
@@ -6709,7 +6716,7 @@ export abstract class BaseMlsService implements IMlsService {
       );
     }
     return {
-      fetch: () => transport.fetch(scope),
+      fetch: () => transport.fetch(scope, this.deviceId),
       publish: (gi, epoch) => transport.publish(scope, gi, epoch, this.deviceId),
     };
   }
@@ -6789,32 +6796,6 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return null;
     }
-  }
-
-  /**
-   * This device's own seat in `groupId`, read as the one-door question ({@link readWelcomeOwedFromRow}):
-   * is somebody else's Welcome its door? `null` when it could not be answered - the read failed, or a
-   * `pending` row lacks the two facts every deployed server writes - and the caller then opens no
-   * door this attempt. Both are said here, the anomaly at a level that accuses.
-   */
-  private async readOwnWelcomeOwed(groupId: string): Promise<WelcomeOwedReading | null> {
-    const short = groupId.slice(0, 8);
-    let rows: DeviceMembershipRow[];
-    try {
-      rows = await this.getDeviceMemberships(this.userId, this.deviceId);
-    } catch (e) {
-      console.warn(
-        `[MLS] externalJoin ${short}... this device's seat could not be read: ${String(e).slice(0, 120)}`
-      );
-      return null;
-    }
-    const reading = readWelcomeOwedFromRow(rows.find((r) => r.groupId === groupId));
-    if (reading === null) {
-      console.error(
-        `[MLS] externalJoin ${short}... this device's pending row lacks welcomeQueued or addInFlight - the server did not answer the question it always answers`
-      );
-    }
-    return reading;
   }
 
   /**
@@ -6968,16 +6949,23 @@ export abstract class BaseMlsService implements IMlsService {
 
         // ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (key groups, channel-encryption section 20).
         // An admitter's Add writes this device's `pending` seat and stores the base for the epoch it
-        // creates in ONE transaction, and holds the add lock until its Welcomes are queued - so a seat
-        // read AFTER this base says whether the base already carries our leaf. The caller's own read
-        // came BEFORE it: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT,
-        // 2026-10-25..29) a device whose roster read predated the Add joined on the base the Add
-        // stored, the admitter's Welcome then landed on the group that join had just built
-        // (`already held - redelivered Welcome ignored`), and the external commit replaced the leaf
-        // the Add wrote. One Welcome, never a redelivery - two doors opened on one seat.
+        // creates in ONE transaction, and holds the add lock until its Welcomes are queued - so the
+        // seat the server read AFTER this base, in the same answer, says whether the base already
+        // carries our leaf. The caller's own roster read came BEFORE it: on 11 of 11 kept rig
+        // consoles (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29) a device whose roster
+        // read predated the Add joined on the base the Add stored, the admitter's Welcome then landed
+        // on the group that join had just built (`already held - redelivered Welcome ignored`), and
+        // the external commit replaced the leaf the Add wrote. One Welcome, never a redelivery - two
+        // doors opened on one seat. Served WITH the base: one read, no extra round trip.
         if (opts.welcomeOwed === 'ask') {
-          const reading = await this.readOwnWelcomeOwed(groupId);
-          if (reading !== 'unhonoured-seat' && reading !== 'not-pending') {
+          const reading = readWelcomeOwedFromSeat(gi.seat);
+          if (reading === null) {
+            console.warn(
+              `[MLS] externalJoin ${short}... base ${gi.baseEpoch} came without a readable seat (${gi.seat ? 'add lock unread' : 'none served'}) - not built this pass`
+            );
+            return { joined: false, reason: 'seat_unreadable' };
+          }
+          if (isWelcomeOwed(reading)) {
             return { joined: false, reason: 'welcome_owed', reading };
           }
         }

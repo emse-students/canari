@@ -691,12 +691,13 @@ describe('BaseMlsService.externalJoin', () => {
 
 /**
  * ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (channel-encryption section 20). A key group's join
- * reads this device's seat AFTER the base it would build on: an admitter's Add stores that base and
- * writes the seat in one transaction, and holds the add lock until its Welcomes are queued. The
- * caller's own earlier read could predate the Add - 11 of 11 kept rig consoles, 2026-10-25..29, where
- * the device joined over the Add and took the admitter's Welcome for a redelivery.
+ * judges its door by this device's seat as the server serves it WITH the base it would build on,
+ * read there AFTER that base: an admitter's Add stores the base and writes the seat in one
+ * transaction, and holds the add lock until its Welcomes are queued. The caller's own earlier read
+ * could predate the Add - 11 of 11 kept rig consoles, 2026-10-25..29, where the device joined over
+ * the Add and took the admitter's Welcome for a redelivery.
  */
-describe('BaseMlsService.externalJoin - an owed Welcome, read after the base', () => {
+describe('BaseMlsService.externalJoin - an owed Welcome, served with the base', () => {
   const owedOpts = { welcomeOwed: 'ask' as const };
   const joinChecking = (ctx: unknown, groupId: string): Promise<ExternalJoinOutcome> =>
     (
@@ -706,72 +707,101 @@ describe('BaseMlsService.externalJoin - an owed Welcome, read after the base', (
       ) => Promise<ExternalJoinOutcome>
     ).call(ctx, groupId, owedOpts);
 
-  const seat = (row: Record<string, unknown> | null) => {
-    const order: string[] = [];
-    const memberships = vi.fn(async (): Promise<Record<string, unknown>[]> => {
-      order.push('seat');
-      return row ? [{ groupId: 'g', ...row }] : [];
-    });
+  /**
+   * A key group whose transport serves each base WITH this device's seat, as chat-delivery does: one
+   * answer per attempt, so the seat can never be older than the base it is judged against.
+   */
+  const keyGroup = (...answers: Array<{ baseEpoch: number; seat?: Record<string, unknown> }>) => {
+    const fetch = vi.fn();
+    for (const a of answers) {
+      fetch.mockResolvedValueOnce({
+        groupInfo: 'AA==',
+        baseEpoch: a.baseEpoch,
+        activeEpoch: a.baseEpoch,
+        ...(a.seat ? { seat: a.seat } : {}),
+      });
+    }
     const ctx = makeCtx({
-      readOwnWelcomeOwed: (BaseMlsService.prototype as unknown as Record<string, unknown>)
-        .readOwnWelcomeOwed,
-      getDeviceMemberships: memberships,
-    });
-    ctx.delivery.fetchGroupInfo.mockImplementation(async () => {
-      order.push('base');
-      return { groupInfo: 'AA==', baseEpoch: 5, activeEpoch: 5 };
+      distributionScopeByGroup: new Map([['g', { kind: 'workspace', workspaceId: 'w' }]]),
+      distributionGroupInfo: { fetch, publish: vi.fn().mockResolvedValue({ stored: true }) },
     });
     ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
-    return { ctx, order, memberships };
+    return { ctx, fetch };
   };
 
   it.each([
     ['welcome-queued', { status: 'pending', welcomeQueued: true, addInFlight: false }],
     ['add-in-flight', { status: 'pending', welcomeQueued: false, addInFlight: true }],
-  ])('stands down on a seat read %s after the base, building nothing', async (reading, row) => {
-    const { ctx, order } = seat(row);
+    // A queued Welcome is a fact on its own; an unread lock cannot take it away.
+    ['welcome-queued', { status: 'pending', welcomeQueued: true }],
+  ])('stands down on a seat served %s with the base, building nothing', async (reading, seat) => {
+    const { ctx, fetch } = keyGroup({ baseEpoch: 5, seat });
 
     expect(await joinChecking(ctx, 'g')).toEqual({
       joined: false,
       reason: 'welcome_owed',
       reading,
     });
-    expect(order).toEqual(['base', 'seat']);
+    // ONE read carries both: the device's own id names the seat, and no second request is made (the
+    // harness has no `getDeviceMemberships` at all, so a separate seat read would throw).
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith({ kind: 'workspace', workspaceId: 'w' }, 'd');
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
   });
 
-  it('opens no door when the seat cannot be read, and says so', async () => {
+  it.each([
+    ['no seat served', undefined, 'none served'],
+    [
+      'an add lock the server could not read',
+      { status: 'pending', welcomeQueued: false },
+      'add lock unread',
+    ],
+  ])('answers seat_unreadable, not welcome_owed, on %s', async (_label, seat, said) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx, memberships } = seat(null);
-    memberships.mockRejectedValue(new Error('503'));
+    const { ctx } = keyGroup({ baseEpoch: 5, seat });
 
-    expect(await joinChecking(ctx, 'g')).toEqual({
-      joined: false,
-      reason: 'welcome_owed',
-      reading: null,
-    });
+    expect(await joinChecking(ctx, 'g')).toEqual({ joined: false, reason: 'seat_unreadable' });
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
-    expect(warn.mock.calls.flat().join(' ')).toContain("this device's seat could not be read");
+    expect(warn.mock.calls.flat().join(' ')).toContain(`came without a readable seat (${said})`);
     warn.mockRestore();
   });
 
   it.each([
-    ['no seat at all', null],
+    ['no seat at all', { status: 'none' }],
     ['a seat nothing follows', { status: 'pending', welcomeQueued: false, addInFlight: false }],
     ['an active seat', { status: 'active' }],
-  ])('serves itself on %s', async (_label, row) => {
-    const { ctx, order } = seat(row);
+  ])('serves itself on %s', async (_label, seat) => {
+    const { ctx } = keyGroup({ baseEpoch: 5, seat });
 
     expect(await joinChecking(ctx, 'g')).toEqual({ joined: true });
-    expect(order).toEqual(['base', 'seat']);
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
   });
 
-  it('does not read the seat for a join that did not ask', async () => {
-    const { ctx, memberships } = seat(null);
+  it('re-reads the seat with the fresher base after an epoch race, and stands down on it', async () => {
+    // THE RACE THIS CLOSES, AS A RETRY. The first attempt's base carries no Add and the seat says so;
+    // its commit loses to an Add, which stored base 6 and this device's seat with it. The retry's
+    // ONE read brings both, so the device stands down on base 6 instead of joining over the Add.
+    const { ctx, fetch } = keyGroup(
+      { baseEpoch: 5, seat: { status: 'none' } },
+      { baseEpoch: 6, seat: { status: 'pending', welcomeQueued: true, addInFlight: false } }
+    );
+    ctx.delivery.submitCommit.mockReset();
+    ctx.delivery.submitCommit.mockResolvedValueOnce({ accepted: false, reason: 'epoch_mismatch' });
+
+    expect(await joinChecking(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'welcome_owed',
+      reading: 'welcome-queued',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('judges no seat for a join that did not ask', async () => {
+    const { ctx } = keyGroup({ baseEpoch: 5 });
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
-    expect(memberships).not.toHaveBeenCalled();
   });
 });
