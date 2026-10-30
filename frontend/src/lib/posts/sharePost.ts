@@ -1,11 +1,9 @@
 import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
-import { shareTextOut } from '$lib/sharing/shareOut';
+import { runShareOut, shareTextOut } from '$lib/sharing/shareOut';
 import { landShareOn } from '$lib/sharing/shareLanding';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
-import { showToast } from '$lib/stores/toast.svelte';
 import { Log } from '$lib/utils/Log';
-import { m } from '$lib/paraglide/messages';
 
 /**
  * HOW A POST IS SHARED: the three rows of its share sheet (`PostShareSheet`), opened by the
@@ -49,21 +47,13 @@ export function sendPostLinkInApp(postId: string, conversationId: string): boole
  * where there is one (`canShareOut`, the phone apps): the sheet's row is not drawn elsewhere.
  */
 export function sharePostLinkOut(postId: string): void {
-  Log.d('sharePost', `sharing the public link of ${postId.slice(0, 8)}`);
-  shareTextOut(postShareUrl(postId)).catch((e: unknown) => {
-    Log.d('sharePost', `the share sheet did not open: ${String(e)}`);
-    showToast(m.share_out_failed(), 'error');
-  });
+  void runShareOut(`post ${postId.slice(0, 8)}`, () => shareTextOut(postShareUrl(postId)));
 }
 
 /**
- * Copies the post's public link, and a toast says so. A TOAST, never a confirmation drawn in the
- * control: the sheet closes on the same tap. The rejection is logged rather than swallowed:
- * `writeText` refuses on an unfocused document and in any non-secure context.
+ * Copies the post's public link; the helper's toast confirms or reports a refusal. A TOAST, never a
+ * confirmation drawn in the control: the sheet closes on the same tap.
  */
 export function copyPostLink(postId: string): void {
-  Log.d('sharePost', `copying the public link of ${postId.slice(0, 8)}`);
-  copyPublicShareLink(`/posts/${postId}`)
-    .then(() => showToast(m.post_link_copied_label(), 'info'))
-    .catch((e: unknown) => Log.d('sharePost', `share link copy failed: ${String(e)}`));
+  void copyPublicShareLink(`/posts/${postId}`);
 }

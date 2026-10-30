@@ -41,6 +41,7 @@
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import { Log } from '$lib/utils/Log';
+  import { copyText } from '$lib/utils/clipboard';
   import Picker from '../ui/Picker.svelte';
   import type { PickerOption } from '../ui/picker';
 
@@ -169,7 +170,6 @@
   let shareInvite = $state<WorkspaceInviteDto | null>(null);
   let shareLoading = $state(false);
   let shareError = $state('');
-  let shareCopied = $state(false);
   /** The QR code of the live invite link, shown in the shared modal. */
   let shareQrOpen = $state(false);
   /** Days until expiry for the next link; 0 means it never expires. */
@@ -499,7 +499,6 @@
     if (!workspaceDbId) return;
     shareLoading = true;
     shareError = '';
-    shareCopied = false;
     try {
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const invite = await channelService.createWorkspaceInvite(workspaceDbId, {
@@ -518,12 +517,8 @@
       const fragment = await mintInviteFragment(workspaceDbId, invite.expiresAt ?? null);
       shareInvite = invite;
       shareLink = `${publicAppUrl(`/c/join/${invite.token}`)}#${fragment}`;
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        // Clipboard may be blocked; the link stays visible for manual copy.
-      }
+      // A refusal is toasted by the helper; the link stays visible for a manual copy.
+      await copyText(shareLink, { what: 'link' });
     } catch (e) {
       Log.d('communityAdmin.loadShareLink failed', e);
       shareError = m.chat_channel_invite_link_error();
@@ -658,7 +653,6 @@
       historyVisibilityError = '';
       shareLink = '';
       shareInvite = null;
-      shareCopied = false;
       activeTab = 'overview';
     }
   });
@@ -1019,11 +1013,6 @@
                   </button>
                 </div>
                 <p class="text-text-muted text-xs">{shareBounds}</p>
-                {#if shareCopied}
-                  <p class="text-green-ok text-xs font-semibold">
-                    {m.chat_link_copied_success()}
-                  </p>
-                {/if}
               {:else}
                 <button
                   type="button"

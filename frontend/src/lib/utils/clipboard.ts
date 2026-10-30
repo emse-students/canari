@@ -1,30 +1,72 @@
+import { m } from '$lib/paraglide/messages';
+import { showToast } from '$lib/stores/toast.svelte';
 import { Log } from '$lib/utils/Log';
 
 /**
- * Writes a value to the clipboard, for the surfaces whose whole point is that the value gets
- * pasted somewhere else - a partnership code into a shop's checkout, an id into a query.
- *
- * A BUTTON IS THE ONLY WAY TO TAKE A SHORT STRING OFF A PHONE, which is what makes this a
- * component of the feature rather than a convenience. On a coarse pointer the app inverts
- * `user-select` (see `app.css`), and even where it does not, a long press onto a six-character
- * code, a drag of two handles and a "Copy" out of the system menu is a gesture nobody completes
- * for a discount code they are reading at a till.
- *
- * A REFUSAL IS LOGGED RATHER THAN SWALLOWED, and the caller is TOLD: `writeText` rejects on a
- * document that is not focused and in any non-secure context, and a copy button that silently
- * does nothing is indistinguishable from one that worked. The boolean is what lets a call site
- * keep its confirmation honest.
- *
- * @param value - The exact text to place on the clipboard.
- * @param what - What is being copied, for the log line only.
- * @returns `true` once written, `false` when the clipboard refused.
+ * What is being copied. It picks the confirmation the member reads ("Lien copie", "Code copie"...)
+ * and names the write in the log, so a call site states its subject once and nothing else.
  */
-export async function copyText(value: string, what = 'value'): Promise<boolean> {
+export type CopyKind = 'link' | 'code' | 'text' | 'id';
+
+/**
+ * How a copy ended, as a type so a caller never branches on a message:
+ * - `unavailable`: there is no `navigator.clipboard` (a non-secure context, an old WebView).
+ * - `refused`: `writeText` rejected (an unfocused document, a denied permission).
+ */
+export type CopyResult = { ok: true } | { ok: false; reason: 'unavailable' | 'refused' };
+
+/** The confirmation each kind of copy shows. A function, so Paraglide resolves the locale at call time. */
+const CONFIRMATION: Record<CopyKind, () => string> = {
+  link: () => m.clipboard_copied_link(),
+  code: () => m.clipboard_copied_code(),
+  text: () => m.clipboard_copied_text(),
+  id: () => m.clipboard_copied_id(),
+};
+
+/**
+ * THE ONE CLIPBOARD WRITE OF THE APP: writes `text`, then SAYS WHAT HAPPENED with a toast.
+ *
+ * It exists because a tap on "Copy" whose only effect is invisible is indistinguishable from a tap
+ * that did nothing (user, 2026-10-30: *"Copier le lien ... aucune confirmation visuelle"*), and
+ * because every call site that wrote its own `navigator.clipboard.writeText` either showed nothing,
+ * swallowed a refusal, or drew a private "Copie" state that lied when the write had been refused.
+ * One helper owns the three answers: the write, the confirmation on success and the failure toast.
+ *
+ * THERE IS ONE BACKEND AND NO FALLBACK. The web and the Tauri WebViews (Android, iOS, desktop) all
+ * expose `navigator.clipboard.writeText` in the secure contexts the app is served from, and no
+ * Tauri clipboard plugin is installed. A context without it, or a write the browser refuses, is
+ * reported as such and LOGGED - an `execCommand('copy')` shim would hide the context that needs
+ * fixing.
+ *
+ * `writeText` is only honoured with a user gesture and a focused document, so call this from the
+ * click handler and, where something async must come first, accept the `refused` result: the failure
+ * toast then tells the member to copy by hand from the field the call site shows.
+ *
+ * @param text - The exact text to place on the clipboard.
+ * @param opts.what - What is being copied; picks the confirmation and labels the log line.
+ * @param opts.silent - Skip the SUCCESS toast, for a caller that confirms in a richer way. The
+ *   failure toast is never skipped.
+ * @returns `{ ok: true }` once written, else the typed reason it was not.
+ */
+export async function copyText(
+  text: string,
+  opts: { what: CopyKind; silent?: boolean }
+): Promise<CopyResult> {
+  const { what, silent = false } = opts;
+  Log.d('Clipboard', `copying a ${what} (${text.length} chars)`);
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+  if (!clipboard?.writeText) {
+    Log.d('Clipboard', `no clipboard in this context, a ${what} was not copied`);
+    showToast(m.clipboard_copy_failed(), 'error');
+    return { ok: false, reason: 'unavailable' };
+  }
   try {
-    await navigator.clipboard.writeText(value);
-    return true;
+    await clipboard.writeText(text);
   } catch (e) {
     Log.d('Clipboard', `refused the write of a ${what}: ${String(e)}`);
-    return false;
+    showToast(m.clipboard_copy_failed(), 'error');
+    return { ok: false, reason: 'refused' };
   }
+  if (!silent) showToast(CONFIRMATION[what](), 'info');
+  return { ok: true };
 }

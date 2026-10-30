@@ -486,3 +486,13 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   Xcode at the start of every `ios.yml` run (`plutil -lint`, `xcodebuild -list`) and parsed whole by
   the vitest, after a pbxproj with two unclosed objects passed every Windows check.
   Suggested next lot: iOS conversation suggestions (`INSendMessageIntent`, the S5 twin).
+
+## One copy helper, one share-failure path (2026-10-30)
+
+A tap on "Copier le lien" in the bookings space page, the message long-press sheet and the two invite panels gave NO confirmation (owner report, 2026-10-30): each call site wrote `navigator.clipboard.writeText` itself, and the ones that confirmed drew a private "Copie" state that stayed true when the write had been refused.
+
+- **`utils/clipboard.ts` `copyText(text, { what })`** is the only clipboard write. `what` (`link | code | text | id`) picks the Paraglide confirmation toast; a refusal or a context without `navigator.clipboard` returns a typed `CopyResult` (`refused` / `unavailable`), is logged, and shows `clipboard_copy_failed`. `silent` skips only the success toast. One backend, no `execCommand` fallback: the web and the Tauri WebViews all expose `navigator.clipboard`, and no Tauri clipboard plugin is installed.
+- `copyPublicShareLink(path)` (`utils/copyShareLink.ts`) is `copyText` over the public origin; `copyId` is `copyText` for an id.
+- **`sharing/shareOut.ts` `runShareOut(what, open)`** runs any share-sheet call and owns the log and the `share_out_failed` toast (message bubble and post sheet shared two copies). It never falls back to a copy: the sheet's rows are only drawn where a sheet exists (`canShareOut`).
+- The inline "Copie" states (forms list and page, calendar subscribe, backup code, group and community invite panels) were deleted: the toast is the single confirmation.
+- The async invite panels copy after a network round trip, outside the tap's gesture: Safari may refuse, and the failure toast then points at the link field the panel keeps visible.

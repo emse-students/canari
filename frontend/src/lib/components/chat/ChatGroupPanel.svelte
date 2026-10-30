@@ -2,6 +2,7 @@
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
+  import { copyText } from '$lib/utils/clipboard';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import {
@@ -217,7 +218,6 @@
   let shareLink = $state('');
   let shareLoading = $state(false);
   let shareError = $state('');
-  let shareCopied = $state(false);
 
   /** Generates a shareable group invite link and copies it to the clipboard. */
   async function generateShareLink() {
@@ -227,18 +227,13 @@
     }
     shareLoading = true;
     shareError = '';
-    shareCopied = false;
     try {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const { token } = await createGroupInvite(groupId);
       shareLink = publicAppUrl(`/g/join/${token}`);
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        /* clipboard blocked; link shown for manual copy */
-      }
+      // A refusal is toasted by the helper; the link stays visible for a manual copy.
+      await copyText(shareLink, { what: 'link' });
     } catch (e) {
       Log.d('chatGroupPanel.generateShareLink failed', e);
       shareError = describeRefusalCode(refusalCode(e)) ?? m.chat_group_link_generation_error();
@@ -264,7 +259,6 @@
     confirmDelete = false;
     confirmLeave = false;
     shareLink = '';
-    shareCopied = false;
     shareError = '';
   });
 
@@ -460,11 +454,6 @@
             {m.chat_group_regenerate_button()}
           </button>
         </div>
-        {#if shareCopied}
-          <p class="text-green-ok text-xs font-semibold">
-            {m.chat_group_link_copied_label()}
-          </p>
-        {/if}
       {:else}
         <button
           type="button"
