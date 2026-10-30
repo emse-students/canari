@@ -33,7 +33,7 @@ x-logging: &logging
 services:
   postgresql:
     logging: *logging
-    image: docker.io/library/postgres:16-alpine
+    image: docker.io/library/postgres:18-alpine
     restart: unless-stopped
     env_file:
       - .env
