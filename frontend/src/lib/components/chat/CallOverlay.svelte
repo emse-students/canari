@@ -213,10 +213,6 @@
    * would read "speaker on" over a headset and the first tap would change nothing audible.
    */
   let routedSpeaker = $state<boolean | null>(null);
-  /** What the toggle shows and inverts: the applied route when known, else the asked one. */
-  let speakerShown = $derived(
-    androidRouteAvailable && routedSpeaker !== null ? routedSpeaker : isSpeakerOn
-  );
   let speakerSupported = $derived(
     typeof navigator !== 'undefined' &&
       'mediaDevices' in navigator &&
@@ -236,6 +232,10 @@
    */
   let androidRouteAvailable = $state(true);
   let speakerDisabled = $derived(isAndroidTauriRuntime() && !androidRouteAvailable);
+  /** What the toggle shows and inverts: the applied route when known, else the asked one. */
+  let speakerShown = $derived(
+    androidRouteAvailable && routedSpeaker !== null ? routedSpeaker : isSpeakerOn
+  );
 
   /**
    * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
