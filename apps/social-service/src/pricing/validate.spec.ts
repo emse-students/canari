@@ -62,6 +62,40 @@ describe('criteria validation', () => {
     });
   });
 
+  // Owner, 2026-10-30: "ne detient pas", validated exactly as "detient" is.
+  describe('a cotisation criterion NOT held', () => {
+    const tiered: CriteriaContext = { tierKeys: [null, 'bde'], questions: new Map() };
+    const parse = (raw: unknown, c: CriteriaContext = tiered) =>
+      parseAudienceCondition(raw, c, 'submitCondition');
+
+    it('accepts a tier the association sells, and anyTier', () => {
+      expect(parse({ notCotisation: { variantKeys: ['bde', null] } })).toEqual({
+        notCotisation: { variantKeys: ['bde', null] },
+      });
+      expect(parse({ notCotisation: { anyTier: true } })).toEqual({
+        notCotisation: { anyTier: true },
+      });
+    });
+
+    it('refuses a tier the association does not sell, and an empty list', () => {
+      expect(() => parse({ notCotisation: { variantKeys: ['nope'] } })).toThrow(
+        BadRequestException
+      );
+      expect(() => parse({ notCotisation: { variantKeys: [] } })).toThrow(BadRequestException);
+    });
+
+    it('refuses it on an association with no cotisation', () => {
+      expect(() => parse({ notCotisation: { anyTier: true } }, ctx)).toThrow(BadRequestException);
+    });
+
+    // One criterion, one mode: the pair is a contradiction or a roundabout spelling of one side.
+    it('refuses it beside a cotisation that must be held', () => {
+      expect(() =>
+        parse({ cotisation: { anyTier: true }, notCotisation: { variantKeys: ['bde'] } })
+      ).toThrow(/both as held and as not held/);
+    });
+  });
+
   // The dimension path shares the promo parser, so the bound cannot be bypassed by pricing on it.
   describe('a promo dimension of the grid', () => {
     const matrix = (values: number[]) => ({

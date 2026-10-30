@@ -71,11 +71,11 @@ import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
-  matchesCondition,
   needsProfile,
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
+import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
   pricedQuestionIds,
   pricingViewFor,
@@ -465,10 +465,18 @@ export class FormsService {
 
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
   private assertMaySubmit(form: Form, facts: PricingFacts): void {
-    if (!form.submitCondition) return;
-    if (matchesCondition(form.submitCondition, facts)) return;
-    this.logger.debug(`[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)}`);
-    throw new ForbiddenException('This form is not open to you.');
+    const code = submitRefusalCode(form.submitCondition, facts);
+    if (code === null) return;
+    this.logger.debug(
+      `[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)} code=${code}`
+    );
+    throw new ForbiddenException({
+      code,
+      message:
+        code === FORM_COTISATION_HELD
+          ? 'This form is for people who do not hold this cotisation, and you already hold it.'
+          : 'This form is not open to you.',
+    });
   }
 
   /**
@@ -1115,6 +1123,12 @@ export class FormsService {
     /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
     hiddenItemIds: string[];
     maySubmit: boolean;
+    /**
+     * Why `submitCondition` excludes this person, typed - the code `submit` would refuse them with -
+     * or null. `maySubmit` stays the answer an older client reads; this only lets a newer one say
+     * WHY (`FORM_COTISATION_HELD`: they already hold the cotisation the form is for people without).
+     */
+    refusalCode: SubmitRefusalCode | null;
   }> {
     const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
@@ -1124,6 +1138,7 @@ export class FormsService {
         pricing: null,
         hiddenItemIds: [],
         maySubmit: false,
+        refusalCode: null,
       };
 
     // Check global capacity independently of per-user state
@@ -1139,15 +1154,15 @@ export class FormsService {
     // is reported the same way rather than shown as a form with no price.
     const noCombinationAvailable =
       !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
-    const maySubmit =
-      (!form.submitCondition || matchesCondition(form.submitCondition, facts)) &&
-      !noCombinationAvailable;
+    // The same classification `submit` refuses with, so the page and the 403 are one fact.
+    const refusalCode = submitRefusalCode(form.submitCondition, facts);
+    const maySubmit = refusalCode === null && !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
 
     if (form.allowMultipleSubmissions)
-      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };
+      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit, refusalCode };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
     // registry that knows no answer. The status is always `free`: an anonymous form takes no money.
@@ -1160,6 +1175,7 @@ export class FormsService {
         pricing,
         hiddenItemIds,
         maySubmit,
+        refusalCode,
       };
     }
 
@@ -1186,6 +1202,7 @@ export class FormsService {
       pricing,
       hiddenItemIds,
       maySubmit,
+      refusalCode,
     };
   }
 

@@ -64,7 +64,7 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { FORM_COTISATION_HELD, providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -97,6 +97,11 @@
   let hiddenItemIds = $state<string[]>([]);
   /** False when a `submitCondition` excludes them from the form entirely. */
   let maySubmit = $state(true);
+  /**
+   * True when what excludes them is a cotisation they already hold and the form is for people
+   * without it - typed by the server (`refusalCode`), so the notice says so instead of "not for you".
+   */
+  let cotisationHeld = $state(false);
   let submitting = $state(false);
   let loading = $state(true);
   let error = $state('');
@@ -242,12 +247,14 @@
         pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
+        refusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
       pricing = view;
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
+      cotisationHeld = refusalCode === FORM_COTISATION_HELD;
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
         void settlePendingPayment(submission.submissionId);
@@ -610,8 +617,14 @@
         >
           <Lock size={20} />
         </div>
-        <p class="text-text-main text-sm font-bold">{m.form_view_not_open_to_you_title()}</p>
-        <p class="text-text-muted mt-1 text-xs">{m.form_view_not_open_to_you_desc()}</p>
+        <p class="text-text-main text-sm font-bold">
+          {cotisationHeld
+            ? m.form_view_cotisation_held_title()
+            : m.form_view_not_open_to_you_title()}
+        </p>
+        <p class="text-text-muted mt-1 text-xs">
+          {cotisationHeld ? m.form_view_cotisation_held_desc() : m.form_view_not_open_to_you_desc()}
+        </p>
       </div>
     {/if}
 
@@ -753,7 +766,9 @@
         {:else if submitted}
           <Check size={16} class="mr-1.5" />{m.form_view_sent()}
         {:else if !maySubmit}
-          {m.form_view_not_open_to_you_title()}
+          {cotisationHeld
+            ? m.form_view_cotisation_held_title()
+            : m.form_view_not_open_to_you_title()}
         {:else if priceUnavailable}
           {m.form_view_combination_closed_title()}
         {:else if formFull}

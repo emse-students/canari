@@ -341,6 +341,35 @@ refuses it (`parseAudienceCondition`), but that refusal is a developer sentence 
 not what a manager should read for having flipped a switch and stopped. So `forms/audience.ts`
 catches it before the request, naming the form or the question it belongs to.
 
+### A cotisation NOT held: `notCotisation` (owner, 2026-10-30)
+
+A form, or one question, can be reserved to people who do **not** hold a given cotisation - the
+creator picks the tier ("BDE" in a `dated` association is this academic year's tag, so "not
+BDE 2026-2027"), and nobody pays it twice. The editor's cotisation criterion has a mode, "Detient la
+cotisation" / "Ne detient pas la cotisation" (`cotisationModeOf` / `withCotisationMode` in
+`frontend/src/lib/forms/audience.ts`); the tiers ticked are kept when the mode flips.
+
+- **Its own key, `notCotisation`, same shape as `cotisation`** (`anyTier` = holds no tier of the
+  association at all). Not a `negate` flag inside `cotisation`: a 1.5.1 editor rebuilds
+  `cotisation` from its checkboxes and would DROP the flag, silently turning "not a cotisant" into
+  "cotisant"; it spreads an unknown key through untouched. `parseAudienceCondition` refuses the two
+  keys together - one criterion, one mode - and validates the tiers exactly as for `cotisation`.
+- **The server is the only judge, as for every profile criterion.** No client evaluates promo,
+  formation or cotisation: `GET /forms/:id/check` answers `maySubmit` and `hiddenItemIds`, so a 1.5.1
+  client shows a holder the form as closed and the question as hidden without knowing the key exists.
+- **The refusal is typed** (`forms/submit-refusal.ts`): `submit` and the file upload answer
+  `403 { code: 'FORM_COTISATION_HELD' }` to a holder, `403 { code: 'FORM_NOT_OPEN_TO_YOU' }` for any
+  other failed criterion. `failedCriterion` (`pricing/audience.ts`) names the criterion that failed,
+  `notCotisation` first, and `matchesCondition` is `failedCriterion(...) === null`. The check carries
+  the same code as `refusalCode`, which is how the fill page says "Vous detenez deja cette cotisation"
+  rather than "Ce formulaire ne vous est pas destine".
+- **Old forms are unchanged**: an absent key is no constraint, and no stored row carries it.
+- Booking spaces share the editor and the predicate, so a space's audience gets the mode too.
+
+Tests: `pricing/audience.spec.ts`, `pricing/validate.spec.ts`, `forms/submit-refusal.spec.ts`,
+`forms/forms.service.matrix.spec.ts` ("a form for people who do NOT hold a cotisation"),
+`frontend/src/lib/forms/audience.test.ts`.
+
 ## Cotisations: a form names a TIER, never a tag
 
 This is the rule the whole cotisation surface turns on, and it is the one thing to read before

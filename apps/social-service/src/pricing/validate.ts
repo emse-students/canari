@@ -120,6 +120,21 @@ function assertSellsCotisation(ctx: CriteriaContext, where: string): void {
   }
 }
 
+/**
+ * A cotisation criterion, held (`cotisation`) or not held (`notCotisation`): one shape, one check,
+ * so the two modes cannot come to accept different tiers.
+ */
+function parseCotisationCriterion(
+  raw: unknown,
+  ctx: CriteriaContext,
+  where: string
+): NonNullable<AudienceCondition['cotisation']> {
+  const c = asRecord(raw, where);
+  assertSellsCotisation(ctx, where);
+  if (c.anyTier === true) return { anyTier: true };
+  return { variantKeys: asTierKeys(c.variantKeys, `${where}.variantKeys`, ctx) };
+}
+
 /** Validates and normalises one condition - a question's visibility, or who may submit. */
 export function parseAudienceCondition(
   raw: unknown,
@@ -129,14 +144,23 @@ export function parseAudienceCondition(
   const doc = asRecord(raw, where);
   const condition: AudienceCondition = {};
 
+  // One cotisation criterion per condition, held OR not held. Both at once is either a contradiction
+  // (`anyTier` on one side matches nobody) or a roundabout spelling of one of them, and the editor
+  // offers a single mode - so a pair it could not show is refused rather than stored.
+  if (doc.cotisation !== undefined && doc.notCotisation !== undefined) {
+    throw new BadRequestException(
+      `${where} names a cotisation both as held and as not held: keep one of the two.`
+    );
+  }
   if (doc.cotisation !== undefined) {
-    const c = asRecord(doc.cotisation, `${where}.cotisation`);
-    assertSellsCotisation(ctx, `${where}.cotisation`);
-    if (c.anyTier === true) condition.cotisation = { anyTier: true };
-    else
-      condition.cotisation = {
-        variantKeys: asTierKeys(c.variantKeys, `${where}.cotisation.variantKeys`, ctx),
-      };
+    condition.cotisation = parseCotisationCriterion(doc.cotisation, ctx, `${where}.cotisation`);
+  }
+  if (doc.notCotisation !== undefined) {
+    condition.notCotisation = parseCotisationCriterion(
+      doc.notCotisation,
+      ctx,
+      `${where}.notCotisation`
+    );
   }
   if (doc.promo !== undefined) {
     const p = asRecord(doc.promo, `${where}.promo`);
