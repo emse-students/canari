@@ -1398,7 +1398,7 @@
   "chat_dm_settings_label": "Paramètres de la discussion",
   "chat_settings_title": "Paramètres",
   "chat_e2e_established_preview": "Canal E2E établi.",
-  "chat_waiting_own_device_key": "En attente d'ajout. Clé de cet appareil : {fingerprint} - un membre à qui l'on demande de l'ajouter voit la même clé.",
+  "chat_waiting_own_device_key": "En attente d'ajout. Clé de cet appareil : {fingerprint}. Ouvrez cette conversation sur un autre de vos appareils déjà dedans, ou demandez à un autre membre de l'ouvrir : vérifiez que la clé affichée est la même, puis touchez Ajouter.",
   "chat_awaiting_admission_preview": "En attente qu'un membre vous ajoute.",
   "chat_unread_messages_label": [
     {

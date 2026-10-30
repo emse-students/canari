@@ -1,6 +1,5 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import PinAccountField from './PinAccountField.svelte';
   import { LoaderCircle, TriangleAlert, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
@@ -25,8 +24,6 @@
      * (to decrypt this device) plus the NEW account PIN to recover their messages.
      */
     variant?: 'change' | 'recover';
-    /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
-    account?: string;
   }
 
   let {
@@ -37,7 +34,6 @@
     isLoading = false,
     loadingProgress = null,
     variant = 'change',
-    account = '',
   }: Props = $props();
 
   const isRecover = $derived(variant === 'recover');
@@ -135,7 +131,6 @@
 
 <Modal {open} {title} {onClose} footerEdge>
   <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-5 p-1">
-    <PinAccountField {account} />
     <div class="border-cn-yellow/30 bg-cn-yellow/10 rounded-xl border px-4 py-3">
       {#if isRecover}
         <p class="text-text-muted text-sm leading-relaxed">
@@ -163,7 +158,7 @@
       <input
         id="current-pin"
         type="password"
-        autocomplete="current-password"
+        autocomplete="one-time-code"
         bind:value={currentPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}
@@ -177,7 +172,7 @@
       <input
         id="new-pin"
         type="password"
-        autocomplete="new-password"
+        autocomplete="one-time-code"
         bind:value={newPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}
@@ -193,7 +188,7 @@
       <input
         id="confirm-pin"
         type="password"
-        autocomplete="new-password"
+        autocomplete="one-time-code"
         bind:value={confirmPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}

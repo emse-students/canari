@@ -2229,7 +2229,6 @@
       ? m.auth_pin_reset_withheld_key_unreadable()
       : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
-  account={globalSession.userId}
 />
 
 <!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->
@@ -2244,7 +2243,6 @@
   externalError={recoverError}
   isLoading={recoverLoading}
   loadingProgress={recoverProgress}
-  account={globalSession.userId}
 />
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}
