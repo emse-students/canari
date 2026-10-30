@@ -115,4 +115,29 @@ describe('SpaceList - the poster as a thumbnail', () => {
     expect(link.getAttribute('href')).toBe('/bookings/spaces/a');
     expect(link.textContent).toContain('Espace a');
   });
+
+  it('shows a search from four spaces and narrows by name or association', async () => {
+    await open([
+      space('a', false),
+      { ...space('b', false), name: 'Studio', associationName: 'Radio' },
+      space('c', false),
+      space('d', false),
+    ]);
+    const input = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    expect(input).not.toBeNull();
+    input.value = 'radio';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    await tick();
+    expect(document.querySelectorAll('a[data-hub-row]')).toHaveLength(1);
+    expect(document.querySelector('a[data-hub-row="b"]')).not.toBeNull();
+  });
+
+  it('draws no search for a short list, and names the way into each space', async () => {
+    await open([space('a', false)]);
+    expect(document.querySelector('input[type="search"]')).toBeNull();
+    expect(document.querySelector('a[data-hub-row="a"]')!.textContent).toContain(
+      m.bookings_space_open_planning()
+    );
+  });
 });
