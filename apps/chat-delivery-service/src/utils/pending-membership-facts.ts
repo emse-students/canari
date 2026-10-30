@@ -31,7 +31,8 @@ export function addInFlightOf(facts: PendingMembershipFacts, groupId: string): b
 
 /**
  * Reads {@link PendingMembershipFacts} for `deviceId` over `pendingGroupIds`, in two round trips
- * for the whole set - never one per row.
+ * for the whole set - never one per row - and in a fixed order: the add locks, then the queued
+ * Welcomes (the reason is at the reads).
  *
  * ONE IMPLEMENTATION, BECAUSE TWO ENDPOINTS CARRY THE ANSWER. `GET mls/device-memberships` asks it
  * for a device's whole membership set, and `GET mls/users/:userId/groups` asks it for the rows it
@@ -56,25 +57,39 @@ export async function readPendingMembershipFacts(
   const locked = new Set<string>();
   if (pendingGroupIds.length === 0) return { welcomed, locked, lockUnread: false };
 
+  // THE LOCK FIRST, THE QUEUE SECOND - the order is what makes the two reads one answer. An Add
+  // queues its Welcome and only THEN releases the lock. Read the other way round, a queue read made
+  // before the Welcome is inserted and a lock read made after the release both answer "nothing", and
+  // a seat an Add has just written reads as one nothing follows - the device joins over the Add
+  // (channel-encryption section 20). Read in this order:
+  //  - the lock is seen held: an Add is in flight, whatever the queue says;
+  //  - the lock is seen free: any Add whose seat the caller already read had queued its Welcome
+  //    before releasing, so the queue read that follows sees it - unless the device already took it.
+  //    A Welcome it installed leaves the group held (the client's join stands down under its MLS
+  //    lock); one whose install failed was ACKed, and a seat nothing follows is then the truth;
+  //  - an Add that takes the lock after this read wrote no seat the caller read, and is not in the
+  //    base it read either: the commit gate takes exactly one of the two commits built on that epoch.
+  //
+  // `mget` answers null per absent key, so a group nobody is adding into costs nothing.
+  let lockUnread = false;
+  try {
+    const held = await redis.mget(pendingGroupIds.map(addLockKey));
+    pendingGroupIds.forEach((g, i) => {
+      if (held[i] !== null && held[i] !== undefined) locked.add(g);
+    });
+  } catch (e) {
+    logger.warn(
+      `[PENDING_FACTS] device=${deviceId} add-lock read failed (${String(e).slice(0, 120)}) - ` +
+        `answering addInFlight=unknown for ${pendingGroupIds.length} group(s)`
+    );
+    lockUnread = true;
+  }
+
   const queued = await queuedMessageRepo.find({
     select: { groupId: true },
     where: { deviceId, isWelcome: true, groupId: In(pendingGroupIds) },
   });
   for (const q of queued) if (q.groupId) welcomed.add(q.groupId);
 
-  // `mget` answers null per absent key, so a group nobody is adding into costs nothing.
-  let held: (string | null)[];
-  try {
-    held = await redis.mget(pendingGroupIds.map(addLockKey));
-  } catch (e) {
-    logger.warn(
-      `[PENDING_FACTS] device=${deviceId} add-lock read failed (${String(e).slice(0, 120)}) - ` +
-        `answering addInFlight=unknown for ${pendingGroupIds.length} group(s)`
-    );
-    return { welcomed, locked, lockUnread: true };
-  }
-  pendingGroupIds.forEach((g, i) => {
-    if (held[i] !== null && held[i] !== undefined) locked.add(g);
-  });
-  return { welcomed, locked, lockUnread: false };
+  return { welcomed, locked, lockUnread };
 }

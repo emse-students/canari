@@ -10,7 +10,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
-import type { WelcomeOwedReading } from '$lib/utils/chat/welcomeOwed';
+import type { OwedWelcomeReading } from '$lib/utils/chat/welcomeOwed';
 import type {
   AdmitRefusalReason,
   GroupExclusions,
@@ -163,7 +163,7 @@ export type ExternalJoinOutcome =
    * Building on that base would write this device's leaf a second time over the Add that base
    * carries (channel-encryption section 20).
    */
-  | { joined: false; reason: 'welcome_owed'; reading: WelcomeOwedReading }
+  | { joined: false; reason: 'welcome_owed'; reading: OwedWelcomeReading }
   /**
    * NOT ATTEMPTED (`welcomeOwed: 'ask'`): the base came WITHOUT a seat this device can read - the
    * server did not serve one, or the add lock could not be read. Not a statement that a Welcome is

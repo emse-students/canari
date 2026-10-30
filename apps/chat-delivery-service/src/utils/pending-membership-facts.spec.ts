@@ -35,4 +35,41 @@ describe('readPendingMembershipFacts - the add lock', () => {
     expect(facts.welcomed.has('g-2')).toBe(true);
     expect(logger.warn.mock.calls.flat().join(' ')).toContain('addInFlight=unknown');
   });
+
+  /**
+   * THE LOCK IS READ BEFORE THE QUEUE. An Add queues its Welcome, then releases its lock; a queue
+   * read before the insert and a lock read after the release would both answer "nothing" for a seat
+   * the Add has just written. This replays that interleaving: the Welcome lands and the lock goes
+   * between the two reads.
+   */
+  it('reads the add lock before the queued Welcomes, so an Add finishing between them is seen', async () => {
+    // The admitter holds the lock with no Welcome queued yet, and finishes (queues its Welcome, then
+    // releases the lock) right after whichever read comes first.
+    const order: string[] = [];
+    let addFinished = false;
+    const afterRead = (what: string) => {
+      order.push(what);
+      addFinished = true;
+    };
+    const redis = {
+      mget: jest.fn(async () => {
+        const held = addFinished ? null : 'u:d#t';
+        afterRead('lock');
+        return [held];
+      }),
+    };
+    const queue = {
+      find: jest.fn(async () => {
+        const rows = addFinished ? [{ groupId: 'g-1' } as QueuedMessage] : [];
+        afterRead('queue');
+        return rows;
+      }),
+    };
+
+    const facts = await readPendingMembershipFacts(queue, redis, 'web-1', ['g-1'], logger);
+
+    expect(order).toEqual(['lock', 'queue']);
+    // Read queue-first, both reads would answer "nothing" here: a seat nothing follows.
+    expect(addInFlightOf(facts, 'g-1') === true || facts.welcomed.has('g-1')).toBe(true);
+  });
 });

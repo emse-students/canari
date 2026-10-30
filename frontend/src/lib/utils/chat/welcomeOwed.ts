@@ -43,8 +43,11 @@ export type WelcomeOwedReading =
   | 'unhonoured-seat'
   | 'not-pending';
 
+/** The readings in which somebody else's Welcome is the door - what {@link isWelcomeOwed} narrows to. */
+export type OwedWelcomeReading = Extract<WelcomeOwedReading, 'welcome-queued' | 'add-in-flight'>;
+
 /** The readings in which somebody else's Welcome is the door, so the device joins nothing itself. */
-export function isWelcomeOwed(reading: WelcomeOwedReading): boolean {
+export function isWelcomeOwed(reading: WelcomeOwedReading): reading is OwedWelcomeReading {
   return reading === 'welcome-queued' || reading === 'add-in-flight';
 }
 

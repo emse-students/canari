@@ -3274,6 +3274,26 @@ in review before merging. The idempotent drop stays as the witness that would sh
 The loader's own pre-read on a held-but-evicted group went the same way: it forgets the dead tree
 and lets the join's served seat decide, so an owed Welcome installs on a group no longer held.
 
+**The two facts of a `pending` seat are read lock first, queue second** (`readPendingMembershipFacts`).
+An Add queues its Welcome and only then releases the add lock. Read queue-first, a queue read made
+before the insert and a lock read made after the release both answer "nothing", and the seat an Add
+has just written reads as one nothing follows. Read lock-first, a lock seen free means any Add whose
+seat was read had already queued its Welcome, which the queue read then sees. The exception is a
+Welcome the device already took: installed, the group is held; failed and ACKed, a seat nothing
+follows is the truth. An add lock Redis could not read is served as unknown (`addInFlight` absent),
+never `false`.
+
+**`admittedAtEpoch` is not served in the seat, deliberately.** It is written in the epoch advance's
+own transaction, so it would close the window without any read order. But nothing clears it when the
+Welcome's install fails and the Welcome is ACKed. A seat carrying it would then read as owed forever,
+and the device would wait for a Welcome already spent: the failed-install strand.
+
+**The client and the server ship together.** A client from this change reads a base served without
+`seat` as `seat_unreadable` and joins nothing, on purpose, because "no answer" is never "nothing
+owed". So social-service, chat-delivery and the frontend go out in ONE release. A server rolled back
+under a newer client strands every key-group external join (`seat_unreadable` on each attempt) until
+the server serves `seat` again.
+
 **When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
 The first run measured the losing side: the newcomer's two live web clients joined by their own
 external commits in the second the Add was built, the Add was refused, and the admitter gave up - so

@@ -38,6 +38,7 @@ import { ADMITTED_SEAT } from '../utils/group-membership';
 import {
   sanitizeAccountUserId,
   sanitizeIdentityValue,
+  sanitizeOptionalQueryValue,
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
@@ -494,7 +495,7 @@ export class InternalController {
     // transaction, and holds the add lock until its Welcomes are queued; so a base that already
     // carries an Add is answered with that Add's seat (`welcomeQueued` or `addInFlight`), and a
     // joiner never builds on it as if nobody owed it a Welcome (channel-encryption section 20).
-    const askingDevice = String(deviceId ?? '').trim();
+    const askingDevice = sanitizeOptionalQueryValue(deviceId, 'deviceId');
     const seat =
       asked && askingDevice && rows
         ? await this.distributionSeatOf(group.id, askingDevice, rows)
