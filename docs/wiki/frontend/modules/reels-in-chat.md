@@ -505,7 +505,7 @@ are for one engineer including tests, in days.
 | RC-11 | *Later*: prepare while the member reviews | measured battery cost on discarded takes | 1.5 | RC-5 |
 | **RC-12** | **The "Envoyer à..." sheet** (15.1, 15.8): the tab's review action, `ReelSendSheet` with "Publier sur CanaReels" first, the list source and its permission filter, the search, multi-select and the server's target cap, the hand-over to `ReelPublishSheet` when the feed row is ticked, i18n, accessibility | component tests: the feed row is first and alone reproduces today's path byte for byte; a read-only or muted salon is not listed; the cap; Back returns to the take; a press writes ONE take and N sends (asserted on the outbox fake) | 3 | RC-13 (to send); RC-8 for the salon rows |
 | **RC-13** | **The multi-target outbox** (15.2, 15.7): the take row and N send rows written in one transaction, the take withdrawn when no send names it (durable reference, no counter), per-send failure and retry, the "expired before it was sent" refusal, the sent-take record and "Supprimer partout", the encoder lease shared with `publishReel`; the take ADOPTING the publish step's upload (`awaitsPublish`, the ref written before the post, the chat hold before the first send - 15.5); **RC-5's single-target entry becomes the one-send case** (one path) | the RC-5 kill-at-each-stage suite re-run with 3 sends, plus: a kill between the take and its sends (impossible by the transaction, asserted), one send refused for good while two go, a cancel of one send keeps the take, the last cancel releases the session and deletes the blob, a send held past its hint fails for good; feed + chats: ONE upload on the fake server, a post refused after the upload still sends the chats, a publish step left before its upload makes the take upload its own | 5 | RC-5, RC-14 |
-| **RC-14** | **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**a migration: the owner's yes**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
+| **RC-14** | **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**an additive migration, APPROVED by the owner 2026-10-30**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
 **Total for the first usable version (RC-0 to RC-9): about 21-23 engineer-days; send-to-many
 (RC-12 to RC-14 and the RC-6/RC-9 amendments) adds about 15.** The ordering puts the
 two server/contract packages (RC-1, RC-2) first because everything else is blind without them, and the
@@ -595,6 +595,9 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
 | D-sendto | What the camera TAB does after a take | **The review's main button is "Envoyer à..."**: a list whose FIRST row is "Publier sur CanaReels" (Snapchat's "My Story"), then conversations, groups and community salons, with a search; **several targets ticked and sent at once** | the owner, 2026-10-30 | section 15; the tab's "Suivant" ([reels](reels.md#publishing-r3-on-c2-and-c3)) |
 | D-oneblob | Storage of a take sent to several conversations | **ONE shared file for every chat target**: one upload, one content key carried in each conversation's encrypted message - chosen knowing that a moderator's deletion then erases it everywhere | the owner, 2026-10-30 | 2.2 and 2.3: "one blob, one conversation" (section 15) |
 | D-onefile | A take published on CanaReels AND sent to conversations | **ONE stored file**, verbatim: *"Un seul fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"* - reference-counted holds, the feed profile and the post's key for the chat copies (no E2E secrecy for them) | the owner, 2026-10-30 | the design's recommendation of two files (15.5) |
+| D-delete-one | "Supprimer pour tout le monde" on a take sent to several conversations | **That conversation's message only**, and the file only when it was the take's last send; **"Supprimer partout" is a separate action, offered on the sending device** | the owner, 2026-10-30 (the recommended option, Q2) | 15.7 |
+| D-postdelete | The author deletes the feed post of a take also sent to chats | **The chat copies stay until their 30 days**: the delete releases the post's hold only; "Supprimer partout" remains the gesture that ends everything | the owner, 2026-10-30 (the recommended option, Q4) | 15.7 |
+| D-photo | A PHOTO taken in the camera tab | **Also goes through "Envoyer à..."**: an ordinary post and/or ordinary images in the chats | the owner, 2026-10-30 (the recommended option, Q3) | 15.1; the tab's photo publish step |
 
 **What the save button changes elsewhere.** Forwarding stays not offered (it copies the `MediaRef`,
 so the CEK). A save writes the DECRYPTED video to the gallery through the plugin that already saves a
@@ -609,10 +612,8 @@ the member's, outside the app.
 | D10 | View once for DMs (best-effort), and when | later, after the plain reel message has run for a release; D-view rules it out for now |
 | - | The 60 s encode time and real sizes at the decided profile | unmeasured, owed to RC-0 on both phones |
 | - | The salon media-download access rule (2.3) | owed to RC-0 |
-| Q1 | A take published to the feed AND sent to chats: one blob or two | **ANSWERED by the owner 2026-10-30: ONE file** (*"Un seul fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"*), designed in 15.3 and 15.5 |
-| Q4 | The author's delete of the feed post: does it erase the chat copies? | **owed to the owner**; recommended no (15.7) |
-| Q2 | "Supprimer pour tout le monde" on a take sent to several conversations | **owed to the owner**; recommended: that conversation only, plus "Supprimer partout" on the sending device (15.7) |
-| Q3 | A PHOTO taken in the tab: the same "Envoyer à..." sheet | **owed to the owner**; recommended yes (15.1) |
+| Q1-Q4 | The four questions of section 15 | **ALL ANSWERED by the owner on 2026-10-30**, now decisions D-onefile, D-delete-one, D-postdelete and D-photo in 9.1 |
+| M1 | Migration: the salon message row declares the reel's `mediaId` (15.4, RC-14) | **APPROVED by the owner on 2026-10-30** ("Oui"), additive: a nullable column on `channel_messages` |
 
 **Not decided here, deliberately:** live streaming (C9, behind the calls revival); stories (C8:
 "not now"); and anything that would make the published reel a conversation attachment.
@@ -840,6 +841,11 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
 - **And ONE file for the feed and the chats too** (Q1, answered the same day), verbatim: *"Un seul
   fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"*. A take published
   on CanaReels AND sent to conversations is ONE stored file (15.5).
+- **And, the same day, the recommended option each time**: "Supprimer pour tout le monde" deletes one
+  conversation's message (the file only with the last send), "Supprimer partout" is separate, on the
+  sending device; the author's post delete leaves the chat copies their 30 days; a photo from the tab
+  goes through "Envoyer à..." too (15.7, 15.1). **The salon `mediaId` migration is APPROVED** (15.4).
+  Every question of 15.9 is answered.
 
 **What this breaks in the sections above, on purpose.** Until now a reel message was filmed inside
 ONE conversation (section 1) and its blob served that conversation alone: 2.2 and media-service
@@ -876,11 +882,13 @@ Nothing here changes the wire contract of RC-1: each target receives an ordinary
   composer's camera does not.
 - **No caption on the chat sends in v1** (RC-5 has none; section 14). The feed caption is the
   publish step's.
-- **A photo taken in the tab** (Q3): recommended the same sheet. The first row then publishes an
-  ordinary post (the photo rule of [reels](reels.md#one-shutter-and-a-capture-that-is-the-preview-2026-10-05)),
-  each chat target gets an ordinary image message (D6), one upload under the `ephemeral` class - a
-  photo already reaches several conversations through one blob whenever it is forwarded, so nothing
-  new is asked of the server. Until the owner answers, a photo keeps today's publish step.
+- **A photo taken in the tab goes through the same sheet** (D-photo, the owner, 2026-10-30). The
+  first row then publishes an ordinary post (the photo rule of [reels](reels.md#one-shutter-and-a-capture-that-is-the-preview-2026-10-05)),
+  each chat target gets an ordinary image message (D6). Chats only: one upload under the `ephemeral`
+  class - a photo already reaches several conversations through one blob whenever it is forwarded,
+  so nothing new is asked of the server. Post AND chats: one file as for a video (D-onefile, 15.5,
+  the post's key included), held by the post and by the chats under the holds of 15.3, which RC-14
+  extends to a post photo's class.
 
 ### 15.2 The outbox: one take, N sends
 
@@ -984,8 +992,9 @@ that:
 **The purge allowlist still names one salon.** RC-8's `chat-reel-purge { mediaId, ownerId: <author> }`
 (2.3) proves the OWNER; with a shared blob it must also prove that the moderator's salon cites it.
 Social-service cannot read a Graine body, so the salon send DECLARES the reel's `mediaId` beside its
-ciphertext, on its `channel_messages` row (a nullable column: a migration, the owner's yes). The
-purge is allowed when ALL hold:
+ciphertext, on its `channel_messages` row. **That is an additive migration (a nullable column),
+APPROVED by the owner on 2026-10-30** ("Oui", to "the salon message row records the reel's `mediaId`
+so a moderator only deletes what is in their salon"; M1 in 15.9). The purge is allowed when ALL hold:
 
 1. the caller holds the moderation permission in the salon of that row;
 2. the row declares that `mediaId`;
@@ -1068,12 +1077,13 @@ one stored file instead of two.
   from conversations - which it learns of a published reel anyway, minus the fact that those fetches
   came from a chat.
 
-### 15.7 The sender's delete: one message, or the blob everywhere (Q2)
+### 15.7 The sender's delete: one message, or the file everywhere (decided 2026-10-30)
 
 Two different acts. Deleting a MESSAGE is the existing "Supprimer pour tout le monde" control event
-in one conversation; deleting the BLOB is `DELETE /api/media/chat-reel/:id`. RC-2's justification
+in one conversation; deleting the FILE is `DELETE /api/media/chat-reel/:id`. RC-2's justification
 for the owner's delete now reads "no other PERSON's message cites the blob": every citation is the
-sender's own fan-out. Recommended:
+sender's own fan-out. **Decided by the owner on 2026-10-30, the recommended option each time
+(D-delete-one, D-postdelete):**
 
 - **"Supprimer pour tout le monde" in one conversation deletes that message there.** The blob goes
   too only when it was the take's LAST live send this device knows of; a take sent to one
@@ -1088,10 +1098,9 @@ sender's own fan-out. Recommended:
   sibling list to the sender's other devices would need a self-sync channel that does not exist.
 - **The sender's `DELETE` releases the `chat` hold, not the file** (15.3): on a take also published,
   the post keeps it; on a chats-only take it was the only hold, so the file goes as today.
-- **The AUTHOR deleting the feed post leaves the chat copies playing** (Q4, recommended): it
-  releases the `post` hold only, and the file lives on for the messages until their 30 days. A post
-  delete is a statement about the FEED; a member who wants everything gone also uses "Supprimer
-  partout" on the sending device. The alternative - a post delete that erases the chats too - would
+- **The AUTHOR deleting the feed post leaves the chat copies in place until their 30 days**
+  (D-postdelete): it releases the `post` hold only. A post delete is a statement about the FEED;
+  "Supprimer partout" on the sending device remains the gesture that ends everything. The alternative - a post delete that erases the chats too - would
   turn the author's feed gesture into a purge of conversations the post screen does not show.
 
 ### 15.8 The sheet's list
@@ -1120,11 +1129,12 @@ sender's own fan-out. Recommended:
   `reel_sendto_failed_in`, `reel_sendto_cancel_all`, `reel_sendto_delete_everywhere`,
   `reel_sendto_same_as_post`, `reel_sendto_too_long_for_chats`, `reel_chat_purged`.
 
-### 15.9 Questions for the owner
+### 15.9 Questions for the owner - all answered 2026-10-30
 
-| # | Question | Recommended answer |
+| # | Question | Answer (the owner, 2026-10-30) |
 | --- | --- | --- |
-| Q1 | A take ticked for CanaReels AND for chats: one blob or two? | **ANSWERED 2026-10-30: one file** (15.5) |
-| Q4 | Does the author's delete of the feed post also erase the copies sent in chats? | **No**: it releases the post's hold; the chats keep it until their 30 days, and "Supprimer partout" is the gesture that ends them (15.7) |
-| Q2 | On a take sent to several conversations, does "Supprimer pour tout le monde" in one of them delete the video everywhere? | **No**: that conversation's message only (the blob too when it was the last), plus "Supprimer partout" offered on the device that sent it (15.7) |
-| Q3 | A PHOTO taken in the tab: the same "Envoyer à..." sheet (an ordinary post first, ordinary images to the chats)? | **Yes** (15.1): one camera, one sheet; a photo needs no new server rule |
+| Q1 | A take ticked for CanaReels AND for chats: one blob or two? | **One file** (D-onefile, 15.5) - against the design's recommendation of two |
+| Q2 | On a take sent to several conversations, does "Supprimer pour tout le monde" in one of them delete the video everywhere? | **No**: that conversation's message only (the file too when it was the last send), and "Supprimer partout" separately, on the sending device (D-delete-one, 15.7) |
+| Q3 | A PHOTO taken in the tab: the same "Envoyer à..." sheet? | **Yes**: an ordinary post and/or ordinary images in the chats (D-photo, 15.1) |
+| Q4 | Does the author's delete of the feed post also erase the copies sent in chats? | **No**: the chat copies stay until their 30 days; "Supprimer partout" remains the gesture that ends everything (D-postdelete, 15.7) |
+| M1 | The migration of 15.4: "the salon message row records the reel's `mediaId` so a moderator only deletes what is in their salon" | **"Oui" - APPROVED** (additive, a nullable column on `channel_messages`) |
