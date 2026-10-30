@@ -668,13 +668,14 @@ fn refuse_foreign_external_remove(
     let joiner_name = joiner.unwrap_or("<unreadable>");
     if removed.len() > 1 {
         log::error!(
-            "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name} \
+            "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name:?} \
              carries {} Remove proposals, and RFC 9420 allows at most one (the joiner's own prior \
              leaf) - nothing merged",
             removed.len()
         );
         return Err(MlsError::ForeignExternalRemove(format!(
-            "group={group_id} joiner={joiner_name} removes={}",
+            "group={group_id} removed_leaf={} removes={}",
+            removed[0].u32(),
             removed.len()
         )));
     }
@@ -689,17 +690,20 @@ fn refuse_foreign_external_remove(
     );
     if own_prior_leaf {
         log::debug!(
-            "[EXTERNAL_COMMIT] group {group_id}: {joiner_name} replaces its own prior leaf {index:?}"
+            "[EXTERNAL_COMMIT] group {group_id}: {joiner_name:?} replaces its own prior leaf {index:?}"
         );
         return Ok(());
     }
     log::error!(
-        "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name} \
+        "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name:?} \
          removes leaf {index:?} ({target:?}), which is not the joiner's own prior leaf \
          (RFC 9420 12.4.3.2) - nothing merged"
     );
+    // THE ERROR TEXT CARRIES NOTHING THE COMMITTER CHOSE: the identities are credential bytes it
+    // wrote, and the web classifies this text by substring (`classifyIncomingDecryptError`), so a
+    // credential spelling another marker would reclassify the refusal. They are in the ERROR above.
     Err(MlsError::ForeignExternalRemove(format!(
-        "group={group_id} joiner={joiner_name} removed_leaf={} removed={target:?}",
+        "group={group_id} removed_leaf={}",
         index.u32()
     )))
 }

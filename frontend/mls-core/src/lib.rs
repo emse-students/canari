@@ -185,6 +185,10 @@ pub enum MlsError {
     /// for [`MlsError::decrypt_kind`], and carrying that marker in its text for the two FFI
     /// boundaries that classify on it (`classifyIncomingDecryptError`), so it is ACKed and never
     /// queued or answered with a heal.
+    ///
+    /// The payload is `group=<id> removed_leaf=<n>` and nothing else: the identities are bytes the
+    /// committer chose, and a substring classifier reading them could be steered to another kind.
+    /// They go to the ERROR line only.
     #[error("FOREIGN_EXTERNAL_REMOVE: same-epoch refusal {0}")]
     ForeignExternalRemove(String),
 }

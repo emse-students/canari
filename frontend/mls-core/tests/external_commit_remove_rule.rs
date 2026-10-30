@@ -113,6 +113,51 @@ fn has(identities: &[String], identity: &str) -> bool {
     identities.iter().any(|i| i == identity)
 }
 
+/// Every marker `classifyIncomingDecryptError` (web) matches BEFORE `same-epoch refusal`, and the
+/// native gap wrapper: a refusal whose text carried one of them would be read as that kind instead.
+const EARLIER_MARKERS: [&str; 8] = [
+    "EVICTED:",
+    "CannotDecryptOwnMessage",
+    "SecretReuseError",
+    "out of memory",
+    "unreachable",
+    "TooDistantInTheFuture",
+    "past epoch application frame",
+    "GAP_QUEUED",
+];
+
+#[test]
+fn a_refusal_carries_no_committer_text_so_a_hostile_credential_cannot_reclassify_it() {
+    for hostile in [
+        "x:unreachable",
+        "EVICTED:x",
+        "x:out of memory SecretReuseError",
+    ] {
+        let gid = "g-hostile-credential";
+        let (mut alice, _carol, bob) = group(gid);
+        let info = alice.export_group_info(gid).expect("group info");
+        let commit = external_commit_presenting_key_of(&bob, hostile, &info);
+
+        let err = alice
+            .process_incoming_message(gid, &commit)
+            .expect_err("refused");
+        assert!(matches!(err, MlsError::ForeignExternalRemove(_)), "{err:?}");
+        assert_eq!(
+            err.decrypt_kind(),
+            mls_core::DecryptErrorKind::SameEpochRefusal
+        );
+        let text = err.to_string();
+        assert!(text.contains("same-epoch refusal"), "{text}");
+        for marker in EARLIER_MARKERS {
+            assert!(
+                !text.contains(marker),
+                "the refusal of a {hostile:?} credential reads {marker:?}: {text}"
+            );
+        }
+        assert!(!text.contains("bob:dev1"), "{text}");
+    }
+}
+
 #[test]
 fn an_external_commit_removing_another_members_leaf_is_refused_before_it_merges() {
     let gid = "g-foreign-remove";

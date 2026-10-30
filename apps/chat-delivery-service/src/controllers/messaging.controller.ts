@@ -76,9 +76,11 @@ export class MessagingController {
     if (refusal) {
       // ONE line, every caller-supplied value sanitised: the refusal is the event, and the response
       // body carries the code only.
-      this.logger.warn(
-        `[SEND] REJECT ${refusal.error} user=${sanitizeLogValue(caller)} ${refusal.detail}`
-      );
+      // A public handshake frame on the send route is no client's ordinary traffic - every sender
+      // seals application frames privately - so it is logged as the accusation it is.
+      const line = `[SEND] REJECT ${refusal.error} user=${sanitizeLogValue(caller)} ${refusal.detail}`;
+      if (refusal.error === 'public_frame_refused') this.logger.error(line);
+      else this.logger.warn(line);
       const response = { error: refusal.error, message: 'this send is not accepted' };
       throw refusal.status === 403
         ? new ForbiddenException(response)

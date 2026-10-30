@@ -2117,11 +2117,12 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
 
       it.each([
-        ['no stored base', null],
-        ['a base at another epoch', { groupId: 'group-1', baseEpoch: 2, groupInfo: OPENMLS_BASE }],
-      ])('refuses one whose removed leaf cannot be named: %s', async (_name, row) => {
-        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
-        storedBase(row);
+        ['no stored base', null, 1],
+        ['a base behind the commit', { groupId: 'group-1', baseEpoch: 0 }, 1],
+        ['a base ahead of a group still at the commit', { groupId: 'group-1', baseEpoch: 2 }, 1],
+      ])('refuses one whose removed leaf cannot be named: %s', async (_name, row, activeEpoch) => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch } });
+        storedBase(row && { ...row, groupInfo: OPENMLS_BASE });
         fanOut();
 
         await expect(atEpoch1(OPENMLS_RESYNC)).rejects.toMatchObject({
@@ -2129,6 +2130,30 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(transaction).not.toHaveBeenCalled();
       });
+
+      /**
+       * THE RACE A LEGITIMATE RESYNC LOSES: built on base 1, submitted after another commit moved
+       * the group and its base to 2. It is the epoch gate's to answer - `epoch_mismatch`, which the
+       * joiner retries on a fresh base - never a 403 that would end its retry.
+       */
+      it.each([
+        ['the resync', OPENMLS_RESYNC],
+        ['a Remove of another leaf', OPENMLS_FOREIGN_REMOVE],
+      ])(
+        'leaves %s built on a superseded base to the epoch gate, and nothing moves',
+        async (_name, proto) => {
+          tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 2 } });
+          storedBase({ groupId: 'group-1', baseEpoch: 2, groupInfo: OPENMLS_BASE });
+          const sent = fanOut();
+
+          await expect(atEpoch1(proto)).resolves.toMatchObject({
+            accepted: false,
+            reason: 'epoch_mismatch',
+            currentEpoch: 2,
+          });
+          expect(sent).not.toHaveBeenCalled();
+        }
+      );
 
       it('refuses one carrying more than one Remove', async () => {
         tables({ keyPackages: [ownKey], roster: [roster] });

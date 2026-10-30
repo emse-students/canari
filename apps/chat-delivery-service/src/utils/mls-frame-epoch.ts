@@ -142,6 +142,21 @@ export type CommitFrame =
       removedLeaves: number[];
     };
 
+/**
+ * Whether `protoBase64` is an MLS 1.0 `PublicMessage` (wire format 1) - a handshake frame in the
+ * clear, which in this estate is only ever an external commit.
+ *
+ * THE SEND ROUTES RELAY ONLY PRIVATE (APPLICATION) FRAMES; A PUBLIC HANDSHAKE FRAME GOES THROUGH THE
+ * COMMIT ROUTE. Every client sender seals through `create_message` in `mls-core`, and no group here
+ * sets a wire-format policy, so openmls's default `PURE_CIPHERTEXT` makes every application frame
+ * and proposal a `PrivateMessage`; external commits go to `POST /mls/commit`, where
+ * {@link readCommitFrame} and the gate read them. A public frame on a send route would reach
+ * members without that gate, so `clientSendRefusal` and the background send refuse it.
+ */
+export function isPublicMlsFrame(protoBase64: string): boolean {
+  return framedWireFormat(Buffer.from(protoBase64, 'base64')) === 1;
+}
+
 /** The wire format of a framed MLS 1.0 message - `PublicMessage` (1) or `PrivateMessage` (2) - or null. */
 function framedWireFormat(bytes: Buffer): 1 | 2 | null {
   // version mls10 = 1; wire_format public_message = 1, private_message = 2.
