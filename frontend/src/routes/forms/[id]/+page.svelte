@@ -108,7 +108,6 @@
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
-  let copiedLink = $state(false);
 
   // ── Submit bar: sits at the end by default, sticks for good once earned ─────
   /** Marks the bar's natural position - placed AFTER the bar (not before), so reaching it means
@@ -177,8 +176,6 @@
 
   function copyFormLink() {
     void copyPublicShareLink(formPath);
-    copiedLink = true;
-    setTimeout(() => (copiedLink = false), 2000);
   }
 
   onMount(async () => {
@@ -498,15 +495,9 @@
         <button
           type="button"
           onclick={copyFormLink}
-          class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors {copiedLink
-            ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
-            : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
+          class="text-text-muted hover:text-text-main hover:bg-cn-border/30 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors"
         >
-          {#if copiedLink}
-            <Check size={13} />{m.form_view_link_copied()}
-          {:else}
-            <Link size={13} />{m.form_view_share()}
-          {/if}
+          <Link size={13} />{m.form_view_share()}
         </button>
         <button
           type="button"

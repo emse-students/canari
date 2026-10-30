@@ -97,14 +97,11 @@
    * checkout on another screen, and on a phone the alternative is a long press, two drag handles
    * and the system menu - over a `break-all` string that wraps mid-token.
    *
-   * THE TOAST IS ONLY SHOWN WHEN THE WRITE HAPPENED. `writeText` refuses on an unfocused document
-   * and outside a secure context, and "Code copie" over an empty clipboard is the one outcome
-   * worse than no button: the student pastes the code they had before.
+   * THE CONFIRMATION IS ONLY SHOWN WHEN THE WRITE HAPPENED, which is `copyText`'s contract:
+   * "Code copie" over an empty clipboard is the one outcome worse than no button.
    */
   async function handleCopy(code: string) {
-    if (await copyText(code, 'partnership code')) {
-      showToast(m.shop_partnership_code_copied(), 'info');
-    }
+    await copyText(code, { what: 'code' });
   }
 
   async function handleClaim(card: PartnershipCard) {
