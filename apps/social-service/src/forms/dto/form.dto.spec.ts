@@ -75,6 +75,10 @@ describe('FormOptionDto.priceModifier is integer cents', () => {
     // The failure is reported on the nested `options` property of the item.
     expect(failedProps(buildItemWithOption(2.5))).toEqual(['options']);
   });
+
+  it('rejects a negative value - the service ignores it, so it would be a phantom discount', () => {
+    expect(failedProps(buildItemWithOption(-100))).toEqual(['options']);
+  });
 });
 
 /**
