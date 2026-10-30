@@ -1,4 +1,5 @@
 import { HISTORY_BATCH_MAX_GROUPS, MlsDeliveryApi } from './mlsDeliveryApi';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('MlsDeliveryApi.fetchHistoryBatch', () => {
   it('maps batch response histories to a Map', async () => {
@@ -138,6 +139,65 @@ describe('MlsDeliveryApi.fetchHistoryBatch', () => {
     expect(String(spy.mock.calls[0][0])).toContain('400');
     expect(String(spy.mock.calls[0][0])).toContain('At most 50 groups per batch');
     spy.mockRestore();
+  });
+
+  // A CHUNK NOBODY ANSWERED IS A FACT ABOUT THE LINK, NOT ABOUT ITS GROUPS: rethrown, typed, and the
+  // chunks after it are not sent into the same unreachable server (production 1.5.1: 50/50/25 got
+  // no answer, then 125 per-group replays). Said by the caller, once - nothing logged here.
+  it('rethrows a transport failure and sends no further chunk', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchFn = vi
+      .fn()
+      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchFn,
+    });
+    const groups = Array.from({ length: 110 }, (_, i) => ({ groupId: `g${i}` }));
+
+    const failure = await api.fetchHistoryBatch(groups).catch((e: unknown) => e);
+
+    expect(isTransportFailure(failure)).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  // WHO ANSWERED decides whether the link is proven up: a captive portal's 2xx HTML page must not
+  // clear `isOffline` (it would un-hold every barrier), the gateway's JSON - whatever its status - does.
+  it('clears isOffline on the gateway answer only, never on a portal page', async () => {
+    const { connectivity } = await import('$lib/stores/connectivity.svelte');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const api = (res: Response) =>
+      new MlsDeliveryApi({
+        historyUrl: 'https://example.test',
+        getToken: async () => 'token',
+        fetchImpl: vi.fn().mockResolvedValue(res),
+      });
+    connectivity.reset();
+    connectivity.isOnline = true;
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.isOffline).toBe(true);
+
+    await api(
+      new Response('<html>portal</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
+    ).fetchHistoryBatch([{ groupId: 'g1' }]);
+    expect(connectivity.isOffline).toBe(true);
+
+    await api(
+      new Response('{"message":"busy"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ).fetchHistoryBatch([{ groupId: 'g1' }]);
+    expect(connectivity.isOffline).toBe(false);
+
+    connectivity.reset();
+    error.mockRestore();
   });
 });
 

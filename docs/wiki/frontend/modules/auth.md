@@ -1658,7 +1658,9 @@ minutes. Only a relaunch recovered.
 SessionExpiredError`, `[AUTH] Session expired - redirecting to /login.` - 1 s BEFORE the callback's
 `got access_token`. It is NOT #1843's `connectivity.onReconnect` (that path is gated on
 `isLoggedIn` and never names the gateway), and nothing on this path changed between `v1.2.6` and
-`1.2.7-alpha.2`.
+`1.2.7-alpha.2`. (The gateway line of that timeline no longer exists: a session end logs `Gateway
+connection stopped - the session has ended`, and since 2026-10-30 a socket that could not open logs
+`[WS] Gateway connection failed`, once, by class - [offline-and-weak-network](../offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30).)
 
 **Two things outlived the sign-out, and only together do they lock the next sign-in out.**
 

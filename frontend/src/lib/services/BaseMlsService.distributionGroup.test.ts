@@ -31,6 +31,7 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { flushMacrotask } from '../../test/flush';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -681,6 +682,39 @@ describe('routing a frame that arrived on the group', () => {
     // The only other symptom of a handler never wired is a community whose history quietly never
     // loads, weeks later, with nothing to point at.
     expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  // Production 1.5.1: a handler that could not reach the server was logged as a refusal, at error.
+  it('keeps a frame its handler could not handle for lack of an answer, said as no answer', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new TransportFailureError(new TypeError('Failed to fetch'));
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('control: a handler that REFUSES a frame for another cause still accuses', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new Error('seed store refused');
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('handler refused a frame'),
+      expect.stringContaining('seed store refused')
+    );
     error.mockRestore();
   });
 

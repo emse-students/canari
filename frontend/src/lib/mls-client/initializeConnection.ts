@@ -4,6 +4,8 @@ import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -231,8 +233,19 @@ export async function openGatewayConnection(
       log(`Gateway connection stopped - the session has ended: ${msg}`);
       throw wsErr;
     }
-    log(`Gateway inaccessible: ${msg}`);
-    console.error('[WS] Gateway connection failed:', msg);
+    // ONE LINE, BY WHAT IS KNOWN. It was two - `log` and `console.error` - on every attempt, an
+    // absent link included: offline, the reconnect ladder logged an ERROR per rung (6 in 61 s on the
+    // Mi 9T, a DNS failure at a cold start on a Pixel, production 1.5.1). A socket that could not
+    // open while the link is KNOWN down - the failure is a transport failure (the token's refresh
+    // got no answer), or the browser reports no network, or a request got no answer since - is the
+    // expected state, said as what is owed. The socket's own rejection cannot say it: a browser
+    // hides why a WebSocket failed, and the native plugin hands over a sentence. Any other failure
+    // is a gateway that should have answered, and accuses.
+    if (isTransportFailure(wsErr) || connectivity.isOffline) {
+      log(`[WS] Gateway connection failed - the link is down, the next reconnect opens it: ${msg}`);
+    } else {
+      console.error('[WS] Gateway connection failed:', msg);
+    }
     // THE REOPEN AFTER A ROTATION FAILED ON A HANDED-IN HANDSHAKE - the login's. No disconnect
     // handler was registered to hear it (that happens above, after the settle), and the login has
     // no ladder of its own, so the reconnect is scheduled HERE rather than left to the watchdog. The

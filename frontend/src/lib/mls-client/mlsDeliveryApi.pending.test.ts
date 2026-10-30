@@ -1,4 +1,5 @@
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { MlsDeliveryApi } from './mlsDeliveryApi';
 import { ADDRESSED_HISTORY_CAPABILITY } from './frameDelivery';
 
@@ -28,6 +29,66 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     a.deviceId = 'd1';
     return a;
   };
+
+  // Review of #2726: the pull tells the store when it gets NO answer, so it must also tell it when
+  // it gets one - the raw fetch reaches no `trackedFetch`, and a flag only ever set would hold every
+  // later mailbox barrier after a long outage.
+  it('clears a known-down link the moment the gateway answers a page, whatever its status', async () => {
+    connectivity.reset();
+    connectivity.isOnline = true;
+    connectivity.notifyServerUnreachable();
+    expect(connectivity.isOffline).toBe(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchFn = vi.fn().mockResolvedValueOnce(
+      new Response('{"message":"busy"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await api(fetchFn).pullPendingMessagesJson();
+
+    expect(connectivity.isOffline).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      '[PENDING] page answered 503 by the gateway - the pull stops here, the next one asks again'
+    );
+    warn.mockRestore();
+    connectivity.reset();
+  });
+
+  // An EDGE page in front of the server - a captive portal's 511, a WAF's HTML 403 - proves nothing
+  // about it: it neither clears a known-down link nor marks a reachable one down (a non-2xx edge
+  // page is the edge's answer, never a transport failure; only a 2xx one is, `NotFromApiError`).
+  it.each([
+    ['a captive portal 511', 511],
+    ['a WAF HTML 403', 403],
+  ])('leaves the connectivity store as it was on %s', async (_label, status) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const edge = () =>
+      new Response('<html>not the server</html>', {
+        status,
+        headers: { 'Content-Type': 'text/html' },
+      });
+
+    // Known down: stays down.
+    connectivity.reset();
+    connectivity.isOnline = true;
+    connectivity.notifyServerUnreachable();
+    await api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson();
+    expect(connectivity.isOffline).toBe(true);
+
+    // Reachable: stays reachable.
+    connectivity.reset();
+    connectivity.isOnline = true;
+    await api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson();
+    expect(connectivity.isOffline).toBe(false);
+
+    expect(warn).toHaveBeenCalledWith(
+      `[PENDING] page answered ${status} by the edge - the pull stops here, the next one asks again`
+    );
+    warn.mockRestore();
+    connectivity.reset();
+  });
 
   it('hands every page to onPage as it lands, and follows the createdAt cursor', async () => {
     const fetchFn = vi
