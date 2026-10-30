@@ -599,17 +599,25 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
   intent BY ITSELF on a locked or idle phone, and it used to be the answer deep link - every call to
   a locked phone would have been answered with nobody touching it. It is now `IncomingCallActivity`:
   the caller's photo and name over the lock screen, Decline and Answer. Answer asks the keyguard to
-  go first (`requestDismissKeyguard`), then sends the notification's own answer intent. The screen
-  closes with its ring (`cancelIncomingCallNotification` -> `finishFor`). On Android 14+ the ring
-  logs `canUseFullScreenIntent()`, the permission the user (or Play) may have withheld.
+  go first (`requestDismissKeyguard`), then sends the notification's own answer intent. **The screen
+  never outlives its ring**: it closes with it (`cancelIncomingCallNotification` -> `finishFor`, and
+  `cancelAllMessageNotifications` on the app's resume); a launch that lands after the ring ended
+  (between `notify` and `onCreate`) asks `isRinging` and closes at once; and the screen bounds
+  itself by the ring window (`CALL_RING_TIMEOUT_MS`). A second call while it shows (`singleTop`)
+  replaces it through `onNewIntent`. On Android 14+ the ring logs `canUseFullScreenIntent()`, the
+  permission the user (or Play) may have withheld.
+- **An open iPhone rings once.** A VoIP push that reaches an app in the foreground (the overlay
+  already rings over the socket) is reported to CallKit and ended at once - Apple requires the
+  report, and a second ring on top of the overlay is what it would otherwise be.
 - **Names come from the phone, never the payload** (decision 6), on both platforms: the server's
   `call_ring` data is ids only; Android names the caller from `display_names.json`
   (`callerDisplayName`), iOS from the same file (`CanariCallerDisplayName`) on all three CallKit
   paths - the VoIP push, the FCM ring of an iPhone with no VoIP token, the decrypted MLS invite. A
   caller the phone never named is "Appel Canari" / "Canari call".
 - **The caller's photo** is on the ring notification (the `Person` icon and the large icon, re-posted
-  once fetched while the ring is still live) and on the call screen. CallKit cannot show a
-  third-party photo; the iPhone shows the name only.
+  once read while the ring is still live) and on the call screen. It is CACHE FIRST: the 24 h file
+  cache every message notification fills (and its remembered "no photo"), the push-secret avatar
+  route only on a miss. CallKit cannot show a third-party photo; the iPhone shows the name only.
 
 **Verified by compiling, never by running:** the Android Kotlin (`:app:compileArm64DebugKotlin`) and
 the merged manifest (`:app:processArm64DebugMainManifest`); the server spec (70 tests). **The
@@ -2427,7 +2435,7 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 - `FLAG_INSISTENT` looping ringtone
 - 60 s timeout (`setTimeoutAfter`)
 - Answer = deep link (after the keyguard, from the call screen); decline = local dismiss
-- Caller named from `display_names.json`, photo from the avatar cache ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
+- Caller named from `display_names.json`, photo from the avatar cache first, the network on a miss ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
 
 ## Ring-end (stop ringing)
 

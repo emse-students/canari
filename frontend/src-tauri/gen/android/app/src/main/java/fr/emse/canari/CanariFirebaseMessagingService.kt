@@ -187,7 +187,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private const val CALLS_ENABLED = true
 
         /** A ring is abandoned after 60s (same order as the OS phone app). */
-        private const val CALL_RING_TIMEOUT_MS = 60_000L
+        /** How long a ring lasts at most; the call screen bounds itself by it too. */
+        internal const val CALL_RING_TIMEOUT_MS = 60_000L
 
         /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
         private const val CALL_NOTIF_ID_BASE = 700_000
@@ -373,7 +374,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         manager.cancel(sbn.id)
                     }
                 }
-                // Ring dedupe entries die with their notifications, so a re-ring can post again.
+                // Ring dedupe entries die with their notifications, so a re-ring can post again -
+                // and so does each ring's call screen, which must never outlive its ring.
+                for (ringing in activeCallRings.toList()) {
+                    IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
+                }
                 activeCallRings.clear()
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
@@ -965,14 +970,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
 
         /**
-         * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
-         * (system call UI with Answer/Decline), classic high-priority notification with the same
-         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen
-         * intent (shown immediately on a locked/idle device when the OS grants USE_FULL_SCREEN_INTENT)
-         * and self-expires after [CALL_RING_TIMEOUT_MS]. Deduped per callId: the cleartext
-         * `call_ring` push and the decrypted MLS `call_invite` may both arrive.
-         */
-        /**
          * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
          * or written for another account than [me] (the file is one per install, two accounts may
          * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
@@ -1013,6 +1010,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return name ?: res.getString(R.string.notif_call_unknown_caller)
         }
 
+        /** Whether [callId] still rings on this device - the call screen asks before it shows. */
+        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
+
+        /**
+         * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
+         * (system call UI with Answer/Decline), classic high-priority notification with the same
+         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen intent
+         * that opens [IncomingCallActivity] (shown at once on a locked or idle device when the OS
+         * grants USE_FULL_SCREEN_INTENT), names the caller from this phone's copy, draws the photo
+         * once it is read, and self-expires after [CALL_RING_TIMEOUT_MS]. Deduped per callId: the
+         * cleartext `call_ring` push and the decrypted MLS `call_invite` may both arrive.
+         */
         internal fun showIncomingCallNotification(
             context: Context,
             groupId: String,
@@ -1924,10 +1933,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
         /**
-         * The other party's photo for the ONGOING-CALL notification (`CallForegroundService`): the
-         * same [fetchAvatar] every message notification uses - its cache, its push-secret route, its
-         * remembered absence - opened to a second caller rather than copied. It does network I/O, so
-         * the caller runs it OFF the main thread.
+         * The other party's photo for the call surfaces outside this class - the ongoing-call
+         * notification (`CallForegroundService`) and the incoming call screen
+         * ([IncomingCallActivity]); the ring notification calls [fetchAvatar] itself. The same
+         * [fetchAvatar] every message notification uses - CACHE FIRST (the 24 h file cache and its
+         * remembered absence), the push-secret route only on a miss - opened to more callers rather
+         * than copied. A miss is network I/O, so every caller runs it OFF the main thread.
          */
         fun callAvatar(context: Context, userId: String): Bitmap? {
             Log.d(TAG, "callAvatar: for ${userId.take(8)}")

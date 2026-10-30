@@ -725,8 +725,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   //
   // The server cannot read MLS ciphertexts, so it cannot tell a call invite from a
   // regular message. The CALLER's client therefore triggers the ring explicitly with a
-  // minimal cleartext payload (callId/groupId/caller display name - the same metadata
-  // level as the senderName/groupName already present on every message push). The MLS
+  // minimal cleartext payload of IDS ONLY (callId/groupId/callerId/hasVideo - never a name,
+  // decision 6: each phone names the caller from its own copy). The MLS
   // CallMsg protos themselves are sent silent; visible ringing on killed devices comes
   // exclusively from this fan-out.
 

@@ -2886,6 +2886,14 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
     // report is still made, because the contract holds whatever this build believes.
     NSLog(@"[CanariCallKit] ERROR voip push on a build without the native ring - reported and ended");
     ringUntilMs = 0;
+  } else if (canari_ios_is_in_foreground()) {
+    // AN OPEN APP ALREADY RINGS: the in-app overlay got the invite over the socket. CallKit on top
+    // would ring the same call twice. Apple still requires the report, so it is reported and ended
+    // at once - the past-deadline branch below, the one thing the contract allows.
+    NSLog(@"[CanariCallKit] call=%@ voip push with the app in the foreground - the in-app overlay "
+          @"rings; reported and ended",
+          callId);
+    ringUntilMs = 0;
   }
   NSUUID *existing = g_ringingCalls[callId];
   NSUUID *uuid = existing ?: [NSUUID UUID];
@@ -2926,7 +2934,8 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
                                        }
                                      }];
   if (remainingMs <= 0) {
-    NSLog(@"[CanariCallKit] call=%@ voip push past its answer deadline - reported and ended",
+    NSLog(@"[CanariCallKit] call=%@ voip push not to ring (deadline passed, or rung in-app) - "
+          @"reported and ended",
           callId);
     CanariEndCallKitCall(callId, CXCallEndedReasonRemoteEnded);
     return;
@@ -3581,7 +3590,7 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
  * - an MLS `message` frame (never a Welcome) whose sender is ME: my own read receipt or own-device
  *   copy from another device - clear that conversation's notification. Decided on the cleartext
  *   `senderId`, so no frame is decrypted to learn it carries nothing.
- * - `call_ring_end`: end a CallKit ring (a no-op while calls are held off).
+ * - `call_ring_end`: end the CallKit ring of that call (a no-op when none rings for it).
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and

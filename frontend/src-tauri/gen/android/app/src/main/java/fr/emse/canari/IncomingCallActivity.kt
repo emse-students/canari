@@ -85,25 +85,61 @@ class IncomingCallActivity : Activity() {
 
     private var callId: String = ""
 
+    private val main = Handler(Looper.getMainLooper())
+
+    /** The screen's own bound: never up longer than a ring can last, whatever reached it or not. */
+    private val ringWindowOver = Runnable {
+        Log.i(TAG, "call screen of call=${callId.take(8)} reached the ring window - closed")
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Over the lock screen, and lighting it: the two things the manifest also declares.
         setShowWhenLocked(true)
         setTurnScreenOn(true)
+        show(intent)
+    }
 
+    /**
+     * A SECOND CALL while this screen shows (`singleTop` delivers its full-screen intent here): the
+     * screen becomes that call's. The first call's ring is still the notification's to end; its
+     * screen entry is dropped, so its `finishFor` no longer closes the screen of the call now shown.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val previous = callId
+        if (showing[previous]?.get() === this) showing.remove(previous)
+        main.removeCallbacks(ringWindowOver)
+        Log.i(TAG, "a new call screen replaces call=${previous.take(8)}")
+        show(intent)
+    }
+
+    /** Draws the call of [intent], or closes at once when that call no longer rings. */
+    private fun show(intent: Intent) {
         callId = intent.getStringExtra(EXTRA_CALL_ID) ?: ""
         val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
         val body = intent.getStringExtra(EXTRA_BODY) ?: ""
         val callerId = intent.getStringExtra(EXTRA_CALLER_ID) ?: ""
-        val answer = pendingExtra(EXTRA_ANSWER)
-        val decline = pendingExtra(EXTRA_DECLINE)
+        val answer = pendingExtra(intent, EXTRA_ANSWER)
+        val decline = pendingExtra(intent, EXTRA_DECLINE)
         if (callId.isEmpty() || answer == null || decline == null) {
             // Only the ring notification writes this intent; one missing a field is a defect there.
             Log.e(TAG, "unreadable call screen intent (call=${callId.isNotEmpty()} answer=${answer != null} decline=${decline != null}) - closed")
             finish()
             return
         }
+        // THE SCREEN NEVER OUTLIVES ITS RING. The ring may have ended between its notify and this
+        // launch (the caller cancelled, the 60 s ran out): `finishFor` found no screen to close
+        // then, so the screen asks for itself - on the main thread, the one `finishFor` runs on.
+        if (!CanariFirebaseMessagingService.isRinging(callId)) {
+            Log.i(TAG, "call=${callId.take(8)} no longer rings - its screen is not shown")
+            finish()
+            return
+        }
         showing[callId] = WeakReference(this)
+        main.postDelayed(ringWindowOver, CanariFirebaseMessagingService.CALL_RING_TIMEOUT_MS)
         Log.i(TAG, "call screen shown for call=${callId.take(8)} locked=${keyguard().isKeyguardLocked}")
 
         val photo = ImageView(this).apply {
@@ -149,6 +185,7 @@ class IncomingCallActivity : Activity() {
     }
 
     override fun onDestroy() {
+        main.removeCallbacks(ringWindowOver)
         if (showing[callId]?.get() === this) showing.remove(callId)
         super.onDestroy()
     }
@@ -199,7 +236,7 @@ class IncomingCallActivity : Activity() {
     private fun keyguard(): KeyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
 
     @Suppress("DEPRECATION")
-    private fun pendingExtra(key: String): PendingIntent? =
+    private fun pendingExtra(intent: Intent, key: String): PendingIntent? =
         if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(key, PendingIntent::class.java)
         else intent.getParcelableExtra(key)
 
