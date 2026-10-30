@@ -1,10 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { X } from '@lucide/svelte';
+  import { CalendarClock, Minus, Plus, X } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import {
     book,
@@ -166,12 +165,17 @@
 </script>
 
 <Modal open title={m.bookings_sheet_title()} topAnchored footerEdge onClose={() => onClose(false)}>
-  <div class="space-y-5">
-    <div>
-      <p class="text-text-main text-base font-bold">{resource.name}</p>
-      <p class="text-text-muted text-sm first-letter:uppercase">
-        {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
-      </p>
+  <div class="space-y-4">
+    <div class="border-cn-border bg-cn-bg flex items-start gap-3 rounded-2xl border p-3">
+      <CalendarClock size={18} class="text-text-muted mt-0.5 shrink-0" aria-hidden="true" />
+      <div class="min-w-0">
+        <p class="text-text-main text-sm font-bold first-letter:uppercase">
+          {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
+        </p>
+        <p class="text-text-muted truncate text-xs">
+          {resource.name === space.name ? space.name : `${space.name} · ${resource.name}`}
+        </p>
+      </div>
     </div>
 
     {#if windowNote}
@@ -183,12 +187,36 @@
     {/if}
 
     {#if run.length > 1}
-      <Select
-        label={m.bookings_sheet_length_label()}
-        value={String(count)}
-        options={lengthOptions}
-        onValueChange={(v) => (count = Number(v))}
-      />
+      <div class="space-y-1.5">
+        <p class="text-text-main text-sm font-semibold">{m.bookings_sheet_length_label()}</p>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border disabled:opacity-40"
+            aria-label={m.bookings_sheet_length_less()}
+            disabled={count <= 1}
+            onclick={() => (count -= 1)}
+          >
+            <Minus size={16} />
+          </button>
+          <span
+            class="text-text-main grow text-center text-sm font-bold tabular-nums"
+            role="status"
+            aria-live="polite"
+          >
+            {lengthOptions[count - 1]?.label}
+          </span>
+          <button
+            type="button"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border disabled:opacity-40"
+            aria-label={m.bookings_sheet_length_more()}
+            disabled={count >= run.length}
+            onclick={() => (count += 1)}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      </div>
     {/if}
 
     {#if space.canManage}
@@ -279,12 +307,31 @@
     {/if}
 
     {#if BOOKING_NOTIFICATIONS_LIVE && !onBehalf}
-      <Select
-        label={m.bookings_reminder_label()}
-        value={reminder}
-        options={reminderOptions(reminderFromValue(reminder))}
-        onValueChange={(v) => (reminder = v)}
-      />
+      <div class="space-y-1.5">
+        <p id="booking-reminder-label" class="text-text-main text-sm font-semibold">
+          {m.bookings_reminder_label()}
+        </p>
+        <div
+          class="flex flex-wrap gap-2"
+          role="radiogroup"
+          aria-labelledby="booking-reminder-label"
+        >
+          {#each reminderOptions(reminderFromValue(reminder)) as option (option.value)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={reminder === option.value}
+              onclick={() => (reminder = option.value)}
+              class="rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors {reminder ===
+              option.value
+                ? 'bg-cn-yellow text-cn-ink border-cn-yellow'
+                : 'border-cn-border text-text-main hover:bg-cn-border/30'}"
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+      </div>
     {/if}
 
     {#if shown.length}
@@ -306,12 +353,12 @@
       </div>
     {/if}
 
-    <ul class="text-text-muted list-disc space-y-1 pl-5 text-xs">
-      <li>{m.bookings_sheet_no_edit_note()}</li>
+    <div class="text-text-muted text-2xs space-y-1">
+      <p>{m.bookings_sheet_no_edit_note()}</p>
       {#if space.associationId === null}
-        <li>{m.bookings_sheet_personal_note()}</li>
+        <p>{m.bookings_sheet_personal_note()}</p>
       {/if}
-    </ul>
+    </div>
 
     {#if error}
       <p
