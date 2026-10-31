@@ -46,6 +46,11 @@
 # file, read off the branch Dependabot pushed (`ceiling_compose_from_ref`).
 : "${CEILING_AUTHENTIK_COMPOSE:=$(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/authentik/compose.yml}"
 
+# EVERY COMPOSE FILE THAT RUNS A THIRD-PARTY IMAGE, space-separated: the population an image's
+# statefulness is read from (`ceiling_image_may_cross_major`). Overridable for the self-tests. A file
+# named here and absent from the tree makes every image's statefulness UNKNOWN, which is refused.
+: "${CEILING_WATCHED_COMPOSES:=$CEILING_PROD_COMPOSE $(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/docker-compose.dev.yml $(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/local/docker-compose.yml $CEILING_AUTHENTIK_COMPOSE}"
+
 # An image reference reduced to the name Dependabot and production both mean. The identity
 # provider's file spells `docker.io/library/postgres`, production's `postgres`; a table matched on
 # one spelling walks past the other, so both sides of every comparison go through this.
@@ -149,6 +154,39 @@ third_party_stateful_images() {
   done <<EOF
 $(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
 EOF
+}
+
+# MAY A CONTAINER IMAGE MOVE ACROSS A MAJOR WITH NO PERSON IN THE LOOP? Exit 0 only when it is
+# PROVEN stateless; every other answer, unknown included, is no.
+#
+# AN ALLOWLIST, NOT A DENYLIST OF DATASTORE NAMES (2026-10-31). The arm in `gate_for_dependency`
+# matched `postgres | redis | garage` by name, and `ceiling.test.sh` kept that list honest only for
+# the two compose files it read. A stateful image added to the dev or local stack, or a new
+# datastore under a name nobody typed, crossed a major as a "stateless" image. So the question is
+# turned round: an image may cross a major only when it is not a known datastore AND every watched
+# compose file (`CEILING_WATCHED_COMPOSES`) could be read AND none of them gives it a named volume.
+# A Dockerfile base (`node`, `rust`) is in no compose file and holds no data directory, so it passes;
+# `adminer`, `nginx` and `coturn` mount no named volume and pass. A missing file fails closed.
+ceiling_image_may_cross_major() { # <image name>
+  local want f name vols
+  want="$(ceiling_image_name "${1:-}")"
+  want="${want%@sha256*}"
+  case "$want" in
+    '' | postgres | redis | garage | dxflrs/garage) return 1 ;;
+  esac
+  for f in $CEILING_WATCHED_COMPOSES; do
+    [ -r "$f" ] || return 1
+    while read -r name vols; do
+      [ -z "$name" ] && continue
+      name="$(ceiling_image_name "${name%@sha256*}")"
+      if [ "$name" = "$want" ] && [ "${vols:-0}" -gt 0 ]; then
+        return 1
+      fi
+    done <<EOF
+$(compose_stateful_images "$f")
+EOF
+  done
+  return 0
 }
 
 # THE ECOSYSTEM DEPENDABOT IS UPDATING, READ OFF THE BRANCH IT PUSHED.
@@ -278,72 +316,76 @@ dev_proven_major() {
 # (`ceiling_compose_from_ref`), production's when absent.
 gate_for_dependency() {
   local __ceiling_compose="${4:-$CEILING_PROD_COMPOSE}"
-  case "$(ceiling_image_name "$1")" in
-    # ---------------------------------------------------------------------------------------------
-    # STATEFUL DATASTORES: THE ONE FAILURE MODE CI STRUCTURALLY CANNOT SEE
-    # ---------------------------------------------------------------------------------------------
-    # A library bump either compiles or it does not. A DATASTORE MAJOR is refused by the DATA THAT
-    # IS ALREADY ON DISK, and every gate in this repository starts from an empty volume - `make
-    # run-ci`, `boot-nest-apps` and the compose stacks all create their database from nothing, so
-    # they exercise the ONE case that always works. Green here says "18 can initialise a fresh
-    # cluster"; it says nothing whatsoever about the cluster production actually has.
-    #
-    # Measured, not inferred, on 2026-09-01: postgres 18 exits on startup with `database files are
-    # incompatible with server` / `Counter to that, there appears to be PostgreSQL data in:
-    # /var/lib/postgresql/data`, because 18+ images changed the mount layout to
-    # major-version-specific subdirectories on top of needing `pg_upgrade`. Eight services depend on
-    # `auth_db`, the only database, so the whole estate went with it.
-    #
-    # The gate is the same shape for all three, which is why they share an arm.
-    #
-    # IT REFUSES A MAJOR CROSSING AND NOTHING ELSE, and that limit is as load-bearing as the arm.
-    # Refusing the whole NAME was the first draft of this repair, and it was wrong for a reason this
-    # repository has already written down: `dependabot.yml` exists over the compose files precisely
-    # because "a digest nothing updates is a FREEZE, not a pin - it converts silently moving into
-    # silently ageing, and the second failure mode is the one nobody notices for a year". Two open
-    # pull requests would have been caught by that draft (#306, #308: `redis 8.8-alpine ->
-    # 8.10-alpine`) and neither can meet the failure mode - an on-disk format is stable WITHIN a
-    # major, which is the entire content of the major-version contract. So the discriminator is the
-    # major production is running, read from the compose file rather than assumed.
-    #
-    # IT FAILS CLOSED. If either major cannot be read - an unparseable tag, an image the compose file
-    # does not name, an empty `dependency-version` - the update is refused. The cost of a false
-    # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
-    postgres | redis | garage | dxflrs/garage)
-      # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
-      # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
-      # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
-      # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
-      #
-      # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
-      # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
-      # releases the arm, which is the safe direction of this change.
-      case "${3:-}" in
-        '' | docker | docker_compose) ;;
-        *) return 0 ;;
-      esac
-      __ceiling_current=$(prod_image_major "$1" "$__ceiling_compose")
-      __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
-      if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
-        [ "$__ceiling_current" = "$__ceiling_proposed" ]; then
-        # Same major: the on-disk format the stack already has is the one this image reads.
+  # ---------------------------------------------------------------------------------------------
+  # STATEFUL DATASTORES: THE ONE FAILURE MODE CI STRUCTURALLY CANNOT SEE
+  # ---------------------------------------------------------------------------------------------
+  # A library bump either compiles or it does not. A DATASTORE MAJOR is refused by the DATA THAT
+  # IS ALREADY ON DISK, and every gate in this repository starts from an empty volume - `make
+  # run-ci`, `boot-nest-apps` and the compose stacks all create their database from nothing, so
+  # they exercise the ONE case that always works. Green here says "18 can initialise a fresh
+  # cluster"; it says nothing whatsoever about the cluster production actually has.
+  #
+  # Measured, not inferred, on 2026-09-01: postgres 18 exits on startup with `database files are
+  # incompatible with server` / `Counter to that, there appears to be PostgreSQL data in:
+  # /var/lib/postgresql/data`, because 18+ images changed the mount layout to
+  # major-version-specific subdirectories on top of needing `pg_upgrade`. Eight services depend on
+  # `auth_db`, the only database, so the whole estate went with it.
+  #
+  # The gate is the same shape for every image that holds data, which is why they share one arm.
+  #
+  # IT REFUSES A MAJOR CROSSING AND NOTHING ELSE, and that limit is as load-bearing as the arm.
+  # Refusing the whole NAME was the first draft of this repair, and it was wrong for a reason this
+  # repository has already written down: `dependabot.yml` exists over the compose files precisely
+  # because "a digest nothing updates is a FREEZE, not a pin - it converts silently moving into
+  # silently ageing, and the second failure mode is the one nobody notices for a year". Two open
+  # pull requests would have been caught by that draft (#306, #308: `redis 8.8-alpine ->
+  # 8.10-alpine`) and neither can meet the failure mode - an on-disk format is stable WITHIN a
+  # major, which is the entire content of the major-version contract. So the discriminator is the
+  # major production is running, read from the compose file rather than assumed.
+  #
+  # IT FAILS CLOSED. If either major cannot be read - an unparseable tag, an image the compose file
+  # does not name, an empty `dependency-version` - the update is refused. The cost of a false
+  # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
+  #
+  # WHICH IMAGES IT APPLIES TO IS AN ALLOWLIST (2026-10-31): every container image EXCEPT those
+  # `ceiling_image_may_cross_major` proves stateless - a named datastore, an image any watched
+  # compose file gives a named volume, and any image at all while a watched file is unreadable.
+  case "${3:-}" in
+    '' | docker | docker_compose)
+      if ! ceiling_image_may_cross_major "$1"; then
+        # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
+        # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
+        # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
+        # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
+        #
+        # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
+        # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
+        # releases the arm, which is the safe direction of this change.
+        __ceiling_current=$(prod_image_major "$1" "$__ceiling_compose")
+        __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
+        if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
+          [ "$__ceiling_current" = "$__ceiling_proposed" ]; then
+          # Same major: the on-disk format the stack already has is the one this image reads.
+          return 0
+        fi
+        # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
+        # else - not the next major, not a sibling image that happens to sit in the same arm, and not
+        # another stack's database: `version-gap.yml` records rehearsals of PRODUCTION's data
+        # directory, so it says nothing about the identity provider's.
+        __ceiling_proven=''
+        if [ "$__ceiling_compose" = "$CEILING_PROD_COMPOSE" ]; then
+          __ceiling_proven=$(dev_proven_major "$(ceiling_image_name "$1")")
+        fi
+        if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
+          [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
+          return 0
+        fi
+        echo "a migration plan, because a MAJOR bump of an image that holds data cannot be judged by any gate here: a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major \`${__ceiling_compose##*/infrastructure/}\` runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
         return 0
       fi
-      # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
-      # else - not the next major, not a sibling image that happens to sit in the same arm, and not
-      # another stack's database: `version-gap.yml` records rehearsals of PRODUCTION's data
-      # directory, so it says nothing about the identity provider's.
-      __ceiling_proven=''
-      if [ "$__ceiling_compose" = "$CEILING_PROD_COMPOSE" ]; then
-        __ceiling_proven=$(dev_proven_major "$(ceiling_image_name "$1")")
-      fi
-      if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
-        [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
-        return 0
-      fi
-      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major \`${__ceiling_compose##*/infrastructure/}\` runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
       ;;
-
+  esac
+  case "$(ceiling_image_name "$1")" in
     # ---------------------------------------------------------------------------------------------
     # WIRE FORMATS: A FROZEN FIXTURE CAN ONLY EVER SEE ONE DIRECTION
     # ---------------------------------------------------------------------------------------------

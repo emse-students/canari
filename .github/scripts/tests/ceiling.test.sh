@@ -311,6 +311,70 @@ ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]
 check_that "ci-passed needs compile-android-app" ci_passed_needs
 
 # -------------------------------------------------------------------------------------------------
+# WHICH IMAGES MAY CROSS A MAJOR IS AN ALLOWLIST: PROVEN STATELESS, OR REFUSED (2026-10-31)
+# -------------------------------------------------------------------------------------------------
+# #2742 proposed `library/postgres 16-alpine -> 18-alpine` for the identity provider's stack. These
+# run off FIXTURES spelling that stack's numbers, so they keep asserting the incident's shape after
+# the real pins move. The watched set is overridden, so "stateful" is read from the fixtures alone.
+echo "an image may cross a major only when no watched compose file gives it a named volume:"
+allow_work=$(mktemp -d)
+printf 'services:\n  postgresql:\n    image: docker.io/library/postgres:16-alpine\n    volumes:\n      - database:/var/lib/postgresql/data\n' > "$allow_work/authentik.yml"
+printf 'services:\n  garage:\n    image: dxflrs/garage:v2.4.1\n    volumes:\n      - meta:/var/lib/garage/meta\n  edge:\n    image: nginx:1.31.8-alpine\n    volumes:\n      - ./nginx.conf:/etc/nginx/nginx.conf:ro\n  admin:\n    image: adminer@sha256:251295c1\n' > "$allow_work/prod.yml"
+# A DATASTORE NOBODY TYPED: in no name list, stateful only because a compose file says so.
+printf 'services:\n  db:\n    image: mariadb:11.4\n    volumes:\n      - db:/var/lib/mysql\n  cache:\n    image: valkey/valkey:8.1-alpine\n    volumes:\n      - cache:/data\n' > "$allow_work/local.yml"
+# The real files are restored after this block: the assertions below it read them.
+saved_composes=("$CEILING_PROD_COMPOSE" "$CEILING_AUTHENTIK_COMPOSE" "$CEILING_WATCHED_COMPOSES" "$CEILING_VERSION_GAP")
+CEILING_PROD_COMPOSE="$allow_work/prod.yml"
+CEILING_AUTHENTIK_COMPOSE="$allow_work/authentik.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/local.yml $allow_work/authentik.yml"
+CEILING_VERSION_GAP="$allow_work/no-gap.yml"
+# THE #2742 TRAILER, verbatim: `library/postgres`, `18-alpine`, no update-type.
+expect_refused "library/postgres" "18-alpine" "#2742: a postgres major on the identity provider's 16 cluster" docker_compose "$allow_work/authentik.yml"
+expect_allowed "library/postgres" "16.5-alpine" docker_compose "$allow_work/authentik.yml"   # 16.4 -> 16.5
+expect_allowed "dxflrs/garage" "v2.5.0" docker_compose "$allow_work/prod.yml"                # #2741, a minor
+expect_refused "dxflrs/garage" "v3.0.0" "garage mounts a named volume" docker_compose "$allow_work/prod.yml"
+# A stateless image's major is the suite's business, and so is a Dockerfile base in no compose file.
+expect_allowed nginx "2.0.0-alpine" docker_compose "$allow_work/prod.yml"   # a bind-mounted config is not state
+expect_allowed adminer "6.0.0" docker_compose "$allow_work/prod.yml"
+expect_allowed node "27-alpine" docker
+# THE CASE THE NAME LIST COULD NOT SEE: refused across a major, allowed within it.
+expect_refused mariadb "12.0" "mariadb mounts a named volume, though no list names it" docker_compose "$allow_work/local.yml"
+expect_refused "valkey/valkey" "9.0-alpine" "valkey mounts a named volume, though no list names it" docker_compose "$allow_work/local.yml"
+# Within-major is judged against the file the update is IN; local.yml pins valkey 8.
+expect_allowed "valkey/valkey" "8.2-alpine" docker_compose "$allow_work/local.yml"
+# FAILING CLOSED: a watched file that cannot be read makes every image's state unknown.
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/absent.yml"
+expect_refused nginx "2.0.0-alpine" "a watched compose file is unreadable, so nginx is not PROVEN stateless" docker_compose "$allow_work/prod.yml"
+# ...and that never reaches a crate: the arm is about images.
+expect_allowed serde "2.0.0" cargo
+CEILING_PROD_COMPOSE="${saved_composes[0]}"
+CEILING_AUTHENTIK_COMPOSE="${saved_composes[1]}"
+CEILING_WATCHED_COMPOSES="${saved_composes[2]}"
+CEILING_VERSION_GAP="${saved_composes[3]}"
+rm -rf "$allow_work"
+
+# THE MAJOR "RUNNING" IS THE BASE BRANCH'S, so the job must check out the base. A `pull_request`
+# checkout is the merge ref, which already carries Dependabot's new pin: #2742 read 18 out of its own
+# bumped file and would have passed as same-major. And every watched compose file must be in the
+# sparse checkout, or `ceiling_image_may_cross_major` reads an absent file and refuses every major.
+echo "the dependency-ceiling job reads the base branch, and every file the table reads:"
+ceiling_job="$(awk '/^  dependency-ceiling:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
+ceiling_job_has() { grep -qF -- "$1" <<<"$ceiling_job"; }
+# shellcheck disable=SC2016  # the workflow expression is matched literally, never expanded
+check_that "the checkout is the pull request's BASE commit" ceiling_job_has 'ref: ${{ github.event.pull_request.base.sha }}'
+for sparse_path in .github/scripts .github/workflows/ci.yml infrastructure/docker-compose.prod.yml \
+  infrastructure/docker-compose.dev.yml infrastructure/local/docker-compose.yml \
+  infrastructure/dev/version-gap.yml infrastructure/authentik/compose.yml; do
+  check_that "the sparse checkout carries $sparse_path" ceiling_job_has "            $sparse_path"
+done
+# The watched set and the sparse list must name the same files, or one of them drifts silently.
+for watched in $CEILING_WATCHED_COMPOSES; do
+  rel="infrastructure/${watched##*/infrastructure/}"
+  check_that "the watched compose file $rel is in the sparse checkout" ceiling_job_has "            $rel"
+  check_that "the watched compose file $rel exists" test -r "$watched"
+done
+
+# -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
 # regression that put one back would stop a whole class of update without anybody deciding to.
 # -------------------------------------------------------------------------------------------------
