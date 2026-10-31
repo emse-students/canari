@@ -8,6 +8,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { assertKindMaySell, writablePermissions } from './selling-kinds';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -689,6 +690,11 @@ export class AssociationsService {
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     const asso = await this.findById(id);
+    // Enabling a cotisation creates a product: a list or an institution sells nothing. Disabling
+    // one (or editing a stored mode) stays open.
+    if (dto.cotisationEnabled === true) {
+      assertKindMaySell(this.logger, id, asso.type, 'cotisation enable');
+    }
     const patch = { ...dto } as unknown as Partial<Association>;
     // Blank clears the logo URL; anything else is held to the image URL allowlist before any write.
     if (dto.logoUrl !== undefined) {
@@ -1145,8 +1151,9 @@ export class AssociationsService {
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
   async addMember(dto: AddMemberDto & { associationId: string }) {
-    const { associationId, userId, role, permissions } = dto;
-    await this.findById(associationId);
+    const { associationId, userId, role } = dto;
+    const target = await this.findById(associationId);
+    const permissions = writablePermissions(target.type, dto.permissions);
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
@@ -1203,6 +1210,10 @@ export class AssociationsService {
     });
     if (!membership) {
       throw new NotFoundException('Member not found');
+    }
+    if (permissions !== undefined) {
+      const kind = await this.kindOf(associationId);
+      if (kind) permissions = writablePermissions(kind, permissions);
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
@@ -3166,6 +3177,9 @@ ${rejectionReason}`
       );
       throw new ServiceUnavailableException('Business key storage is not configured');
     }
+    // A list or an institution collects nothing. An absent row is left to the UPDATE below (404).
+    const target = await this.assoRepo.findOne({ where: { id }, select: { id: true, type: true } });
+    if (target) assertKindMaySell(this.logger, id, target.type, 'Lydia account link');
     const sealed = sealSecret(
       LYDIA_BUSINESS_KEY_PURPOSE,
       lydiaBusinessKeyContext(id, vendorToken),
@@ -4057,6 +4071,15 @@ ${rejectionReason}`
    * before accepting paid forms/purchases.
    * @throws BadRequestException when neither the association nor its approved parent can receive payments
    */
+  /** The kind of an association (`null` when it does not exist) - what the forms' price guard reads. */
+  async kindOf(associationId: string): Promise<Association['type'] | null> {
+    const row = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: { id: true, type: true },
+    });
+    return row?.type ?? null;
+  }
+
   async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
@@ -4121,6 +4144,7 @@ ${rejectionReason}`
     ]);
     if (!asso) throw new NotFoundException('Association not found');
     if (!parent) throw new NotFoundException('Parent association not found');
+    assertKindMaySell(this.logger, associationId, asso.type, 'payment delegation request');
 
     // No chains: the parent must not itself route its payments to a further association.
     if (parent.paymentParentAssociationId) {
@@ -4194,6 +4218,8 @@ ${rejectionReason}`
     ]);
     if (!parent) throw new NotFoundException('Parent association not found');
     if (!child) throw new NotFoundException('Association not found');
+    assertKindMaySell(this.logger, parentAssociationId, parent.type, 'payment delegation approval');
+    assertKindMaySell(this.logger, childId, child.type, 'payment delegation approval');
     if (
       child.paymentParentAssociationId !== parentAssociationId ||
       child.paymentDelegationStatus !== 'pending'
