@@ -41,6 +41,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PRODUCT_ALREADY_PURCHASED) {
     return m.shop_already_purchased();
   }
+  if (err instanceof SocialApiError && err.code === PRODUCT_COTISANTS_ONLY) {
+    return m.shop_members_only_hint();
+  }
   if (err instanceof SocialApiError && err.code === TIER_NOT_A_RISE) {
     return m.shop_tier_not_a_rise();
   }
@@ -118,6 +121,14 @@ export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
  * product: decided by Canari from its purchase records, before any payment request is issued.
  */
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
+
+/**
+ * The body `code` of social-service's 403 when the product is reserved to the association's
+ * cotisants (`membersOnly`, the Cercle top-up's box included) and the buyer holds no active tier of
+ * it. The card already greys its button from `viewerIsCotisant`; this is the sentence for the click
+ * that the listing could not foresee (a cotisation that ended since the page was drawn).
+ */
+export const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
 
 /**
  * The body `code` of social-service's 409 when the buyer holds, active, a sibling cotisation tier

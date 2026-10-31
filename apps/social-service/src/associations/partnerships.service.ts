@@ -17,6 +17,8 @@ import {
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
 import { isUniqueViolation } from '../common/pg-errors';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo } from '../spaces/viewer-visibility';
 import {
   AddPartnershipCodesDto,
   CreatePartnershipCardDto,
@@ -105,22 +107,22 @@ export class PartnershipsService {
 
   // ── Student-facing reads ─────────────────────────────────────────────────
 
-  /** Active partnership cards for one association, shown on its own page. */
+  /**
+   * Active partnership cards for one association, shown on its own page - only when that
+   * association is visible to the reader (`activeCardsVisibleTo`): the page stays reachable by its
+   * link (D37), its partnerships do not, since claiming one is refused the same way.
+   */
   async listActiveByAssoc(associationId: string, userId: string): Promise<PartnershipCardView[]> {
-    const cards = await this.cardRepo.find({
-      where: { associationId, isActive: true },
-      order: { createdAt: 'ASC' },
-    });
+    const cards = await this.activeCardsVisibleTo(userId, associationId);
     return this.annotateViewerCotisant(cards, userId);
   }
 
-  /** Active partnership cards across every association, shown on the shop page. */
+  /** Active partnership cards across every association visible to the reader, shown on the shop page. */
   async listAllActive(userId: string): Promise<PartnershipCardView[]> {
-    const all = await this.cardRepo.find({
-      where: { isActive: true },
-      order: { associationId: 'ASC', createdAt: 'ASC' },
-    });
+    const all = await this.activeCardsVisibleTo(userId);
     // A review account sees only the cards of associations it is a member of (review-cohort-reach.ts).
+    // Already implied by the space predicate (a review account has no real space), kept as the
+    // cohort's own stated boundary.
     const reached = await associationsReachedByReviewer(
       this.cardRepo.manager,
       userId,
@@ -128,6 +130,35 @@ export class PartnershipsService {
     );
     const cards = reached === null ? all : all.filter((c) => reached.has(c.associationId));
     return this.annotateViewerCotisant(cards, userId);
+  }
+
+  /**
+   * The active cards whose OWNING association is visible to `userId`
+   * (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of the reader's
+   * spaces) - the directory's predicate, so a partnership of another campus is no more listed than
+   * its association is. `associationId` narrows to one association.
+   */
+  private async activeCardsVisibleTo(
+    userId: string,
+    associationId?: string
+  ): Promise<PartnershipCard[]> {
+    const qb = this.cardRepo
+      .createQueryBuilder('c')
+      .where('c.isActive = true')
+      .andWhere(associationVisibleToViewerSql('"c"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
+      .orderBy('c.associationId', 'ASC')
+      .addOrderBy('c.createdAt', 'ASC');
+    if (associationId !== undefined) {
+      qb.andWhere('c.associationId = :associationId', { associationId });
+    }
+    const cards = await qb.getMany();
+    this.logger.debug(
+      `[PARTNERSHIP] ${cards.length} active card(s) visible to ${userId.slice(0, 8)}` +
+        (associationId ? ` in association=${associationId.slice(0, 8)}` : '')
+    );
+    return cards;
   }
 
   /**
@@ -385,7 +416,10 @@ export class PartnershipsService {
 
   // ── Claiming ──────────────────────────────────────────────────────────────
 
-  /** Claims a partnership card for a student: any logged-in user, gated only on `membersOnly`. */
+  /**
+   * Claims a partnership card for a student: anyone its association is visible to (404 otherwise,
+   * as for a card that does not exist), then gated on `membersOnly`.
+   */
   async claimCard(cardId: string, userId: string): Promise<PartnershipClaimResult> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, isActive: true } });
     if (!card) throw partnershipNotFound();
@@ -395,6 +429,15 @@ export class PartnershipsService {
       card.associationId,
       'partnership claim'
     );
+    // Asked AFTER the review cohort's own refusal, which keeps its typed 403: a card whose
+    // association the claimant cannot see answers exactly like a card that does not exist.
+    if (!(await associationVisibleTo(this.cardRepo.manager, card.associationId, userId))) {
+      this.logger.log(
+        `[PARTNERSHIP] claim refused: card=${cardId.slice(0, 8)} - association ` +
+          `${card.associationId.slice(0, 8)} is not visible to ${userId.slice(0, 8)}`
+      );
+      throw partnershipNotFound();
+    }
 
     if (card.membersOnly) {
       const asso = await this.assoRepo.findOne({ where: { id: card.associationId } });

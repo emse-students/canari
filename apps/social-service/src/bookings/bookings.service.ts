@@ -15,6 +15,8 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo, sharesSpaceWith } from '../spaces/viewer-visibility';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -191,13 +193,38 @@ export class BookingsService {
   /**
    * Refuses an account the space is not open to (D6, D31): enforced on every read and write, never
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
+   * Before the audience, the CAMPUS (`assertSpaceVisible`): a space outside the reader's spaces
+   * answers 404 `space-not-found`, exactly like one that does not exist.
    */
   private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
     this.assertSameSideAsSpace(space, [actor.userId]);
-    if (canManage || !space.audience) return;
+    if (canManage) return;
+    await this.assertSpaceVisible(space, actor.userId);
+    if (!space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
     throw new ForbiddenException({ code: 'audience' });
+  }
+
+  /**
+   * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
+   * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
+   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
+   * `listedSpaces` filters on); a PERSONAL space when they share no space with its owner
+   * (`sharesSpaceWithViewerSql`, a personal post's rule). Its manager - the owner of a personal
+   * space - never reaches here (`assertMayUse`).
+   */
+  private async assertSpaceVisible(space: BookingSpace, userId: string) {
+    const visible =
+      space.associationId !== null
+        ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
+        : await sharesSpaceWith(this.spaces.manager, space.ownerId, userId);
+    if (visible) return;
+    this.logger.log(
+      `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
+        `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
   }
 
   /**
@@ -406,7 +433,10 @@ export class BookingsService {
    * The spaces a member may book from the Reservations page (D16, D31), by name, at most
    * {@link LISTED_SPACES_LIMIT} - the limit is the SQL's, so the page never reads more:
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
-   * - an association space only while its association is not ARCHIVED;
+   * - an association space only while its association is not ARCHIVED, and only when that
+   *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
+   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
    *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
    * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
@@ -430,7 +460,8 @@ export class BookingsService {
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
       .andWhere(
-        '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
+        `((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false
+          AND ${associationVisibleToViewerSql('"s"."associationId"', ':me')}))`,
         { me: actor.userId }
       )
       .orderBy('s.name', 'ASC')

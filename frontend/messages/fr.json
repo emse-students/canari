@@ -1343,6 +1343,8 @@
   "admin_cercle_config_hint": "Produit unique, crédité sur le site du Cercle pour {name}.",
   "admin_cercle_product_name": "Recharge du compte Cercle",
   "admin_cercle_amount_hint": "Le montant est choisi par l'acheteur ; ces bornes l'encadrent. Une recharge est rachetable sans limite et ne peut jamais être épuisée.",
+  "admin_cercle_members_only_label": "Réservé aux cotisants",
+  "admin_cercle_members_only_hint": "Coché, seuls les cotisants de l'association (une formule active, quelle qu'elle soit) peuvent recharger. Décoché, toute personne connectée peut recharger.",
   "admin_cercle_webhook_secret_set": "Un secret est enregistré. Laisser vide pour le conserver, ou saisir une nouvelle valeur pour le remplacer.",
   "admin_cercle_saved": "Enregistré",
   "admin_cercle_webhook_failures_hint": "Une livraison échouée est relancée automatiquement, avec un délai qui s'allonge à chaque essai. Le bouton relance tout de suite - après avoir corrigé l'URL ou la clef, par exemple. Supprime la ligne si la recharge a déjà été traitée à la main sur le site du Cercle : la relancer la créditerait deux fois.",

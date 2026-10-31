@@ -229,7 +229,7 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
  * review account has no real space (`isReaderSpaceSql`), so the first disjunct never pairs one with
  * a member, in either direction.
  */
-function sharesSpaceWithAuthorSql(author: string, user: string): string {
+export function sharesSpaceWithAuthorSql(author: string, user: string): string {
   return `(EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
       WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})
@@ -391,6 +391,17 @@ export function liveVisibleToViewerSql(
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */
 export function associationVisibleToViewerSql(association: string, viewer: string): string {
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer')})`;
+}
+
+/**
+ * The viewer whose id is the placeholder `viewer` shares at least one space with the person whose
+ * id is the expression `owner` ({@link sharesSpaceWithAuthorSql}) - what opens a PERSONAL booking
+ * space to someone who is not its owner. Never true for the owner by itself: an owner with no
+ * space (staff) shares none with anybody, themselves included, so a caller lets the owner through
+ * on its own rights.
+ */
+export function sharesSpaceWithViewerSql(owner: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${sharesSpaceWithAuthorSql(owner, 'vis_viewer')})`;
 }
 
 /**

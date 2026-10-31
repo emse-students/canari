@@ -74,3 +74,42 @@ describe('association listing scopes', () => {
     expect(paths()).toEqual(['/api/associations?scope=all', '/api/associations?scope=directory']);
   });
 });
+
+/**
+ * EVERY WRITE THAT CHANGES WHAT THE DIRECTORY ANSWERS DROPS IT (the comment on
+ * `associationDirectory`): an association's audience rules ARE the directory, and designating a BDE
+ * can add the rule that makes it reach its space. Without the drop, the directory stayed stale for
+ * five minutes after the admin grid saved.
+ */
+describe('writes that change the directory drop it', () => {
+  it('asks the directory again after an association audience is saved', async () => {
+    const { listAssociationDirectory, setAssociationAudiences } = await freshApi();
+    await listAssociationDirectory();
+    await setAssociationAudiences('a1', [{ formation: null, campus: 'gardanne' }]);
+    await listAssociationDirectory();
+    expect(paths()).toEqual([
+      '/api/associations?scope=directory',
+      '/api/associations/a1/audiences',
+      '/api/associations?scope=directory',
+    ]);
+  });
+
+  it('asks the directory again after a space BDE is designated', async () => {
+    const { listAssociationDirectory, setSpaceBde } = await freshApi();
+    await listAssociationDirectory();
+    await setSpaceBde('s1', 'a1');
+    await listAssociationDirectory();
+    expect(paths()).toEqual([
+      '/api/associations?scope=directory',
+      '/api/associations/spaces/s1/bde',
+      '/api/associations?scope=directory',
+    ]);
+  });
+
+  it('CONTROL: a read alone does not drop it', async () => {
+    const { listAssociationDirectory } = await freshApi();
+    await listAssociationDirectory();
+    await listAssociationDirectory();
+    expect(paths()).toEqual(['/api/associations?scope=directory']);
+  });
+});

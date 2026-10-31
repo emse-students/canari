@@ -1086,6 +1086,12 @@ the blocks it created). Nobody else is sent it.
   its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
   (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
   space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
+- **A SPACE FOLLOWS THE CAMPUS (owner, 2026-10-31)**: an association space is listed only when its
+  association is visible to the reader (D37's predicate: a member of it, or its rules reach one of
+  their spaces), and a personal space opens only to those who share a space with its owner. By its
+  id, outside that, every read and the booking answer 404 `space-not-found` (`assertSpaceVisible`,
+  asked by `assertMayUse` before the audience; a manager never reaches it). A personal space owned by
+  staff (no space) is therefore its owner's alone ([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)).
 - **THE LISTING COSTS A FIXED NUMBER OF QUERIES, NOT ONE PER SPACE**: the rows (limit in SQL), the
   manage rights in one `mayActOnAny`, the cotisations of every association in one
   `cotisationTiersByAssociation`, and the profile (core-service) ONCE, only when some audience needs

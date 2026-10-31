@@ -3299,21 +3299,31 @@ export function getAssociationAudiences(associationId: string): Promise<Audience
   );
 }
 
-/** Designates, or clears with `null`, the BDE of a space (D22). */
-export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
-  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
+/**
+ * Designates, or clears with `null`, the BDE of a space (D22). Drops the held directory: the
+ * server makes a designated BDE reach its space (`SpacesService.setBde` adds the rule it lacks),
+ * which changes who it is listed to.
+ */
+export async function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
+  await request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
     method: 'PUT',
     body: JSON.stringify({ associationId }),
   });
+  invalidateAssociationDirectory();
 }
 
-/** Replaces the audience rules of an association; at least one rule is required. */
-export function setAssociationAudiences(
+/**
+ * Replaces the audience rules of an association; at least one rule is required. Drops the held
+ * directory: the rules ARE what the directory (D37) and its map filter are computed from.
+ */
+export async function setAssociationAudiences(
   associationId: string,
   rules: AudienceRule[]
 ): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+  const saved = await request<AudienceRule[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`,
     { method: 'PUT', body: JSON.stringify({ rules }) }
   );
+  invalidateAssociationDirectory();
+  return saved;
 }

@@ -138,7 +138,22 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
     });
     await ds.initialize();
     await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
-    await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
+    // The profile columns the campus predicate reads (`reader-spaces.ts`): every account here is an
+    // ICM Saint-Etienne student, and every association reaches every space - the campus border is
+    // `bookings.service.integration.spec.ts`'s subject, not this file's.
+    await q(
+      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+         admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
+         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
+    );
+    await q(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
+    await q(`INSERT INTO spaces VALUES ('ICM', 'saint-etienne')`);
+    await q(
+      `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
+    );
+    await q(
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+    );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
@@ -304,7 +319,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
    */
   async function setup(settings: Partial<BookingSpace> = {}) {
     const association = (
-      await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
+      await q(
+        `WITH a AS (INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id),
+           r AS (INSERT INTO association_audiences ("associationId") SELECT id FROM a)
+         SELECT id FROM a`
+      )
     )[0].id as string;
     grants.add(`${ORGA}:${association}`);
     const space = await ds.getRepository(BookingSpace).save({

@@ -752,7 +752,11 @@ Any boutique product (not just membership) can gate or discount on cotisant stat
   criterion is where a gridded product says what a cotisant pays.
 
 All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, `hasAnyActiveTag` +
-`assertCanPurchase`); the client only mirrors the *display*.
+`assertCanPurchase`); the client only mirrors the *display*. **`membersOnly` means a COTISANT, never a
+member row**: `assertCanPurchase` is handed `isCotisant` from `tierFactsOf` (an active tag of one of
+the association's tiers), and an association with no `cotisationMode` has no cotisant at all. Its
+refusal is a 403 with the code `PRODUCT_COTISANTS_ONLY` (2026-10-31), which the shop maps to its own
+sentence (`paymentRefusal.ts`); a `requiredTags` refusal still carries no code.
 
 ### Form pricing fields
 
@@ -1111,6 +1115,14 @@ Cercle (external service) tracks a per-user cash **balance**; Canari tracks **co
 Each service is the source of truth for its own half, and neither caches the other's data.
 
 ### Outbound: Canari -> Cercle (`balance_topup` webhook)
+
+**The top-up may be reserved to cotisants (owner, 2026-10-31).** `/admin/cercle` carries a
+"Reserve aux cotisants" box, UNTICKED by default, written to the product's existing `membersOnly`
+(no migration). Ticked, a buyer holding no active tier of the association is refused at checkout with
+`PRODUCT_COTISANTS_ONLY` before any payment request is issued, and the shop card greys its button from
+`viewerIsCotisant` as for any members-only product. Proven in `products.service.spec.ts` ("the Cercle
+top-up reserved to cotisants"). Like every product, the top-up is also offered only to the buyers its
+association is visible to ([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)).
 
 When a `balance_topup` product (created at `/admin/cercle`, global admin only) is purchased via
 Stripe, `ProductsService.dispatchCercleWebhook` (`products.service.ts`) POSTs the recharge to the

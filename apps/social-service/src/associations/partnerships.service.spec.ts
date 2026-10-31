@@ -6,6 +6,12 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
+import { associationVisibleTo } from '../spaces/viewer-visibility';
+
+/** Visibility is SQL, proven in `shop-partnership-visibility.integration.spec.ts`; visible here unless a test says otherwise. */
+jest.mock('../spaces/viewer-visibility', () => ({
+  associationVisibleTo: jest.fn(() => Promise.resolve(true)),
+}));
 
 /**
  * WHAT AN `UPDATE ... RETURNING` REALLY ANSWERS, and the reason this suite was green while the
@@ -27,9 +33,20 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
       query: jest.fn(() => Promise.resolve([])),
     };
     manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
-    const cardRepo = {
+    const cardRepo: any = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
+      // The listings (`activeCardsVisibleTo`): answered by `find`, so each test states its rows in
+      // one place. Which association is VISIBLE is SQL, proven against PostgreSQL in
+      // `shop-partnership-visibility.integration.spec.ts`.
+      createQueryBuilder: jest.fn(() => {
+        const qb: any = {};
+        for (const method of ['where', 'andWhere', 'orderBy', 'addOrderBy']) {
+          qb[method] = jest.fn(() => qb);
+        }
+        qb.getMany = jest.fn(() => cardRepo.find({ where: { isActive: true } }));
+        return qb;
+      }),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       remove: jest.fn((x: unknown) => Promise.resolve(x)),
@@ -95,6 +112,22 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
 
       const [allActive] = await service.listAllActive('user1');
       expect(allActive.sharedCode).toBeNull();
+    });
+  });
+
+  describe('a card of an association the claimant cannot see', () => {
+    it('is refused as NOT FOUND, exactly like a card that does not exist, and claims nothing', async () => {
+      const { service, cardRepo, manager } = makeService();
+      Object.assign(cardRepo, { manager });
+      cardRepo.findOne.mockResolvedValue(card({ claimMode: 'text', staticText: 'Show your ID' }));
+      (associationVisibleTo as jest.Mock).mockResolvedValueOnce(false);
+      const err = await service.claimCard('card1', 'user1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect((err as NotFoundException).getResponse()).toMatchObject({
+        code: PARTNERSHIP_ERROR_CODES.NOT_FOUND,
+      });
+      expect(associationVisibleTo).toHaveBeenCalledWith(manager, 'asso1', 'user1');
+      expect(manager.transaction).not.toHaveBeenCalled();
     });
   });
 

@@ -191,6 +191,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          "This product is reserved to the association's cotisants",
+          'PRODUCT_COTISANTS_ONLY',
+          403
+        )
+      )
+    ).toBe(m.shop_members_only_hint());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'The payment account of this association changed while the purchase was opened.',
           'PAYMENT_ROUTING_CHANGED',
           409

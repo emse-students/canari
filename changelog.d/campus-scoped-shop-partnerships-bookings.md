@@ -1,0 +1,3 @@
+### Fixed - the shop, the partnerships and the booking spaces follow the campus; the Cercle top-up may be reserved to cotisants
+
+A product, a partnership card or a booking space of another campus is no longer listed, and answers 404 by its id, unless the reader belongs to its association; the directory is re-read after an audience or BDE change and when the reader's own campus or cursus changes; `/admin/cercle` gains a "Réservé aux cotisants" box ([profiles-and-access](docs/wiki/profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31), [cotisations](docs/wiki/cotisations.md#outbound-canari---cercle-balance_topup-webhook)).

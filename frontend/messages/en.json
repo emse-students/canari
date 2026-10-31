@@ -1311,6 +1311,8 @@
   "admin_cercle_config_hint": "A single product, credited on the Cercle site for {name}.",
   "admin_cercle_product_name": "Cercle account top-up",
   "admin_cercle_amount_hint": "The buyer picks the amount; these bounds frame it. A top-up can be bought any number of times and can never run out.",
+  "admin_cercle_members_only_label": "Reserved to cotisants",
+  "admin_cercle_members_only_hint": "Ticked, only the association's cotisants (any active tier) can top up. Unticked, anyone signed in can top up.",
   "admin_cercle_webhook_secret_set": "A secret is stored. Leave empty to keep it, or type a new value to replace it.",
   "admin_cercle_saved": "Saved",
   "admin_cercle_webhook_failures_hint": "A failed delivery is retried automatically, waiting longer after each attempt. The button retries right now - after fixing the URL or the key, for instance. Delete the row if the top-up was already settled by hand on the Cercle site: retrying would credit it twice.",

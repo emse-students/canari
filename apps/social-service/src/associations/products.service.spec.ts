@@ -22,6 +22,16 @@ import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
+import { associationVisibleTo } from '../spaces/viewer-visibility';
+
+/**
+ * Whether the buyer may see the product's association is one SQL predicate, proven against a real
+ * PostgreSQL in `shop-partnership-visibility.integration.spec.ts`. Here every association is
+ * visible unless a test says otherwise, and what is under test is that a purchase ASKS it.
+ */
+jest.mock('../spaces/viewer-visibility', () => ({
+  associationVisibleTo: jest.fn(() => Promise.resolve(true)),
+}));
 
 /**
  * An in-memory `product_checkouts` keeping the two properties the service relies on: a conditional
@@ -154,8 +164,14 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The distinct-association query of the provider-activation sweep.
       createQueryBuilder: jest.fn(() => {
         const qb: any = {};
-        for (const method of ['select', 'where']) qb[method] = jest.fn(() => qb);
+        for (const method of ['select', 'where', 'andWhere', 'orderBy', 'addOrderBy']) {
+          qb[method] = jest.fn(() => qb);
+        }
         qb.getRawMany = jest.fn(() => Promise.resolve(withheldRows));
+        // The shop listing (`listAllActive`): answered by `find`, so each test states its rows in
+        // one place. Which association is VISIBLE is SQL, proven against PostgreSQL in
+        // `shop-partnership-visibility.integration.spec.ts`.
+        qb.getMany = jest.fn(() => (productRepo.find as jest.Mock)({ where: { isActive: true } }));
         return qb;
       }),
       __setWithheld: (ids: string[]) => {
@@ -3845,6 +3861,61 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       row.createdAt = new Date(row.createdAt.getTime() - ms);
       row.expiresAt = new Date(row.expiresAt.getTime() - ms);
     };
+
+    /**
+     * THE CERCLE TOP-UP'S "RESERVE AUX COTISANTS" BOX (owner, 2026-10-31) is `membersOnly` on the
+     * `balance_topup` product, and `membersOnly` means a COTISANT of the association - an active
+     * tier tag of it (`isCotisant`), never a mere member row. Refused with a CODE the shop maps to
+     * its own sentence, before any payment request is issued.
+     */
+    describe('the Cercle top-up reserved to cotisants', () => {
+      const topup = {
+        type: 'balance_topup' as const,
+        membersOnly: true,
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: null,
+      };
+
+      it('refuses a non-cotisant at checkout with PRODUCT_COTISANTS_ONLY, and issues nothing', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const err = await t.service
+          .createCheckoutSession('asso1', 'prod1', 'user1', 500)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PRODUCT_COTISANTS_ONLY',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('CONTROL: opens the checkout of a cotisant, at the amount they chose', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(true);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+        expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('CONTROL: the box unticked (the default) opens it to a non-cotisant', async () => {
+        const t = setup({ ...topup, membersOnly: false });
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+      });
+    });
+
+    it('refuses a product whose association the buyer cannot see as NOT FOUND, and issues nothing', async () => {
+      const t = setup();
+      (associationVisibleTo as jest.Mock).mockResolvedValueOnce(false);
+      await expect(t.checkout()).rejects.toThrow(NotFoundException);
+      expect(associationVisibleTo).toHaveBeenCalledWith(expect.anything(), 'asso1', 'user1');
+      expect(orderRefs(t.calls)).toHaveLength(0);
+      expect(t.checkouts.rows).toHaveLength(0);
+    });
 
     it('gives every attempt its own order_ref, so a retry after a DECLINED one is issued', async () => {
       const t = setup();

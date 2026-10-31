@@ -41,6 +41,13 @@ export const PREVIOUS_CHECKOUT_OPEN = 'PREVIOUS_CHECKOUT_OPEN';
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
+ * The body `code` of the 403 a checkout gets when the product is reserved to the association's
+ * cotisants (`membersOnly`, and no `requiredTags`) and the buyer holds no active tier of it - the
+ * Cercle top-up's "Reserve aux cotisants" box included. The shop maps it to its own sentence.
+ */
+export const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
+
+/**
  * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds, ACTIVE, a sibling
  * tier whose product price is greater than or equal to it: the sibling XOR would replace the held
  * tier, a silent downgrade (or a sideways swap paid in full). Holding that very tier answers

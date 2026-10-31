@@ -24,6 +24,7 @@ import {
   COTISATION_DISABLED,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
+  PRODUCT_COTISANTS_ONLY,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
@@ -48,6 +49,8 @@ import {
 } from './product-checkout';
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo } from '../spaces/viewer-visibility';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
@@ -933,15 +936,27 @@ export class ProductsService {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   /**
-   * Returns all active products across all associations (login required, listed on /shop), each
-   * annotated for `userId` (`annotateForViewer`).
+   * Returns the active products of every association visible to `userId` (login required, listed
+   * on /shop), each annotated for `userId` (`annotateForViewer`). Visible is the directory's
+   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, or its rules
+   * reach one of the reader's spaces): a product of another campus is no more listed than its
+   * association is, and `preparePurchase` refuses it the same way.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
-    const all = await this.productRepo.find({
-      where: { isActive: true },
-      order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
-    });
+    const all = await this.productRepo
+      .createQueryBuilder('p')
+      .where('p.isActive = true')
+      .andWhere(associationVisibleToViewerSql('"p"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
+      .orderBy('p.associationId', 'ASC')
+      .addOrderBy('p.sortOrder', 'ASC')
+      .addOrderBy('p.createdAt', 'ASC')
+      .getMany();
+    this.logger.debug(`[SHOP] ${all.length} active product(s) visible to ${userId.slice(0, 8)}`);
     // A review account's shop holds only the associations it is a member of (review-cohort-reach.ts).
+    // Already implied by the space predicate (a review account has no real space), kept as the
+    // cohort's own stated boundary.
     const reached = await associationsReachedByReviewer(
       this.productRepo.manager,
       userId,
@@ -2922,6 +2937,16 @@ export class ProductsService {
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
+    // The shop lists only the associations the buyer can see (`listAllActive`), and a purchase by
+    // id is held to the same predicate: a product of an association the buyer cannot see answers
+    // exactly like one that does not exist. A member of it (D21) is inside the predicate.
+    if (!(await associationVisibleTo(this.productRepo.manager, associationId, userId))) {
+      this.logger.log(
+        `[SHOP] purchase refused: product=${product.id.slice(0, 8)} - association ` +
+          `${associationId.slice(0, 8)} is not visible to ${userId.slice(0, 8)}`
+      );
+      throw new NotFoundException('Product not found');
+    }
 
     // Route to the association's own account, or an approved parent's when delegating.
     const provider = await this.activePaymentProvider();
@@ -3466,11 +3491,14 @@ export class ProductsService {
       this.logger.debug(
         `[SHOP] rejected: product=${product.id.slice(0, 8)} gating not satisfied for user=${userId.slice(0, 8)}`
       );
-      throw new ForbiddenException(
-        requiredTags.length > 0
-          ? 'This product is reserved to users holding one of the required tags'
-          : "This product is reserved to the association's cotisants"
-      );
+      throw requiredTags.length > 0
+        ? new ForbiddenException(
+            'This product is reserved to users holding one of the required tags'
+          )
+        : new ForbiddenException({
+            code: PRODUCT_COTISANTS_ONLY,
+            message: "This product is reserved to the association's cotisants",
+          });
     }
 
     // A balance top-up is a recharge of an account on another site: repeatable by definition and
