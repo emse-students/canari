@@ -1,8 +1,10 @@
 # DPIA (AIPD) - MiGallery face recognition
 
 **Status: draft v1, 2026-10-16, for the controller (Association MiTV) and the school's DPO to
-validate; facts updated 2026-10-31 to the stored-template design (option C) MiGallery now carries:
-lots A1-A7 written, the A7 seed and lot A8 not yet run.** Every assessment the new design changes
+validate; facts updated 2026-10-31 to the stored-template design (option C), which is written in MiGallery
+(lots A1-A9) and not yet deployed: production still runs the former design, Immich clustering
+every face into persons, and the A7 seed and the A8 cutover have not run. Section 1 states what
+holds once option C is released.** Every assessment the new design changes
 is marked **to be re-assessed by the owner**: this update states facts and draws no conclusion.
 The mechanism is MiGallery's [face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md), the one reference; this page
 does not restate it. A DPIA is required here: face recognition processes biometric data used to identify a
@@ -21,18 +23,20 @@ assessment found one, it says "to audit" and the details went to the controller 
 | Controller | Association MiTV (`bureau@mitv.fr`); Rootz operates the infrastructure | MiGallery `/cgu` |
 | Service | MiGallery (`gallery.mitv.fr`), a front end and proxy over **Immich**, self-hosted; MiGallery holds no media itself | MiGallery `docs/wiki/immich-proxy.md` |
 | Purpose | let a member find the event photographs they appear in ("Mes photos"), and let them share that set with chosen members | MiGallery `docs/wiki/photos-cv.md` |
-| Data | event photographs; **the face store** (`data/faces.db`): one embedding per detected face of EVERY photograph (about 600,000), float16 512-d, sealed (AES-256-GCM, a server-held key), with its box; **per consenting member** (`migallery.db`): 3 to 5 sealed reference embeddings, the faces given to them with their band (`auto` at a distance <= 0.5, `suggested` up to 0.62) and their confirm or reject answer, face crops cut for them alone, the consent record (date, terms version, origin); until lot A8, Immich's own faces, persons and embeddings, and the legacy link `users.photos_id` (read by nothing but the seed) | MiGallery `face-matching-option-c.md` sections 1 and 4, `src/lib/db/schema.sql`, `src/lib/db/face-database.ts` |
+| Data | event photographs; **the face store** (`data/faces.db`): one embedding per detected face of EVERY photograph (about 600,000), float16 512-d, sealed (AES-256-GCM, a server-held key), with its box; **per consenting member** (`migallery.db`): 1 to 5 sealed reference embeddings (the selfie gives the first, confirmed faces add more, up to 5), the faces given to them with their band (`auto` at a distance <= 0.5, `suggested` up to 0.62) and their confirm or reject answer, face crops cut for them alone, the consent record (date, terms version, origin); until lot A8, Immich's own faces, persons and embeddings, and the legacy link `users.photos_id` (read by the A7 seed to carry links over to references, and until A8 still by the admin link routes, the user API, withdrawal and account deletion - which clear it, journal the person whose Immich name is to be cleared and anonymise the logs - and the start-up backfill of `legacy` consent rows) | MiGallery `face-matching-option-c.md` sections 1 and 4, `src/lib/db/schema.sql`, `src/lib/db/face-database.ts` |
 | Model | buffalo_l, run by Immich's own machine-learning service, which MiGallery reaches over an internal network holding the two containers only; no clustering, no person object | MiGallery `face-matching-option-c.md` (A2, A3) |
 | Data subjects | (a) members who opted in; (b) members who did not; (c) **people with no account, photographed at events** - (b) and (c) are in the face store | - |
 | How a member opts in | ticks an explicit agreement box in `/parametres`, then takes a selfie: the model service embeds it in memory and it is never stored, neither in MiGallery nor in Immich; a selfie with a second face is refused. Its embedding is the first reference; faces the member confirms add references, up to 5. A member whose account was linked to an Immich person before gets references from that person's faces (lot A7), only while their consent is open | MiGallery `face-matching-option-c.md` (A5, A7) |
 | What a member sees | "Mes photos" shows the `auto` faces and the `suggested` faces they confirmed; the `suggested` ones wait on a confirmation screen, with crops served to them alone. Readers of a member's photos: the member, the members they granted, admins, API keys. MiGallery's proxy refuses every Immich person and face call, to everyone | MiGallery `face-matching-option-c.md` (A6), `docs/wiki/photos-cv.md` |
 | Where | MiGallery's wiki states that MiGallery and Immich run on the association's own machine, not on the school's shared host; the offsite copy of MiGallery's database per the [register](register-of-processing.md#4-migallery-controller-mitv) | MiGallery `face-matching-option-c.md` (A8 row) |
-| Retention | photographs: indefinite (stated by the terms); the face store: as long as the photograph exists, in **no** backup; references, matches, crops: until withdrawal or account deletion, erased synchronously in one transaction (the crops right after its commit); Immich's faces, persons and embeddings: deleted by lot A8, with an encrypted copy of what is deleted kept 30 days, then deleted (owner, 2026-10-31) | MiGallery `/cgu` sections 4-5, `face-matching-option-c.md` |
+| Retention | photographs: indefinite (stated by the terms); the face store: as long as the photograph exists, in **no** backup - a photograph in Immich's trash still exists and keeps its templates until the trash is emptied, and a deleted one loses them once two listings of Immich at least 20 hours apart have both missed it; references, matches, crops: until withdrawal or account deletion, erased synchronously in one transaction (the crops right after its commit); Immich's faces, persons and embeddings: deleted by lot A8, with an encrypted copy of what is deleted kept 30 days, then deleted (owner, 2026-10-31) | MiGallery `/cgu` sections 4-5, `face-matching-option-c.md` |
 
 **What face detection does that consent does not cover.** Every face of every photograph is
 detected and its embedding stored in the face store, before and regardless of any opt-in. The
 opt-in gives a member references, and only a comparison with references ties a stored face to
-anyone: nothing groups the store into persons. So biometric templates exist for members who never
+anyone: nothing groups the store into persons, save once - the one-time seed (lot A7) groups the
+faces Immich had already linked to a member, in a working table and an in-memory centroid dropped
+at its end, only to compute that member's references. So biometric templates exist for members who never
 opted in and for non-members. (Before option C, Immich clustered every face into persons and the
 opt-in linked a cluster to an account; Immich keeps those clusters until lot A8 deletes them.)
 
@@ -65,8 +69,6 @@ opt-in linked a cluster to an account; Immich keeps those clusters until lot A8 
 
 ## 4. Risks
 
-| Risk | Source | Likelihood | Severity | Level |
-| --- | --- | --- | --- | --- |
 The likelihood, severity and level columns are the 2026-10-16 assessment, kept for the record.
 The source column states the facts of the stored-template design (2026-10-31); every row whose
 facts changed is **to be re-assessed by the owner**.
@@ -77,7 +79,7 @@ facts changed is **to be re-assessed by the owner**.
 | R2 - templates survive withdrawal | withdrawal and account deletion erase the member's references, matches and crops; the face store's templates of their faces stay, with no member and no name, until their photograph goes; Immich's person and its embeddings stay until A8 | certain for the store (by design) | high | 2026-10-16: **HIGH** - **to be re-assessed by the owner** |
 | R3 - a member's photo set or face data seen by members it was not shared with | one access rule for a member's photos (the member, members they granted, admins, API keys); crops served to the face's holder only; the proxy refuses every Immich person and face call, admins included (MiGallery A6) | to assess | high | 2026-10-16: to assess - **to be re-assessed by the owner** |
 | R4 - a selfie kept after the link | the selfie is embedded in memory and never stored, neither in MiGallery nor in Immich (MiGallery A5) | 2026-10-16: possible | medium | 2026-10-16: medium - **to be re-assessed by the owner** |
-| R5 - identification of a person across the whole archive (tracking attendance) | no clustering in MiGallery: a stored face is tied to someone only through a reference of them; Immich's clusters remain until A8, visible to anyone with Immich admin access | possible | high | 2026-10-16: medium - **to be re-assessed by the owner** |
+| R5 - identification of a person across the whole archive (tracking attendance) | no clustering in MiGallery (save the one-time seed, section 1): a stored face is tied to someone only through a reference of them; Immich's clusters remain until A8, visible to anyone with Immich admin access | possible | high | 2026-10-16: medium - **to be re-assessed by the owner** |
 | R6 - breach of the databases or their backups | the face store is sealed under a server-held key and in no backup; references are sealed and in the MiGallery database backups; Immich's database dumps hold its faces until A8 and rotate out after it; A8's encrypted copy is deleted after 30 days | low | high | 2026-10-16: medium - **to be re-assessed by the owner** |
 | R7 - inaccurate match attributes a photo to the wrong person | model error; one holder per face (the nearest member); `auto` only at <= 0.5, with 3 references and no close runner-up, otherwise the member confirms; the measured and derived rates are in MiGallery `face-matching-option-c.md` section 2.2, the rate on strangers NOT MEASURED | possible | low-medium | 2026-10-16: low - **to be re-assessed by the owner** |
 
@@ -99,9 +101,9 @@ facts changed is **to be re-assessed by the owner**.
 Ordered by the risk they lower. Each is a backlog line
 ([backlog](../backlog.md#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16)).
 
-1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller); BUILT as a
-   stored-template design** (lots A1-A7 written by 2026-10-31; the A7 seed and lot A8 not yet run).
-   What was built differs from the 2026-10-24 text below on three points, decided since: the
+1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller); WRITTEN, NOT
+   DEPLOYED, as a stored-template design** (lots A1-A9 written by 2026-10-31; the A7 seed and lot
+   A8 not yet run). What was written differs from the 2026-10-24 text below on three points, decided since: the
    matches are stored (`face_matches`) rather than computed at search time; the model is Immich's
    own machine-learning service, over a dedicated internal network, rather than a pinned image in a
    MiGallery worker; and the model comparison is done (buffalo_l kept). As decided on 2026-10-24: face
@@ -117,20 +119,21 @@ Ordered by the risk they lower. Each is a backlog line
    no one can be followed across the archive without a reference of them. Until it is built, inform
    at events (a notice where photographs are taken) and publish a page for non-members with an
    objection channel (`bureau@mitv.fr`).
-2. **R2 - BUILT** (MiGallery A1, A4, A5): withdrawal and account deletion delete the member's
+2. **R2 - WRITTEN, NOT DEPLOYED** (MiGallery A1, A4, A5): once released, withdrawal and account
+   deletion delete the member's
    references and matches in one transaction, and their crops after its commit. **Owed**: lot A8,
    which deletes Immich's own faces, persons and embeddings and keeps an encrypted copy of what it
    deletes for 30 days, then deletes it (owner, 2026-10-31: *"Oui, 30 jours puis supprimée"*).
-3. **R3 - BUILT** (MiGallery A6): one access rule for a member's photos, crops for their holder
+3. **R3 - WRITTEN, NOT DEPLOYED** (MiGallery A6): once released, one access rule for a member's photos, crops for their holder
    only, every Immich person and face call refused by the proxy to everyone. Whether that closes
    the audit is **to be re-assessed by the owner**.
-4. **R4 - BUILT** (MiGallery A5): the selfie is never stored, neither as an asset nor anywhere else.
-5. **Proof of consent - BUILT** for the consents given in MiGallery (`face_consents`: date, terms
+4. **R4 - WRITTEN, NOT DEPLOYED** (MiGallery A5): once released, the selfie is never stored, neither as an asset nor anywhere else.
+5. **Proof of consent - WRITTEN, NOT DEPLOYED** for the consents given in MiGallery (`face_consents`: date, terms
    version, origin); the controller keeps the proof of the `legacy` links.
 6. **Terms page** - MiGallery's `/cgu`: sign-in is MiConnect; the "last updated" date is the terms
    version, a fixed date; the face sections (the store, the selfie, the bands, withdrawal,
-   retention, backups, the cutover) describe the stored-template design since lot A9 (terms
-   version 2026-10-31). **Still open**: Google Fonts is loaded (visitor IPs to Google) - self-host
+   retention, backups, the cutover) describing the stored-template design are written (lot A9,
+   terms version 2026-10-31) and not yet deployed. **Still open**: Google Fonts is loaded (visitor IPs to Google) - self-host
    the font.
 7. **Processor agreement** between MiTV and Rootz (Art. 28).
 8. **Retention** for photographs and for the `logs` table.

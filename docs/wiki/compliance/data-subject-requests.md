@@ -74,11 +74,13 @@ the admin interface - the person then cannot sign in to any service.
 ### MiGallery (SQLite `data/migallery.db`, controller MiTV)
 
 `users` (`id_user`), `user_favorites` (`user_id`), `photo_access_permissions` (`owner_id`,
-`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). A member's face
-data is `face_references`, `face_matches` and `face_consents` (`user_id`), plus their crops under
+`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). Option C is
+written and not yet deployed; until it is released, a member's face data is Immich's person linked
+through `users.photos_id`, handled through the Immich admin. Once released, a member's face data is `face_references`, `face_matches` and `face_consents` (`user_id`), plus their crops under
 `data/cache/faces/members/`; withdrawal in the settings, or the account's deletion, erases all of it
 (a withdrawal keeps the closed consent row, which goes with the account). The face store (`data/faces.db`) holds one template per face of every
-photograph and names no one: it goes with its photograph. Until lot A8, Immich still holds its own
+photograph and names no one: it goes with its photograph (a photograph in Immich's trash keeps its
+templates until the trash is emptied). Until lot A8, Immich still holds its own
 faces and persons - access and erasure there go through the Immich admin. Mechanism:
 [MiGallery face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md), [dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
 
