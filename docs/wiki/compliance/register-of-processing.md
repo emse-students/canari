@@ -88,16 +88,19 @@ the source. Backups: `authentik_db.sql.gz`, 14 days (section 7).
 
 | # | Processing | Purpose | Data | Subjects | Basis | Retention |
 | --- | --- | --- | --- | --- | --- | --- |
-| G1 | Accounts | sign-in, roles, album permissions | `users` (MiConnect sub, names, promo, formation, role, linked Immich person id), sessions (7 days), favourites, album permissions | members | 6.1.b | life of the account |
+| G1 | Accounts | sign-in, roles, album permissions | `users` (MiConnect sub, names, promo, formation, role, the legacy linked Immich person id - read by nothing but the one-shot seed of the face store, until lot A8), sessions (7 days), favourites, album permissions | members | 6.1.b | life of the account |
 | G2 | Event photographs | publish the association's photos to members | photographs (Immich, self-hosted) | **everyone photographed, members or not** | 6.1.f (to document) | **indefinite (OPEN: no retention set)** |
-| G3 | Face recognition | let a member find photos of themselves | Immich face detection and embeddings over ALL photos; a member links their account by a selfie | members who opted in; **non-members are detected too** | 9.2.a explicit consent for members (collected by another means - the owner must keep the proof); **no basis identified for non-members (OPEN)** | **embeddings not deleted on unlink or account deletion (OPEN)** |
+| G3 | Face recognition (option C, a stored-template design: [MiGallery face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md)) | let a member find the photographs they appear in ("Mes photos") | **the face store**, `data/faces.db`: one embedding per detected face of EVERY photograph (about 600,000), float16 512-d, sealed with AES-256-GCM under a server key, with its box; **per consenting member**, in `migallery.db`: 3 to 5 sealed reference embeddings (`face_references`: a selfie embedded in memory and never stored, then faces the member confirmed; for a link that existed before, the 5 faces of their own Immich person nearest its centroid), the faces given to them (`face_matches`: `auto` at a distance <= 0.5, shown without a question; `suggested` up to 0.62, shown on a confirmation screen; the member's confirm or reject answer), face crops cut on the server for the member alone, the consent record (`face_consents`: date, terms version, origin). No clustering, no person. The model is Immich's own machine-learning service (buffalo_l), reached over an internal network that holds MiGallery and that service only. **Until lot A8**, Immich's own faces, persons and embeddings as well | members who opted in (references, matches, crops, consent); **every person photographed, non-members included** (the face store, and Immich's own faces until A8) | 9.2.a explicit consent for members, recorded with the terms version (links made before the record: `legacy`, collected by another means - the owner must keep the proof); **no basis identified for non-members (OPEN)** - the owner went ahead on 2026-10-31 pending the DPO's answer | references, matches, crops: until withdrawal or account deletion, which erase them synchronously, in one transaction (the crops right after its commit); the consent record: closed at withdrawal, deleted with the account; **the face store: as long as the photograph exists, in no backup, and not part of a member's withdrawal** (its rows carry no member); Immich's faces, persons and embeddings: deleted by lot A8, an encrypted copy of what is deleted kept 30 days, then deleted |
 | G4 | Audit log | traceability | `logs` (actor, event, target, IP) | members | 6.1.f | **no purge (OPEN)** |
 
 Full analysis: [dpia-migallery-faces](dpia-migallery-faces.md). Recipients: Immich (self-hosted),
 MiConnect; avatars served to Canari, Sky, Portail-etu. Google Fonts is loaded by the page (visitor
-IPs to Google - **OPEN**). Backups: database 14 days, Immich database dumps 7 days, offsite copy on
-another school VM. Its terms page (`/cgu`, repository `MiGallery`) carries claims to correct (**OPEN**,
-listed in the DPIA).
+IPs to Google - **OPEN**). Backups: the MiGallery database (`migallery.db`: accounts, references,
+matches, consents) 10 daily copies on its server and about 14 days offsite, Immich database dumps
+7 days; **`data/faces.db` is in no backup**. MiGallery's terms page (`/cgu`, repository
+`MiGallery`) is the public face of rows G1-G4: its face sections describe the stored-template
+design since lot A9 (terms version 2026-10-31); Google Fonts is still to correct (**OPEN**, listed
+in the DPIA).
 
 ## 5. Sky
 
