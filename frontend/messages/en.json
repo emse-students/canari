@@ -387,7 +387,7 @@
   "chat_device_management_title": "Device management",
   "chat_syncing_devices": "Syncing devices…",
   "chat_devices_load_error": "Unable to load devices linked to your account.",
-  "chat_device_not_listed_warning": "This device ({id}) does not appear in the list below. Refresh before deleting anything: a deletion is permanent and blocks re-registration.",
+  "chat_device_not_listed_warning": "This device does not appear in the list below. Refresh before deleting anything: a deletion is permanent and blocks re-registration.",
   "chat_device_last_one_error": "The last device cannot be deleted: you would lose access to your encrypted conversations, and this device could no longer re-register.",
   "chat_devices_count_label": [
     {
@@ -404,7 +404,7 @@
   "common_ok_button": "OK",
   "chat_current_device_badge": "This device",
   "chat_device_removed_toast": "Device removed",
-  "chat_device_version_label": "v{device}",
+  "chat_device_version_label": "Canari {device}",
   "chat_rename_device_label": "Rename",
   "chat_rename_device_title": "Rename this device",
   "chat_delete_device_label": "Delete device",

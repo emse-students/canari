@@ -3311,4 +3311,4 @@ Every avatar without a photo or logo (a person, a group or community, an associa
 
 ## User-visible text shows outcomes, never internals (owner, 2026-10-31)
 
-No key fingerprint or technical id on a normal screen: the waiting device's own notice (`chat_waiting_own_device`) no longer prints its key. The rule and the screens still listed are in [durable-rules](../durable-rules.md) (UI and i18n).
+No key fingerprint or technical id on a normal screen: the waiting device's own notice (`chat_waiting_own_device`) no longer prints its key, and the devices list shows a device's name, browser and last use but not its id. The rule and the screens still listed are in [durable-rules](../durable-rules.md) (UI and i18n).
