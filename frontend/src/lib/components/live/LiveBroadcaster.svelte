@@ -188,8 +188,10 @@
     outdated: m.live_unsupported_outdated,
     other: m.live_unsupported,
   };
+  /** Asked ONCE per sheet (it logs): an engine's recording support does not change while open. */
+  const recordingGap = liveRecordingGap();
   function unsupportedText(): string {
-    return UNSUPPORTED_TEXT[liveRecordingGap() ?? 'other']();
+    return UNSUPPORTED_TEXT[recordingGap ?? 'other']();
   }
 
   const START_TEXT: Record<LiveStartProblem, () => string> = {

@@ -1109,6 +1109,11 @@ recorder string would not admit one more browser. The VIEWER is the strict side:
 string quoted in full (`avc1.42E01F,mp4a.40.2` plays, bare `avc1` and `video/mp4` do NOT, measured the
 same day), and iOS plays through `ManagedMediaSource` on the same string. So the recorder string stays.
 
+**Where the 126 comes from**: Chromium added MP4 containers to `MediaRecorder` in release 126 (Chrome
+Platform Status, "MediaRecorder: MP4 support"; the same engine in Edge). It is the one number
+`LIVE_CHROMIUM_MP4_FROM` in `liveRecorder.ts` holds, and it only chooses WHICH words the sheet shows - the
+capability itself is always `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)`, never the user agent.
+
 The sheet now says why, by cause (`classifyRecordingGap`, a user-agent read, tested): Firefox is named,
 a Chromium before 126 is told to update, anything else gets the generic text; all three point at Chrome,
 Edge or the app.
@@ -1140,9 +1145,16 @@ anything on option 2.** If AAC encode is absent, option 2 is dead for Firefox an
 
 ## The switch-camera button needs two cameras (2026-10-31)
 
-`CameraSession.canSwitch` (`cameraCount >= 2`) gates the button of the live sheet and of the CanaReels
-camera (`CameraScreen`, which also stands the double-tap flip down). The count is
-`enumerateDevices()` filtered on `videoinput`, read AFTER the camera is open (labels and devices can be
-hidden before the grant) and again on `devicechange`, the listener removed on `stop()`. A list that cannot
-be read offers no switch and logs a `warn`. Video calls had it already: `CallService.refreshCameraCount`
-offers the switch from two cameras (`canSwitchCamera`) and was left as it was.
+`CameraSession.canSwitch` gates the button of the live sheet and of the CanaReels camera (`CameraScreen`,
+which also stands the double-tap flip down). **It fails open (review, 2026-10-31): the button and the
+double-tap are hidden ONLY on a measured count of exactly 1.** An unknown count (list unreadable, or a
+browser that listed no camera) keeps them: a phone that wrongly lost the front/back flip would lose it for
+good, whereas a desktop with one webcam and a visible button merely does nothing on a tap. The count is
+`countVideoInputs()` (`enumerateDevices()` filtered on `videoinput`, the ONE implementation - the call
+screen's `CallService.refreshCameraCount` uses it too), read AFTER the camera is open (labels and devices
+can be hidden before the grant) and again on `devicechange`; the listener is removed on `stop()`, and a
+read that lands after `stop()` writes nothing (`#watchEpoch`).
+
+**The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
+`[CAMERA_COUNT] videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`videoinput=1`, the rule is wrong for that browser and the line is the evidence.

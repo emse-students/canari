@@ -206,6 +206,15 @@ export async function countVideoInputs(): Promise<number> {
   return devices.filter((d) => d.kind === 'videoinput').length;
 }
 
+/**
+ * Whether this browser understands the `facingMode` constraint - a phone's front/back choice. Read
+ * for the `[CAMERA_COUNT]` line, which is how the real count is compared with the device's kind.
+ */
+export function facingModeSupported(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.mediaDevices?.getSupportedConstraints?.().facingMode === true;
+}
+
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
 export function releaseCamera(stream: MediaStream | null): void {
   if (!stream) return;

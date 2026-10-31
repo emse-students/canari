@@ -510,6 +510,29 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     expect(session.facing).toBe('environment');
   });
 
+  it('a MEASURED single camera stands the double tap down; an unknown count keeps it (fails open)', async () => {
+    const one = lensWithMic();
+    const openOne = vi.fn((_facing: CameraFacing) => Promise.resolve(one.stream));
+    const single = new CameraSession(openOne, openOne, async () => 1);
+    const oneTarget = await mountLive({}, single);
+    await vi.waitFor(() => expect(single.cameraCount).toBe(1));
+    doubleTap(oneTarget);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openOne).toHaveBeenCalledTimes(1);
+
+    const unknown = lensWithMic();
+    const openUnknown = vi.fn((_facing: CameraFacing) => Promise.resolve(unknown.stream));
+    const session = new CameraSession(openUnknown, openUnknown, async () => {
+      throw new Error('no list');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unknownTarget = await mountLive({}, session);
+    expect(session.cameraCount).toBeNull();
+    doubleTap(unknownTarget, 3);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openUnknown).toHaveBeenLastCalledWith('environment', true);
+  });
+
   it('DURING A TAKE a double tap flips only the lens: the microphone runs on, the zoom is back at 1x', async () => {
     const first = lensWithMic();
     const back = lensWithMic().lens;
