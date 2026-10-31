@@ -33,6 +33,7 @@
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
   import { formatNoticeSlot, readBookingNoticeMeta } from '$lib/bookings/noticeText';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import type { ReportReason } from '$lib/moderation/reasons';
 
@@ -200,9 +201,20 @@
       notif.type === 'repost_personal_requested' ||
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
-      notif.type === 'booking_added') &&
+      notif.type === 'booking_added' ||
+      // The reminder carries the booked space's owning association (owner, 2026-10-30). A reminder
+      // written before that, or for a link-only / personal space, has none: it keeps the neutral
+      // avatar - a data gap in old rows, not a fallback path (logged below).
+      notif.type === 'booking_reminder') &&
       !!notif.associationId
   );
+  $effect(() => {
+    if (notif.type === 'booking_reminder' && !notif.associationId) {
+      Log.d('[NOTIF] booking reminder without an association: neutral avatar', {
+        id: notif.id,
+      });
+    }
+  });
   /**
    * THE TWO ANSWERS TO A PROFILE CORRECTION REQUEST (WP4b), listed for the same reason as the agenda's
    * five: a type this chain does not name would inherit the COMMENT sentence, glyph and colour. The
@@ -315,7 +327,12 @@
         <VideoOff size={24} />
       </span>
     {:else if actorIsAssociation}
-      <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
+      <AssociationAvatar
+        id={notif.associationId ?? notif.actorId}
+        name={notif.actorName}
+        logoUrl={notif.associationLogoUrl}
+        fill
+      />
     {:else}
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
     {/if}
@@ -459,7 +476,7 @@
         {#if !isBookingReminder}{BOOKING_TEXT[notif.type]()}{/if}
         {#if bookingNotice}
           <!-- The space, then the slot on the space's clock in the reader's locale; the organiser's
-               word (`text`, plain text) on its own line. -->
+               word (`meta.word`, plain text) on its own line. -->
           {#if bookingNotice.place}<span class="italic"
               ><EmojiText text={bookingNotice.place} /></span
             >{#if bookingSlot}&#32;&#183;&#32;{/if}{/if}{bookingSlot ?? ''}

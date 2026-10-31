@@ -120,6 +120,40 @@ describe('NotificationRow avatar', () => {
   });
 });
 
+describe('NotificationRow booking reminder avatar (owner, 2026-10-30)', () => {
+  const reminder = (extra: Partial<PostNotification> = {}): PostNotification => ({
+    id: 'r1',
+    type: 'booking_reminder',
+    postId: 'b-1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'Salle Musique - Salle · 11:00',
+    read: false,
+    createdAt: new Date().toISOString(),
+    ...extra,
+  });
+
+  it('draws the owning association logo, keeping the type badge', () => {
+    const target = renderRow(
+      reminder({
+        actorName: 'Club Musique',
+        associationId: 'asso-1',
+        associationLogoUrl: '/api/media/public/logo1',
+      })
+    );
+    expect(target.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+    // The clock badge is still drawn over the avatar.
+    expect(target.querySelector('span.rounded-full.bg-green-600')).not.toBeNull();
+  });
+
+  it('keeps the generic avatar for an old reminder without an association', () => {
+    const target = renderRow(reminder());
+    expect(target.querySelector('[aria-label^="Avatar de"]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Logo de"]')).toBeNull();
+  });
+});
+
 /**
  * AND THE SENTENCE UNDER THAT AVATAR SAID THE ASSOCIATION HAD COMMENTED.
  *

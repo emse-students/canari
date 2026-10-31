@@ -866,9 +866,12 @@ over", closes), anything else (a retry, the dialog stays open). Only a report th
 "block the person who is broadcasting" through `showConfirm` (danger) and `blockUser(broadcasterId)`;
 a block leaves the live through the viewer's own dismissal. The offer says "the person", not the
 name: on an association's live the displayed name is the association's, the block lands on the member
-who broadcasts. **Not built, by the server's contract:** reporting ONE chat line - `content_reports`
-accepts `contentType: 'live'` only ([lives](../../services/lives.md#an-erased-account-and-a-single-message-reported)),
-so a viewer reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
+who broadcasts. **Reporting ONE chat line is built (WP-L8b client half, 2026-10-21):** a `Flag` button
+(`data-live-chat-report`) on every numbered line that is not the reader's own in `LiveChatPanel`, wired
+by `LiveViewer` (`report={(line) => (reportedLine = line)}`) to `LiveChatReportDialog`
+([decisions of 2026-10-21](#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half),
+[lives](../../services/lives.md#a-reported-chat-line-wp-l8b)). The viewer's TOP-BAR control still
+reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
 `LiveViewer.svelte.test.ts`.
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
@@ -1075,3 +1078,11 @@ exactness, what happens when Redis does not answer) is
   and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
   end screen, and reset for a new live).
 - **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).
+
+## The viewer header and the rules sheet (2026-10-30, `1.5.2-alpha.1` readings)
+
+- The LIVE pill and the elapsed time sit on a second line under the broadcaster's name, so the name
+  takes the header's width and truncates only against the action buttons (`LiveViewer.svelte`).
+- The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
+- The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
+  never draws under the iOS status bar (`LiveBroadcaster.svelte`).

@@ -1,6 +1,7 @@
 #import "canari_push.h"
 #import "canari_ios.h"
 #import "canari_rust_bridge.h"
+#import "KeyboardMediaBridge.h"
 
 #import <CallKit/CallKit.h>
 #import <Foundation/Foundation.h>
@@ -9,6 +10,7 @@
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
 #import <FirebaseMessaging/FirebaseMessaging.h>
@@ -1852,7 +1854,11 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
     NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
     id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
     if (![json isKindOfClass:[NSDictionary class]] || ![json[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] encryptQueuedMessages: ok=false");
+      // The reason, not only the verdict: a refused write (the foreground guard, a moved
+      // mls.bin) and an unreadable state end here alike, and only the Rust error tells them apart.
+      id reason = [json isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
+      NSLog(@"[CanariPush] encryptQueuedMessages: ok=false (%@)",
+            [reason isKindOfClass:[NSString class]] ? reason : @"no reason given");
       return nil;
     }
     id results = json[@"results"];
@@ -2087,6 +2093,65 @@ static void CanariSendReadWatermark(NSString *groupId, long long at) {
   CanariRewriteOutboxMirror(entries);
   CanariDrainOutboxBackground(ctx);
   NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
+}
+
+/// `CallEndReason.CALL_END_REASON_DECLINED` in libs/proto/canari.proto: the callee refused the ring.
+static const unsigned int kCanariCallEndReasonDeclined = 2;
+
+/**
+ * Tells the caller this phone DECLINED its call, from the CallKit Decline - the hangup the in-app
+ * Decline sends (`CallMsg { hangup, end_reason = DECLINED }`), so the caller's ring ends at once and
+ * its record reads "declined". Before, the CallKit Decline sent nothing and the caller rang out its
+ * whole minute (1.5.2-alpha.1). Android twin: handleCallDecline in CanariNotificationActionReceiver.kt.
+ *
+ * SENT ONCE, NEVER QUEUED: it is a transport frame (silent, not durable, as the in-app send), and a
+ * hangup replayed from the outbox mirror after its call ended would mean nothing. A failure is
+ * logged and the caller rings out its window. Blocking (an FFI encrypt and a POST): call it off the
+ * main queue.
+ */
+static void CanariSendCallDecline(NSString *groupId, NSString *callId) {
+  if (groupId.length == 0 || callId.length == 0) {
+    NSLog(@"[CanariCallKit] ERROR decline with no group or call - the caller is not told");
+    return;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSString *secret = CanariRetrievePushSecret();
+  if (ctx == nil || secret == nil) {
+    NSLog(@"[CanariCallKit] ERROR decline call=%@: push context or secret absent - the caller is "
+          @"not told",
+          callId);
+    return;
+  }
+  NSString *messageId = [[NSUUID UUID] UUIDString];
+  long long sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  char *protoPtr = canari_native_build_call_hangup_proto(
+      messageId.UTF8String, sentAt, callId.UTF8String, ctx.deviceId.UTF8String,
+      kCanariCallEndReasonDeclined);
+  if (protoPtr == nil) {
+    NSLog(@"[CanariCallKit] ERROR decline call=%@: the hangup could not be built", callId);
+    return;
+  }
+  NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
+  canari_free_string(protoPtr);
+  if (protoB64.length == 0) {
+    NSLog(@"[CanariCallKit] ERROR decline call=%@: the hangup could not be built", callId);
+    return;
+  }
+  CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
+  entry.entryId = messageId;
+  entry.groupId = groupId;
+  entry.proto = protoB64;
+  entry.sentAt = sentAt;
+  entry.silent = YES;
+  entry.durable = NO;
+  NSString *ciphertext = CanariEncryptQueuedMessages(ctx, @[ entry ])[messageId];
+  if (ciphertext == nil) {
+    NSLog(@"[CanariCallKit] decline call=%@: encrypt failed - the caller rings out its window",
+          callId);
+    return;
+  }
+  BOOL sent = CanariSendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, YES, NO);
+  NSLog(@"[CanariCallKit] decline call=%@ sent=%d", callId, sent);
 }
 
 /**
@@ -2679,7 +2744,8 @@ static CXProvider *g_callProvider = nil;
 static PKPushRegistry *g_voipRegistry = nil;
 /// callId -> CallKit UUID for calls currently ringing (or answered but not yet handed over).
 static NSMutableDictionary<NSString *, NSUUID *> *g_ringingCalls = nil;
-/// CallKit UUID string -> {groupId, callId, hasVideo} for the answer handler.
+/// CallKit UUID string -> {groupId, callId, callerId, hasVideo, answered?} for the answer and end
+/// handlers: the answer carries all of it to the webview, the end reads `answered` to tell a decline.
 static NSMutableDictionary<NSString *, NSDictionary *> *g_ringingCallInfo = nil;
 
 /// Ends a CallKit session for `callId` (remote hangup, answered elsewhere, timeout). No-op when
@@ -2698,6 +2764,76 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
     [g_callProvider reportCallWithUUID:uuid endedAtDate:nil reason:reason];
     NSLog(@"[CanariCallKit] call %@ ended (reason=%ld)", callId, (long)reason);
   });
+}
+
+/// Removes the pending accept the CallKit answer wrote, when it names `callId` (an End after the
+/// answer). Read before the removal, so the answer of another call is never the one dropped.
+static void CanariCancelPendingCallAccept(NSString *callId) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || callId.length == 0) {
+    NSLog(@"[CanariCallKit] ERROR cancel of the answer of call=%@: no data dir or call", callId);
+    return;
+  }
+  NSString *path = [dir stringByAppendingPathComponent:kPendingCallAcceptFileName];
+  NSData *data = [NSData dataWithContentsOfFile:path];
+  if (data == nil) {
+    NSLog(@"[CanariCallKit] answer of call=%@ ended - no pending accept left to cancel", callId);
+    return;
+  }
+  id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  id pendingCall = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"callId"] : nil;
+  if (![pendingCall isKindOfClass:[NSString class]] || ![pendingCall isEqualToString:callId]) {
+    NSLog(@"[CanariCallKit] answer of call=%@ ended - the pending accept names another call, kept",
+          callId);
+    return;
+  }
+  NSError *err = nil;
+  if (![[NSFileManager defaultManager] removeItemAtPath:path error:&err]) {
+    NSLog(@"[CanariCallKit] ERROR the pending accept of call=%@ could not be removed: %@", callId,
+          CanariErrorReason(err));
+    return;
+  }
+  NSLog(@"[CanariCallKit] answer of call=%@ cancelled by the End - pending accept removed", callId);
+}
+
+/// Tells a live page that the CallKit answer's `pending_call_accept.json` waits -
+/// `canari:call-accept`, on which the page drains it (`drainNativePendingCallAccept`). A page not
+/// loaded yet drains it at its mount instead. A STAT, never a read: nothing is told when no answer
+/// waits.
+///
+/// AN EVENT, BECAUSE THE PAGE SEES NO TRANSITION. PushKit launches a killed app in the background,
+/// and WKWebView loads the page `visible` and keeps it so until the app has been active and left:
+/// on the iPhone 12 (1.5.2-alpha.2, K7 and K8) the page went `0 -> 1` at the launch and never
+/// changed when the answer brought the app to the front, so no `visibilitychange` drained the file
+/// and the call was never joined. The deep link of 1.5.2-alpha.1 was the trigger that hid this; a
+/// link no longer answers (calls.md, "An answer from the ring joins on the ring's facts").
+///
+/// CALLED AT THE HANDOVER, NEVER AT THE ANSWER: until the app is active a CallKit End may still
+/// cancel the answer (`CanariCancelPendingCallAccept` removes the file), and the page must not
+/// already hold it in memory then.
+static void CanariTellPageOfPendingCallAccept(void) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil ||
+      ![[NSFileManager defaultManager]
+          fileExistsAtPath:[dir stringByAppendingPathComponent:kPendingCallAcceptFileName]]) {
+    return;
+  }
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariCallKit] an answer waits before the WebView: the page drains it at mount");
+    return;
+  }
+  [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:call-accept'));"
+            completionHandler:^(__unused id result, NSError *error) {
+              // Said once the page ran the dispatch, never before: either line is a fact.
+              if (error != nil) {
+                NSLog(@"[CanariCallKit] ERROR the page was not told of the answer (%@): it drains "
+                      @"at its next mount or resume",
+                      CanariErrorReason(error));
+                return;
+              }
+              NSLog(@"[CanariCallKit] an answer waits - the page was told");
+            }];
 }
 
 @interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
@@ -2720,14 +2856,26 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
   NSString *groupId = info[@"groupId"] ?: @"";
   NSString *callId = info[@"callId"] ?: @"";
+  NSString *callerId = info[@"callerId"] ?: @"";
   BOOL hasVideo = [info[@"hasVideo"] boolValue];
   NSLog(@"[CanariCallKit] answer call=%@ group=%@", callId, groupId);
+  if (info != nil) {
+    // Answered: an END of this CallKit call from now on is a hang-up of an answered call, never a
+    // decline (performEndCallAction).
+    NSMutableDictionary *answered = [info mutableCopy];
+    answered[@"answered"] = @YES;
+    g_ringingCallInfo[action.callUUID.UUIDString] = answered;
+  }
 
+  // THE PENDING ACCEPT IS THE WHOLE ANSWER: every fact the join needs, from the ring. The webview
+  // joins on it without waiting for the caller's MLS invite, a transport frame the server skipped
+  // while this phone was closed (calls.md, "An answer from the ring joins on the ring's facts").
   NSString *dir = CanariTauriDataDir();
   if (dir != nil && groupId.length > 0) {
     NSDictionary *pending = @{
       @"groupId" : groupId,
       @"callId" : callId,
+      @"callerId" : callerId,
       @"hasVideo" : @(hasVideo),
       @"acceptedAt" : @((long long)([[NSDate date] timeIntervalSince1970] * 1000)),
     };
@@ -2740,9 +2888,8 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   // Best-effort foreground: works when the app is unlocked/active contexts allow it; from the
   // lock screen the user lands in the app via the CallKit UI's app button instead.
   if (groupId.length > 0) {
-    NSString *link = [NSString
-        stringWithFormat:@"fr.emse.canari://chat/%@?acceptCall=%@&video=%d", groupId, callId,
-                         hasVideo ? 1 : 0];
+    // NAVIGATION ONLY: the answer is the private file above, never a parameter of a link.
+    NSString *link = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
     NSURL *url = [NSURL URLWithString:link];
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
@@ -2752,18 +2899,51 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
   }
 }
 
-/// User declined on the system UI: local dismiss only. In a group call "decline" means "stop
-/// ringing me", never "end the call for everyone"; the caller stops via ring-end or timeout.
+/// The user ended the call on the system UI, and the caller is told (`CanariSendCallDecline`: the
+/// in-app Decline's hangup), so its ring ends at once instead of after its whole window. Calls are
+/// 1:1 (calls.md, lot 1), so declining and ending the caller's ring are one act.
+///
+/// AN END AFTER THE ANSWER CANCELS THE ANSWER. The answer wrote `pending_call_accept.json` for the
+/// webview; ended now, that file is removed (`CanariCancelPendingCallAccept`), or an unlock in the
+/// next minutes would join a call the user hung up. Nothing can be held in the webview's memory yet:
+/// the page is told of the file only at the handover (`CanariTellPageOfPendingCallAccept`, queued
+/// behind the AnsweredElsewhere ends), so no End can follow a drain. The caller is told as for a
+/// decline - this device never joined.
 - (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
   (void)provider;
   NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
   NSString *callId = info[@"callId"] ?: @"";
-  NSLog(@"[CanariCallKit] declined/ended call=%@", callId);
+  NSString *groupId = info[@"groupId"] ?: @"";
+  BOOL answered = [info[@"answered"] boolValue];
+  NSLog(@"[CanariCallKit] %@ call=%@", answered ? @"ended after the answer" : @"declined", callId);
   if (callId.length > 0) {
     [g_ringingCalls removeObjectForKey:callId];
   }
   [g_ringingCallInfo removeObjectForKey:action.callUUID.UUIDString];
   [action fulfill];
+  if (answered) {
+    CanariCancelPendingCallAccept(callId);
+  }
+  if (info != nil) {
+    UIApplication *app = [UIApplication sharedApplication];
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    task = [app beginBackgroundTaskWithName:@"canari-call-decline"
+                          expirationHandler:^{
+                            NSLog(@"[CanariCallKit] decline call=%@ ran out of background time",
+                                  callId);
+                            [app endBackgroundTask:task];
+                            task = UIBackgroundTaskInvalid;
+                          }];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      CanariSendCallDecline(groupId, callId);
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (task != UIBackgroundTaskInvalid) {
+          [app endBackgroundTask:task];
+          task = UIBackgroundTaskInvalid;
+        }
+      });
+    });
+  }
 }
 
 @end
@@ -2829,6 +3009,7 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
     g_ringingCallInfo[uuid.UUIDString] = @{
       @"groupId" : groupId ?: @"",
       @"callId" : callId,
+      @"callerId" : callerId ?: @"",
       @"hasVideo" : @(hasVideo),
     };
 
@@ -2902,6 +3083,7 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
     g_ringingCallInfo[uuid.UUIDString] = @{
       @"groupId" : groupId ?: @"",
       @"callId" : callId,
+      @"callerId" : callerId ?: @"",
       @"hasVideo" : @NO,
     };
   }
@@ -3093,6 +3275,11 @@ static void CanariCallKitSetup(void) {
                 for (NSString *callId in [g_ringingCalls.allKeys copy]) {
                   CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
                 }
+                // THEN the page is told an answer waits: queued on the main queue behind the ends
+                // above, so it runs once no CallKit End can remove the file any more.
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  CanariTellPageOfPendingCallAccept();
+                });
               }];
   NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }
