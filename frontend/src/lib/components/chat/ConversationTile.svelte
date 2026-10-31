@@ -92,9 +92,12 @@
 
   onMount(() => {
     // Only poll presence for real user IDs (direct conversations).
+    // The teardown names the peer it watched, captured here: a prop read in a teardown can re-run a
+    // parent derived with stale values and rewire it (frontend/architecture, on teardowns).
     if (isDirect) {
-      watchUsers([contactName]);
-      return () => unwatchUsers([contactName]);
+      const watched = contactName;
+      watchUsers([watched]);
+      return () => unwatchUsers([watched]);
     }
   });
 
@@ -183,7 +186,7 @@
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
+      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="lg" />
     {/if}
   </div>
 

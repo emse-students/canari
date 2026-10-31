@@ -4,6 +4,7 @@ import type {
   IMlsService,
   UserGroupRow,
   DeviceMembershipRow,
+  WelcomeRequestAnswer,
 } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
@@ -21,6 +22,7 @@ import { reconcileGroup } from './historyReconcile';
 import { pendingGroupExitIds } from './pendingGroupExits';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
+import { admissionFreezeOf, isFrozenByAdmissionRefusal } from './admissionFreeze';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
@@ -226,6 +228,14 @@ export interface RecoveryDeps {
   saveConversation: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
+  /**
+   * The group just became sendable through an external join: the SAME seam a processed Welcome
+   * raises (`sessionAuth`'s `announceGroupReady`), so the messages held for the group are resumed at
+   * once. REQUIRED, so the compiler names every caller: every bag passes
+   * `captureGroupReadyAnnouncer()`, read once where it is built, so a join landing after its session
+   * ended announces nothing into the next one.
+   */
+  onGroupReady: (groupId: string) => void;
 }
 
 /**
@@ -346,6 +356,24 @@ export interface ReAddOptions {
 }
 
 /**
+ * Whether `groupId` is frozen by a refused admission, said out loud - the gate EVERY seam that
+ * forgets a group or rebuilds this device from the server's state reads first (`admissionFreeze.ts`).
+ *
+ * The server, if it is the party that let a person in without a member, has moved the group on, so
+ * its group info and its commit log both hold them: an external join or a re-Welcome would rebuild
+ * this device from the very state that was refused. A frozen group is lifted by a person, never
+ * repaired - and it is WARN rather than silent, because the group stops following the server.
+ */
+function refusedWhileFrozen(groupId: string, deps: RecoveryDeps, seam: string): boolean {
+  const freeze = admissionFreezeOf(groupId);
+  if (!freeze) return false;
+  deps.log(
+    `[ADMISSION] ${seam} refused for ${groupId.slice(0, 8)}... - a commit admitted ${freeze.entrant}, whom no member added, so this device does not rebuild from the server's state`
+  );
+  return true;
+}
+
+/**
  * Recovers `groupId` when the local MLS state is absent or out of sync. Single recovery ACTION seam,
  * self-throttled via {@link RECOVERY_TIMEOUT_MS}; the SYNC_WATCHDOG drives the cadence, reactive
  * paths call it on demand. No private timer, no reboot/successor - the self-service external-commit
@@ -374,6 +402,7 @@ export async function requestReAdd(
   deps: RecoveryDeps,
   opts: ReAddOptions = {}
 ): Promise<void> {
+  if (refusedWhileFrozen(groupId, deps, 'requestReAdd')) return;
   // Idempotence: an already-dead conversation does not restart a network recovery.
   const known = findByGroupId(deps.conversations, groupId)?.[1];
   if (known?.lifecycle === 'removed') return;
@@ -590,6 +619,9 @@ export async function requestReAdd(
       // The account is seated. The list carries this device's seat too when the server has one, read
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
       // seat there, this device's door is its own, as an `active` row's.
+      // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ, goes on to the join below like any other:
+      // whether it is a further device of a member is read off the tree its commit would be built
+      // on (`asAFurtherDevice`), never off the server's rows.
       const listed = seat.row.deviceMembership;
       if (listed) {
         deps.log(
@@ -731,7 +763,11 @@ export async function requestReAdd(
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
   let outcome: ExternalJoinOutcome;
   try {
-    outcome = await deps.mlsService.externalJoin(groupId);
+    // A FURTHER DEVICE OF A MEMBER (2026-10-27) - the tree holds a leaf of its user and none of its
+    // own - is not let in by its own commit: the join answers `further_device` and the device asks
+    // a member below, whose device shows it and its key. Read off the very GroupInfo the commit
+    // would be built on, so an honest device never makes the entry members say as nobody's.
+    outcome = await deps.mlsService.externalJoin(groupId, { asAFurtherDevice: 'ask' });
   } catch (e) {
     // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
     // join and no point asking a member to re-add us - the group's own roster is what refused. This
@@ -840,6 +876,10 @@ export async function requestReAdd(
       // event that announces it.
       deps.mlsService.notifyConversationAvailable(groupId);
     }
+    // THE GROUP IS SENDABLE NOW, AND THIS PATH NEVER SAID SO: the row went `active` and nothing
+    // resumed what the outbox held for it, so a message written while the device was out waited for
+    // its own backoff timer (review, 2026-10-31). Raised whether or not the row moved - the group did.
+    deps.onGroupReady(groupId);
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
     // very path also runs for a device that merely rotated its MLS identity and whose store, keyed
@@ -927,6 +967,21 @@ export async function requestReAdd(
     return;
   }
 
+  // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
+  // ASKED ON THE CADENCE, NOT ONCE: no answer the server gives makes the ask durable. A `forwarded`
+  // ask lives on one member's screen, a `stored` one is drained to a member's screen at its next
+  // connection, and a screen that reloads before deciding loses it; nothing on this device can see
+  // that happen, so a record of "already asked" would strand the device in a quiet group. The member's
+  // device adds it with no one asked (`automaticAdmission`: the gate is on the user). The durable
+  // shape - the request as a server row, re-read by every member's sweep - is on the backlog.
+  if (outcome.reason === 'further_device') {
+    await askAMemberToReAddUs(
+      groupId,
+      deps,
+      "a further device of a member - a member's Add, not this device's own join"
+    );
+    return;
+  }
   // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
   // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
   // work around a wait. The watchdog's next pass joins again once the wait has passed.
@@ -1048,6 +1103,17 @@ function classifyOwnSeat(
           `a member is asked, no self-service join`
       );
     }
+    if (reading === 'unhonoured-seat' && admittedAt === null) {
+      // NO COMMIT ADMITTED THIS SEAT SINCE IT WAS LAST WRITTEN - which is NOT "never admitted": the
+      // server clears `admittedAtEpoch` on every transition, the demotions included (a kick, the
+      // stale-device sweep), so a device coming back and one never admitted read the same. Not an
+      // anomaly, and not a door by itself: the join decides it on the tree of the GroupInfo it is
+      // built on, the one every member's verdict reads (`asAFurtherDevice`).
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - the join's tree decides whose door it is`
+      );
+      return 'unhonoured-seat';
+    }
     if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
       // flight is the population `reportStrandedDeviceMemberships` names hourly; reaching it here
@@ -1164,14 +1230,24 @@ async function askAMemberToReAddUs(
   deps: RecoveryDeps,
   context: string
 ): Promise<void> {
-  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest… (${context})`);
-  await deps.mlsService
-    .sendWelcomeRequest(groupId)
-    .catch((e) =>
-      deps.log(`[READD] welcome_request failed for ${groupId.slice(0, 8)}...: ${String(e)}`)
-    );
+  const short = groupId.slice(0, 8);
+  deps.log(`[READD] ${short}... sendWelcomeRequest… (${context})`);
+  let answer: WelcomeRequestAnswer;
+  try {
+    answer = await deps.mlsService.sendWelcomeRequest(groupId);
+  } catch (e) {
+    deps.log(`[READD] welcome_request failed for ${short}...: ${String(e)}`);
+    return;
+  }
+  // WHAT THE SERVER DID, NOT "SENT": a request that reached nobody used to read exactly like one a
+  // member holds. Neither answer is a durable ask - a forwarded one lives on one member's screen, a
+  // stored one is drained to a member's screen at its next connection - so the cadence asks again.
   deps.log(
-    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    !answer
+      ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
+      : answer.status === 'stored'
+        ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+        : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
 }
 
@@ -1193,6 +1269,7 @@ export async function recoverForkedGroup(
   deps: RecoveryDeps,
   minEpoch = 0
 ): Promise<void> {
+  if (refusedWhileFrozen(groupId, deps, 'recoverForkedGroup')) return;
   deps.log(`[FORK] ${groupId.slice(0, 8)}... local state forked behind server - forget + re-add`);
   // minEpoch = known server epoch: rejects a stale re-Welcome from a diverged branch
   // (a commit queued at the old epoch must not re-fork us). Awaited BEFORE the re-add is asked for:
@@ -1249,6 +1326,7 @@ export async function recoverRosterDisagreement(
   deps: RecoveryDeps
 ): Promise<void> {
   if (!isReAddDue(groupId)) return;
+  if (refusedWhileFrozen(groupId, deps, 'recoverRosterDisagreement')) return;
 
   deps.log(
     `[ROSTER] ${groupId.slice(0, 8)}... the server refuses our frames while WASM holds the group` +
@@ -1285,6 +1363,9 @@ export async function recoverRosterDisagreement(
  * (a tombstone, a refused membership, a group nobody can repair), and none of those is here.
  */
 export function isReAddDue(groupId: string): boolean {
+  // A group frozen by a refused admission is never due: it is lifted by a person, and a cadence that
+  // polled it would say so every tick.
+  if (isFrozenByAdmissionRefusal(groupId)) return false;
   return Date.now() - (lastReAddAt.get(groupId) ?? 0) >= RECOVERY_TIMEOUT_MS;
 }
 

@@ -207,7 +207,7 @@
     if (userId) {
       e.preventDefault();
       e.stopPropagation();
-      void goto(resolve(`/profile/${userId}`));
+      void goto(resolve(`profile/${userId}`));
     }
   }
 

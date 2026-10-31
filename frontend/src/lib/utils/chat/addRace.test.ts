@@ -18,6 +18,7 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 }));
 
 import { inviteMembersToGroup } from './groupCreation';
+
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 

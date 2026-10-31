@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SegmentedMediaError } from '$lib/mediaSegmented';
 import {
   MediaDecryptError,
@@ -9,8 +9,37 @@ import {
   MEDIA_PURGED_MESSAGE,
   isMediaPurgedError,
   isRetryableMediaFailure,
+  logMediaFailure,
   mediaFailureCause,
 } from './mediaErrors';
+
+describe('logMediaFailure - one line, at the level its cause deserves', () => {
+  // Production 1.5.1: a range that got no answer printed `media not shown (unreachable)` at error,
+  // with a stack, beside a second line from the stream itself.
+  it('says a media the server did not answer for at warn, with what is owed, and no stack', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const err = new MediaUnreachableError(new TypeError('Failed to fetch'));
+    logMediaFailure('PostMedia', 'unreachable', 'm-1', err);
+
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('Retry draws it again');
+    expect(typeof warn.mock.calls[0][2]).toBe('string');
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('control: a corrupt media still accuses', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    logMediaFailure('PostMedia', 'corrupt', 'm-1', new Error('tag'));
+
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+});
 
 describe('mediaFailureCause - one cause per type, never per message', () => {
   it.each([

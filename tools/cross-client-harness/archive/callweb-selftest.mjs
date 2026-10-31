@@ -7,6 +7,10 @@
  *
  *   bun archive/callweb-selftest.mjs
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { BUSY_ROUNDS, CALL_JUDGES, CALL_WEB_ROWS, PULSE_ON_MS, PULSE_PERIOD_MS, RECORD_SEATS, ROUND_MS, SEAT_TONES, UNANSWERED_ROUNDS, callNarration, callOwn, recordForm, toneWav } from '../callrows.mjs';
 import { captionWith } from '../messages.mjs';
 import { rowVerdict } from '../srvlog.mjs';
@@ -55,7 +59,19 @@ broken('basic', { rang: null }, 'no ring fails, one failure');
 broken('basic', { flow: flow(0, 1) }, 'a seat that heard no energy fails');
 broken('basic', { down: { W2: 3, W4: null } }, 'one end left up fails');
 broken('mute', { muted: flow(1, 0.5) }, 'W4 still hearing W2 while muted fails');
-broken('mute', { after: flow(1, 0.1) }, 'W4 hearing under 20 % after the unmute fails');
+broken('mute', { after: flow(1, 0.1) }, '(c) W4 back at 10 % while the control kept everything: too small for what the call kept, fails');
+broken('mute', { after: flow(0.5, 0.08) }, '(c) W4 back at 8 % while the control kept 50 %: under a fifth of it, fails');
+broken('mute', { after: flow(0, 0) }, '(b) both directions dead after the unmute: the control is silent, fails');
+broken('mute', { after: flow(0.02, 0.01) }, 'both faded to almost nothing: W4 under the 5 % floor, fails - small over small never passes');
+{
+  const r = callOwn('mute', { ...CLEAN.mute, after: flow(1, 0.001) });
+  ok('mute: (a) the muted direction never recovering while the control holds steady fails, on the floor AND the share', r.verdict === 'FAIL' && r.failures.length === 2);
+}
+{
+  // THE 1.5.1-alpha.1 READING (2026-10-27): both directions faded together after the unmute.
+  const m = { ...CLEAN.mute, before: flow(1.612, 1.085), muted: flow(0.802, 0.0103), after: flow(0.186, 0.203) };
+  ok('mute: W4 back at 18.7 % while the unmuted control kept 11.5 % passes - the call faded, the unmute worked', callOwn('mute', m).verdict === 'PASS');
+}
 broken('mute', { senderAtMute: { enabled: true } }, 'a track left enabled by the mute fails');
 broken('decline', { neverConnected: false }, 'a declined call that connected fails');
 broken('cancel', { ringStopped: null }, 'a ring that never stopped fails');
@@ -95,7 +111,7 @@ const UNANS = `log: [Call] ring window (60000 ms) closed unanswered - call=${H}`
 const PRIMED = 'log: [Call] voice primed (tap while ringing): AbortError: The play() request was interrupted because the media was removed from the document. https://goo.gl/LdLk22';
 const E2E_OK = `log: [Call] E2E worker report (5 s after connected): frames=250 decrypt-failed=0 short=0 (empty 0) no-key=0 ok`;
 const E2E_BAD = `log: [Call] E2E worker report (5 s after connected): frames=250 decrypt-failed=3 short=0 (empty 0) no-key=0 ok`;
-const BUSY = `log: [Call] invite ${H} in ${H} not rung - busy (state=incall call=${H})`;
+const BUSY = `log: [Call] invite ${H} in ${H} meets state=incall call=${H}`;
 
 ok("the caller's hang-up is forgiven on W2 in CALL-WEB-1", forgiven('CALL-WEB-1', 'W2', HUNG));
 ok('... and NOT on W4 there, which did not hang up', !forgiven('CALL-WEB-1', 'W4', HUNG));
@@ -112,7 +128,7 @@ ok('... and NOT in CALL-WEB-1, which connected', !forgiven('CALL-WEB-1', 'W4', P
 ok('a clean E2E report is forgiven in a connected row', forgiven('CALL-WEB-1', 'W2', E2E_OK));
 ok('... a report with a decrypt failure is NOT', !forgiven('CALL-WEB-1', 'W2', E2E_BAD));
 ok('... nor is a clean report in a row that never connects', !forgiven('CALL-WEB-4', 'W2', E2E_OK));
-ok('the callee not rung while busy is forgiven on W4 in CALL-WEB-7', forgiven('CALL-WEB-7', 'W4', BUSY));
+ok('the second invite meeting the call in progress is forgiven on W4 in CALL-WEB-7', forgiven('CALL-WEB-7', 'W4', BUSY));
 ok('... and NOT in CALL-WEB-1', !forgiven('CALL-WEB-1', 'W4', BUSY));
 ok('a call line at another level stays dirt', !forgiven('CALL-WEB-1', 'W2', HUNG.replace(/^log/, 'warning')));
 ok('a seat the row does not name gets nothing', callNarration('CALL-WEB-1', 'W5').length === 0 && callNarration('NOT-A-ROW', 'W2').length === 0);
@@ -165,6 +181,77 @@ const peakIn = (fromMs, toMs) => {
 ok('loud inside a pulse', peakIn(50, 200) > 0.25 * 32767);
 ok('silent between pulses - the swing the rig reads to tell pulsed from steady', peakIn(PULSE_ON_MS + 1, PULSE_PERIOD_MS - 1) === 0);
 ok('each pulse fades in rather than clicking on', Math.abs(at(1)) < 0.01 * 32767);
+
+// -- how each call ENDS, and the record it writes (#2582; read on 1.5.1-alpha.1, 2026-10-27) -------
+console.log('the end of a call and its record, per scenario and role');
+const END = (state, outcome, notify) => `log: [20:33:35.528] [Call] ending call ${H} state=${state} outcome=${outcome} notify=${notify} remote=${!notify}`;
+const REC = (outcome) => `log: [20:33:35.531] [CallRecord] ${H} finalized as ${outcome}`;
+const PRIMED_DIAL = 'log: [Call] voice primed (mounted within the dialling tap): AbortError: The play() request was interrupted because the media was removed from the document. https://goo.gl/LdLk22';
+for (const row of ['CALL-WEB-1', 'CALL-WEB-2']) {
+  ok(`${row}: the caller ends an answered call and notifies`, forgiven(row, 'W2', END('incall', 'answered', true)) && forgiven(row, 'W2', REC('answered')));
+  ok(`${row}: the callee is told of it and does not notify`, forgiven(row, 'W4', END('incall', 'answered', false)) && forgiven(row, 'W4', REC('answered')));
+}
+ok('COUNTER: the callee ending as if it had hung up stays dirt in CALL-WEB-1', !forgiven('CALL-WEB-1', 'W4', END('incall', 'answered', true)));
+ok('COUNTER: an answered call recorded not-answered stays dirt', !forgiven('CALL-WEB-1', 'W2', REC('not-answered')) && !forgiven('CALL-WEB-1', 'W2', END('incall', 'not-answered', true)));
+ok('CALL-WEB-4: the callee declines and notifies, the caller is told', forgiven('CALL-WEB-4', 'W4', END('incoming', 'declined', true)) && forgiven('CALL-WEB-4', 'W2', END('calling', 'declined', false)));
+ok('... both record it declined', forgiven('CALL-WEB-4', 'W4', REC('declined')) && forgiven('CALL-WEB-4', 'W2', REC('declined')));
+ok('COUNTER: a decline recorded as cancelled stays dirt', !forgiven('CALL-WEB-4', 'W2', REC('cancelled')) && !forgiven('CALL-WEB-4', 'W2', END('calling', 'cancelled', false)));
+ok('CALL-WEB-5: the caller cancels and notifies, the callee is told', forgiven('CALL-WEB-5', 'W2', END('calling', 'cancelled', true)) && forgiven('CALL-WEB-5', 'W4', END('incoming', 'cancelled', false)));
+ok('COUNTER: a cancel recorded as declined stays dirt', !forgiven('CALL-WEB-5', 'W4', REC('declined')));
+ok("CALL-WEB-6: the caller's unanswered ring ends not-answered", forgiven('CALL-WEB-6', 'W2', END('calling', 'not-answered', true)) && forgiven('CALL-WEB-6', 'W2', REC('not-answered')));
+ok('COUNTER: an unanswered ring recorded answered stays dirt', !forgiven('CALL-WEB-6', 'W2', REC('answered')));
+ok("the caller's ring screen primed away is forgiven on W2 in each row that never connects", ['CALL-WEB-4', 'CALL-WEB-5', 'CALL-WEB-6'].every((r) => forgiven(r, 'W2', PRIMED_DIAL)));
+ok('COUNTER: ... and NOT on W2 in a connected row', !forgiven('CALL-WEB-1', 'W2', PRIMED_DIAL) && !forgiven('CALL-WEB-7', 'W2', PRIMED_DIAL));
+ok('CALL-WEB-7: W5 is answered busy and ends at once, recorded busy', forgiven('CALL-WEB-7', 'W5', `log: [Call] ${H} is busy - ending call ${H} at once`) && forgiven('CALL-WEB-7', 'W5', END('calling', 'busy', true)) && forgiven('CALL-WEB-7', 'W5', REC('busy')));
+ok("... W4 records W5's call busy and ends its own as told", forgiven('CALL-WEB-7', 'W4', REC('busy')) && forgiven('CALL-WEB-7', 'W4', END('incall', 'answered', false)));
+ok('COUNTER: a busy answer is dirt outside the busy row', !forgiven('CALL-WEB-1', 'W4', REC('busy')) && !forgiven('CALL-WEB-1', 'W2', `log: [Call] ${H} is busy - ending call ${H} at once`));
+ok('CALL-WEB-3: the callee ends and notifies, the caller is told', forgiven('CALL-WEB-3', 'W4', END('incall', 'answered', true)) && forgiven('CALL-WEB-3', 'W2', END('incall', 'answered', false)) && forgiven('CALL-WEB-3', 'W2', REC('answered')));
+ok('COUNTER: in CALL-WEB-3 the caller ending as if it had hung up stays dirt', !forgiven('CALL-WEB-3', 'W2', END('incall', 'answered', true)));
+const LEFT_END = `log: [02:07:14.100] [Call] ending call ${H} state=incall outcome=answered notify=false remote=false`;
+ok('CALL-WEB-8: W2 ends on the peer leaving the room, neither notifying nor told', forgiven('CALL-WEB-8', 'W2', LEFT_END) && forgiven('CALL-WEB-8', 'W2', REC('answered')));
+ok('COUNTER: ... that end is dirt in any other row', !forgiven('CALL-WEB-1', 'W2', LEFT_END) && !forgiven('CALL-WEB-3', 'W2', LEFT_END));
+ok('COUNTER: the same end at warn stays dirt', !forgiven('CALL-WEB-1', 'W2', END('incall', 'answered', true).replace(/^log/, 'warning')));
+
+{
+  // THE SPELLINGS, against the source: a reworded line fails here rather than going dirt on a run.
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const svc = readFileSync(join(ROOT, 'frontend/src/lib/services/CallService.ts'), 'utf8');
+  const rec = readFileSync(join(ROOT, 'frontend/src/lib/utils/chat/callSystemMessages.ts'), 'utf8');
+  const srv = readFileSync(join(ROOT, 'apps/chat-delivery-service/src/services/calls.service.ts'), 'utf8');
+  ok('the end, the busy answer and the meeting invite are spelled as CallService.ts writes them', [
+    "`[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`",
+    "const ended = outcome ?? (wasCalling && !this.peerArrived ? 'unrung' : 'answered');",
+    '`[Call] ${senderId} is busy - ending call ${callMsg.callId} at once`',
+    '`[Call] invite ${callId} in ${groupId} meets state=${state} call=${this.currentCallId}`',
+  ].every((t) => svc.includes(t)));
+  ok('the record is spelled as callSystemMessages.ts writes it', rec.includes("`[CallRecord] ${callId} finalized as ${outcome ?? 'answered'}`"));
+  ok('the ring end and the presence are spelled as calls.service.ts writes them', [
+    '`[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`',
+    '`[ring] ring-end call=${callId} notified=${notified}/${tokens.length}`',
+    '`[calls] cleared presence for user=${userId} device=${deviceId}`',
+  ].every((t) => srv.includes(t)));
+}
+
+console.log("the ring's end and the presence cleared, per row");
+const END_RING = (reason) => `${NEST('DEBUG')}[ring] endRing user=${U64} group=${G} call=${C} reason=${reason}`;
+const RING_END = (r, n) => `${NEST('LOG')}[ring] ring-end call=${C} notified=${r}/${n}`;
+const CLEARED = `${NEST('DEBUG')}[calls] cleared presence for user=${U64} device=web-${U64}-mvn2mrrz-j6mu`;
+ok('an answered call ends its ring answered, then ended (CALL-WEB-1, 2)', ['CALL-WEB-1', 'CALL-WEB-2'].every((r) => expectedIn(END_RING('answered'), r) && expectedIn(END_RING('ended'), r)));
+ok('a declined call ends its ring ended (CALL-WEB-4)', expectedIn(END_RING('ended'), 'CALL-WEB-4'));
+ok('a cancelled or unanswered call ends its ring cancelled (CALL-WEB-5, 6)', ['CALL-WEB-5', 'CALL-WEB-6'].every((r) => expectedIn(END_RING('cancelled'), r)));
+ok('the busy row ends one ring answered then ended, and one cancelled (CALL-WEB-7)', ['answered', 'ended', 'cancelled'].every((r) => expectedIn(END_RING(r), 'CALL-WEB-7')));
+ok('COUNTER: a decline whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-4'));
+ok('COUNTER: a cancel whose ring ended answered stays dirt', !expectedIn(END_RING('answered'), 'CALL-WEB-5'));
+ok('a callee hang-up ends its ring answered, then ended (CALL-WEB-3)', expectedIn(END_RING('answered'), 'CALL-WEB-3') && expectedIn(END_RING('ended'), 'CALL-WEB-3'));
+ok('a reload ends its ring answered (CALL-WEB-8), with its ring-end and presence', expectedIn(END_RING('answered'), 'CALL-WEB-8') && expectedIn(RING_END(0, 0), 'CALL-WEB-8') && expectedIn(CLEARED, 'CALL-WEB-8'));
+ok('COUNTER: a reload whose ring ended `ended` stays dirt - the reloaded page never hung up', !expectedIn(END_RING('ended'), 'CALL-WEB-8'));
+ok('COUNTER: an answered call whose ring ended cancelled stays dirt',!expectedIn(END_RING('cancelled'), 'CALL-WEB-1'));
+ok('COUNTER: a reason nobody sends is a shape nobody has read', rowVerdict(END_RING('lost'), 'CALL-WEB-1')?.expected === false);
+ok('a ring-end that reached every token it tried is expected', expectedIn(RING_END(0, 0), 'CALL-WEB-1') && expectedIn(RING_END(3, 3), 'CALL-WEB-5'));
+ok('COUNTER: ... one that reached FEWER is not', !expectedIn(RING_END(1, 3), 'CALL-WEB-1') && !expectedIn(RING_END(0, 2), 'CALL-WEB-6'));
+ok('the presence cleared at the end is expected in a CALL row', expectedIn(CLEARED, 'CALL-WEB-4'));
+ok('COUNTER: none of them outside a CALL row', !expectedIn(END_RING('answered'), 'COMM-1') && !expectedIn(RING_END(0, 0), 'TOK-3') && !expectedIn(CLEARED, 'LIVE-WEB-2'));
+ok('COUNTER: an endRing at ERROR is never forgiven', rowVerdict(END_RING('answered').replace('DEBUG', 'ERROR'), 'CALL-WEB-1') === null);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall good');
 process.exit(failures ? 1 : 0);

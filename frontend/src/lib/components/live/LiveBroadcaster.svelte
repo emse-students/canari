@@ -18,12 +18,13 @@
     CameraOff,
     Eye,
     LoaderCircle,
+    Monitor,
     Radio,
     RefreshCcw,
     ShieldAlert,
     ShieldCheck,
     SwitchCamera,
-    Timer,
+    Video,
     WifiOff,
     X,
   } from '@lucide/svelte';
@@ -41,6 +42,7 @@
     type LiveStartProblem,
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
+  import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
 
@@ -143,6 +145,13 @@
     };
   });
 
+  // The share was stopped from the browser's own bar: the live ends (liveBroadcast.screenShareStopped).
+  $effect(() => {
+    if (camera.phase === 'error' && camera.fault === 'interrupted') {
+      void broadcast.screenShareStopped();
+    }
+  });
+
   onMount(() => {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
@@ -181,6 +190,18 @@
     });
   }
 
+  /** Why THIS browser cannot broadcast, in plain words and with what to do (live.md, "Firefox"). */
+  const UNSUPPORTED_TEXT: Record<LiveRecordingGap, () => string> = {
+    firefox: m.live_unsupported_firefox,
+    outdated: m.live_unsupported_outdated,
+    other: m.live_unsupported,
+  };
+  /** Asked ONCE per sheet (it logs): an engine's recording support does not change while open. */
+  const recordingGap = liveRecordingGap();
+  function unsupportedText(): string {
+    return UNSUPPORTED_TEXT[recordingGap ?? 'other']();
+  }
+
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
@@ -191,7 +212,7 @@
     'rate-limited': m.live_start_rate_limited,
     disabled: m.live_limits_disabled,
     offline: m.live_start_offline,
-    unsupported: m.live_unsupported,
+    unsupported: unsupportedText,
     failed: m.live_start_failed,
   };
 
@@ -234,7 +255,8 @@
   {#key camera.stream}
     <video
       bind:this={video}
-      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user'
+      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user' &&
+      broadcast.source === 'camera'
         ? '-scale-x-100'
         : ''} {camera.phase === 'live' && frameReady
         ? 'opacity-100'
@@ -296,7 +318,7 @@
       </button>
     {/if}
 
-    {#if broadcast.phase === 'preview' && camera.phase === 'live'}
+    {#if broadcast.phase === 'preview' && camera.phase === 'live' && camera.canSwitch && broadcast.source === 'camera'}
       <button
         type="button"
         class={iconButton}
@@ -311,7 +333,7 @@
 
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <div
-      class="absolute inset-x-0 bottom-0 flex flex-col gap-3 bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
+      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
     >
       <h2 class="text-lg font-bold">{m.live_prelive_title()}</h2>
       <p class="text-sm text-white/80">
@@ -319,6 +341,42 @@
           ? m.live_prelive_as_association({ name: associationName })
           : m.live_prelive_as_member()}
       </p>
+      {#if broadcast.canShareScreen}
+        <div
+          class="flex flex-col gap-2"
+          role="radiogroup"
+          aria-label={m.live_source_label()}
+          data-live-source-group
+        >
+          <div class="flex gap-2">
+            {#each ['camera', 'screen'] as const as option (option)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={broadcast.source === option}
+                disabled={broadcast.phase !== 'preview' || broadcast.choosingSource}
+                class="{pill} flex-1 justify-center {broadcast.source === option
+                  ? 'bg-white text-black'
+                  : 'bg-white/15 hover:bg-white/25'}"
+                onclick={() => void broadcast.chooseSource(option)}
+                data-live-source={option}
+              >
+                {#if option === 'camera'}
+                  <Video size={18} strokeWidth={2.25} />
+                  {m.live_source_camera()}
+                {:else}
+                  <Monitor size={18} strokeWidth={2.25} />
+                  {m.live_source_screen()}
+                {/if}
+              </button>
+            {/each}
+          </div>
+          {#if broadcast.source === 'screen'}
+            <p class="text-sm text-white/80" data-live-source-hint>{m.live_source_screen_hint()}</p>
+          {/if}
+        </div>
+      {/if}
+
       <ul class="flex flex-col gap-2 text-sm text-white/90">
         <li class="flex items-start gap-2.5">
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
@@ -329,12 +387,6 @@
           {m.live_rule_moderation()}
         </li>
         {#if broadcast.limits}
-          <li class="flex items-start gap-2.5">
-            <Timer size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
-            {m.live_rule_duration({
-              minutes: Math.floor(broadcast.limits.maxDurationMs / 60_000),
-            })}
-          </li>
           <li class="flex items-start gap-2.5">
             <CameraOff size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
             {m.live_rule_background({
@@ -376,7 +428,7 @@
       {/if}
 
       {#if !broadcast.supported}
-        <p class="text-sm font-semibold text-red-300" role="alert">{m.live_unsupported()}</p>
+        <p class="text-sm font-semibold text-red-300" role="alert">{unsupportedText()}</p>
       {:else if broadcast.limitsProblem}
         <div class="flex items-center justify-between gap-3" role="alert">
           <p class="text-sm font-semibold text-red-300">
@@ -405,7 +457,13 @@
 
       {#if camera.phase === 'error' && camera.fault}
         <div class="flex items-center justify-between gap-3" role="alert">
-          <p class="text-sm text-white/80">{CAMERA_FAULT_TEXT[camera.fault]()}</p>
+          <p class="text-sm text-white/80">
+            {broadcast.source === 'screen'
+              ? broadcast.phase === 'preview'
+                ? m.live_source_screen_stopped()
+                : m.live_source_screen_stopped_on_air()
+              : CAMERA_FAULT_TEXT[camera.fault]()}
+          </p>
           <button
             type="button"
             class="{pill} shrink-0 bg-white/15 hover:bg-white/25"

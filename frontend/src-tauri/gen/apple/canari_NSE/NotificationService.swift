@@ -214,6 +214,20 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
     case "social_live_started": composed = actorTitled("live_started")
+    // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
+    case "social_follow_request": composed = actorTitled("follow_request")
+    case "social_follow_accepted": composed = actorTitled("follow_accepted")
+    // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's
+    // word) is the body, a fixed sentence on a link-only space (Q-R5).
+    case "social_booking_cancelled": composed = actorTitled("booking_cancelled")
+    case "social_booking_withdrawn": composed = actorTitled("booking_withdrawn")
+    case "social_booking_added": composed = actorTitled("booking_added")
+    // The reminder: nobody acted, a fixed title; the body is the place and the time.
+    case "social_booking_reminder":
+      composed = (
+        Self.localized("notif.social.booking_reminder.title", locale: locale),
+        arg.isEmpty ? Self.localized("notif.social.booking_reminder.body", locale: locale) : arg
+      )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
@@ -243,6 +257,24 @@ class NotificationService: UNNotificationServiceExtension {
       composed = (
         Self.localized("notif.form.paid_over_capacity.title", locale: locale),
         Self.localizedFormat("notif.form.paid_over_capacity.body", arg, locale: locale)
+      )
+    // An association's Lydia payments became active / were paused, to its payout managers: `arg`
+    // is the association's name only.
+    case "lydia_payments_active":
+      composed = (
+        Self.localized("notif.lydia_payments_active.title", locale: locale),
+        Self.localizedFormat("notif.lydia_payments_active.body", arg, locale: locale)
+      )
+    case "lydia_payments_paused":
+      composed = (
+        Self.localized("notif.lydia_payments_paused.title", locale: locale),
+        Self.localizedFormat("notif.lydia_payments_paused.body", arg, locale: locale)
+      )
+    // A payer refunded by an association: `arg` is the association's name only.
+    case "lydia_refund_issued":
+      composed = (
+        Self.localized("notif.lydia_refund_issued.title", locale: locale),
+        Self.localizedFormat("notif.lydia_refund_issued.body", arg, locale: locale)
       )
     // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
     case "event_proposed":
@@ -477,15 +509,15 @@ class NotificationService: UNNotificationServiceExtension {
       decrypted = runDecryptLadder(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64)
     }
 
-    // Call signaling over MLS (WP-XP-5, killed-app path). Only pre-WP-XP-5 callers send these
-    // pushes non-silent (new callers ring via APNs VoIP -> CallKit instead). An invite becomes a
-    // time-sensitive ringing banner; control events (hangup/answered/ICE) must never surface as a
-    // message - the NSE cannot drop a push (no filtering entitlement), so they deliver blank and
-    // additionally clear a previously-shown ring banner for the same callId.
+    // Call signaling over MLS (WP-XP-5, killed-app path). Current callers send it silent, so it never
+    // reaches this extension; only an old or crafted client sends it as an alert. It must never
+    // surface as a message, and an invite NEVER RINGS: the one ring is the server's `call_ring`
+    // (`applyGenericCallRing`, VoIP, FCM), the only one that passed calls_mode, the conversation's
+    // permission, the video rule and blocks. The NSE cannot drop a push (no filtering entitlement),
+    // so both deliver blank; a control event that ended the call also clears its ring banner.
     if let call = decrypted, call.type == "call_invite" {
-      applyCallInviteContent(
-        content: content, senderName: senderName, groupName: groupName,
-        groupId: groupId, callId: call.callId ?? "", hasVideo: call.hasVideo, locale: ctx.locale)
+      NSLog("[CanariNSE] call_invite over MLS: not a ring - delivered blank, the server's call_ring is the only one")
+      applyCallControlContent(content: content, callId: call.callId ?? "", ended: false)
       return
     }
     if let call = decrypted, call.type == "call_control" {
@@ -598,40 +630,9 @@ class NotificationService: UNNotificationServiceExtension {
     return nil
   }
 
-  /// Ringing banner for a legacy (non-silent) MLS call invite: ringtone-class sound +
-  /// time-sensitive interruption so it breaks through Focus like a call should.
-  private func applyCallInviteContent(
-    content: UNMutableNotificationContent, senderName: String, groupName: String,
-    groupId: String, callId: String, hasVideo: Bool, locale: String?
-  ) {
-    content.title = senderName.isEmpty ? "Canari" : senderName
-    content.subtitle = groupName
-    // The emoji is not a translation and stays here; the sentence comes from the table, in the
-    // language chosen inside Canari. Android twin: notif_incoming_call / notif_incoming_video_call.
-    let callKey = hasVideo ? "notif.call.incoming_video" : "notif.call.incoming"
-    content.body = "\(hasVideo ? "\u{1f4f9}" : "\u{1f4de}") \(Self.localized(callKey, locale: locale))"
-    if #available(iOS 15.2, *) {
-      content.sound = .defaultRingtone
-    } else {
-      content.sound = .default
-    }
-    if #available(iOS 15.0, *) {
-      content.interruptionLevel = .timeSensitive
-    }
-    if !groupId.isEmpty {
-      content.threadIdentifier = groupId
-      content.userInfo["deepLink"] =
-        "fr.emse.canari://chat/\(groupId)?acceptCall=\(callId)&video=\(hasVideo ? 1 : 0)"
-    }
-    // Tag with the callId so a later hangup/answered control push can clear this banner.
-    if !callId.isEmpty {
-      content.userInfo["canariCallId"] = callId
-    }
-    finish()
-  }
-
-  /// Call control (hangup/answered/ICE): deliver a blank, silent content (the NSE cannot suppress
-  /// a push) and clear any ringing banner previously shown for the same callId.
+  /// Call signaling that reached the extension as an alert (an MLS invite or control event from an
+  /// old or crafted client): deliver a blank, silent content (the NSE cannot suppress a push) and,
+  /// for a control event that ended the call, clear the server ring banner of the same callId.
   private func applyCallControlContent(
     content: UNMutableNotificationContent, callId: String, ended: Bool
   ) {

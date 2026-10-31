@@ -64,6 +64,7 @@
       <AnonymousAvatar fill />
     {:else if selectedAssociation}
       <AssociationAvatar
+        id={selectedAssociation.id}
         fill
         shape="circle"
         name={selectedAssociation.name}
@@ -93,6 +94,7 @@
           {:else}
             {@const asso = associations.find((a) => a.id === option.value)}
             <AssociationAvatar
+              id={asso?.id ?? option.value}
               fill
               shape="circle"
               name={asso?.name ?? option.label}

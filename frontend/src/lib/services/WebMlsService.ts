@@ -1481,6 +1481,11 @@ export class WebMlsService extends BaseMlsService {
     return this.client.export_group_info(groupId) as Uint8Array;
   }
 
+  /** WASM client wrapper - `external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return this.client.external_join_is_a_further_device(groupInfoBytes);
+  }
+
   /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns
    *  [group_id, commit] from the WASM boundary. */
   protected async joinByExternalCommit(
@@ -1667,6 +1672,14 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
+  /**
+   * See {@link BaseMlsService.heldGroupsKnown}: the WASM module is read live, so the list is known
+   * exactly when a client exists - before one, `getLocalGroups()` answers `[]`, which says nothing.
+   */
+  override heldGroupsKnown(): boolean {
+    return this.client !== null && this.client !== undefined;
+  }
+
   /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
   getLocalGroups(): string[] {
     if (!this.client) return [];
@@ -1696,6 +1709,20 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return Array.from(this.client.get_member_identities(groupId) as Iterable<string>);
+  }
+
+  /** WASM client wrapper - classifies a group for the admission rule. */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot classify ${groupId} (${policy})`);
+    this.client.set_admission_policy(groupId, policy);
+  }
+
+  /** WASM client wrapper - the admission policy a group was classified with. */
+  async getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s admission policy`);
+    return this.client.admission_policy(groupId) as 'closed' | 'open' | 'unclassified';
   }
 
   /** WASM client wrapper - the tree's signature key for one leaf, or null when it has none. */

@@ -8,12 +8,13 @@ import type { JoinApprovalRequest } from './actions';
  *
  * An automatic Add never brings a new person in (`automaticAdmission` in `actions.ts`): whatever a
  * server row or a relayed request says, a user with no leaf in this device's tree is admitted only by
- * a member's own gesture. The two automatic adders raise the ask here instead, and the banner shows
- * it. Accepting is the member's Add (`inviteMembersToGroup`, signed by this device); refusing removes
+ * a member's own gesture. The two automatic adders raise the ask here instead, and the conversation
+ * shows it as a discreet system line (`JoinRequestRow`; there is no app-wide banner). Accepting is the member's Add (`inviteMembersToGroup`, signed by this device); refusing removes
  * the request's roster row on the server, which is what stops the ask from coming back.
  *
  * ONE ENTRY PER PERSON AND CONVERSATION, whatever the number of their devices or of the sweeps that
- * raise it. The pending-invitation sweep is the durable source - the server's `pending` rows - so a
+ * raise it. THERE IS NO ASK ABOUT A DEVICE: a device of a member is added automatically (owner,
+ * 2026-10-31 - the gate is on the user, never the device). The pending-invitation sweep is the durable source - the server's `pending` rows - so a
  * finished sweep REPLACES what it raised ({@link settleSweptJoinRequests}): an ask another member
  * answered, or whose row is gone, leaves with the next sweep rather than staying on screen.
  */
@@ -43,6 +44,25 @@ export interface JoinRequestHandlers {
 }
 
 const requests = new SvelteMap<string, JoinRequest>();
+
+/**
+ * A DECLINE THIS MEMBER MADE, kept for the session so the conversation can say so. An accepted ask
+ * needs no record: the Add writes its own `memberAdded` notice on every member's device. No frame
+ * tells the OTHER members of a decline, so this line is this device's alone - never a stored row,
+ * which history reconciliation would relay under an id nobody else holds.
+ */
+export interface DeclinedAsk {
+  /** The entry's identity, unique per line. */
+  key: string;
+  groupId: string;
+  userId: string;
+}
+const declined = new SvelteMap<string, DeclinedAsk>();
+
+/** The declines this member made in one conversation, oldest first. Reactive. */
+export function declinedJoinRequests(groupId: string): DeclinedAsk[] {
+  return [...declined.values()].filter((d) => d.groupId === groupId);
+}
 /**
  * THE ASKS THE SERVER SAID WERE ANSWERED THIS SESSION, BY IDENTITY (`askId`, the seat's id). An ask
  * is settled for good: a raise naming a settled identity is a read made before the settlement - a
@@ -50,11 +70,38 @@ const requests = new SvelteMap<string, JoinRequest>();
  * the same person is a new seat, so a new identity, and is raised. No order of arrival is assumed.
  */
 const settledAsks = new SvelteSet<string>();
-// Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
+// Reactive, so a line is drawn for an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
-function keyOf(groupId: string, userId: string): string {
+function keyOf(groupId: string, userId: string) {
   return `${groupId}|${canonicalUserId(userId)}`;
+}
+
+/** The store key of one ask as an automatic adder raised it. */
+function keyOfAsk(ask: JoinApprovalRequest): string {
+  return keyOf(ask.groupId, ask.requesterUserId);
+}
+
+/** The store key of one entry. */
+function keyOfEntry(entry: JoinRequest): string {
+  return keyOf(entry.groupId, entry.userId);
+}
+
+/**
+ * The `groupId|userId` pairs whose seat was flagged as a person's ask while the user still held a
+ * leaf (`admissionOfSeat` in `actions.ts`), already accused this session. The state is EXPECTED for
+ * as long as a removed member's leaf outlives the removal, and every sweep meets it again: it is said
+ * once at a level that accuses, then quietly, and asked about anew after a sign-out.
+ */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log dedup ledger, nothing renders it
+const flaggedAsksSaid = new Set<string>();
+
+/** Whether this is the first time this session that the flagged ask of `userId` in `groupId` is met. */
+export function firstSightOfFlaggedAsk(groupId: string, userId: string): boolean {
+  const key = keyOf(groupId, userId);
+  if (flaggedAsksSaid.has(key)) return false;
+  flaggedAsksSaid.add(key);
+  return true;
 }
 
 function short(groupId: string): string {
@@ -66,7 +113,7 @@ function short(groupId: string): string {
  * the server already settled is not recorded, and a newer ask of the same person replaces the entry.
  */
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
-  const key = keyOf(ask.groupId, ask.requesterUserId);
+  const key = keyOfAsk(ask);
   const userId = canonicalUserId(ask.requesterUserId);
   if (ask.askId && settledAsks.has(ask.askId)) {
     console.log(
@@ -118,7 +165,8 @@ export function beginJoinRequestSweep(): JoinRequestSweep {
 /**
  * Replaces the asks with what one COMPLETED pending-invitation sweep raised: the server's `pending`
  * rows are the durable state, so an ask the sweep did not raise again has been answered or has
- * gone. A sweep that did not complete settles nothing.
+ * gone. A sweep that did not complete settles nothing, and a group it did not read through
+ * (`notSwept`) keeps its asks.
  *
  * ONLY AN ASK THAT WAS ON SCREEN WHEN THE SWEEP STARTED can be taken away by it (`sweep`, by identity
  * - never a clock): an ask announced while the sweep was reading may postdate every row it read, so
@@ -132,15 +180,18 @@ export function beginJoinRequestSweep(): JoinRequestSweep {
  */
 export function settleSweptJoinRequests(
   sweep: JoinRequestSweep,
-  raised: readonly JoinApprovalRequest[]
+  raised: readonly JoinApprovalRequest[],
+  notSwept?: ReadonlySet<string>
 ): void {
-  const keep = raised.map((ask) => keyOf(ask.groupId, ask.requesterUserId));
-  // Deleting the entry being visited is safe while iterating a Map.
+  const keep = raised.map(keyOfAsk);
+  // Deleting the entry being visited is safe while iterating a Map. A group the sweep did not read
+  // through (its add lock was busy) keeps what it shows: no flicker while another device adds.
   for (const [key, entry] of requests) {
+    if (notSwept?.has(entry.groupId)) continue;
     if (!keep.includes(key) && sweep.shown.includes(tokenOf(key, entry))) requests.delete(key);
   }
   for (const ask of raised) {
-    const key = keyOf(ask.groupId, ask.requesterUserId);
+    const key = keyOfAsk(ask);
     const live = requests.get(key);
     if (
       live?.askId &&
@@ -209,8 +260,11 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
 
 /** Removes `request`'s entry only while it still is that ask - never a newer ask of the person. */
 function forget(request: JoinRequest): void {
-  const key = keyOf(request.groupId, request.userId);
-  if (requests.get(key)?.askId === request.askId) requests.delete(key);
+  const key = keyOfEntry(request);
+  const live = requests.get(key);
+  if (live?.askId === request.askId) {
+    requests.delete(key);
+  }
 }
 
 /**
@@ -266,6 +320,13 @@ export async function answerJoinRequest(
     return false;
   }
   forget(request);
+  if (answer === 'decline') {
+    declined.set(keyOfEntry(request), {
+      key: keyOfEntry(request),
+      groupId: request.groupId,
+      userId: request.userId,
+    });
+  }
   console.log(
     `[JOIN_REQUEST] ${request.userId} ${answer === 'approve' ? 'admitted' : 'declined'} in ${short(request.groupId)}`
   );
@@ -275,5 +336,7 @@ export async function answerJoinRequest(
 /** Forgets every ask (sign-out, tests): they belong to the account that was signed in. */
 export function resetJoinRequests(): void {
   requests.clear();
+  declined.clear();
   settledAsks.clear();
+  flaggedAsksSaid.clear();
 }

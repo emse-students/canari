@@ -1,6 +1,7 @@
 <script lang="ts">
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { untrack } from 'svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flip } from 'svelte/animate';
@@ -417,7 +418,7 @@
       .filter(({ convo, resolved }) =>
         conversationMatchesQuery(
           resolved.displayName,
-          convo.messages.at(-1)?.content ?? '',
+          previewContentOf(convo.messages) ?? '',
           searchQuery
         )
       )
@@ -633,9 +634,9 @@
                 : workspace.name}
             >
               <GroupAvatar
+                id={workspace.id}
                 imageMediaId={workspace.imageMediaId}
                 name={workspace.name}
-                variant="community"
                 size="lg"
               />
             </button>
@@ -762,9 +763,7 @@
               displayName={resolved.displayName}
               displayNameResolved={resolved.displayNameResolved}
               conversationType={convo.conversationType}
-              lastMessage={convo.messages.length > 0
-                ? convo.messages[convo.messages.length - 1].content
-                : undefined}
+              lastMessage={previewContentOf(convo.messages)}
               isReady={convo.lifecycle === 'active'}
               isRemoved={convo.lifecycle === 'removed'}
               awaitingAdmission={isNeverAdmitted(convo)}

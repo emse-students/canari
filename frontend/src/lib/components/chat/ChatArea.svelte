@@ -14,7 +14,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { tick, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -38,6 +38,7 @@
     chatViewCountLine,
     isPinnedToBottom,
     respondToNewMessage,
+    keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
@@ -64,6 +65,7 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
+  import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
     isNarrowChatLayout,
@@ -93,6 +95,8 @@
     isChannel?: boolean;
     /** Callback fired on each keystroke in the composer. */
     onMessageChange: (value: string) => void;
+    /** A writer bound to the draft of the conversation open now (an edit gives its draft back there). */
+    bindDraftWriter: () => (text: string) => void;
     /** Callback to submit the composed message. */
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
@@ -254,6 +258,7 @@
     messageText,
     isChannel = false,
     onMessageChange,
+    bindDraftWriter,
     onSend,
     onTyping,
     onSendGif,
@@ -317,6 +322,11 @@
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
 
+  // A device waiting to be added says so, in plain words and with no key on screen. NOT for a
+  // person's invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person.
+  const waitingToBeAdded = $derived(
+    conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
   // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
@@ -940,11 +950,12 @@
   const editSession = createEditSession({
     getText: () => messageText,
     setText: (text) => onMessageChange(text),
+    bindDraftWriter: () => bindDraftWriter(),
     save: (messageId, text) => onEdit?.(messageId, text),
   });
 
-  // An edit belongs to ONE conversation: the composer's text is cleared on a switch, and the draft
-  // saved by the session belonged to the conversation that was left.
+  // An edit belongs to ONE conversation: on a switch the session gives its saved draft back to the
+  // conversation that was left, so the edited message's text never stays there as a draft.
   // The id goes through a $derived on purpose: an effect reading `conversation?.id` depends on the
   // `conversation` OBJECT, which the parent replaces on every incoming message (same id, new
   // object) - that re-ran the reset and dropped the banner. A derived is compared by value, so
@@ -954,6 +965,11 @@
     void conversationId;
     untrack(() => editSession.reset());
   });
+  // The page holding this composer unmounts on any route change (/chat <-> /communities, a profile
+  // link, a notification's landing) while the drafts outlive it in `useMessaging`: an edit left open
+  // then would leave the edited message's text as the draft, with no banner, for Send to post twice
+  // (review of #2614, 2026-10-27).
+  onDestroy(() => editSession.reset('its composer unmounted'));
 
   $effect(() => {
     const c = conversation;
@@ -1058,8 +1074,11 @@
   });
 
   $effect(() => {
-    onMessagesScrollEl?.(chatContainer ?? null);
-    return () => onMessagesScrollEl?.(null);
+    // Captured: a prop read in a teardown can re-run a parent derived with stale values and rewire
+    // it (frontend/architecture, on teardowns).
+    const report = onMessagesScrollEl;
+    report?.(chatContainer ?? null);
+    return () => report?.(null);
   });
 
   /**
@@ -1083,7 +1102,7 @@
    * l'interface"*).
    *
    * AN OBSERVER, NOT A TIMER. Every trigger is the change itself, so there is nothing to tune and
-   * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
+   * nothing that fires when nothing happened; `threadGrowthResponse` holds the judgement and is
    * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
    * nothing recomputes it without a scroll event, and content growing under a stationary reader
    * fires none.
@@ -1117,10 +1136,16 @@
       keyboardWasOpen = kbOpen;
       return;
     }
-    if (!keyboardWasOpen && kbOpen && _composerFocused && isNearBottom) {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    const response = keyboardChangeResponse({
+      wasOpen: keyboardWasOpen,
+      isOpen: kbOpen,
+      composerFocused: _composerFocused,
+      isNearBottom,
+    });
+    if (keyboardWasOpen !== kbOpen) {
+      Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
-    if (keyboardWasOpen && !kbOpen && isNearBottom) {
+    if (response === 'follow-bottom') {
       tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
     }
     keyboardWasOpen = kbOpen;
@@ -1661,6 +1686,11 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{heldNotice}</span>
           </div>
+        {:else if waitingToBeAdded}
+          <div class="chat-send-notice is-pending" role="status" data-own-device-key>
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{m.chat_waiting_own_device()}</span>
+          </div>
         {/if}
       {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -1694,7 +1724,7 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
-          notice={sendError || heldNotice ? sendNotice : undefined}
+          notice={sendError || heldNotice || waitingToBeAdded ? sendNotice : undefined}
         />
       </div>
     {/if}

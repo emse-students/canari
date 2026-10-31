@@ -1,13 +1,26 @@
-import { BadGatewayException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  LYDIA_BUSINESS_BLOCKED,
+  LYDIA_BUSINESS_NOT_VALIDATED,
+  lydiaReadinessRefusal,
   mapCorePaymentError,
   PAYMENT_PROVIDER_REFUSED,
   PROVIDER_MAX_AMOUNT_CENTS,
   PROVIDER_MIN_AMOUNT_CENTS,
 } from './core-payment-error';
+import {
+  LYDIA_ENROLMENT_IN_FLIGHT,
+  PAYMENTS_BLOCKED,
+  PAYMENTS_NOT_ACTIVATED,
+} from '../associations/lydia-readiness';
 
 function coreAnswer(status: number, data: unknown): AxiosError {
   const config = {
@@ -120,5 +133,44 @@ describe('the provider range mirrored from core-service', () => {
     ) as { minCents: number; maxCents: number };
     expect(PROVIDER_MIN_AMOUNT_CENTS).toBe(contract.minCents);
     expect(PROVIDER_MAX_AMOUNT_CENTS).toBe(contract.maxCents);
+  });
+});
+
+describe('error 5 / 2701 - a request/do refused on the Business itself (lot 2)', () => {
+  it.each([
+    [LYDIA_BUSINESS_NOT_VALIDATED, 'request-refused', PAYMENTS_NOT_ACTIVATED],
+    [LYDIA_BUSINESS_BLOCKED, 'request-blocked', PAYMENTS_BLOCKED],
+  ])('core`s %s is the cause %s and the payer`s typed 409 %s', (coreCode, cause, socialCode) => {
+    const err = coreAnswer(400, { code: coreCode, providerCode: '5', message: 'refused' });
+    expect(lydiaReadinessRefusal(err)).toBe(cause);
+    const log = logger();
+    const out = mapCorePaymentError(err, log as never, 'shop');
+    expect(out).toBeInstanceOf(ConflictException);
+    expect((out as ConflictException).getResponse()).toMatchObject({ code: socialCode });
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('classifies on the CODE, never on the sentence', () => {
+    expect(
+      lydiaReadinessRefusal(
+        coreAnswer(400, { code: PAYMENT_PROVIDER_REFUSED, message: 'Business non valide' })
+      )
+    ).toBeNull();
+    expect(lydiaReadinessRefusal(coreAnswer(502, {}))).toBeNull();
+    expect(lydiaReadinessRefusal(new Error(LYDIA_BUSINESS_NOT_VALIDATED))).toBeNull();
+  });
+
+  it('the codes equal the shared contract core-service and the frontend read too', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
+        'utf8'
+      )
+    ) as { core: Record<string, string>; social: Record<string, string> };
+    expect(LYDIA_BUSINESS_NOT_VALIDATED).toBe(contract.core.businessNotValidated);
+    expect(LYDIA_BUSINESS_BLOCKED).toBe(contract.core.businessBlocked);
+    expect(Object.values(contract.social)).toEqual(
+      expect.arrayContaining([PAYMENTS_NOT_ACTIVATED, PAYMENTS_BLOCKED, LYDIA_ENROLMENT_IN_FLIGHT])
+    );
   });
 });

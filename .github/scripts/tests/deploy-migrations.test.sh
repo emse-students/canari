@@ -246,9 +246,9 @@ for caller in "$DEPLOY" "$RESET"; do
     fail "$name does not call apply_migrations on a line of its own"
   fi
 done
-migrate_line="$(grep -nE '^[[:space:]]*apply_migrations[[:space:]]*$' "$RESET" | head -1 | cut -d: -f1)"
+migrate_line="$(grep -nE '^[[:space:]]*apply_migrations[[:space:]]*$' "$RESET" | sed -n 1p | cut -d: -f1)"
 # shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
-seed_line="$(grep -nE 'cat "\$SEED_SQL"' "$RESET" | head -1 | cut -d: -f1)"
+seed_line="$(grep -nE 'cat "\$SEED_SQL"' "$RESET" | sed -n 1p | cut -d: -f1)"
 if [ -n "$seed_line" ] && [ -n "$migrate_line" ] && [ "$migrate_line" -lt "$seed_line" ]; then
   ok "the reset migrates before it seeds (line $migrate_line < $seed_line)"
 else

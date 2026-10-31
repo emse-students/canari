@@ -26,6 +26,7 @@ export const DELETED_ACCOUNT = '[deleted]';
 export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'DeviceGroupMembership.userId': { action: 'delete' },
   'DeviceSignatureKey.userId': { action: 'delete' },
+  'Group.createdBy': { action: 'anonymise' },
   'GroupInvite.createdBy': { action: 'anonymise' },
   'GroupMember.userId': { action: 'delete' },
   'GroupMembershipInterval.userId': { action: 'delete' },
@@ -54,5 +55,6 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   },
   'RevokedDevice.userId': { action: 'delete' },
   'SeatEviction.userId': { action: 'delete' },
+  'RevokedDeviceGroup.userId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
 };

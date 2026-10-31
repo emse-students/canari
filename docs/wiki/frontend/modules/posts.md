@@ -76,6 +76,17 @@ The user's two decisions, for posts, reels and comments alike:
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
 
+**The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
+band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
+pill (the conversation header's recipe and tokens: `--glass-chrome-*`, nothing new) and the CanaReels
+entry is the matching round glass button (the `ui-icon-button` box: 44 px touch, 38 px pointer; the pill follows the same split with `h-11` and `md:pointer-fine:h-9.5`, never a size on the button itself, which `iconButtonScale.test.ts` forbids). The sticky wrapper has NO background and
+no horizontal inset, so both edges are the feed column's own gutters and cards scroll under the glass;
+it is `pointer-events-none` with its buttons `auto`, so the gaps stay the feed's. The glass is drawn at
+every width, unlike the phone-only conversation chrome (`usesGlassChrome`), because on desktop the row
+floats over scrolling cards too, and a desktop-only opaque twin would be a second look for one
+control. The active tab keeps its amber fill, plus `font-semibold`; chips have the `tap-target` 44 px
+hit box on touch. The reveal logic below is unchanged.
+
 **The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
 only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
 `.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
@@ -116,6 +127,28 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 
 The price, stated: after a reload an anonymous voter sees THAT they voted and the results, but not
 which option they picked - the server does not know.
+
+## Who voted: a capped hover, and an info button that opens the full list (2026-10-24)
+
+`PostPolls.svelte` is the ONE poll card, for a post poll and a channel poll (`ChannelPoll` wraps
+it), so this is one implementation. The voter list used to be a hover tooltip on the vote count,
+reached on a phone only by a long press (hard to hold without voting) and as tall as the voter list
+(45 names overflowed the screen).
+
+- **Hover (mouse only)** on the info button shows `POLL_TOOLTIP_MAX_VOTERS` (10) names, then
+  "+ N autres personnes" (`post_poll_voters_more`, plural), and its `max-height` follows the room
+  above the anchor. A touch pointer never opens it (`pointerType === 'mouse'`).
+- **The info button** (Users icon, 44 px) is a SIBLING of the vote button, never a child: the old
+  count badge was a `role=button` nested in the vote button and relied on `stopPropagation`. It
+  opens `PollVotersSheet.svelte` - `Modal`, so a bottom sheet on a phone and a dialog on desktop,
+  with the focus trap, Escape, the back gesture and focus return. The sheet scrolls and, with
+  two options or more, switches option through a row of toggle buttons (`aria-pressed`; a `tablist` is reserved by `sectionMenus.test.ts`).
+- **Anonymous polls and empty options get no button**: the server sends an anonymous poll no voter
+  ids (a tally), and an option with 0 voters has nobody to list. The server is unchanged.
+- Helpers (cap, name resolution) are in `posts/pollVoters.ts`.
+- **Not verifiable without a phone**: the sheet's height and scroll under the keyboard-aware
+  overlay, and that a scroll starting on the info button never votes (it cannot by construction -
+  the button has no vote handler - but nothing here ran on the Mi 9T).
 
 ## Post creation (EditPostForm.svelte)
 
@@ -253,6 +286,36 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   video that plays by itself carries `TRANSPARENT_VIDEO_POSTER` (`utils/videoPoster.ts`), and the
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
+
+## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
+
+The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or
+`/posts?search=1`. The feed strips the parameter with a `goto(..., { replace: true })`, so no
+history entry carries it, and only then opens the composer or the search field.
+
+The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
+closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
+open through `await commit_promise; await tick(); await tick();`, and `_before_navigate` skips every
+callback while one is open, so a strip fired by the arriving page ran no hook and drained nothing.
+Kit 3 ends the navigation as soon as the page has settled (`finish_navigation`), so the strip runs
+the hooks. Since #2613 a composer opened in the same tick was therefore closed as it opened. A
+replace issued while an overlay's own history entry is under the pointer would also overwrite that
+entry: a second reason to strip first.
+
+Whether the strip landed is read off the page, never off the error. Kit rejects an overtaken
+navigation with an untyped `Error('navigation aborted')`. A strip overtaken by another navigation
+drops the command with an info line, and only a strip that failed on the feed itself is logged as
+an error.
+
+On the Mi 9T the sequence was read over CDP: the overlay pushed at 130 ms, the dialog mounted at
+134, unmounted at 164 with no popstate, and the router's replace at 180, which also overwrote the
+overlay's own history entry. No Live chip could be reached, so LIVE-WEB-2 and LIVE-STALL-1 could
+not run. The search field is not an overlay and was never closed.
+
+`page.feedCommand.svelte.test.ts` mounts the route with a `goto` double in kit 3's order (a
+microtask, the drain, the new URL). It fails on the old order. It cannot see the real router or
+the WebView's history: the phone reading is what proves the router keeps that order. The drain now
+logs how many overlays a navigation closes, which was silent.
 
 ## Key components
 
@@ -1827,7 +1890,7 @@ key would fail to open on every later read.
 was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
 `loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
 and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
-comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on the workstation, 7 reads,
 median (max):
 
 | page | sealed size | CPU 1x | CPU 6x |
@@ -1991,6 +2054,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - **Paging.** `PostCommentThread.loadMore()` reads the next page of `GET /posts/:id/comments` (20 whole threads, newest first) and ADDS it: **a row already held is never replaced by a page's copy** (a heart tapped while the page was in flight is newer), and **a comment removed meanwhile - here, or announced by another surface (`noteRemoved`) - stays gone** though the page was read before the deletion answered. `hasMore` is the server's answer and decides the "view older comments" button; before any page, the server's count against the rows held does. A failure is SAID (`post_comment_load_older_error`), never silent. When a fresher feed row replaces the card's, **the older pages already read are kept** (`keepHeld`: the row's own copy of a comment wins, nothing is read again) - the thread does not collapse to the newest few under the reader's thumb. The whole-thread read (`loadAll`, `GET /posts/:id`) and the ledger "hold" it needed are gone.
 - **The sorts.** "Récents" is the order the pages come in; "Anciens" and "Aimés" are about the WHOLE thread, so they read the remaining pages first (up to 25) or "oldest" would be the oldest of what happens to be loaded; a page that brings nothing ends the wait.
 - **Shared with the reel sheet.** `ReelCommentsSheet` mounts the same `PostComments` and the same `loadMore`; `CommentAuthorAvatar` is drawn by the thread and by the preview, so they cannot disagree about who wrote a comment.
+- **The preview draws the comment's picture and its like (2026-10-31).** The collapsed preview used to render only the author and `text`, so a comment that was only a GIF (empty `text`, a `media` ref) showed as a name in an empty bubble; only the thread drew `media`. Both surfaces now share `CommentMedia` (`compact` is the preview's thumbnail) and `CommentLikeButton` (the heart, `aria-pressed`, the count, the `tap-target` 44 px box). The card hands the preview `thread.like`, the SAME write path as the sheet, so the two hearts read one comment and cannot drift (pinned in `PostCard.commentSync`); a pending row's heart is withheld, as in the thread. A like never opens the sheet (`openFromComment` ignores a `button`). A comment has one text and at most one picture; a mention is a markdown link and a reply is never the preview's comment, so there is no other kind to draw.
 - **Fixed on the way.** The thread's list scrolled sideways: the 44 px hit box a small control gets (`tap-target`, the heart at the row's right end) stuck out of the scroller by a few pixels. The scroller now reaches the sheet's edges (`-mx-4 px-4`), so the box stays inside it.
 
 **Seen** at 390 px in a headless Chrome on a fixture card (the preview, the open sheet, the viewport cut to 480 px). **NOT seen on a phone**: the real keyboard (iOS resizes the visual viewport, Android the layout one - the overlay is built for the first and the layout rule serves both, but only a phone settles it), the back gesture, and the focus handed back to the comment button on close.

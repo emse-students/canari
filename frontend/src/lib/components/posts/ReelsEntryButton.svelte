@@ -68,7 +68,7 @@
   aria-haspopup="dialog"
   aria-busy={opening}
   onclick={open}
-  class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-full border focus-visible:ring-2 focus-visible:ring-amber-500 {opening
+  class="glass-chrome ui-icon-button text-text-muted hover:text-text-main rounded-full focus-visible:ring-2 focus-visible:ring-amber-500 {opening
     ? 'opacity-60'
     : ''}"
 >

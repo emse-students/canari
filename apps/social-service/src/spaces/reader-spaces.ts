@@ -1,3 +1,5 @@
+import { acceptedFollowSql } from '../follows/follow-status';
+import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
 import { ruleReachesSpaceSql } from './rule-sql';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -15,6 +17,12 @@ import type { SpaceCampus, SpaceFormation } from './space.entity';
  * `cursus` would then fail on a dependency it cannot see. A fragment costs nothing to the schema
  * and every caller still states the rule by naming the one function that holds it.
  *
+ * A REVIEW ACCOUNT HAS NO SPACE, WHATEVER ITS PROFILE (`review-cohort.ts`, 2026-10-31): the store
+ * reviewers' accounts share a world of their own - the cohort counts as ONE space among themselves
+ * (`sharesSpaceWithAuthorSql`, the feed gate) and reaches no real one (`isReaderSpaceSql`). So a
+ * reviewer reads only what the cohort writes, and a member never reads it, without anybody having
+ * to keep the cohort's profiles empty.
+ *
  * EVERY FRAGMENT IS PARENTHESISED, because each is meant to be combined with `AND`: the gate this
  * module replaces recorded what an unparenthesised `OR` did (it admitted every admin row, whoever
  * asked).
@@ -28,6 +36,8 @@ export interface SpacePair {
 
 /** The two profile facts spaces are computed from, as `users` stores them (WP3). */
 export interface ReaderProfile {
+  /** The reader's id, when known: a review account has no space, whatever its profile. */
+  id?: string;
   campus: string | null;
   /** jsonb `[{formation, promo}]`; anything that is not an array is no cursus. */
   cursus: unknown;
@@ -40,6 +50,7 @@ export interface ReaderProfile {
  * through spaces they do not have.
  */
 export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]): SpacePair[] {
+  if (isInReviewCohort(user.id)) return [];
   if (!user.campus || !Array.isArray(user.cursus)) return [];
   const formations = new Set(
     (user.cursus as unknown[])
@@ -58,6 +69,7 @@ export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]):
  * own-spaces rule, whether or not a space exists for that entry).
  */
 export function campusWideReaderCampus(user: ReaderProfile): string | null {
+  if (isInReviewCohort(user.id)) return null;
   if (!user.campus) return null;
   if (user.cursus === null || user.cursus === undefined) return user.campus;
   return Array.isArray(user.cursus) && user.cursus.length === 0 ? user.campus : null;
@@ -70,10 +82,11 @@ export function campusWideReaderCampus(user: ReaderProfile): string | null {
 /**
  * Space row `space` is one of user row `user`'s spaces. Containment (`@>`) rather than
  * `jsonb_array_elements`: a malformed `cursus` (not an array) simply contains nothing, where the
- * function would raise and take every reader's query down with one bad row.
+ * function would raise and take every reader's query down with one bad row. A review account has
+ * none (`review-cohort.ts`).
  */
 export function isReaderSpaceSql(space: string, user: string): string {
-  return `(${space}.campus = ${user}.campus AND ${user}.cursus @> jsonb_build_array(jsonb_build_object('formation', ${space}.formation)))`;
+  return `(${space}.campus = ${user}.campus AND ${user}.cursus @> jsonb_build_array(jsonb_build_object('formation', ${space}.formation)) AND NOT ${inReviewCohortSql(`${user}.id`)})`;
 }
 
 /** Rule row `rule` reaches at least one space of user row `user`. */
@@ -110,12 +123,23 @@ function isAdminSql(user: string): string {
  * personal post), and only on READ paths - see `ReadOpts`.
  */
 export function readGrantReachesAssociationSql(association: string, user: string): string {
+  // A grant never carries a review account across the cohort's boundary (review-cohort.ts): it
+  // reads an association by a grant only when the association is the cohort's own (a review
+  // account on its roster). With no cohort the clause is `NOT false`, and changes nothing.
+  const cohortReader = inReviewCohortSql(`${user}.id`);
+  const cohortGate =
+    cohortReader === 'false'
+      ? ''
+      : `
+      AND (NOT ${cohortReader} OR EXISTS (SELECT 1 FROM association_members rg_cohort
+        WHERE rg_cohort."associationId" = ${association}
+          AND ${inReviewCohortSql('rg_cohort."userId"')}))`;
   return `EXISTS (SELECT 1 FROM read_grants rg_grant
     JOIN spaces rg_space ON rg_space.campus = rg_grant.campus
       AND (rg_grant.formation IS NULL OR rg_grant.formation = rg_space.formation)
     JOIN association_audiences rg_rule ON rg_rule."associationId" = ${association}
       AND ${ruleReachesSpaceSql('rg_rule', 'rg_space')}
-    WHERE rg_grant.user_id = ${user}.id)`;
+    WHERE rg_grant.user_id = ${user}.id${cohortGate})`;
 }
 
 /**
@@ -200,11 +224,16 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
 /**
  * User row `user` shares at least one space with the author whose id is the expression `author` -
  * what makes a PERSONAL item (a post, a live) visible. No read grant ever reaches it (WP7).
+ *
+ * The review cohort is a space of its own: two review accounts share it, and nobody else does - a
+ * review account has no real space (`isReaderSpaceSql`), so the first disjunct never pairs one with
+ * a member, in either direction.
  */
 function sharesSpaceWithAuthorSql(author: string, user: string): string {
-  return `EXISTS (
+  return `(EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
-      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})`;
+      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})
+    OR (${inReviewCohortSql(author)} AND ${inReviewCohortSql(`${user}.id`)}))`;
 }
 
 /**
@@ -262,14 +291,16 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
  *   post is announced to its author's followers who see it (`announceRecipientsSql(true)`), and
  *   once the republication commits they see it, so the sweep tells them - and telling them here
  *   too would tell them twice. After the announce, the sweep is spent and everyone newly reached is
- *   told here.
+ *   told here. A follower is an ACCEPTED one, exactly as the sweep counts them: someone whose
+ *   request is still pending is not told by the sweep, so they are told here.
  */
 export function newlyReachedByPersonalRepublicationSql(announced: boolean): string {
   const followers = announced
     ? ''
     : `
     AND NOT EXISTS (SELECT 1 FROM user_follows nr_follow
-      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id)`;
+      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id
+        AND ${acceptedFollowSql('nr_follow')})`;
   return `${NEWLY_REACHED_BY_REPUBLICATION_SQL}
     AND NOT EXISTS (SELECT 1 FROM user_blocks nr_block
       WHERE (nr_block."blockerId" = nr_user.id AND nr_block."blockedId" = nr_post."authorId")
@@ -291,26 +322,70 @@ export function postVisibleToViewerSql(
 }
 
 /**
+ * A SQL boolean: the user ids the expressions `a` and `b` yield stand on the same side of the
+ * review cohort's boundary (`review-cohort.ts`). The constant `true` with no cohort configured. For
+ * a row written BEFORE the rule - a follow, a bell row - which every list then leaves out.
+ */
+export function sameSideOfReviewCohortSql(a: string, b: string): string {
+  const aIn = inReviewCohortSql(a);
+  if (aIn === 'false') return 'true';
+  return `(${aIn} = ${inReviewCohortSql(b)})`;
+}
+
+/**
+ * A review account's posts are invisible to every reader outside the cohort but a platform admin
+ * (`review-cohort.ts`): an `AND ...` clause on `posts."authorId"`, or nothing. The visibility
+ * predicate already keeps them apart - the cohort is a space of its own - and this states it again
+ * on the author, so a post a review account writes AS an association it somehow joined still never
+ * reaches a member's feed or search. Spliced by the feed and the search of `PostsService`.
+ */
+export function reviewCohortAuthorFilterSql(
+  isAdmin: boolean,
+  viewerId: string | undefined
+): string {
+  if (isAdmin || isInReviewCohort(viewerId)) return '';
+  const authorInCohort = inReviewCohortSql('posts."authorId"');
+  return authorInCohort === 'false' ? '' : `AND NOT ${authorInCohort}`;
+}
+
+/**
  * Live row `live` (a `lives` row) is visible to user row `user`: THE RULE OF A POST BY THE SAME
  * BROADCASTER (WP-L7, decided 2026-10-19) - its broadcaster; a member's live, a user sharing a space
  * with the broadcaster; an association's live, a user who sees the association (a member, or its
  * rules reach one of their spaces, or - with `readGrants` - a nominative read grant). A live has no
  * republication, so that disjunct of the post rule has nothing to add. An admin is a reader like any
  * other, as when browsing posts.
+ *
+ * ONE EXCEPTION, `adminSeesCohort`, for opening ONE live by its id: a platform admin may watch a
+ * review account's live. No admin ever shares the review cohort's space (`review-cohort.ts`), so
+ * without it a reported live of the cohort could be judged by nobody - moderation needs it. The
+ * "Live now" list never passes it: browsing, an admin still sees only their own spaces.
  */
-export function liveVisibleToUserSql(live: string, user: string, opts: ReadOpts = {}): string {
-  return `(${live}."broadcasterId" = ${user}.id
+export function liveVisibleToUserSql(
+  live: string,
+  user: string,
+  opts: ReadOpts & { adminSeesCohort?: boolean } = {}
+): string {
+  const cohortClause = opts.adminSeesCohort
+    ? `
+    OR (${isAdminSql(user)} AND ${inReviewCohortSql(`${live}."broadcasterId"`)})`
+    : '';
+  return `(${live}."broadcasterId" = ${user}.id${cohortClause}
     OR (${live}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)})
-    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, opts)}))`;
+    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, { readGrants: opts.readGrants })}))`;
 }
 
 /**
  * Live row `live` is visible to the viewer whose id is the placeholder `viewer` - the watch paths
  * (the list, the key, the manifest), so read grants count as on every post READ path. An absent
- * viewer sees nothing.
+ * viewer sees nothing. `adminSeesCohort`: see {@link liveVisibleToUserSql}.
  */
-export function liveVisibleToViewerSql(live: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true })})`;
+export function liveVisibleToViewerSql(
+  live: string,
+  viewer: string,
+  opts: { adminSeesCohort?: boolean } = {}
+): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true, ...opts })})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */
@@ -345,12 +420,13 @@ export function eventVisibleToViewerSql(event: string, viewer: string): string {
 
 /**
  * THE FEED GATE: may user `$1` use the feed at all - an admin, someone with at least one space, a
- * member of at least one association (whose content D21 opens to them), or a named reader holding a
- * read grant (WP7). Answers `inAudience`.
+ * member of at least one association (whose content D21 opens to them), a named reader holding a
+ * read grant (WP7), or a review account (whose cohort is a space of its own). Answers `inAudience`.
  */
 export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_user WHERE gate_user.id = $1 AND (
     ${isAdminSql('gate_user')}
     OR EXISTS (SELECT 1 FROM spaces gate_space WHERE ${isReaderSpaceSql('gate_space', 'gate_user')})
+    OR ${inReviewCohortSql('gate_user.id')}
     OR EXISTS (SELECT 1 FROM association_members gate_member WHERE gate_member."userId" = gate_user.id)
     OR EXISTS (SELECT 1 FROM read_grants gate_grant WHERE gate_grant.user_id = gate_user.id)
   )) AS "inAudience"`;
@@ -371,17 +447,19 @@ export async function readInFeedAudience(
 export const READER_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s JOIN users u ON u.id = $1
   WHERE ${isReaderSpaceSql('s', 'u')} ORDER BY s.campus, s.formation`;
 
-/** The two profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
-export const READER_PROFILE_SQL = `SELECT campus, cursus FROM users WHERE id = $1`;
+/** The profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
+export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id = $1`;
 
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a
- * personal post further to its author's followers (`followersOnly`).
+ * personal post further to its author's ACCEPTED followers (`followersOnly`): a pending request is
+ * not a follow (WP-F1).
  */
 export function announceRecipientsSql(followersOnly: boolean): string {
   const follows = followersOnly
     ? `AND EXISTS (SELECT 1 FROM user_follows ann_follow
-         WHERE ann_follow."followedUserId" = ann_post."authorId" AND ann_follow."followerUserId" = ann_user.id)`
+         WHERE ann_follow."followedUserId" = ann_post."authorId" AND ann_follow."followerUserId" = ann_user.id
+           AND ${acceptedFollowSql('ann_follow')})`
     : '';
   return `SELECT ann_user.id FROM users ann_user JOIN posts ann_post ON ann_post.id = $1
     WHERE ann_user.id <> ann_post."authorId" ${follows}

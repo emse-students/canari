@@ -7,7 +7,13 @@
     onOpen,
     media,
     letterbox = false,
-  }: { onOpen?: () => void; media?: { mediaId: string }; letterbox?: boolean } = $props();
+    deferred = false,
+  }: {
+    onOpen?: () => void;
+    media?: { mediaId: string };
+    letterbox?: boolean;
+    deferred?: boolean;
+  } = $props();
 </script>
 
 <button
@@ -15,5 +21,6 @@
   data-post-media-open
   data-media-id={media?.mediaId}
   data-letterbox={letterbox ? 'true' : 'false'}
+  data-deferred={deferred ? 'true' : 'false'}
   onclick={() => onOpen?.()}>open</button
 >

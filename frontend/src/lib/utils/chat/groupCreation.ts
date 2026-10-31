@@ -10,6 +10,7 @@ import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { captureGroupReadyAnnouncer } from './groupReadyAnnouncer';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
@@ -285,6 +286,10 @@ export async function createNewGroup(
           contactName: groupDisplayName,
           displayName: groupDisplayName, // preserve original casing for display
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     selectConversation(conversationKey);
@@ -1123,6 +1128,7 @@ export async function startNewConversation(
             if (id) maybeSelect(id);
           },
           saveConversation,
+          onGroupReady: captureGroupReadyAnnouncer(),
           log,
         });
       } catch {
@@ -1240,6 +1246,10 @@ export async function startNewConversation(
           displayName: contact,
           directPeerId: contact,
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     maybeSelect(conversationKey);

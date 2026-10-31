@@ -55,27 +55,7 @@ pub(crate) async fn initialiser_mls(
 ) -> Result<String, String> {
     let opts = opts.unwrap_or_default();
     let legacy_pin = opts.legacy_pin;
-    // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
-    // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
-    // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
-    //
-    // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
-    // under the write lock: a background engine (a key-group join from a push, channel-encryption
-    // section 26) then either wrote before this read or sees the mark and gives up - never lands
-    // between the read and this manager's first persist, which would erase it.
-    let encrypted_state = match (encrypted_state, opts.state_on_disk) {
-        (None, Some(true)) => {
-            let path = tauri::Manager::path(&app)
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("mls.bin");
-            crate::concurrency::foreground_load_mls_bin(&path)?
-        }
-        (supplied, _) => {
-            crate::concurrency::mark_foreground_manager_loading();
-            supplied
-        }
-    };
+    let state_on_disk = opts.state_on_disk;
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app.clone())
@@ -91,6 +71,31 @@ pub(crate) async fn initialiser_mls(
         Some(device_key_b64)
     };
     tauri::async_runtime::spawn_blocking(move || {
+        // FIRST, BEFORE ANYTHING CAN FAIL: every exit that does not reach `install` - an `Err`, a
+        // panic - ends the native session when the guard drops, so a failed sign-in never leaves the
+        // previous account's manager or key installed, nor this process marked warm over no manager.
+        let install = InstallGuard::new(manager_state, device_key_state);
+        // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when
+        // it did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller
+        // that does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
+        //
+        // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
+        // under the write lock: a background engine (a key-group join from a push, channel-encryption
+        // section 26) then either wrote before this read or sees the mark and gives up - never lands
+        // between the read and this manager's first persist, which would erase it.
+        let encrypted_state = match (encrypted_state, state_on_disk) {
+            (None, Some(true)) => {
+                let path = tauri::Manager::path(&app)
+                    .app_data_dir()
+                    .map_err(|e| e.to_string())?
+                    .join("mls.bin");
+                crate::concurrency::foreground_load_mls_bin(&path)?
+            }
+            (supplied, _) => {
+                crate::concurrency::mark_foreground_manager_loading();
+                supplied
+            }
+        };
         // Resolve the key explicitly instead of letting the loader do it internally: the
         // resolved key is cached below so later saves in this session (which arrive with an
         // empty device_key_b64 in biometric mode) never have to prompt again.
@@ -141,14 +146,110 @@ pub(crate) async fn initialiser_mls(
             }
         }
 
-        let mut lock = manager_state
-            .lock()
-            .map_err(|_| "Failed to lock state".to_string())?;
-        *lock = Some(manager);
-        *device_key_state
-            .lock()
-            .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
+        install.install(manager, key)?;
         Ok::<String, String>("MLS Initialized".into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Ends the native MLS session when an [`initialiser_mls`] attempt is dropped without installing - an
+/// `Err` from any step, or a panic - so a failed install leaves the slot EMPTY BY CONSTRUCTION rather
+/// than by a reset each error branch must remember.
+///
+/// **WHY A FAILED INSTALL ENDS THE SESSION RATHER THAN KEEPING THE ONE BEFORE IT.** The slot is
+/// process-wide and a sign-out on a phone is an in-app navigation: when account B's install fails
+/// (another account's state, a refused key), what the slot still held was account A's manager and
+/// key, and a later command could act on A's state under B's session.
+struct InstallGuard {
+    manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
+    device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
+    installed: bool,
+}
+
+impl InstallGuard {
+    fn new(
+        manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
+        device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
+    ) -> Self {
+        Self {
+            manager_state,
+            device_key_state,
+            installed: false,
+        }
+    }
+
+    /// Installs `manager` and its at-rest `key` - the one success exit. The key is written while the
+    /// manager mutex is held, the order [`crate::concurrency::end_native_session`] takes them in.
+    fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), String> {
+        {
+            let mut slot = self
+                .manager_state
+                .lock()
+                .map_err(|_| "Failed to lock state".to_string())?;
+            *self
+                .device_key_state
+                .lock()
+                .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
+            *slot = Some(manager);
+        }
+        self.installed = true;
+        log::debug!("[MLS] manager and at-rest key installed");
+        Ok(())
+    }
+}
+
+impl Drop for InstallGuard {
+    fn drop(&mut self) {
+        if self.installed {
+            return;
+        }
+        log::warn!(
+            "[MLS] initialiser_mls did not install a manager - ending the native session so no previous one stays installed"
+        );
+        if let Err(e) = crate::concurrency::end_native_session(
+            &self.manager_state,
+            &self.device_key_state,
+            None,
+            "failed initialiser_mls",
+        ) {
+            log::error!("[MLS] the teardown after a failed initialiser_mls failed: {e}");
+        }
+    }
+}
+
+/// Ends this process's native MLS session - the ONE teardown command, reached through the frontend's
+/// one helper (`endNativeMlsSession`) at a sign-out, an account switch, a failed sign-in and a state
+/// reset. With `sweep_state`, `mls.bin` and every file built from it go in the SAME hold
+/// ([`crate::concurrency::end_native_session`]); without it they stay, because a sign-out keeps the
+/// local state for the account's next sign-in.
+#[tauri::command]
+pub(crate) async fn terminer_session_mls(
+    reason: String,
+    sweep_state: bool,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
+    let data_dir = if sweep_state {
+        Some(
+            tauri::Manager::path(&app)
+                .app_data_dir()
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    // Off the async runtime: the teardown may wait for an in-flight checkpoint.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::concurrency::end_native_session(
+            &manager_state,
+            &device_key_state,
+            data_dir.as_deref(),
+            &reason,
+        )
+        .map(|_| ())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -199,7 +300,7 @@ fn session_at_rest_key(
     (*cached
         .lock()
         .map_err(|_| "Failed to lock device key".to_string())?)
-    .ok_or_else(|| "no device key for this session - MLS not initialized".to_string())
+    .ok_or_else(crate::state::manager_absent_error)
 }
 
 /// Returns the at-rest key [`initialiser_mls`] cached for this session, base64-encoded, or `None`
@@ -272,7 +373,7 @@ pub(crate) fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> R
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager.create_group(group_id).map_err(|e| e.to_string())
 }
@@ -303,9 +404,7 @@ pub(crate) async fn oublier_key_packages(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
 
         let outcome = manager
             .forget_key_packages(&key_packages)
@@ -337,9 +436,7 @@ pub(crate) async fn key_package_a_clef_privee(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         let has_private = manager
             .key_package_has_private(&key_package_bytes)
             .map_err(|e| e.to_string())?;
@@ -365,9 +462,7 @@ pub(crate) async fn generer_key_packages_et_persister(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
 
         log::debug!(
             "generer_key_packages_et_persister start count={} (batch native path)",
@@ -481,7 +576,7 @@ pub(crate) fn oublier_groupe(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager.forget_group(&group_id, min_epoch);
     Ok(())
 }
@@ -492,7 +587,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.get_known_groups())
 }
 
@@ -505,7 +600,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
 /// **IT IS A COMMAND RATHER THAN A LINE IN `initialiser_mls`, AND THAT IS THE WHOLE POINT.** It used
 /// to be a `log::info!` inside `load_or_create`, which put an O(pool) walk that deserialises every
 /// stored bundle in front of the first screen: 24.5 ms against 12.9 ms at a 1000-package pool,
-/// measured on OXYGEN 2026-09-17 - half of a cold load. Web already called its own census after
+/// measured on the workstation 2026-09-17 - half of a cold load. Web already called its own census after
 /// `MLS ready` for exactly that reason. Now both do.
 ///
 /// Returns the line rather than logging it, so the ONE place that decides where a diagnostic is
@@ -516,7 +611,7 @@ pub(crate) fn recenser_key_packages(state: tauri::State<AppState>) -> Result<Str
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.key_package_census_summary())
 }
 
@@ -540,9 +635,7 @@ pub(crate) async fn groupe_actif(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         manager
             .is_group_active(&group_id)
             .map_err(|e| e.to_string())
@@ -563,9 +656,7 @@ pub(crate) async fn obtenir_epoch(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         // u64: no truncation; Tauri serializes it as a JSON number (exact <= 2^53, never reached). [[S4]]
         manager.get_epoch(&group_id).map_err(|e| e.to_string())
     })
@@ -598,7 +689,7 @@ pub(crate) fn ajouter_membres_bulk(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     // Stage-only (C7-A): the commit is NOT merged here. The caller validates it server-side then
     // calls confirmer_commit (accepted) / annuler_commit (rejected), and reads the post-merge
@@ -637,7 +728,7 @@ pub(crate) fn remplacer_appareil(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     let record = manager
         .replace_device_recorded(&group_id, &identity, &key_package, intent)
         .map_err(|e| e.to_string())?;
@@ -657,7 +748,7 @@ pub(crate) fn verifier_key_package(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .vet_key_package(&key_package, &expected_identity)
         .to_string())
@@ -675,7 +766,7 @@ pub(crate) fn feuille_portant_cle(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .leaf_holding_key_of(&group_id, &key_package)
         .map_err(|e| e.to_string())
@@ -694,7 +785,7 @@ pub(crate) fn cles_signature_epinglees(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.pinned_signature_keys(&user_id, &device_id))
 }
 
@@ -710,7 +801,7 @@ pub(crate) fn epoques_departs(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.removal_epochs(&group_id, &user_id))
 }
 
@@ -724,7 +815,7 @@ pub(crate) fn prendre_evenements_appareils(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     Ok(manager.take_device_events())
 }
 
@@ -738,7 +829,7 @@ pub(crate) fn trailer_welcome(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
@@ -780,7 +871,7 @@ pub(crate) fn envoyer_message_bytes(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     seal_unless_commit_pending(manager, &group_id, &message_bytes)
 }
 
@@ -815,7 +906,7 @@ pub(crate) fn prendre_constats_fork(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .take_fork_findings()
         .into_iter()
@@ -837,7 +928,7 @@ pub(crate) fn skip_send_generations(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager
         .skip_send_generations(&group_id, count)
@@ -858,7 +949,7 @@ pub(crate) fn lister_identites_membres(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
 
     manager.member_identities(&group_id).map_err(|e| {
         log::error!(
@@ -868,6 +959,44 @@ pub(crate) fn lister_identites_membres(
         );
         e.to_string()
     })
+}
+
+/// Classifies `group_id` for the admission rule (`mls_core::admission`): `closed` for a conversation,
+/// `open` for a community or salon key group, whose members enter by external commit by design.
+/// The caller checkpoints the state after it, like every mutation. Rejects any other name.
+#[tauri::command]
+pub(crate) fn definir_politique_admission(
+    group_id: String,
+    policy: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let policy = mls_core::AdmissionPolicy::parse(&policy)
+        .ok_or_else(|| format!("unknown admission policy '{policy}'"))?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.set_admission_policy(&group_id, policy);
+    Ok(())
+}
+
+/// The policy `group_id` was classified with: `closed`, `open`, or `unclassified` when nobody did
+/// (the behaviour every group had before the rule: its external commits are merged).
+#[tauri::command]
+pub(crate) fn lire_politique_admission(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<String, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .admission_policy(&group_id)
+        .map_or("unclassified", mls_core::AdmissionPolicy::as_str)
+        .to_string())
 }
 
 #[tauri::command]
@@ -881,7 +1010,7 @@ pub(crate) fn retirer_membres(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     let id_slices: Vec<&str> = user_ids.iter().map(|s| s.as_str()).collect();
     manager
@@ -901,7 +1030,7 @@ pub(crate) fn retirer_membres_par_appareil(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     let id_slices: Vec<&str> = device_identities.iter().map(|s| s.as_str()).collect();
     manager
@@ -924,7 +1053,7 @@ pub(crate) fn rafraichir_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .stage_self_update_recorded(&group_id, intent)
         .map(|r| (r.commit, r.group_info))
@@ -942,7 +1071,7 @@ pub(crate) fn date_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_leaf_minted_at(&group_id)
         .map_err(|e| e.to_string())
@@ -959,7 +1088,7 @@ pub(crate) fn cle_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_leaf_encryption_key(&group_id)
         .map_err(|e| e.to_string())
@@ -977,7 +1106,7 @@ pub(crate) fn contexte_correspond_base(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_context_matches_base(&group_id, &group_info)
         .map_err(|e| e.to_string())
@@ -1011,7 +1140,7 @@ pub(crate) fn soumission_en_attente(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(match manager.pending_submission(&group_id) {
         PendingSubmissionRead::None => SoumissionLue::None,
         PendingSubmissionRead::Unreadable => SoumissionLue::Unreadable,
@@ -1035,7 +1164,7 @@ pub(crate) fn groupes_commit_en_attente(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.groups_with_pending_commit())
 }
 
@@ -1051,7 +1180,7 @@ pub(crate) fn confirmer_commit_welcome_du(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .merge_pending_commit_owing_welcome(&group_id, recipients)
         .map_err(|e| e.to_string())
@@ -1074,7 +1203,7 @@ pub(crate) fn welcomes_dus(state: tauri::State<AppState>) -> Result<Vec<WelcomeD
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .owed_welcomes()
         .into_iter()
@@ -1099,7 +1228,7 @@ pub(crate) fn welcome_remis(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager.welcome_delivered(&group_id, &recipient, &welcome);
     Ok(())
 }
@@ -1120,7 +1249,7 @@ pub(crate) fn confirmer_commit(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .merge_pending_commit_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1137,7 +1266,7 @@ pub(crate) fn annuler_commit(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .clear_pending_commit_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1154,7 +1283,7 @@ pub(crate) fn exporter_ratchet_tree(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .export_ratchet_tree_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1171,9 +1300,26 @@ pub(crate) fn exporter_group_info(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .export_group_info(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+/// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+#[tauri::command]
+pub(crate) async fn mls_external_join_is_a_further_device(
+    group_info_bytes: Vec<u8>,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .external_join_is_a_further_device(&group_info_bytes)
         .map_err(|e| e.to_string())
 }
 
@@ -1191,7 +1337,7 @@ pub(crate) fn rejoindre_par_commit_externe(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .join_by_external_commit(&group_info_bytes)
         .map_err(|e| e.to_string())
@@ -1272,7 +1418,7 @@ pub(crate) async fn recevoir_message_bytes(
             .mls_manager
             .lock()
             .map_err(|_| "Failed to lock state")?;
-        let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+        let manager = crate::state::live_manager_mut(&mut lock)?;
         manager.process_incoming_message_with_sender(&group_id, &message_bytes)
     };
 
@@ -1418,6 +1564,20 @@ pub(crate) async fn recevoir_message_bytes(
                     Err(err_str)
                 }
 
+                // A COMMIT BRINGING A NEW USER INTO A CLOSED GROUP, refused unmerged by mls-core
+                // (`admission.rs`). Never queued - a retry is refused again - and surfaced verbatim
+                // so the shared frontend classifier reaches the ONE policy that freezes the group
+                // instead of recovering it: every recovery rebuilds from the server's state, which
+                // is the very state this commit came from.
+                DecryptErrorKind::AdmissionRefused => {
+                    log::warn!(
+                        "[ADMISSION] Commit refused for group={}: {} - handing it to the frontend, the group is to be frozen and not recovered",
+                        group_id,
+                        err_str
+                    );
+                    Err(err_str)
+                }
+
                 // REFUSED AT EXACTLY ITS OWN EPOCH. Never queued, for the reason the arms above
                 // are not: a retry reads the same immutable epoch state and is refused again, so
                 // the row is dead weight until the sweeper reaches it. Surfaced verbatim, and the
@@ -1449,9 +1609,7 @@ pub(crate) async fn recevoir_messages_batch(
         let mut lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_mut()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager_mut(&mut lock)?;
         log::debug!(
             "recevoir_messages_batch group={} count={}",
             group_id,
@@ -1475,7 +1633,7 @@ pub(crate) fn exporter_secret(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
 
     manager
         .export_secret(
@@ -1613,7 +1771,7 @@ pub(crate) fn graine_sign_with_device_credential(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .sign_with_device_credential(&message)
         .map_err(|e| e.to_string())
@@ -1639,7 +1797,7 @@ pub(crate) fn graine_run(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     let reading = manager.graine_run(&group_id).map_err(|e| e.to_string())?;
     Ok(GraineRunDto {
         run_id: reading.run_id,
@@ -1660,8 +1818,102 @@ pub(crate) fn graine_member_signature_key(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .member_signature_key(&group_id, &identity)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::concurrency::test_support::serialise;
+    use std::sync::Arc;
+
+    const KEY_A: [u8; 32] = [1u8; 32];
+    const KEY_B: [u8; 32] = [2u8; 32];
+
+    type Slot = Arc<Mutex<Option<MlsManager>>>;
+    type KeySlot = Arc<Mutex<Option<[u8; 32]>>>;
+
+    /// Account A's session, installed as a successful `initialiser_mls` leaves it.
+    fn slot_of_account_a() -> (Slot, KeySlot) {
+        let manager = Arc::new(Mutex::new(None));
+        let key = Arc::new(Mutex::new(None));
+        InstallGuard::new(manager.clone(), key.clone())
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .unwrap();
+        (manager, key)
+    }
+
+    /// THE FAILED SIGN-IN OF ANOTHER ACCOUNT: B's install fails (here, an `Err` before `install`),
+    /// and A's manager and key must not stay behind - `Some` used to be written on success only, so
+    /// the failure left A's session installed under B's.
+    #[test]
+    fn a_failed_install_leaves_the_slot_empty_and_the_key_cleared() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        assert!(
+            manager.lock().unwrap().is_some(),
+            "precondition: A is installed"
+        );
+
+        let attempt = || -> Result<(), String> {
+            let _install = InstallGuard::new(manager.clone(), key.clone());
+            Err("the saved state is another account's".to_string())
+        };
+        assert!(attempt().is_err());
+
+        assert!(
+            manager.lock().unwrap().is_none(),
+            "A's manager outlived B's failed install"
+        );
+        assert!(
+            key.lock().unwrap().is_none(),
+            "A's key outlived B's failed install"
+        );
+    }
+
+    /// A panic inside the install is a failed install too: the guard drops while unwinding.
+    #[test]
+    fn a_panicking_install_leaves_the_slot_empty() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        let (m, k) = (manager.clone(), key.clone());
+        let panicked = std::panic::catch_unwind(move || {
+            let _install = InstallGuard::new(m, k);
+            panic!("the load exploded");
+        });
+        assert!(panicked.is_err());
+        assert!(manager.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+        assert!(key.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+    }
+
+    /// The success exit replaces the slot and the key, and does not end the session it installed.
+    #[test]
+    fn a_successful_install_replaces_the_slot_and_the_key() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        InstallGuard::new(manager.clone(), key.clone())
+            .install(
+                MlsManager::load_or_create("guard-b", "d1", None).unwrap(),
+                KEY_B,
+            )
+            .unwrap();
+        assert!(manager.lock().unwrap().is_some());
+        assert_eq!(*key.lock().unwrap(), Some(KEY_B));
+    }
+
+    /// A save with no key of its own and none cached is the typed refusal, not a sentence.
+    #[test]
+    fn a_save_with_no_session_key_is_refused_with_the_typed_code() {
+        let refused = session_at_rest_key("", &Mutex::new(None)).err().unwrap();
+        assert!(
+            refused.starts_with(crate::state::MLS_MANAGER_ABSENT),
+            "{refused}"
+        );
+    }
 }

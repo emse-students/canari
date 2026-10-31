@@ -55,6 +55,7 @@ import { isCommitRaceRefusal, refusedAdmits } from '$lib/mls-client/CommitRefuse
 import { AddAbortedError, rebuildOnRace } from './commitRace';
 import { readConfirmedTree, type TreeReading } from './confirmedTree';
 import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
+import { firstSightOfFlaggedAsk } from './joinRequests.svelte';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
@@ -70,8 +71,8 @@ import {
 import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
 
 /**
- * A device asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to bring
- * a new person in, raised with {@link handleWelcomeRequest} and {@link processPendingInvitations}.
+ * A NEW PERSON asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to
+ * bring them in, raised with {@link handleWelcomeRequest} and {@link processPendingInvitations}.
  */
 export interface JoinApprovalRequest {
   groupId: string;
@@ -95,6 +96,15 @@ export interface JoinApprovalRequest {
  * bringing a new person in is a member's gesture - `inviteMembersToGroup`, or approving the join -
  * never a reaction to a server row.
  *
+ * THE GATE IS ON THE USER, NEVER ON THE DEVICE (owner, 2026-10-31: "la barriere est une barriere
+ * utilisateur, pas appareil"). Any device of a member is added automatically, and every member sees
+ * "X added a device" (`deviceNotices.svelte.ts`) - nothing asks a member about it. The 2026-10-27
+ * interim asked a member about every device whose own leaf was not in the tree, a 1:1 included, and
+ * is deleted. The user is read off the leaf credentials of THIS device's tree, which the requesting
+ * device cannot write; that the device is the user's rests on the delivery service's authentication
+ * of its enrolment, and the package's credential is bound to `userId:deviceId` by the Add itself
+ * (`key_package_verdict`, `identity-mismatch`).
+ *
  * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
  * and asks no one - another member, or the next sweep, answers.
  *
@@ -115,6 +125,7 @@ async function automaticAdmission(deps: {
   confirmed?: TreeReading;
 }): Promise<AutomaticAdmission> {
   const { mlsService, groupId, userId, tag, log, confirmed } = deps;
+  let identities: readonly string[];
   if (confirmed !== undefined) {
     if (confirmed.status === 'unconfirmed') {
       log(
@@ -122,17 +133,50 @@ async function automaticAdmission(deps: {
       );
       return 'unreadable';
     }
-    return treeHoldsUser(confirmed.identities, userId) ? 'member-device' : 'newcomer';
+    identities = confirmed.identities;
+  } else {
+    try {
+      identities = await mlsService.getGroupMemberIdentities(groupId);
+    } catch (e) {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+      );
+      return 'unreadable';
+    }
   }
-  try {
-    const identities = await mlsService.getGroupMemberIdentities(groupId);
-    return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
-  } catch (e) {
-    log(
-      `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
-    );
-    return 'unreadable';
-  }
+  return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
+}
+
+/**
+ * {@link automaticAdmission} for a seat the server may flag as an invitation-link ask
+ * (`awaitingAdmission`), with the one verdict such a seat adds: `ask-for-a-member`.
+ *
+ * A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, whatever the tree says - only a member's gesture
+ * answers it. AND IT IS NEVER A PERSON'S ASK FOR A USER WHO ALREADY HOLDS A LEAF (review of #2594,
+ * 2026-10-27): the ask's Add re-plans the person's devices from the server's list and its Decline
+ * removes the person's leaves, so one tap on such an entry would act on a member nobody asked about.
+ * A member is not a new person; the flag is an anomaly, refused at a level that accuses, and nothing
+ * is raised. Without the flag the verdict is {@link automaticAdmission}'s.
+ */
+async function admissionOfSeat(deps: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  groupId: string;
+  userId: string;
+  awaitingAdmission: boolean | undefined;
+  tag: string;
+  log: (message: string) => void;
+}): Promise<AutomaticAdmission | 'ask-for-a-member'> {
+  const { awaitingAdmission, ...rest } = deps;
+  const verdict = await automaticAdmission(rest);
+  if (awaitingAdmission !== true) return verdict;
+  if (verdict === 'newcomer' || verdict === 'unreadable') return verdict;
+  const what = `${deps.tag} ${deps.userId}'s seat in ${deps.groupId.slice(0, 8)}... is flagged as a join ask, but the user already holds a leaf there - no person's ask is raised for a member, nothing added`;
+  // SAID ONCE PER SESSION AT A LEVEL THAT ACCUSES: a removed member's leaf can outlive the removal
+  // until it is collected, and every sweep meets the same seat. The ask is raised again by the first
+  // sweep after the leaf is gone, since the verdict is read from the tree on every pass.
+  if (firstSightOfFlaggedAsk(deps.groupId, deps.userId)) console.error(what);
+  else deps.log(`${what} (already reported this session)`);
+  return 'ask-for-a-member';
 }
 
 /** What every automatic Add of one group rests on, as one read of the server gives it. */
@@ -329,9 +373,11 @@ export async function raiseAnnouncedJoinAsk(params: {
     log,
   });
   if (admission === 'unreadable') return;
-  if (admission === 'member-device') {
+  // ANY LEAF OF THE USER, not only this device's: a person's ask is never raised for a member
+  // ({@link admissionOfSeat}).
+  if (admission !== 'newcomer') {
     log(
-      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member's Add came first, nothing to ask`
+      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member, not a new person: nothing to ask`
     );
     return;
   }
@@ -543,9 +589,15 @@ export async function processPendingInvitations(params: {
   /**
    * A pending device whose USER holds no leaf in our tree is a new person, never added from a server
    * row (`automaticAdmission`): this asks a member to approve the join instead. The row is left as
-   * it is - the approval, or the next sweep, is what answers it.
+   * it is - the approval, or the next sweep, is what answers it. A device of a member is never
+   * asked about: it is added.
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+  /**
+   * A group whose rows this pass did NOT read through - another device held its add lock - so its
+   * silence about an ask says nothing, and the asks shown for it stay (`settleSweptJoinRequests`).
+   */
+  onGroupNotSwept?: (groupId: string) => void;
 }): Promise<boolean> {
   const {
     mlsService,
@@ -556,6 +608,7 @@ export async function processPendingInvitations(params: {
     requestReAdd,
     log,
     onJoinApprovalRequested,
+    onGroupNotSwept,
   } = params;
 
   const myDeviceId = mlsService.getDeviceId();
@@ -629,7 +682,8 @@ export async function processPendingInvitations(params: {
     // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
-      log(`[PENDING] Group ${groupId}: lock held by another device - skip`);
+      log(`[PENDING] Group ${groupId}: lock held by another device - skip, its asks stay as shown`);
+      onGroupNotSwept?.(groupId);
       continue;
     }
 
@@ -647,19 +701,17 @@ export async function processPendingInvitations(params: {
           retirePendingInvitation(mlsService, inv, groupId, log);
           continue;
         }
-        // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
-        // answers it, so a leaf of theirs in the tree never makes it an automatic Add.
-        const admission =
-          inv.awaitingAdmission === true
-            ? 'newcomer'
-            : await automaticAdmission({
-                mlsService,
-                groupId,
-                userId: inv.userId,
-                tag: '[PENDING]',
-                log,
-              });
-        if (admission === 'unreadable') continue;
+        // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+        // ({@link admissionOfSeat}).
+        const admission = await admissionOfSeat({
+          mlsService,
+          groupId,
+          userId: inv.userId,
+          awaitingAdmission: inv.awaitingAdmission,
+          tag: '[PENDING]',
+          log,
+        });
+        if (admission === 'unreadable' || admission === 'ask-for-a-member') continue;
         if (admission === 'newcomer') {
           askAMemberToAdmit(
             conversations,
@@ -1517,7 +1569,8 @@ export async function handleWelcomeRequest(params: {
   onNotReady?: (terminalGroupId: string) => void;
   /**
    * A requester whose USER holds no leaf in our tree is a new person, never added on a relayed
-   * request (`automaticAdmission`): this asks a member to approve the join instead.
+   * request (`automaticAdmission`): this asks a member to approve the join instead. A device of a
+   * member is never asked about: it is added.
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }) {
@@ -1596,20 +1649,18 @@ export async function handleWelcomeRequest(params: {
   // The roster guard above reads the server, and so does everything that brought this request
   // here. Whether the requester is a MEMBER is read from our own tree: a new person is brought in by
   // a member's gesture, never by a relayed request (`automaticAdmission`).
-  // A SEAT STILL AWAITING A MEMBER IS AN ASK, WHATEVER THE TREE SAYS: only a member's gesture
-  // answers it, so a leaf of the requester's never turns it into an automatic Add.
+  // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+  // ({@link admissionOfSeat}).
   const seat = userMembers.find((m) => m.userId === requesterUserId);
-  const admission =
-    seat?.awaitingAdmission === true
-      ? 'newcomer'
-      : await automaticAdmission({
-          mlsService,
-          groupId,
-          userId: requesterUserId,
-          tag: '[WELCOME_REQ]',
-          log,
-        });
-  if (admission === 'unreadable') return;
+  const admission = await admissionOfSeat({
+    mlsService,
+    groupId,
+    userId: requesterUserId,
+    awaitingAdmission: seat?.awaitingAdmission,
+    tag: '[WELCOME_REQ]',
+    log,
+  });
+  if (admission === 'unreadable' || admission === 'ask-for-a-member') return;
   if (admission === 'newcomer') {
     askAMemberToAdmit(
       conversations,

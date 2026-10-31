@@ -13,8 +13,12 @@ import {
   noPinOpensState,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  isMlsManagerAbsent,
+  MlsSessionVacantError,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -55,6 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
+import { nextPageRingHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -94,7 +99,24 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
  */
 export class TauriMlsService extends BaseMlsService {
-  private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
+  private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** This instance's name in the native ring's holder set (`page_ring.rs`). */
+  private readonly socketHolder = nextPageRingHolder('mls-service');
+  private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
+    return this._ws;
+  }
+  /**
+   * THE ONE SEAM THAT HOLDS THE SOCKET, so the one place that says so. Holding it is what makes this
+   * page ring an incoming call (the caller's invite is a transport frame, delivered over an open
+   * socket only), and the native ring stands back for an app in front only while it is held
+   * ({@link reportPageGatewaySocket}). A change is reported; a repeat is not.
+   */
+  private set ws(next: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null) {
+    const before = this._ws !== null;
+    this._ws = next;
+    if (before !== (next !== null)) reportPageGatewaySocket(this.socketHolder, next !== null);
+  }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
   /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
@@ -209,6 +231,9 @@ export class TauriMlsService extends BaseMlsService {
     this._cacheStamp.set(groupId, stamp);
     if (epoch !== null) {
       this._epochByGroupId.set(groupId, epoch);
+      // An epoch the manager answered proves it holds the group: a listing this read overtook skips
+      // it (touched since), so the read adds it itself (see `syncGroupCachesFromNative`).
+      this._knownGroups.add(groupId);
       logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch });
       return;
     }
@@ -652,7 +677,7 @@ export class TauriMlsService extends BaseMlsService {
    *
    * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
    * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
-   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on the workstation
    * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
    * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
    * bundles do not belong in front of the connected badge; native was doing exactly that.
@@ -1057,6 +1082,15 @@ export class TauriMlsService extends BaseMlsService {
         console.log(`[MLS][Tauri] Resume reload not applied (${outcome}) - live state kept.`);
       }
     } catch (e) {
+      if (isMlsManagerAbsent(e)) {
+        // NO NATIVE SESSION UNDER A RESUMING ONE: a teardown ran (a sign-out, a failed install or
+        // rotation) and a resume reload never installs a manager. Carrying on would leave a session
+        // on screen whose every MLS command fails, so it is reported - the shell ends it on this
+        // device and reopens it at the PIN gate (`mlsSessionLoss.ts` says why that and not a re-init
+        // or a sign-out) - and the resume sequence is told to stop.
+        reportMlsSessionLost('resume found no native session');
+        throw new MlsSessionVacantError(e);
+      }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
       // advance, so this must be loud even though it does not abort the resume.
       console.error('[MLS][Tauri] reloadStateFromDisk failed:', e);
@@ -1132,18 +1166,32 @@ export class TauriMlsService extends BaseMlsService {
     // is the two callers that genuinely hold bytes the native side could not have read - the
     // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
-      userId: this.userId,
-      deviceId: this.deviceId,
-      deviceKeyB64,
-      encryptedState,
-      opts: {
-        legacyPin: legacyPin ?? null,
-        biometricPrompt: keystoreUnlockPrompt(),
-        stateOnDisk: stateOnDisk === true,
-        unattendedKeyRead: unattendedKeyRead === true,
-      },
-    });
+    try {
+      await invoke('initialiser_mls', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64,
+        encryptedState,
+        opts: {
+          legacyPin: legacyPin ?? null,
+          biometricPrompt: keystoreUnlockPrompt(),
+          stateOnDisk: stateOnDisk === true,
+          unattendedKeyRead: unattendedKeyRead === true,
+        },
+      });
+    } catch (e) {
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
+      // (by construction, on every exit that did not install); this is the same end through the one
+      // helper every path uses, so the previous account's manager and key cannot be left installed
+      // whatever the native side did. The install's own error is the one that propagates.
+      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
+        (teardown: unknown) =>
+          console.error(
+            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
+          )
+      );
+      throw e;
+    }
   }
 
   /**
@@ -1549,6 +1597,8 @@ export class TauriMlsService extends BaseMlsService {
       if (this.cacheWriteAllowed(groupId, stamp)) {
         this._cacheStamp.set(groupId, stamp);
         this._epochByGroupId.set(groupId, epoch);
+        // Held, as the manager just said - see `readEpochIntoCache`.
+        this._knownGroups.add(groupId);
       }
       return epoch;
     } catch (e) {
@@ -1566,6 +1616,13 @@ export class TauriMlsService extends BaseMlsService {
   protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
     const gi = await invoke<number[]>('exporter_group_info', { groupId });
     return new Uint8Array(gi);
+  }
+
+  /** Tauri-native `invoke` wrapper - `mls_external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('mls_external_join_is_a_further_device', {
+      groupInfoBytes: Array.from(groupInfoBytes),
+    });
   }
 
   /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.
@@ -1717,6 +1774,16 @@ export class TauriMlsService extends BaseMlsService {
    */
   async getGroupMemberIdentities(groupId: string): Promise<string[]> {
     return invoke<string[]>('lister_identites_membres', { groupId });
+  }
+
+  /** Classifies a group for the admission rule (`definir_politique_admission`). */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    await invoke<void>('definir_politique_admission', { groupId, policy });
+  }
+
+  /** The admission policy a group was classified with (`lire_politique_admission`). */
+  async getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'> {
+    return invoke<'closed' | 'open' | 'unclassified'>('lire_politique_admission', { groupId });
   }
 
   /** The tree's signature key for one leaf, or null when it has none (`graine_member_signature_key`). */
