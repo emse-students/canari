@@ -1,4 +1,4 @@
-use crate::admission::{AdmissionPolicy, judge_external_commit};
+use crate::admission::{AdmissionPolicy, AdmissionVerdict, judge_external_commit};
 use openmls::prelude::*;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
@@ -525,20 +525,26 @@ impl MlsManager {
                 }
                 // The leaves BEFORE the merge, for the device record (`crate::device_trust`).
                 let leaves_before = leaf_keys(group);
-                // A CLOSED group does not merge an external commit that brings in a user holding no
-                // leaf: no member added them, and the verdict is a function of the tree before the
-                // commit and the commit alone, so every member reaches the same one whenever it
-                // processes it (`crate::admission`). Refused here, before anything is merged, the
-                // group is left exactly as it was.
+                // THE ADMISSION RULE, DISARMED (`crate::admission`, owner 2026-10-31): a CLOSED group
+                // judges an external commit that brings in a user holding no leaf, says so, and
+                // MERGES it as it always did - legitimate paths produce exactly this commit, and a
+                // refusal froze the group for good. The entry is still reported by the device
+                // observers below (`[UNINVITED_ENTRY]`), the count the fix-forward is read on.
                 if external_commit {
                     let tree_before: Vec<String> =
                         leaves_before.iter().map(|(_, id, _)| id.clone()).collect();
-                    judge_external_commit(
+                    if let AdmissionVerdict::Uninvited(entrant) = judge_external_commit(
                         observers.admission.get(group_id).copied(),
                         &tree_before,
                         sender_identity.as_deref(),
-                        group_id,
-                    )?;
+                    ) {
+                        log::warn!(
+                            "[ADMISSION] {} entered closed group {} by an external commit holding no \
+                             leaf - no member added them; the rule is disarmed, so it is merged",
+                            entrant.as_deref().unwrap_or("unreadable-identity"),
+                            group_id.get(..8).unwrap_or(group_id)
+                        );
+                    }
                 }
                 // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
                 // Remove took are gone (`graine_run.rs`).

@@ -1,13 +1,23 @@
-//! Who may enter a group on their own: the admission policy of one group, and the rule that applies it.
+//! Who may enter a group on their own: the admission policy of one group, and the rule that judges it.
 //!
-//! # Why a commit is refused at all
+//! # Why the rule exists
 //!
 //! An external commit adds its own sender, and the delivery service holds every group info, so a
 //! service under hostile control can build one for an identity of its choosing and hand it to every
-//! member. Merging whatever arrives made that commit a silent entry. A CLOSED group therefore
-//! refuses an external commit whose user holds no leaf yet: such a person enters through a member's
-//! own Add (`Sender::Member`), which is a human decision signed by that member's leaf and is never
-//! restricted here.
+//! member. A CLOSED group's rule names an external commit whose user holds no leaf yet an entry no
+//! member made: such a person is meant to enter through a member's own Add (`Sender::Member`), a
+//! human decision signed by that member's leaf, which is never judged here.
+//!
+//! # THE RULE IS DISARMED: it judges, and nothing is refused (owner, 2026-10-31)
+//!
+//! #2815 refused such a commit unmerged and froze the group. Legitimate paths produce exactly that
+//! commit - a peer whose KeyPackage was skipped at creation (a 1:1 included), a user whose only
+//! device was revoked so the stray sweep removed its leaf, a user whose only leaf was evicted while
+//! the seat stands - and a frozen group dropped every later frame for good. So the verdict is
+//! computed and logged, and the commit is MERGED as it always was; the entry is still reported by
+//! the device observers (`[UNINVITED_ENTRY]` on the server), the count the fix-forward is read on.
+//! What the fix-forward owes before the rule refuses anything again is in
+//! `docs/wiki/protocols/mls-protocol.md` ("the admission rule is disarmed").
 //!
 //! # The rule is a function of the tree and the commit, and nothing else
 //!
@@ -30,14 +40,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::device_trust::canonical_user_of;
 use crate::state::MlsManager;
-use crate::{MlsError, device_trust::canonical_user_of};
 
 /// How a group treats an external commit from a user who holds no leaf.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AdmissionPolicy {
-    /// Such a commit is refused ([`MlsError::AdmissionRefused`]): a conversation.
+    /// Such a commit is judged [`AdmissionVerdict::Uninvited`]: a conversation. Merged anyway while
+    /// the rule is disarmed (module doc).
     Closed,
     /// Such a commit is merged: a community or salon key group, entered by external commit.
     Open,
@@ -98,44 +109,35 @@ pub(crate) fn tree_holds_user(tree: &[String], entrant: &str) -> bool {
         .any(|leaf| canonical_user_of(leaf).as_deref() == Some(wanted.as_str()))
 }
 
-/// Judges an EXTERNAL commit on a group's policy and its tree before the commit.
+/// What the admission rule says of one external commit ([`judge_external_commit`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdmissionVerdict {
+    /// The group is not closed, or the entrant's user already holds a leaf: nothing to say.
+    Admitted,
+    /// A CLOSED group, and the entrant's user holds no leaf - no member added them. Carries the
+    /// entrant (`userId:deviceId`), `None` when its credential is unreadable. While the rule is
+    /// disarmed this is logged and the commit is MERGED anyway (see the module doc).
+    Uninvited(Option<String>),
+}
+
+/// Judges an EXTERNAL commit on a group's policy and its tree before the commit - a pure function of
+/// its arguments, so two honest members at the same epoch reach the same verdict whenever each one
+/// processes the commit.
 ///
 /// `entrant` is the commit's verified sender - for an external commit, the joiner itself - `None`
 /// when its credential is unreadable, which a closed group cannot vouch for. Only external commits
 /// are asked: a member's commit is signed by a leaf already in the tree, and what it adds is that
 /// member's decision.
-///
-/// # Errors
-/// [`MlsError::AdmissionRefused`], naming the entrant, when the group is closed and the entrant's
-/// user holds no leaf.
-pub(crate) fn judge_external_commit(
+pub fn judge_external_commit(
     policy: Option<AdmissionPolicy>,
     tree_before: &[String],
     entrant: Option<&str>,
-    group_id: &str,
-) -> Result<(), MlsError> {
+) -> AdmissionVerdict {
     if policy != Some(AdmissionPolicy::Closed) {
-        return Ok(());
+        return AdmissionVerdict::Admitted;
     }
-    let short = group_id.get(..8).unwrap_or(group_id);
     match entrant {
-        Some(identity) if tree_holds_user(tree_before, identity) => Ok(()),
-        Some(identity) => {
-            log::error!(
-                "[ADMISSION] REFUSED: {identity} entered {short} by an external commit but holds no \
-                 leaf of the group - no member added them; nothing merged"
-            );
-            Err(MlsError::AdmissionRefused(format!(
-                "{identity} entered by external commit"
-            )))
-        }
-        None => {
-            log::error!(
-                "[ADMISSION] REFUSED: an external commit into {short} carries an unreadable credential"
-            );
-            Err(MlsError::AdmissionRefused(
-                "unreadable-identity entered by external commit".to_string(),
-            ))
-        }
+        Some(identity) if tree_holds_user(tree_before, identity) => AdmissionVerdict::Admitted,
+        other => AdmissionVerdict::Uninvited(other.map(str::to_string)),
     }
 }

@@ -981,24 +981,6 @@ pub(crate) fn definir_politique_admission(
     Ok(())
 }
 
-/// The policy `group_id` was classified with: `closed`, `open`, or `unclassified` when nobody did
-/// (the behaviour every group had before the rule: its external commits are merged).
-#[tauri::command]
-pub(crate) fn lire_politique_admission(
-    group_id: String,
-    state: tauri::State<AppState>,
-) -> Result<String, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    Ok(manager
-        .admission_policy(&group_id)
-        .map_or("unclassified", mls_core::AdmissionPolicy::as_str)
-        .to_string())
-}
-
 #[tauri::command]
 pub(crate) fn retirer_membres(
     group_id: String,
@@ -1560,20 +1542,6 @@ pub(crate) async fn recevoir_message_bytes(
                     log::warn!(
                         "[EVICT] Frame for group={} arrived after this device was evicted - handing the classification to the frontend, no repair is owed",
                         group_id
-                    );
-                    Err(err_str)
-                }
-
-                // A COMMIT BRINGING A NEW USER INTO A CLOSED GROUP, refused unmerged by mls-core
-                // (`admission.rs`). Never queued - a retry is refused again - and surfaced verbatim
-                // so the shared frontend classifier reaches the ONE policy that freezes the group
-                // instead of recovering it: every recovery rebuilds from the server's state, which
-                // is the very state this commit came from.
-                DecryptErrorKind::AdmissionRefused => {
-                    log::warn!(
-                        "[ADMISSION] Commit refused for group={}: {} - handing it to the frontend, the group is to be frozen and not recovered",
-                        group_id,
-                        err_str
                     );
                     Err(err_str)
                 }
