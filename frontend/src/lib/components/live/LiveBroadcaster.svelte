@@ -311,7 +311,7 @@
 
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <div
-      class="absolute inset-x-0 bottom-0 flex flex-col gap-3 bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
+      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
     >
       <h2 class="text-lg font-bold">{m.live_prelive_title()}</h2>
       <p class="text-sm text-white/80">

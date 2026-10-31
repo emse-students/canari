@@ -223,6 +223,11 @@ export interface SessionContext {
   setIsLoggedIn(v: boolean): void;
   isWsConnected(): boolean;
   setIsWsConnected(v: boolean): void;
+  /**
+   * The opened socket's post-connect catch-up is done (`ConnectionDeps.onCaughtUp`): what a call
+   * answered on the native ring waits for before it joins.
+   */
+  onConnectionCaughtUp(): void;
   getLoginError(): string;
   setLoginError(v: string): void;
   isReconnecting(): boolean;

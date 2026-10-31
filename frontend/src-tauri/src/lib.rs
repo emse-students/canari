@@ -1212,6 +1212,54 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("").unwrap())
 }
 
+/// Builds the call hangup a callee sends when it refuses a ring, for the Decline of the NATIVE
+/// ring (notification action and call screen), which runs with no webview: the same frame the
+/// in-app Decline sends, so the caller's ring ends at once
+/// ([`mobile::proto_fields::build_call_hangup_app_message`]). Empty on a marshalling failure,
+/// logged; the Kotlin caller then sends nothing and says so.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildCallHangupProto<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    message_id: jni::objects::JString<'a>,
+    sent_at: jni::sys::jlong,
+    call_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    end_reason: jni::sys::jint,
+) -> jni::objects::JString<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let result = (|| -> Result<String, String> {
+        let message_id_str: String = env
+            .get_string(&message_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let call_id_str: String = env.get_string(&call_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let bytes = mobile::proto_fields::build_call_hangup_app_message(
+            &message_id_str,
+            sent_at,
+            &call_id_str,
+            &device_id_str,
+            end_reason.max(0) as u32,
+        );
+        Ok(STANDARD.encode(&bytes))
+    })();
+
+    let out = result.unwrap_or_else(|e| {
+        log::error!("[CALL_DECLINE] nativeBuildCallHangupProto failed: {e}");
+        String::new()
+    });
+    env.new_string(&out)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessagesBackground<
