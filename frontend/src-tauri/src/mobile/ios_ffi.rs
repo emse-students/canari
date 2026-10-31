@@ -622,6 +622,17 @@ pub unsafe extern "C" fn canari_ios_page_rings_call(call_id: *const c_char) -> b
     crate::page_ring::page_rings_call(&str_from_c_str(call_id))
 }
 
+/// Registers the native listener told when the page STARTS ringing a call (`page_ring`): the
+/// iPhone ends that call's unanswered CallKit ring when the app is active. Registered by
+/// `CanariCallKitSetup` rather than linked, since this crate is linked into the notification
+/// extension too, where that function does not exist.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_page_ringing_listener(
+    listener: Option<crate::page_ring::PageRingingListener>,
+) {
+    crate::page_ring::set_page_ringing_listener(listener);
+}
+
 /// Signals the move to background (diagnostic log).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_pause() {

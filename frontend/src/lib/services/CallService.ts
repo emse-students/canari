@@ -434,7 +434,20 @@ export class CallService {
   private keyMismatchShown = false;
   private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
 
-  public currentCallId: string | null = null;
+  /** The call this device rings, joins or runs - read and written through {@link currentCallId}. */
+  private _currentCallId: string | null = null;
+  /** The call this device rings, joins or runs, or null. */
+  public get currentCallId(): string | null {
+    return this._currentCallId;
+  }
+  /**
+   * Every write re-judges the call this page rings ({@link syncPageRingingCall}), so the native side
+   * hears of the call whichever of the two - the id or the state - moves last.
+   */
+  public set currentCallId(next: string | null) {
+    this._currentCallId = next;
+    this.syncPageRingingCall();
+  }
   public currentGroupId: string | null = null;
   /** Room access token issued by chat-delivery-service, sent in the SFU Join message. */
   private currentRoomToken: string | null = null;
@@ -555,6 +568,14 @@ export class CallService {
   private readonly pageRingHolder = nextPageRingHolder('call-service');
   /** The call last told to the native side as ringing in this page, or null. */
   private pageRingingCall: string | null = null;
+  /**
+   * Whether this instance tells the native side the call it rings: in Tauri, until it is retired
+   * ({@link retireFromPageRing}). Set in the constructor, so the field initializers that run before
+   * it (`_currentCallId`) report nothing.
+   */
+  private reportsPageRinging = false;
+  /** Ends the `callState` subscription that feeds {@link syncPageRingingCall}. */
+  private pageRingUnsubscribe: (() => void) | null = null;
 
   constructor(private mlsService: IMlsService) {
     // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
@@ -569,20 +590,39 @@ export class CallService {
     // opens rings nothing (calls.md, "The handover ends an unanswered ring only when the page rings
     // that call").
     if (isTauriRuntime()) {
-      this.callState.subscribe((state) => this.syncPageRingingCall(state));
+      this.reportsPageRinging = true;
+      this.pageRingUnsubscribe = this.callState.subscribe(() => this.syncPageRingingCall());
     }
   }
 
   /**
    * Tells the native side the call this page rings - the one it is `incoming` on - on every change,
-   * never on a repeat. `currentCallId` is set before the state moves to `incoming` and cleared after
-   * it leaves, so it names the right call on both edges.
+   * never on a repeat. Run on every move of the state AND every write of {@link currentCallId}, so it
+   * holds whatever order the two are written in.
    */
-  private syncPageRingingCall(state: CallState): void {
-    const ringing = state === 'incoming' ? this.currentCallId : null;
+  private syncPageRingingCall(): void {
+    if (!this.reportsPageRinging) return;
+    const ringing = get(this.callState) === 'incoming' ? this._currentCallId : null;
     if (ringing === this.pageRingingCall) return;
     this.pageRingingCall = ringing;
     reportPageRingingCall(this.pageRingHolder, ringing);
+  }
+
+  /**
+   * Retires this instance from the native ring's facts: withdraws the call it said it rings, and
+   * says nothing more. Called when the instance is REPLACED (an account switch builds a new one,
+   * `useChatSession.initServices`) - a replaced service left `incoming` would otherwise keep a
+   * holder nobody withdraws until the next page load.
+   */
+  public retireFromPageRing(): void {
+    if (!this.reportsPageRinging) return;
+    this.reportsPageRinging = false;
+    this.pageRingUnsubscribe?.();
+    this.pageRingUnsubscribe = null;
+    if (this.pageRingingCall !== null) {
+      this.pageRingingCall = null;
+      reportPageRingingCall(this.pageRingHolder, null);
+    }
   }
 
   /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */

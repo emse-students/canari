@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 
 /** The Rust command answering the current document's generation (`page_ring::page_ring_document`). */
 export const PAGE_RING_DOCUMENT_COMMAND = 'page_ring_document';
@@ -10,13 +11,40 @@ export const SET_PAGE_RINGING_CALL_COMMAND = 'set_page_ringing_call';
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 /**
- * This document's generation, asked once, at the first statement (`page_ring_document`). Every
- * statement names it, so the native side ignores one still in flight from a previous document
- * across a navigation - it would otherwise leave a holder nobody withdraws. Null until asked; a
- * failed ask is kept (and said at every statement), never retried, since a later answer could
- * belong to a later document.
+ * This document's generation (`page_ring_document`). Every statement names it, so the native side
+ * ignores one still in flight from a previous document across a navigation - it would otherwise
+ * leave a holder nobody withdraws, and a page at the PIN gate counted as ringing rings nothing
+ * (#2785's defect again).
+ *
+ * ASKED WHEN THIS MODULE LOADS, in Tauri: the ask must leave while this document is surely the
+ * current one. Asked lazily at the first statement, an old page's first ask could cross a reload
+ * and learn the NEW document's generation, and its statements would then count in it.
+ *
+ * A FAILED ASK IS ASKED AGAIN at the next statement (null here): this module dies with its
+ * document, so any answer it gets is this document's own - keeping the failure would only silence
+ * every statement for the rest of the page.
  */
 let documentGeneration: Promise<number> | null = null;
+
+/** Asks the generation and keeps the answer; a failure is said once and cleared for the next ask. */
+function askDocumentGeneration(invokeFn: Invoke): Promise<number> {
+  const ask = invokeFn(PAGE_RING_DOCUMENT_COMMAND).then((document) => {
+    if (typeof document !== 'number') {
+      throw new Error(`the document generation is not a number: ${String(document)}`);
+    }
+    return document;
+  });
+  documentGeneration = ask;
+  ask.catch((e: unknown) => {
+    console.warn(
+      `[CallRing] the document generation could not be learned: ${String(e)} - asked again at the next statement`
+    );
+    if (documentGeneration === ask) documentGeneration = null;
+  });
+  return ask;
+}
+
+if (isTauriRuntime()) askDocumentGeneration(invoke);
 
 /**
  * The statements of this document, in the order they were made: each waits for the one before, so
@@ -34,13 +62,7 @@ function state(
   label: string,
   invokeFn: Invoke
 ): void {
-  documentGeneration ??= invokeFn(PAGE_RING_DOCUMENT_COMMAND).then((document) => {
-    if (typeof document !== 'number') {
-      throw new Error(`the document generation is not a number: ${String(document)}`);
-    }
-    return document;
-  });
-  const generation = documentGeneration;
+  const generation = documentGeneration ?? askDocumentGeneration(invokeFn);
   statements = statements.then(async () => {
     try {
       const document = await generation;

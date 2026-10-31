@@ -91,6 +91,36 @@ describe('the call the page rings, told to the native side', () => {
     ]);
   });
 
+  it('follows the call id too, whichever of the id and the state is written last', () => {
+    const service = new CallService(fakeMls);
+    service.callState.set('incoming');
+    expect(report).not.toHaveBeenCalled();
+    service.currentCallId = 'call-6';
+    service.currentCallId = 'call-7';
+    service.currentCallId = null;
+    expect(report.mock.calls.map((c) => c[1])).toEqual(['call-6', 'call-7', null]);
+  });
+
+  it('a replaced service withdraws the call it rang and says nothing more', () => {
+    const service = new CallService(fakeMls);
+    ring(service, 'call-8');
+    service.retireFromPageRing();
+    service.retireFromPageRing();
+    service.callState.set('idle');
+    ring(service, 'call-9');
+    const holder = report.mock.calls[0][0];
+    expect(report.mock.calls).toEqual([
+      [holder, 'call-8'],
+      [holder, null],
+    ]);
+  });
+
+  it('a retired service that rang nothing withdraws nothing', () => {
+    const service = new CallService(fakeMls);
+    service.retireFromPageRing();
+    expect(report).not.toHaveBeenCalled();
+  });
+
   it('a browser page states nothing: there is no native ring to tell', () => {
     tauri = false;
     const service = new CallService(fakeMls);

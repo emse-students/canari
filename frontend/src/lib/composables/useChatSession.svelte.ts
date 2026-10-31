@@ -442,6 +442,9 @@ export function useChatSession() {
       if (callServiceMls === svc) return;
       callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
+      // The replaced service (an account switch) withdraws what it told the native ring, so its
+      // holder does not outlive it (`CallService.retireFromPageRing`).
+      callService?.retireFromPageRing();
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
       // An answer given on the ring joins once the socket's catch-up is done, whichever of the two

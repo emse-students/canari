@@ -221,14 +221,70 @@ pub(crate) fn set_page_gateway_socket(document: u64, holder: String, held: bool)
 pub(crate) fn set_page_ringing_call(document: u64, holder: String, call_id: Option<String>) {
     match with_page_ring(|r| r.state_ringing(document, &holder, call_id.as_deref())) {
         Applied::Yes { changed: false } => {}
-        Applied::Yes { changed: true } => log::debug!(
-            "[CALL_RING] {holder} {}",
-            match &call_id {
-                Some(c) => format!("rings call={c} in the page"),
-                None => "rings no call in the page".to_owned(),
+        Applied::Yes { changed: true } => {
+            log::debug!(
+                "[CALL_RING] {holder} {}",
+                match &call_id {
+                    Some(c) => format!("rings call={c} in the page"),
+                    None => "rings no call in the page".to_owned(),
+                }
+            );
+            #[cfg(any(target_os = "ios", test))]
+            if let Some(c) = call_id.as_deref().filter(|c| !c.is_empty()) {
+                tell_page_started_ringing(c);
             }
-        ),
+        }
         Applied::StaleDocument { stated } => log_stale("a ringing statement", &holder, stated),
+    }
+}
+
+/// The native function told that the page started ringing a call: on iOS, `canari_push.mm`'s
+/// `CanariPageStartedRinging`, which ends that call's UNANSWERED CallKit ring when the app is active.
+/// Without it, a call rung by CallKit (the page had no socket) and then by the page (the unlock came
+/// in time for the invite) rang twice while the app was active: the handover runs only on an
+/// activation, and an app already active sees none. The id is valid for the call only.
+///
+/// REGISTERED, NEVER LINKED: this crate is linked into the notification extension too, where
+/// `canari_push.mm` is not, so naming its symbol here would break that link (`native_cache.rs`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) type PageRingingListener = extern "C" fn(call_id: *const std::os::raw::c_char);
+
+#[cfg(any(target_os = "ios", test))]
+static PAGE_RINGING_LISTENER: Mutex<Option<PageRingingListener>> = Mutex::new(None);
+
+/// Registers (or, with `None`, removes) the native listener of [`PageRingingListener`].
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn set_page_ringing_listener(listener: Option<PageRingingListener>) {
+    *PAGE_RINGING_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = listener;
+    log::debug!(
+        "[CALL_RING] page ringing listener {}",
+        if listener.is_some() {
+            "registered"
+        } else {
+            "removed"
+        }
+    );
+}
+
+/// Tells the native listener the page started ringing `call_id`, outside every lock of this module
+/// (the listener only copies the id and queues the rest on the main queue).
+#[cfg(any(target_os = "ios", test))]
+fn tell_page_started_ringing(call_id: &str) {
+    let listener = *PAGE_RINGING_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(listener) = listener else {
+        log::warn!(
+            "[CALL_RING] the page rings call={call_id} and no native listener is registered - a \
+             CallKit ring of it is judged at the next activation only"
+        );
+        return;
+    };
+    match std::ffi::CString::new(call_id) {
+        Ok(c) => listener(c.as_ptr()),
+        Err(e) => log::error!("[CALL_RING] call id {call_id:?} has a NUL byte, not told: {e}"),
     }
 }
 
@@ -360,5 +416,30 @@ mod tests {
             "a dead web content process holds nothing"
         );
         assert!(!page_rings_call("call-9"));
+
+        // The native listener hears of a call the page STARTS ringing - once, never a withdrawal, a
+        // repeat or a previous document's statement.
+        set_page_ringing_listener(Some(record_told));
+        let doc = page_ring_document();
+        set_page_ringing_call(doc, "s".into(), Some("call-10".into()));
+        set_page_ringing_call(doc, "s".into(), Some("call-10".into()));
+        set_page_ringing_call(doc, "s".into(), None);
+        set_page_ringing_call(doc.wrapping_sub(1), "s".into(), Some("call-11".into()));
+        set_page_ringing_call(doc, "s".into(), Some(String::new()));
+        set_page_ringing_call(doc, "s".into(), Some("call-12".into()));
+        set_page_ringing_listener(None);
+        set_page_ringing_call(doc, "s".into(), Some("call-13".into()));
+        assert_eq!(
+            *TOLD.lock().unwrap(),
+            vec!["call-10".to_owned(), "call-12".to_owned()]
+        );
+    }
+
+    static TOLD: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    extern "C" fn record_told(call_id: *const std::os::raw::c_char) {
+        // SAFETY: the listener contract - a valid NUL-terminated string for the call's duration.
+        let id = unsafe { std::ffi::CStr::from_ptr(call_id) };
+        TOLD.lock().unwrap().push(id.to_string_lossy().into_owned());
     }
 }

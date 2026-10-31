@@ -2810,8 +2810,8 @@ static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
 
 /// The ring's deadline reached a call CallKit may still show. An UNANSWERED one rang out. An
 /// ANSWERED one did not: the user took it, and the page never took it over (the app was not made
-/// active in time) - so it is never ended `Unanswered`, which files a call the user answered as
-/// missed. It is ended `Failed`: the ring's window is the answer's (the server's `room-token`
+/// active in time) - so it is never ended `Unanswered`, which names a call nobody took (and, by
+/// reading, not observation, likely files it as missed in Recents). It is ended `Failed`: the ring's window is the answer's (the server's `room-token`
 /// refuses a join past its deadline with 410 - the VoIP ring follows that deadline, the FCM ring
 /// approximates it with `kCallRingTimeoutSec`), and a session left open would show a green bar for
 /// a call nobody can join. Its pending accept is kept, so the page, once opened, joins if the server
@@ -3390,6 +3390,45 @@ static void CanariPersistVoipToken(NSString *hexToken) {
 
 static CanariVoipPushDelegate *g_voipPushDelegate = nil;
 
+/// The page STARTED ringing `callIdC` itself (Rust `page_ring`, through the listener
+/// `CanariCallKitSetup` registers). With the app ACTIVE, an unanswered CallKit ring of that call is
+/// the second ring of one call - CallKit rang it while the page had no socket, then the unlock came
+/// in time for the invite - and no activation follows to run the handover, so it is ended here, as
+/// the handover would (`AnsweredElsewhere`: the page took it over). Tells nothing more: an answered
+/// call is the handover's, and an inactive app is judged at its activation.
+///
+/// Called on the thread of the Tauri command, with an id valid for the call only: the id is copied
+/// here, and the judgement made on the main queue, where every CallKit fact lives.
+static void CanariPageStartedRinging(const char *callIdC) {
+  if (callIdC == NULL) {
+    NSLog(@"[CanariCallKit] ERROR the page started ringing a call with no id - nothing judged");
+    return;
+  }
+  NSString *callId = [NSString stringWithUTF8String:callIdC];
+  if (callId.length == 0) {
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSUUID *uuid = g_ringingCalls[callId];
+    if (uuid == nil) {
+      return;  // CallKit does not ring it: the page's is the only ring
+    }
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) {
+      NSLog(@"[CanariCallKit] call=%@ rings in the page and in CallKit, app not active - judged at "
+            @"its activation",
+            callId);
+      return;
+    }
+    if ([g_ringingCallInfo[uuid.UUIDString][@"answered"] boolValue]) {
+      return;  // answered on CallKit: the handover owns it
+    }
+    NSLog(@"[CanariCallKit] call=%@ now rings in the active page - its unanswered CallKit ring is "
+          @"ended",
+          callId);
+    CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
+  });
+}
+
 /// Installs PushKit (VoIP credentials + pushes) and the app-active handover: once the app is
 /// active the in-app call UI owns the experience, so any lingering CallKit session is closed.
 static void CanariCallKitSetup(void) {
@@ -3406,6 +3445,8 @@ static void CanariCallKitSetup(void) {
               usingBlock:^(__unused NSNotification *note) {
                 CanariHandOverCallsToPage(@"the app became active");
               }];
+  // An app ALREADY active sees no activation: the page's own start of a ring is the other trigger.
+  canari_ios_set_page_ringing_listener(CanariPageStartedRinging);
   NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }
 

@@ -413,6 +413,37 @@ describe('the native answer is a private intent carrying every fact the join nee
     );
   });
 
+  it('iOS: a call the ACTIVE page starts ringing ends its unanswered CallKit ring (review of #2794)', () => {
+    // No activation follows in an app already active, so the handover never runs: the page's own
+    // start of a ring is the trigger, registered with Rust (never linked: the NSE links the crate).
+    const setup = between(
+      pushMm,
+      'static void CanariCallKitSetup(void) {',
+      '\n}\n',
+      'CanariCallKitSetup'
+    );
+    expect(setup).toContain('canari_ios_set_page_ringing_listener(CanariPageStartedRinging);');
+    const started = between(
+      pushMm,
+      'static void CanariPageStartedRinging(const char *callIdC) {',
+      '\n}\n',
+      'CanariPageStartedRinging'
+    );
+    // The id is copied on the caller's thread, everything else judged on the main queue.
+    expect(started).toMatch(
+      /NSString \*callId = \[NSString stringWithUTF8String:callIdC\];[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{/
+    );
+    expect(started).toMatch(
+      /applicationState != UIApplicationStateActive\) \{[\s\S]*?return;[\s\S]*?\[@"answered"\] boolValue\]\) \{\s*return;[\s\S]*?CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);/
+    );
+    expect(
+      readFileSync(resolve(here, '../../../src-tauri/src/mobile/ios_ffi.rs'), 'utf8')
+    ).toContain('pub extern "C" fn canari_ios_set_page_ringing_listener(');
+    expect(read('apple/Sources/canari/canari_rust_bridge.h')).toContain(
+      'void canari_ios_set_page_ringing_listener(void (*listener)(const char *call_id));'
+    );
+  });
+
   it('iOS: the ring deadline never ends an ANSWERED call as unanswered (review of #2785)', () => {
     const deadline = between(
       pushMm,
