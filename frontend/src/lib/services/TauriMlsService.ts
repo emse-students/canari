@@ -51,6 +51,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
+import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
@@ -1165,14 +1166,18 @@ export class TauriMlsService extends BaseMlsService {
       // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
       // (by construction, on every exit that did not install); this is the same end through the one
       // helper every path uses, so the previous account's manager and key cannot be left installed
-      // whatever the native side did. The install's own error is the one that propagates.
+      // whatever the native side did. The install's own error is the one that propagates, typed
+      // HERE at the invoke boundary: the command rejects with `{ code, message }`
+      // (`StateLoadRefusal`), so `classifyStateLoadFailure` and the login read a TYPE, never the
+      // message. No older string shape is understood: the app embeds this frontend, so the native
+      // half that answers is always the one built with it.
       await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
         (teardown: unknown) =>
           console.error(
             `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
           )
       );
-      throw e;
+      throw mlsStateLoadErrorOf(e);
     }
   }
 

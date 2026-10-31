@@ -2567,9 +2567,28 @@ equality (`storage_values` is an unordered `HashMap`; the CBOR is not determinis
 
 ## Failing to load a saved state
 
-`loadStateWithKey` rejects with a TYPED `mls-core` error, and `BaseMlsService.classifyStateLoadFailure`
-reads the type, never a sentence (table below). One case is checked first because it looks exactly
-like `undecryptable` and has a completely different answer.
+`loadStateWithKey` rejects with a TYPED error, and `BaseMlsService.classifyStateLoadFailure` reads
+the type with `instanceof` alone - never a sentence, and since 2026-10-27 not even a code found inside
+one (table below). One case is checked first because it looks exactly like `undecryptable` and has a
+completely different answer.
+
+**The code crosses every boundary as a FIELD and is typed where it crosses.** `mls-core` decides it on
+the variant (`MlsError::state_load_code`: the four verdicts about the bytes plus
+`KEYSTORE_KEY_UNAVAILABLE`, `None` otherwise) and hands it out as `StateLoadRefusal { code, message }`:
+
+| Boundary | Rejects with | Typed by |
+| --- | --- | --- |
+| Tauri `initialiser_mls` | the serialized `StateLoadRefusal` | `TauriMlsService.invokeInit` -> `mlsStateLoadErrorOf` |
+| WASM `WasmMlsClient` constructor (legacy and v1 blobs, and a v2 blob WebCrypto opened) | the same two fields, as a JS object | `loadAndInitWasm` -> `mlsStateLoadErrorOf` |
+| the web's v2 opener (`openMlsStateBlobV2`) | `MlsStateVerdictError` itself, decided from the header | at the throw |
+| `state_blob_verdict` (after a WebCrypto refusal) | a code string, `OPENED` or a verdict | `loadAndInitWasm` |
+
+`mlsStateLoadErrorOf` (`mls-client/mlsStateLoadError.ts`) builds `MlsStateVerdictError` for a verdict,
+`KeystoreKeyUnavailableError` for an empty keystore, and `MlsStateLoadUntypedError` for a `null` code -
+which the classifier calls `unknown`, whatever its message names. A rejection outside the
+`{ code, message }` shape, or a code outside the closed set, is accused at `console.error` (a bindings
+mismatch, never a verdict). No older string shape is understood, deliberately: the native app embeds
+its frontend and the WASM ships in the same bundle, so the code and its reader come from one build.
 
 ### An envelope older than v0.11.0
 
@@ -2606,21 +2625,24 @@ migration's own failure and applied by the normal path below. Doing this from in
 
 ### The `classifyStateLoadFailure` verdicts
 
-| Verdict | Thrown as | Meaning | Recovery |
+| Verdict | Typed as (code) | Meaning | Recovery |
 |---|---|---|---|
-| `undecryptable` | `STATE_UNDECRYPTABLE:` | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `SavedStateUnopenedError('undecryptable')`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
-| `rotated` | `STATE_KEY_MISMATCH:` | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. |
-| `altered` | `STATE_ALTERED:` | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
-| `mismatch` | `IDENTITY_MISMATCH:` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
-| `keystore_unavailable` | `KEYSTORE_KEY_UNAVAILABLE` | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
-| `unknown` | anything else | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!noPinOpensState(cause)`. |
+| `undecryptable` | `MlsStateVerdictError` (`STATE_UNDECRYPTABLE`) | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `SavedStateUnopenedError('undecryptable')`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
+| `rotated` | `MlsStateVerdictError` (`STATE_KEY_MISMATCH`) | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. |
+| `altered` | `MlsStateVerdictError` (`STATE_ALTERED`) | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
+| `mismatch` | `MlsStateVerdictError` (`IDENTITY_MISMATCH`) | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
+| `keystore_unavailable` | `KeystoreKeyUnavailableError` (`KEYSTORE_KEY_UNAVAILABLE`) | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
+| `unknown` | anything else, `MlsStateLoadUntypedError` included - even when its message names a code | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!noPinOpensState(cause)`. |
 
 **It used to branch on prose, with a default arm of `sealed`** - so every unrecognised failure,
 corruption included, told the user *"your PIN was changed on another device"*. Measured by CORRUPT-2
 and CORRUPT-1 on 2026-09-08 (one flipped byte; the state cut to half its length): the message sent
 the user after an old PIN that never existed, and the correct PIN left the gate `LOCKED+overlay` five
 passes running. Typed in `v0.18.18`; `state_load_failure_is_typed.rs` and the classifier tests
-assert that the OLD PROSE no longer classifies. **Since step 2 (PK1, 2026-10-17) a damaged FRAMED
+assert that the OLD PROSE no longer classifies. **Until 2026-10-27 the codes were still found by
+`includes` in the message**, so any text naming one bought its recovery - `altered`'s irreversible
+rotation included; the classifier tests now assert that a message naming each code, without the
+type, is `unknown`. **Since step 2 (PK1, 2026-10-17) a damaged FRAMED
 state exits by itself** (`altered` rotates); a damaged LEGACY blob still exits only through
 `onForgotPinReset` until its first rewrite, since its bytes cannot say it was altered.
 
@@ -2724,11 +2746,12 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
   (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
   longer land after the native session was ended.
-- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
-  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
-  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
-  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
-  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object. The
+  `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE` do (step 1, #2596); this code and the rest
+  (`EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:`, `UNRECOVERABLE:`) still cross
+  as the string's leading token, so the boundary has TWO conventions until the separately reviewed
+  step 2 is merged. The token is read in `isMlsManagerAbsent` alone and turned into a type at each
+  throw. Step 2 and its decode-order risk are a [backlog](../backlog.md) item.
 - **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
@@ -2781,8 +2804,9 @@ has the before/after table).
   `OPENED`, or one of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
   `IDENTITY_MISMATCH`, which returns as the typed `MlsStateVerdictError` that
   `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
-  recovery stays reachable. Each code is also the `Display` prefix the Tauri commands surface, so
-  both boundaries use the same word (pinned in `state_load_failure_is_typed.rs`). A REJECTION from
+  recovery stays reachable. The Tauri command and the WASM constructor carry the same code as a
+  field (`StateLoadRefusal`), and it is also each variant's `Display` prefix, for the logs (pinned in
+  `state_load_failure_is_typed.rs`). A REJECTION from
   `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
   the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
   not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)

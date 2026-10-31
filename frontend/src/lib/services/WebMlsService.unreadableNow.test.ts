@@ -87,7 +87,9 @@ describe('WebMlsService - a state unreadable right now', () => {
 
   it('CONTROL: an alteration mls-core PROVED still rotates, read once', async () => {
     // What separates the two classes is the deterministic reader's verdict, not the engine's.
-    loadAndInitWasm.mockRejectedValue(new MlsStateVerdictError('STATE_ALTERED', unreadable()));
+    loadAndInitWasm.mockRejectedValue(
+      new MlsStateVerdictError('STATE_ALTERED', 'judged', unreadable())
+    );
     const ctx = makeCtx();
 
     await initImpl(ctx, new Uint8Array([1, 2, 3]), { noFreshStart: true });
@@ -104,7 +106,7 @@ describe('WebMlsService - a state unreadable right now', () => {
   ] as const)('classifies the verdict %s by its TYPE as %s', (code, failure) => {
     const ctx = makeCtx();
     // The message is overwritten so only the type can carry the verdict.
-    const error = new MlsStateVerdictError(code, unreadable());
+    const error = new MlsStateVerdictError(code, 'judged', unreadable());
     error.message = 'no code in this text';
     expect(ctx.classifyStateLoadFailure(error)).toBe(failure);
   });

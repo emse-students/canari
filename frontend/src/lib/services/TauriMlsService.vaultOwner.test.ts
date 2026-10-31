@@ -57,11 +57,10 @@ function mlsBinIsAlices(): void {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === 'sauvegarder_mls_et_persister') return Promise.resolve([1, 2, 3]);
     if (cmd === 'initialiser_mls') {
-      return Promise.reject(
-        new Error(
-          'IDENTITY_MISMATCH: expected bob:bob-device but state contains alice:alice-device'
-        )
-      );
+      return Promise.reject({
+        code: 'IDENTITY_MISMATCH',
+        message: 'IDENTITY_MISMATCH: expected bob:bob-device but state contains alice:alice-device',
+      });
     }
     return Promise.resolve(undefined);
   });
@@ -112,7 +111,10 @@ describe('TauriMlsService init - a vault key whose owner is not proven', () => {
   it('refuses a state that will not open under the key, and runs no legacy re-seal', async () => {
     invoke.mockImplementation((cmd: string) =>
       cmd === 'initialiser_mls'
-        ? Promise.reject(new Error('STATE_UNDECRYPTABLE'))
+        ? Promise.reject({
+            code: 'STATE_UNDECRYPTABLE',
+            message: 'STATE_UNDECRYPTABLE: aead::Error',
+          })
         : Promise.resolve(undefined)
     );
     const svc = makeService();
