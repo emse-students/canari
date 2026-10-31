@@ -481,34 +481,24 @@ maybe('Lydia refunds against PostgreSQL', () => {
     });
   });
 
-  it('writes a statement in the words it is given: payments, refunds, totals, no payer', async () => {
-    const labels = {
-      date: 'D',
-      operation: 'Op',
-      item: 'Item',
-      method: 'Method',
-      amount: 'Amount',
-      reason: 'Why',
-      payment: 'PAY',
-      refundTotal: 'REFUND-ALL',
-      refundPartial: 'REFUND-PART',
-      cash: 'CASH',
-      online: 'ONLINE',
-      totalReceived: 'IN',
-      totalRefunded: 'OUT',
-      balance: 'NET',
-    };
-    const csv = await service.statementCsv(ASSO, labels);
-    expect(csv.charCodeAt(0)).toBe(0xfeff);
-    expect(csv.slice(1).split(String.fromCharCode(13, 10))[0]).toBe('D;Op;Item;Method;Amount;Why');
-    expect(csv).toContain(';REFUND-ALL;');
-    expect(csv).toContain(';REFUND-PART;');
-    expect(csv).toMatch(/;NET;;;-?[0-9]+,[0-9]{2};/);
+  it('states the payments, the confirmed refunds as negatives, and the totals - no payer', async () => {
+    const statement = await service.statement(ASSO);
+    const kinds = new Set(statement.lines.map((l) => l.operation));
+    expect(kinds).toEqual(new Set(['payment', 'refund-total', 'refund-partial']));
+    for (const line of statement.lines) {
+      expect(line.date).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+      expect(line.operation === 'payment' ? line.amountCents > 0 : line.amountCents < 0).toBe(true);
+    }
+    const sum = (op: (o: string) => boolean) =>
+      statement.lines.filter((l) => op(l.operation)).reduce((s, l) => s + l.amountCents, 0);
+    expect(statement.receivedCents).toBe(sum((o) => o === 'payment'));
+    expect(statement.refundedCents).toBe(-sum((o) => o !== 'payment'));
     // The statement names no payer: no account id written by the fixtures appears in it.
+    const text = JSON.stringify(statement);
     const buyers = (await ds.query(`SELECT DISTINCT "userId" FROM purchase_records`)) as {
       userId: string;
     }[];
-    for (const { userId } of buyers) expect(csv).not.toContain(userId);
+    for (const { userId } of buyers) expect(text).not.toContain(userId);
   });
 
   it("an erased manager's refunds stay, their name on them anonymised", async () => {

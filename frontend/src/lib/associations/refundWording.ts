@@ -1,9 +1,10 @@
 import { m } from '$lib/paraglide/messages';
 import type {
   AssociationRefund,
+  AssociationStatement,
   RefundStanding,
   RefundWithdrawal,
-  StatementLabels,
+  StatementLine,
 } from '$lib/associations/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
@@ -160,22 +161,67 @@ export function eurosToCents(typed: string | number): number | null {
   return cents > 0 ? cents : null;
 }
 
-/** The statement's words, in this client's language (the server has none of its own). */
-export function statementLabels(): StatementLabels {
-  return {
-    date: m.asso_statement_col_date(),
-    operation: m.asso_statement_col_operation(),
-    item: m.asso_statement_col_item(),
-    method: m.asso_statement_col_method(),
-    amount: m.asso_statement_col_amount(),
-    reason: m.asso_statement_col_reason(),
-    payment: m.asso_statement_payment(),
-    refundTotal: m.asso_statement_refund_total(),
-    refundPartial: m.asso_statement_refund_partial(),
-    cash: m.asso_statement_cash(),
-    online: m.asso_statement_online(),
-    totalReceived: m.asso_statement_total_received(),
-    totalRefunded: m.asso_statement_total_refunded(),
-    balance: m.asso_statement_balance(),
-  };
+/** The byte-order mark a spreadsheet needs to read the file as UTF-8. */
+const BOM = String.fromCharCode(0xfeff);
+
+/** Cents as a decimal with a comma (`12,50`, `-3,00`): what a spreadsheet in French reads as a number. */
+function euros(cents: number): string {
+  return (cents / 100).toFixed(2).replace('.', ',');
+}
+
+/**
+ * One CSV cell: quoted when it carries `;`, a quote or a line break. A TEXT cell starting with a
+ * character a spreadsheet reads as a formula (`= + - @`, tab, carriage return) is prefixed with `'`
+ * - a product name or a typed reason is data, never a formula. Amounts (`euros`) are never
+ * neutralised: a refund is a negative number.
+ */
+export function csvCell(value: string): string {
+  const numeric = /^-?\d+,\d{2}$/.test(value);
+  const safe = !numeric && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[;"\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/** The operation cell of a statement line, in this client's words. */
+function operationLabel(operation: StatementLine['operation']): string {
+  if (operation === 'refund-total') return m.asso_statement_refund_total();
+  if (operation === 'refund-partial') return m.asso_statement_refund_partial();
+  return m.asso_statement_payment();
+}
+
+/**
+ * The association's statement as a CSV file's text (`;`, UTF-8 with a BOM, CRLF), every header and
+ * word in this client's language - the server sends data only. Payments and refunds, then the
+ * three totals.
+ */
+export function statementCsv(statement: AssociationStatement): string {
+  const rows: string[][] = [
+    [
+      m.asso_statement_col_date(),
+      m.asso_statement_col_operation(),
+      m.asso_statement_col_item(),
+      m.asso_statement_col_method(),
+      m.asso_statement_col_amount(),
+      m.asso_statement_col_reason(),
+    ],
+    ...statement.lines.map((line) => [
+      line.date,
+      operationLabel(line.operation),
+      line.item,
+      line.method === 'cash' ? m.asso_statement_cash() : m.asso_statement_online(),
+      euros(line.amountCents),
+      line.reason ?? '',
+    ]),
+    [],
+    ['', m.asso_statement_total_received(), '', '', euros(statement.receivedCents), ''],
+    ['', m.asso_statement_total_refunded(), '', '', euros(-statement.refundedCents), ''],
+    [
+      '',
+      m.asso_statement_balance(),
+      '',
+      '',
+      euros(statement.receivedCents - statement.refundedCents),
+      '',
+    ],
+  ];
+  return BOM + rows.map((cells) => cells.map(csvCell).join(';')).join('\r\n') + '\r\n';
 }

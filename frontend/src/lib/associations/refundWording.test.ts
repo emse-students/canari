@@ -9,7 +9,8 @@ import {
   refundAttemptOf,
   refundEffectMessage,
   refundStateLabel,
-  statementLabels,
+  statementCsv,
+  csvCell,
 } from './refundWording';
 
 const standing = (over: Partial<RefundStanding> = {}): RefundStanding => ({
@@ -116,8 +117,63 @@ describe('the amount typed', () => {
   });
 });
 
-it('the statement is written in this client words, every one filled', () => {
-  const labels = statementLabels();
-  expect(Object.keys(labels)).toHaveLength(14);
-  for (const value of Object.values(labels)) expect(value).toBeTruthy();
+describe('the statement file', () => {
+  const statement = {
+    lines: [
+      {
+        date: '2026-10-01',
+        operation: 'payment' as const,
+        item: 'Gala',
+        method: 'online' as const,
+        amountCents: 1250,
+        reason: null,
+      },
+      {
+        date: '2026-10-02',
+        operation: 'refund-partial' as const,
+        item: '=HYPERLINK("x")',
+        method: 'online' as const,
+        amountCents: -300,
+        reason: 'a; b',
+      },
+    ],
+    receivedCents: 1250,
+    refundedCents: 300,
+  };
+
+  it('is a UTF-8 CSV in this client words, with the three totals', () => {
+    const csv = statementCsv(statement);
+    const rows = csv.slice(1).split(String.fromCharCode(13, 10));
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(rows[0]).toBe(
+      [
+        m.asso_statement_col_date(),
+        m.asso_statement_col_operation(),
+        m.asso_statement_col_item(),
+        m.asso_statement_col_method(),
+        m.asso_statement_col_amount(),
+        m.asso_statement_col_reason(),
+      ].join(';')
+    );
+    expect(rows[1]).toBe(
+      `2026-10-01;${m.asso_statement_payment()};Gala;${m.asso_statement_online()};12,50;`
+    );
+    expect(csv).toContain(`;${m.asso_statement_balance()};;;9,50;`);
+    expect(csv).toContain(`;${m.asso_statement_total_refunded()};;;-3,00;`);
+  });
+
+  it('neutralises a cell a spreadsheet would run, and quotes a separator', () => {
+    const csv = statementCsv(statement);
+    expect(csv).toContain(`;"'=HYPERLINK(""x"")";`);
+    expect(csv).toContain(';-3,00;"a; b"');
+  });
+
+  it.each([
+    ['+33', "'+33"],
+    ['-x', "'-x"],
+    ['@cmd', "'@cmd"],
+    ['-12,50', '-12,50'],
+  ])('writes the cell %j as %j', (value, expected) => {
+    expect(csvCell(value)).toBe(expected);
+  });
 });

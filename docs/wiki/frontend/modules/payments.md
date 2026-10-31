@@ -1071,10 +1071,13 @@ erasure.
 false` ([legacy-compatibility](../../legacy-compatibility.md)); Lydia's own e-mail to the payer
 (`notify_payer`, on by default) tells them meanwhile.
 
-**The statement** (`GET /associations/:id/statement.csv?labels=...`) is Canari's own records only:
-every payment listed and every confirmed refund, with three totals, `;`-separated UTF-8 with a BOM.
-Its words are the client's (`export-labels`, as forms and bookings); it names no payer, and a text
-cell a spreadsheet would run as a formula is prefixed with `'`.
+**The statement** (`GET /associations/:id/statement`) is Canari's own records only: every payment
+listed and every confirmed refund (a negative amount), with the totals, as DATA. The client writes
+the file (`statementCsv`, `refundWording.ts`): `;`-separated UTF-8 with a BOM, every word in its own
+language, a text cell a spreadsheet would run as a formula prefixed with `'`. It names no payer.
+**Why not a server-built file like the forms' and bookings' exports:** those take their words in the
+request, and a CSV - text, unlike their xlsx - built from request words is request text echoed back
+(CodeQL `js/reflected-xss` on this pull request); data in, words on the client, removes that path.
 
 **Not built:** a refund screen for a delegated child's payments in the parent's delegation tab (the
 route works for the parent, which holds the Business); refunding a booking (bookings take no payment).

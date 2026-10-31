@@ -34,10 +34,6 @@ import {
   type RefundSideEffect,
   type RefundWithdrawal,
 } from './refund-codes';
-import type { StatementLabels } from './statement-labels';
-
-/** The byte-order mark a spreadsheet needs to read the statement as UTF-8. */
-const BOM = String.fromCharCode(0xfeff);
 
 /** How long social waits on core's refund route: over core's own 60 s bound on Lydia. */
 export const CORE_REFUND_TIMEOUT_MS = 90_000;
@@ -70,6 +66,25 @@ export interface RefundView {
   requestedAt: string;
   answeredAt: string | null;
   resolvedAt: string | null;
+}
+
+/** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
+export interface StatementLine {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  operation: 'payment' | 'refund-total' | 'refund-partial';
+  item: string;
+  method: 'cash' | 'online';
+  amountCents: number;
+  /** The refund's reason, as the manager typed it; null for a payment. */
+  reason: string | null;
+}
+
+/** The association's statement: its lines, oldest payments first then refunds, and the totals. */
+export interface AssociationStatement {
+  lines: StatementLine[];
+  receivedCents: number;
+  refundedCents: number;
 }
 
 /** Per payment of the association's list: whether a refund is offered, and where it stands. */
@@ -662,12 +677,13 @@ export class RefundsService {
   }
 
   /**
-   * The association's statement from Canari's own records - payments received and refunds
-   * confirmed, with their totals - as CSV (`;`, UTF-8 with a BOM, for a spreadsheet). Every word is
-   * the client's (`labels`, `statement-labels.ts`). Names no payer: an accounting statement needs
-   * amounts and dates, not people. Text cells a spreadsheet would read as a formula are neutralised.
+   * The association's statement from Canari's own records - every payment listed and every refund
+   * confirmed, oldest first, with the totals - as DATA. The client writes the spreadsheet file in its
+   * own words (`statementCsv`, frontend `refundWording.ts`): this service has no language, and a
+   * file built from words the request carried would echo request text back. Names no payer: an
+   * accounting statement needs amounts and dates, not people.
    */
-  async statementCsv(associationId: string, labels: StatementLabels): Promise<string> {
+  async statement(associationId: string): Promise<AssociationStatement> {
     const manager = this.refundRepo.manager;
     const records = await manager.find(PurchaseRecord, {
       where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
@@ -678,43 +694,36 @@ export class RefundsService {
       order: { requestedAt: 'ASC' },
     });
     const byId = new Map(records.map((r) => [r.id, r]));
-    const lines: string[][] = [
-      [labels.date, labels.operation, labels.item, labels.method, labels.amount, labels.reason],
-    ];
-    let received = 0;
-    let refunded = 0;
+    const lines: StatementLine[] = [];
+    let receivedCents = 0;
+    let refundedCents = 0;
     for (const r of records) {
-      received += r.amountCents;
-      lines.push([
-        isoDate(r.paidAt),
-        labels.payment,
-        r.productName,
-        r.paymentMethod === 'cash' ? labels.cash : labels.online,
-        euros(r.amountCents),
-        '',
-      ]);
+      receivedCents += r.amountCents;
+      lines.push({
+        date: isoDate(r.paidAt),
+        operation: 'payment',
+        item: r.productName,
+        method: r.paymentMethod === 'cash' ? 'cash' : 'online',
+        amountCents: r.amountCents,
+        reason: null,
+      });
     }
     for (const f of refunds) {
-      refunded += f.amountCents;
-      lines.push([
-        isoDate(f.answeredAt ?? f.resolvedAt ?? f.requestedAt),
-        f.kind === 'total' ? labels.refundTotal : labels.refundPartial,
-        byId.get(f.purchaseRecordId)?.productName ?? '',
-        labels.online,
-        euros(-f.amountCents),
-        f.reason,
-      ]);
+      refundedCents += f.amountCents;
+      lines.push({
+        date: isoDate(f.answeredAt ?? f.resolvedAt ?? f.requestedAt),
+        operation: f.kind === 'total' ? 'refund-total' : 'refund-partial',
+        item: byId.get(f.purchaseRecordId)?.productName ?? '',
+        method: 'online',
+        amountCents: -f.amountCents,
+        reason: f.reason,
+      });
     }
-    lines.push([]);
-    lines.push(['', labels.totalReceived, '', '', euros(received), '']);
-    lines.push(['', labels.totalRefunded, '', '', euros(-refunded), '']);
-    lines.push(['', labels.balance, '', '', euros(received - refunded), '']);
-    const csv = BOM + lines.map((cells) => cells.map(csvCell).join(';')).join('\r\n') + '\r\n';
     this.logger.log(
       `[LYDIA-REFUND] statement of ${associationId.slice(0, 8)}: ${records.length} payment(s), ` +
         `${refunds.length} refund(s)`
     );
-    return csv;
+    return { lines, receivedCents, refundedCents };
   }
 }
 
@@ -750,20 +759,4 @@ function toView(row: LydiaRefund): RefundView {
 
 function isoDate(d: Date): string {
   return new Date(d).toISOString().slice(0, 10);
-}
-
-/** Cents as a French decimal (`12,50`, `-3,00`): what a spreadsheet in French reads as a number. */
-function euros(cents: number): string {
-  return (cents / 100).toFixed(2).replace('.', ',');
-}
-
-/**
- * One CSV cell: quoted when it carries `;`, a quote or a line break; a TEXT cell starting with a
- * character a spreadsheet reads as a formula (`= + - @`, tab, carriage return) is prefixed with `'`.
- * Amounts come from `euros` and are never neutralised (a refund is a negative number).
- */
-export function csvCell(value: string): string {
-  const numeric = /^-?\d+,\d{2}$/.test(value);
-  const safe = !numeric && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[;"\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }

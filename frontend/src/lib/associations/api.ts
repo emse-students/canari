@@ -2217,35 +2217,31 @@ export async function resolveAssociationRefund(
   );
 }
 
-/** The words of the statement export, every one required by the server (`export-labels`). */
-export interface StatementLabels {
+/** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
+export interface StatementLine {
+  /** `YYYY-MM-DD`. */
   date: string;
-  operation: string;
+  operation: 'payment' | 'refund-total' | 'refund-partial';
   item: string;
-  method: string;
-  amount: string;
-  reason: string;
-  payment: string;
-  refundTotal: string;
-  refundPartial: string;
-  cash: string;
-  online: string;
-  totalReceived: string;
-  totalRefunded: string;
-  balance: string;
+  method: 'cash' | 'online';
+  amountCents: number;
+  reason: string | null;
 }
 
-/** The association's statement - payments and refunds with totals - as CSV, in `labels`' words. */
-export async function exportAssociationStatement(
-  associationId: string,
-  labels: StatementLabels
-): Promise<Blob> {
-  const query = encodeURIComponent(JSON.stringify(labels));
-  const res = await apiFetch(
-    `${socialUrl()}/api/associations/${encodeURIComponent(associationId)}/statement.csv?labels=${query}`
+/** The association's statement, as data: the client writes the file in its own words. */
+export interface AssociationStatement {
+  lines: StatementLine[];
+  receivedCents: number;
+  refundedCents: number;
+}
+
+/** The association's payments and confirmed refunds, with the totals (MANAGE_PAYOUT_ACCOUNT). */
+export async function getAssociationStatement(
+  associationId: string
+): Promise<AssociationStatement> {
+  return request<AssociationStatement>(
+    `/api/associations/${encodeURIComponent(associationId)}/statement`
   );
-  if (!res.ok) throw await socialRefusal(res);
-  return res.blob();
 }
 
 // ── Payment delegation (MANAGE_PRODUCTS) ─────────────────────────────────────

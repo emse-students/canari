@@ -7,7 +7,7 @@
     quoteCashSale,
     closePaidNotGranted,
     listAssociationRefunds,
-    exportAssociationStatement,
+    getAssociationStatement,
     SocialApiError,
     type Association,
     type AssociationProduct,
@@ -37,7 +37,7 @@
   import {
     notRefundableHint,
     refundStateLabel,
-    statementLabels,
+    statementCsv,
     unconfirmedRefund,
   } from '$lib/associations/refundWording';
 
@@ -141,7 +141,8 @@
     statementBusy = true;
     statementError = '';
     try {
-      const blob = await exportAssociationStatement(asso.id, statementLabels());
+      const statement = await getAssociationStatement(asso.id);
+      const blob = new Blob([statementCsv(statement)], { type: 'text/csv;charset=utf-8' });
       const name = `${m.asso_statement_file()}-${asso.name}`.replace(/[\\/:*?"<>|]+/g, '_');
       await downloadDecryptedFile(blob, `${name}.csv`);
       Log.i('ASSO', `statement downloaded for ${asso.id.slice(0, 8)}`);

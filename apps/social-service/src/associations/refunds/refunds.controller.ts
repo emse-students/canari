@@ -7,16 +7,12 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Query,
-  Res,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Response } from 'express';
 import { NginxAuthGuard } from '../../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../../common/guards/user-resource-throttler.guard';
 import { RefundsService, type RefundInput } from './refunds.service';
-import { parseStatementLabels } from './statement-labels';
 
 /**
  * The refund routes (enrolment chantier lot 4). Every one is for a `MANAGE_PAYOUT_ACCOUNT` holder of
@@ -78,30 +74,17 @@ export class RefundsController {
   }
 
   /**
-   * The association's statement - payments and refunds with totals - as a CSV download, written in
-   * the client's words (`labels`, a JSON object; refused `export-labels` without them).
+   * The association's statement - payments and refunds with totals - as data; the client writes the
+   * spreadsheet file in its own words.
    */
   @UseGuards(NginxAuthGuard)
-  @Get(':id/statement.csv')
+  @Get(':id/statement')
   async statement(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Query('labels') rawLabels: string | undefined,
-    @Res() res: Response
+    @Param('id', ParseUUIDPipe) id: string
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
-    const labels = parseStatementLabels(rawLabels);
-    const csv = await this.refunds.statementCsv(id, labels);
-    const body = Buffer.from(csv, 'utf8');
-    res.set({
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="statement.csv"',
-      'Content-Length': body.byteLength,
-      'Cache-Control': 'no-store, private',
-      // The words come from the request: a file to save, never a page a browser may render.
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.send(body);
+    return this.refunds.statement(id);
   }
 }

@@ -15,8 +15,7 @@ import {
   LYDIA_REFUND_NOT_PENDING,
   LYDIA_REFUND_NOT_REFUNDABLE,
 } from './refund-codes';
-import { csvCell, RefundsService } from './refunds.service';
-import { parseStatementLabels } from './statement-labels';
+import { RefundsService } from './refunds.service';
 
 const CONTRACT = JSON.parse(
   readFileSync(
@@ -155,27 +154,6 @@ describe('RefundsService', () => {
       }
     );
   });
-
-  describe('a statement cell', () => {
-    it.each([
-      ['=SUM(A1)', "'=SUM(A1)"],
-      ['+33', "'+33"],
-      ['-x', "'-x"],
-      ['@cmd', "'@cmd"],
-      ['\tx', "'\tx"],
-    ])('neutralises %j a spreadsheet would run', (value, expected) => {
-      expect(csvCell(value)).toBe(expected);
-    });
-
-    it('keeps an amount a number, a refund negative', () => {
-      expect(csvCell('-12,50')).toBe('-12,50');
-    });
-
-    it('quotes a separator, a quote or a line break', () => {
-      expect(csvCell('a;b')).toBe('"a;b"');
-      expect(csvCell('say "hi"')).toBe('"say ""hi"""');
-    });
-  });
 });
 
 describe('LydiaRefundNotifier', () => {
@@ -227,39 +205,5 @@ describe('LydiaRefundNotifier', () => {
     jest.spyOn(notifier, 'enabled').mockReturnValue(true);
     await notifier.tell(asso, null);
     expect(notifications.createNotifications).not.toHaveBeenCalled();
-  });
-});
-
-describe('the statement words', () => {
-  const full = {
-    date: 'Date',
-    operation: 'Opération',
-    item: 'Libellé',
-    method: 'Moyen',
-    amount: 'Montant',
-    reason: 'Motif',
-    payment: 'Paiement',
-    refundTotal: 'Remboursement total',
-    refundPartial: 'Remboursement partiel',
-    cash: 'Espèces',
-    online: 'En ligne',
-    totalReceived: 'Total encaissé',
-    totalRefunded: 'Total remboursé',
-    balance: 'Solde',
-  };
-
-  it('are read whole', () => {
-    expect(parseStatementLabels(JSON.stringify(full))).toEqual(full);
-  });
-
-  it.each([
-    ['absent', undefined],
-    ['not JSON', '{'],
-    ['missing one word', JSON.stringify({ ...full, balance: undefined })],
-    ['an empty word', JSON.stringify({ ...full, cash: '' })],
-  ])('are refused %s - there is no default language', (_name, raw) => {
-    expect(() => parseStatementLabels(raw)).toThrow(
-      expect.objectContaining({ response: expect.objectContaining({ code: 'export-labels' }) })
-    );
   });
 });
