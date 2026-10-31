@@ -280,6 +280,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           text: d.text,
           actorName: d.actorName,
           actorId: d.actorId,
+          associationId: d.associationId,
           bookingId: d.postId,
         });
         push(d, [d.recipientId]);
@@ -2072,6 +2073,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         '10:00',
         '10:00',
       ]);
+      // ...and its reminder row names no association either (Q-R5).
+      expect(told.filter((t) => t.type === 'booking_reminder').map((t) => t.associationId)).toEqual(
+        [undefined, undefined]
+      );
 
       // The ORGANISER acts: the push names nobody - no association, no logo, no person - and the
       // organiser's word reaches the bell row only, never the lock screen (Q-R3 on Q-R5).
@@ -2160,6 +2165,13 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(tos('booking_reminder')).toEqual([ALICE, BOB]);
       expect(told.find((t) => t.type === 'booking_reminder')?.text).toContain('10:00');
       expect(told.every((t) => t.bookingId === id)).toBe(true);
+      // The row carries the owning association, so the bell draws its logo (owner, 2026-10-30).
+      // (`told` also holds the booking's own `booking_added` notice, where the actor is a person.)
+      expect(
+        told
+          .filter((t) => t.type === 'booking_reminder')
+          .every((t) => t.associationId === space.associationId)
+      ).toBe(true);
     });
 
     it('no reminder for a cancelled booking, a withdrawn participant, or one made inside its delay (Q-R6)', async () => {

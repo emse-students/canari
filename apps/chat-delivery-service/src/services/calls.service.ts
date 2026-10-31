@@ -364,8 +364,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    *
    * Three refusals, each an answer: not a member (403); a room `initiate` never bound to THIS
    * group (403 - knowing a room id must not buy a token signed for another conversation); and a
-   * room whose ring window closed or whose binding expired (410 - the caller has stopped
-   * ringing, so there is nobody to answer).
+   * room whose ring window closed, whose ring `ring-end` recorded as over, or whose binding
+   * expired (410 - the caller has stopped ringing, so there is nobody to answer).
    */
   async requestRoomToken(
     userId: string,
@@ -410,6 +410,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (Date.now() > answerBy) {
       this.logger.log(
         `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
+      );
+      throw new GoneException('This call is over');
+    }
+    // The ring ENDED inside its window: the caller cancelled, a device answered, or the call ended
+    // (a decline included). Nobody is left to answer, so the window no longer counts. The device
+    // that answers asks for its token BEFORE it calls `ring-end answered`, so its own answer never
+    // meets this; a sibling of it asking afterwards does, and that call is taken.
+    const ringEnded = await this.redis.get(callRingEndedKey(roomId));
+    if (ringEnded !== null) {
+      this.logger.log(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring ended (${ringEnded})`
       );
       throw new GoneException('This call is over');
     }

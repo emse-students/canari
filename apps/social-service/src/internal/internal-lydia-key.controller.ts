@@ -38,4 +38,28 @@ export class InternalLydiaKeyController {
     );
     return { businessPrivateToken };
   }
+
+  /**
+   * `{ associationId, onboardingComplete }` of the association holding `vendorToken`, both null when
+   * none does - for the log line of Lydia's unsigned business webhook. A read only: no key, nothing
+   * written, and the caller decides nothing on it.
+   */
+  @Post('lydia-business-of-vendor-token')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async lydiaBusinessOfVendorToken(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Body() body: { vendorToken?: unknown }
+  ): Promise<{ associationId: string | null; onboardingComplete: boolean | null }> {
+    assertInternalSecret(headerSecret);
+    const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
+    const holder = await this.associationsService.lydiaBusinessOfVendorToken(vendorToken);
+    this.logger.debug(
+      `[INTERNAL_LYDIA_KEY] business lookup answered ${holder ? 'an association' : 'none'}`
+    );
+    return {
+      associationId: holder?.associationId ?? null,
+      onboardingComplete: holder?.onboardingComplete ?? null,
+    };
+  }
 }
