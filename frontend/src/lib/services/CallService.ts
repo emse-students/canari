@@ -17,6 +17,7 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { countVideoInputs } from '$lib/reels/cameraAccess';
 import { takePendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -3905,8 +3906,7 @@ export class CallService {
   /** Reads how many cameras the device has, once one is open (labels and counts need the grant). */
   private async refreshCameraCount(): Promise<void> {
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cameras = devices.filter((d) => d.kind === 'videoinput').length;
+      const cameras = await countVideoInputs();
       if (cameras >= 2 !== get(this.canSwitchCamera)) {
         appendLog(`[Call] ${cameras} camera(s) on this device`);
         this.canSwitchCamera.set(cameras >= 2);
