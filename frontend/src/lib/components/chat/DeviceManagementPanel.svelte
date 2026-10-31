@@ -197,15 +197,6 @@
   }
 
   /**
-   * Short form of a device id: enough to recognise a row and to match it against
-   * a log line, which a position in the list cannot do - the position changes
-   * whenever the list does. The full id stays available on hover.
-   */
-  function shortDeviceId(deviceId: string): string {
-    return deviceId.slice(0, 8);
-  }
-
-  /**
    * Loads both halves of the list.
    *
    * The two calls hit different services and are awaited together rather than in
@@ -395,7 +386,7 @@
         >
           <TriangleAlert size={20} class="mt-0.5 shrink-0" />
           <p class="text-sm leading-relaxed font-medium">
-            {m.chat_device_not_listed_warning({ id: myDeviceId })}
+            {m.chat_device_not_listed_warning()}
           </p>
         </div>
       {/if}
@@ -507,23 +498,11 @@
                       {/if}
                     {/if}
 
-                    <div
-                      class="text-text-muted text-2xs mt-1 truncate font-mono opacity-80"
-                      title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
-                    >
-                      {#if row.device}
-                        {shortDeviceId(row.device.deviceId)}
-                        {#if rowIsMobile(row) && row.device.deviceAppVersion}
-                          <span class="ml-2 font-semibold"
-                            >{m.chat_device_version_label({
-                              device: row.device.deviceAppVersion,
-                            })}</span
-                          >
-                        {/if}
-                      {:else if row.unlistedDeviceId}
-                        {shortDeviceId(row.unlistedDeviceId)}
-                      {/if}
-                    </div>
+                    {#if row.device && rowIsMobile(row) && row.device.deviceAppVersion}
+                      <p class="text-text-muted text-2xs mt-1 font-semibold opacity-80">
+                        {m.chat_device_version_label({ device: row.device.deviceAppVersion })}
+                      </p>
+                    {/if}
                   {/if}
                 </div>
 

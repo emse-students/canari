@@ -51,6 +51,10 @@ import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
+  assertReviewerReachesAssociation,
+  associationsReachedByReviewer,
+} from './review-cohort-reach';
+import {
   AssociationsService,
   type LydiaReadinessOutcome,
   type LydiaReadinessRef,
@@ -933,10 +937,17 @@ export class ProductsService {
    * annotated for `userId` (`annotateForViewer`).
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
-    const products = await this.productRepo.find({
+    const all = await this.productRepo.find({
       where: { isActive: true },
       order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
     });
+    // A review account's shop holds only the associations it is a member of (review-cohort-reach.ts).
+    const reached = await associationsReachedByReviewer(
+      this.productRepo.manager,
+      userId,
+      all.map((p) => p.associationId)
+    );
+    const products = reached === null ? all : all.filter((p) => reached.has(p.associationId));
     return this.annotateForViewer(products, userId);
   }
 
@@ -2063,6 +2074,12 @@ export class ProductsService {
     callbackUrls?: { successUrl?: string; cancelUrl?: string },
     payerEmail?: string
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+    await assertReviewerReachesAssociation(
+      this.productRepo.manager,
+      userId,
+      associationId,
+      'product checkout'
+    );
     for (const id of await this.productsToSettleBefore(associationId, productId)) {
       await this.settlePreviousOpenAttempt(id, userId);
     }

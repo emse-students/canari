@@ -26,6 +26,9 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', () => {
   let service: MessagingService;
   let wake: jest.SpyInstance;
+  let log: jest.SpyInstance;
+  const noPeerLine = () =>
+    log.mock.calls.map(([m]) => String(m)).find((m) => m.includes('NO_PEER_ONLINE')) ?? '';
 
   const redis = {
     smembers: jest.fn(),
@@ -76,7 +79,7 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
     }).compile();
     service = module.get(MessagingService);
     const logger = (service as unknown as { logger: Record<string, (m: string) => void> }).logger;
-    jest.spyOn(logger, 'log').mockImplementation(() => {});
+    log = jest.spyOn(logger, 'log').mockImplementation(() => {});
     jest.spyOn(logger, 'warn').mockImplementation(() => {});
     wake = jest
       .spyOn(
@@ -95,6 +98,9 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
     expect(wake).not.toHaveBeenCalled();
     // The frame every member's app drains when it opens is still written.
     expect(redis.pipeline).toHaveBeenCalled();
+    // The closing line says what happened, not what would have for a member's device.
+    expect(noPeerLine()).toContain('no FCM wake');
+    expect(noPeerLine()).not.toContain('FCM sent to peers');
   });
 
   it("still wakes the members' phones for a member's own device", async () => {
@@ -108,5 +114,6 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
       'reqU:reqD',
       expect.any(String)
     );
+    expect(noPeerLine()).toContain('FCM sent to peers');
   });
 });

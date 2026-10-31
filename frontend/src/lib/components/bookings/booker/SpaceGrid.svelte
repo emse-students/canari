@@ -22,9 +22,10 @@
    * THE WEEK OF ONE COLUMN (D46, D48): the days as columns, as the agenda's week, each unit placed
    * on a shared hour axis; on a phone the same component draws ONE day. A day with nothing offered
    * folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
-   * what tapping it does is the page's (`onPick`). A free unit the booking window refuses ON THIS
-   * DEVICE'S CLOCK is drawn and named as such, but still opens: the device may be wrong, and the
-   * server's answer is the one that counts.
+   * what tapping it does is the page's (`onPick`). A free unit the booking window refuses now (over,
+   * too soon, too far, not open yet) is drawn greyed and DISABLED on the booker's grid: it is not
+   * offered, so no sheet opens on it. Should the server still refuse at the send, its typed refusal
+   * is said in plain words.
    *
    * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
    * range follows the pointer, held by `dragRange` to free touching units and to what one booking
@@ -48,10 +49,25 @@
     /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
     blockMode?: boolean;
     nowMs: number;
+    /**
+     * The LATEST start the server refused as `started` or `notice` while the device's clock still
+     * took it. Both refusals only grow with time, so every start at or before it is refused too and
+     * is never offered again; `null` while none was refused.
+     */
+    lastRefusedStart?: number | null;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
-  let { space, resource, layout, mode, blockMode = false, nowMs, onPick }: Props = $props();
+  let {
+    space,
+    resource,
+    layout,
+    mode,
+    blockMode = false,
+    nowMs,
+    lastRefusedStart = null,
+    onPick,
+  }: Props = $props();
 
   /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
   let coarse = $state(isCoarsePointerDevice());
@@ -101,7 +117,11 @@
     const current = selection;
     if (!current) return null;
     const cells = layout.days[current.day]?.cells ?? [];
-    const { first, count } = dragRange(cells, current.anchor, current.current, unitLimit);
+    // Only a range's START is judged by the booking window, as the server does: a unit AFTER the
+    // anchor joins the range whatever the window says of it as a start, and a unit BEFORE the
+    // anchor would become the start, so it must be offered.
+    const walk = cells.map((c, i) => (i > current.anchor || offered(c) ? c : null));
+    const { first, count } = dragRange(walk, current.anchor, current.current, unitLimit);
     if (count === 0) return null;
     return { day: current.day, first, last: first + count - 1, count, cells };
   });
@@ -134,7 +154,7 @@
     if (e.button !== 0 || unitLimit < 2) return;
     const hit = cellAt(e.target);
     const unit = hit ? layout.days[hit.day]?.cells[hit.idx] : null;
-    if (!hit || !unit || unit.state !== 'free') return;
+    if (!hit || !unit || unit.state !== 'free' || !offered(unit)) return;
     clearPress();
     swallowClick = false;
     const touch = e.pointerType === 'touch';
@@ -195,7 +215,24 @@
     return { destroy: () => node.removeEventListener('touchmove', stop) };
   }
 
-  /** What a cell says, and whether the device's clock puts it outside the booking window. */
+  /**
+   * Whether tapping a unit does anything: everything does on the organiser's block grid, and a
+   * free unit on the booker's grid only while the booking window takes its start. One that cannot
+   * be booked now is drawn greyed and is not a control at all.
+   */
+  function offered(unit: SlotUnit): boolean {
+    return blockMode || unit.state !== 'free' || bookableStart(unit);
+  }
+
+  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
+  function bookableStart(unit: SlotUnit): boolean {
+    return (
+      windowRefusal(space, unit.startMs, nowMs) === null &&
+      (lastRefusedStart === null || unit.startMs > lastRefusedStart)
+    );
+  }
+
+  /** What a cell says, and whether the booking window refuses it now. */
   function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
     if (unit.state === 'booked') {
       const who = unit.booking.mine
@@ -206,7 +243,7 @@
     if (unit.state === 'blocked') {
       return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
     }
-    if (windowRefusal(space, unit.startMs, nowMs) === null) {
+    if (bookableStart(unit)) {
       return { text: m.bookings_cell_free(), closed: false, past: false };
     }
     // A free unit already over keeps its name for a screen reader but is not written in the cell.
@@ -263,7 +300,7 @@
         : 'border-transparent hover:bg-red-err/10 hover:border-red-err/30';
     }
     if (past) return 'bg-cn-bg/50 text-text-muted/40 border-cn-border/30';
-    if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60 hover:bg-cn-border/20';
+    if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60';
     return 'bg-green-ok/10 text-green-ok border-green-ok/30 hover:bg-green-ok/20';
   }
 </script>
@@ -353,6 +390,7 @@
               data-cell
               data-day={dayIndex}
               data-idx={idx}
+              disabled={!offered(unit)}
               onclick={() => {
                 if (swallowClick) {
                   swallowClick = false;

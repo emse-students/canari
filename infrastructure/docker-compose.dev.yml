@@ -220,6 +220,8 @@ services:
     expose:
       - "3010"
     environment:
+      # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
       # NestJS service here is not in production mode, and `auth.controller.ts` then decided
       # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.

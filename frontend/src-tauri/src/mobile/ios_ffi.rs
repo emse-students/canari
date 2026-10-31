@@ -607,6 +607,32 @@ pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
     crate::page_ring::page_rings_in_app()
 }
 
+/// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
+/// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
+/// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.
+///
+/// # Safety
+/// `call_id` must be null or a valid null-terminated C string for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_page_rings_call(call_id: *const c_char) -> bool {
+    if call_id.is_null() {
+        log::error!("[CALL_RING] canari_ios_page_rings_call: a null call id - rings no call");
+        return false;
+    }
+    crate::page_ring::page_rings_call(&str_from_c_str(call_id))
+}
+
+/// Registers the native listener told when the page STARTS ringing a call (`page_ring`): the
+/// iPhone ends that call's unanswered CallKit ring when the app is active. Registered by
+/// `CanariCallKitSetup` rather than linked, since this crate is linked into the notification
+/// extension too, where that function does not exist.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_page_ringing_listener(
+    listener: Option<crate::page_ring::PageRingingListener>,
+) {
+    crate::page_ring::set_page_ringing_listener(listener);
+}
+
 /// Signals the move to background (diagnostic log).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_pause() {

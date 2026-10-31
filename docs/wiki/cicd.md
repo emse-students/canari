@@ -1445,7 +1445,8 @@ MAJOR bump of an image that holds data cannot be judged by any gate here"*. It e
 rehearse the upgrade in place and record it in `infrastructure/dev/version-gap.yml` with
 `evidence: in_place_upgrade`. That lifts production's arm only. The identity provider's database
 has no rehearsal mechanism, so its major moves by a person's pull request, which carries the data
-migration.
+migration. #2742 itself went that way on 2026-10-31: closed, and its 16 -> 18 shipped by hand with its
+operation ([authentik](infrastructure/authentik.md#postgresql-16---18-2026-10-31)).
 
 ### A Dependabot cargo bump that is incomplete by construction is completed and merged (WP-RUST-LOCK-AUTOMERGE, 2026-10-18)
 

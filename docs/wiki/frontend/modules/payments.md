@@ -845,7 +845,7 @@ afterwards. The `confirm` callback reached Canari's route and verified with the 
 same day, two Businesses were created through the onboarding in production; neither is validated yet.
 
 **What that run found, and where each stands** (the work package is in
-[backlog](../../backlog.md#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)):
+[backlog](../../backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)):
 
 - The card said "En attente" and offered a console link that answered 404: since lot 2 it is a step
   screen, and the link is gone.

@@ -51,7 +51,10 @@ const logger = new Logger('GroupMembership');
  * the clock `sendMessage` stamps `queued_message.createdAt` with - the server time a window is
  * compared against. The database's `now()` is a different clock; the two agree only by accident.
  * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
- * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
+ * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation. It
+ * is ASSERTED at every boot, at ERROR, by `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`):
+ * this function, which compares a `new Date()` against a `now()`-dated device row, is the other
+ * instance it guards.
  *
  * **AND IT RECORDS AN ADMISSION THAT PRECEDED IT** (review of #2226). When a device row of this
  * person in this group is older than the enrolment - a commit admitted an invitee who came online
@@ -620,6 +623,78 @@ export function isKeyDistributionGroup(
   return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
 }
 
+/**
+ * Whether `group` withholds what precedes a person's arrival ({@link withheldWindows}): a GROUP
+ * conversation does, a 1:1 does not, and a key-distribution group is read as a 1:1 (its roster is
+ * social-service's, and Graine decides what its past goes to). A missing row is read as a 1:1 - the
+ * caller says so, since that answer withholds nothing before an arrival.
+ *
+ * ONE predicate for the two readers of a person's arrival: the exclusions route a history answer is
+ * filtered on, and the server's own filter of the history stream (`MessagingService.getHistory`), so
+ * the two can never disagree on which conversations the span applies to.
+ */
+export function withholdsArrivalSpan(
+  group: Pick<Group, 'isGroup' | 'distributionWorkspaceId' | 'distributionChannelId'> | null
+): boolean {
+  return group?.isGroup === true && !isKeyDistributionGroup(group);
+}
+
+/**
+ * DATES A LINK JOINER'S ARRIVAL AT THE MEMBER'S ADD THAT ADMITS THEM, in the transaction `m` of the
+ * accepted commit that lifts their `awaitingAdmission` (`MessagingService.liftAwaitingAdmission`, the
+ * one door that lifts it).
+ *
+ * **WHY.** A newcomer reads nothing from before their arrival, and the arrival is the ADD (user,
+ * 2026-10-21: "added = arrived", as on WhatsApp). The invitation link writes the seat - the roster
+ * row, its open interval and `pending` device rows - when the person ASKS (`acceptGroupInvite`),
+ * which can be days before a member answers. {@link withheldWindows} reads the arrival from exactly
+ * those: the interval's `joinedAt` and the earliest device row. Left as written, every history answer
+ * and the history stream handed the person what was sent while they were waiting outside - the
+ * person was never a member then (a Decline DELETES that interval for the same reason,
+ * {@link withdrawAwaitingSeat}). So the lift moves both to the admission:
+ *
+ * - the open interval's `joinedAt` becomes this instant, and its `admittedAt` is cleared - the
+ *   device rows it was copied from predate the admission too;
+ * - the person's device rows in the group are dated the SAME instant, which is what
+ *   {@link withheldWindows} reads them as: "a device row is written when a commit admits the device".
+ *
+ * **ONE VALUE FOR BOTH COLUMNS, NEVER `now()` FOR ONE OF THEM.** Both are `timestamp WITHOUT time
+ * zone`: a JavaScript `Date` is stored as this process's local wall time, `now()` as the database
+ * session's, and both are read back as this process's. Two sources made the arrival - the earlier of
+ * the two - wrong by the offset between the two zones whenever they differ: measured an hour early
+ * under `TZ=Europe/Paris` against a UTC database, an hour of the group's past handed to the newcomer
+ * (review of #2800). One value also removes the transaction-start skew `now()` carried. The other
+ * writer that still mixes the two clocks is {@link ensureGroupMember}; the boot check
+ * `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`) accuses any estate where they disagree.
+ *
+ * A former member asking again through a link keeps their closed intervals: the gap since their
+ * departure now runs to this admission, so the time they spent waiting is withheld with it - the
+ * 2026-10-14 rule.
+ *
+ * @param m the commit's transactional manager - the lift, this and the advance commit together.
+ * @param userIds the people whose ask this commit answered (their flag was just lifted).
+ * @returns how many intervals and device rows were re-dated, for the caller's log line.
+ */
+export async function dateArrivalAtAdmission(
+  m: EntityManager,
+  groupId: string,
+  userIds: readonly string[]
+): Promise<{ intervals: number; devices: number }> {
+  if (userIds.length === 0) return { intervals: 0, devices: 0 };
+  const people = [...userIds];
+  const at = new Date();
+  const intervals = await m
+    .getRepository(GroupMembershipInterval)
+    .update({ groupId, userId: In(people), leftAt: IsNull() }, { joinedAt: at, admittedAt: null });
+  const devices = await m
+    .createQueryBuilder()
+    .update(DeviceGroupMembership)
+    .set({ createdAt: at })
+    .where('"groupId" = :groupId AND "userId" IN (:...people)', { groupId, people })
+    .execute();
+  return { intervals: intervals.affected ?? 0, devices: devices.affected ?? 0 };
+}
+
 /** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
 const notAMemberRepeats = new RepeatCounter();
 
@@ -804,8 +879,8 @@ export type ExclusionWindow = { from: number; until: number | null };
  * A window is the stretch between the END of one interval and the START of the next - and, when the
  * latest interval is closed, from its end onwards. **The time before the FIRST interval is never a
  * window HERE**: that span is a group-conversation rule, added by {@link withheldWindows}, and this
- * function also feeds the server's own stream filter and the legacy `exclusions` field, whose
- * readers take a union. A person with one open interval has no window at all, and that
+ * function also feeds the legacy `exclusions` field, whose readers take a union, and the server's own
+ * stream filter in a 1:1 or a key group. A person with one open interval has no window at all, and that
  * is also what a brand-new device of a continuous member sees - intervals are per USER, never per
  * device, so a wipe or a new phone opens nothing.
  *
@@ -933,7 +1008,10 @@ export function insideExclusion(at: number, windows: readonly ExclusionWindow[])
  * leaf, and every frame sent while they were out is sealed at an epoch their old state can still
  * open. Live delivery and the queue never reach them (their device rows are gone), so the one road
  * back is this stream, walked after a re-add. The server knows both the window and the row's time,
- * so it withholds the ciphertext itself - a control that holds whatever the reader's build.
+ * so it withholds the ciphertext itself - a control that holds whatever the reader's build. In a
+ * group conversation the windows also hold the span before the reader's arrival
+ * ({@link withheldWindows}): a newcomer is served no ciphertext of the group's past, so its absence
+ * rests on this server and not on the newcomer's restraint.
  *
  * **DROPPED, NEVER MARKED.** A marked row (`{ id, withheld }`, the first shape) stalled every store
  * build shipped before it for good: the old walk decodes `content` unconditionally, the decode

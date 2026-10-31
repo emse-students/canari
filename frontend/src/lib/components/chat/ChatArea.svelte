@@ -322,6 +322,11 @@
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
 
+  // A device waiting to be added says so, in plain words and with no key on screen. NOT for a
+  // person's invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person.
+  const waitingToBeAdded = $derived(
+    conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
   // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
@@ -1681,6 +1686,11 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{heldNotice}</span>
           </div>
+        {:else if waitingToBeAdded}
+          <div class="chat-send-notice is-pending" role="status" data-own-device-key>
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{m.chat_waiting_own_device()}</span>
+          </div>
         {/if}
       {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -1714,7 +1724,7 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
-          notice={sendError || heldNotice ? sendNotice : undefined}
+          notice={sendError || heldNotice || waitingToBeAdded ? sendNotice : undefined}
         />
       </div>
     {/if}

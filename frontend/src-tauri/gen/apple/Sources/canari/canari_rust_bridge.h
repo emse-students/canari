@@ -124,6 +124,17 @@ void canari_ios_on_pause(void);
    arrives on (Rust `page_ring`). An app in front at the PIN gate holds none, and is rung natively. */
 bool canari_ios_page_rings_in_app(void);
 
+/* Whether the page is ringing THIS call itself (its CallService is `incoming` on it, Rust
+   `page_ring`). The handover ends an unanswered CallKit ring only on this: a page holding the
+   socket may still have skipped that call's invite. */
+bool canari_ios_page_rings_call(const char *call_id);
+
+/* Registers the function Rust `page_ring` calls when the page STARTS ringing a call, with its id
+   (valid for the call only, on the thread of the Tauri command). Registered, never linked: the
+   Rust library is linked into the notification extension too, where that function does not exist.
+   NULL removes it. */
+void canari_ios_set_page_ringing_listener(void (*listener)(const char *call_id));
+
 /* The share manifest's name, in the app data directory and in the App Group: the native side
    only STATS it (whether a share waits, which Data Protection allows while the device is locked),
    never reads it. Pinned against Rust's PENDING_SHARE_FILE by iosShareExtension.test.ts. */

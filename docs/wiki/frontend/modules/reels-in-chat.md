@@ -526,6 +526,13 @@ sheet only adds targets to the same outbox shape. RC-9 closes both.
 **Release shape.** The reader (RC-1 contract + RC-6 tile, so every client can DRAW a reel message and
 its tombstone) ships before the writer (RC-4 camera entry), the order used for Graine v2 and the
 segmented media writer: a message a client cannot draw is worse than one it draws as a plain video.
+
+**State (re-read against the tags 2026-10-24):** the reader (#1659, RC-1 with the tile) and the
+server class (#1661, RC-2) shipped in `v1.2.2`, RC-7 (native push, #2112) in `v1.3.1`; RC-3/RC-4
+(#2098) and RC-5 (resumable upload, #2117) are merged with `CHAT_REEL_WRITER_ENABLED` OFF, in no
+release yet. Owed before the switch moves: the chat profile and the 60 s cap wired into the queued
+reel, the durable release of an upload session an offline device leaked, the RC-0 re-run and the
+readings on both phones (the pull requests' own "Owed" lists).
 RC-2's `chat-reel` class is server-side and safe to ship first (nothing sets it yet). The stable follows
 the usual two-release sequence ([CLAUDE.md](../../../../CLAUDE.md) "gesture two") with a pre-release on dev
 and the testers.
