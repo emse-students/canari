@@ -1424,10 +1424,32 @@ export function useMessaging() {
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
     );
 
-    // Media (inline upload+send) still requires a ready MLS group; queuing media is a later
-    // increment. Text/reply are captured into the outbox and never blocked here - they flush
-    // automatically once the group becomes sendable.
+    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. The barrier
+    // below can hold a send for many seconds on a stalled link (18 s measured, 2026-10-31), and the
+    // staging used to be cleared only after it: every Send tap meanwhile read the same files again
+    // and queued another copy under a new id - 13 taps, 13 copies of one video. Now a second Send
+    // finds nothing staged and aborts as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file
+    // staged in the same conversation during the barrier belongs to the NEXT send. A voice note
+    // (`opts.files`) never entered the staging.
+    if (sendsQueue && fileEntries.length > 0) {
+      setPendingMediaFiles(
+        sentFrom,
+        pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
+      );
+    }
+
+    // A DM/GROUP FILE IS QUEUED IN THE OUTBOX like a text, but only once the group is usable: the
+    // barrier and the membership check below run BEFORE its placeholder and its entry are written,
+    // and a refusal gives the claimed files back to the staging. Text/reply are captured into the
+    // outbox and never blocked here - they flush automatically once the group becomes sendable.
+    // Queuing the file at the tap and dropping this barrier, which the outbox flush already takes,
+    // is `docs/wiki/backlog.d/media-send-queued-at-the-tap.md`.
     if (filesToSend.length > 0 && !isChannel) {
+      const generation = signOutGeneration();
+      const barrierStartedAt = performance.now();
+      ctx.log(
+        `[SEND] media barrier: waiting for the inbound queue and the membership check before ${fileEntries.length} file(s) are queued`
+      );
       // WAIT FOR THE DRAIN, DO NOT REFUSE BECAUSE OF IT.
       //
       // This used to bail out on `isMessageCatchupActive` and tell the user "Synchronisation en
@@ -1443,15 +1465,44 @@ export function useMessaging() {
         // `null`: a click on the send button, never a stack inside a decrypt session.
         .waitForMessageQueueIdle('media send', null)
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-      const stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
+      /** Gives the claimed files back, unless the account that claimed them has signed out since. */
+      const restage = () => {
+        if (sendsQueue && signOutGeneration() === generation) {
+          setPendingMediaFiles(sentFrom, [...fileEntries, ...pendingMediaFilesFor(sentFrom)]);
+        }
+      };
+      let stillMember: boolean;
+      try {
+        stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
+      } catch (error) {
+        ctx.log(
+          `[SEND] media barrier: the membership check threw, ${fileEntries.length} file(s) go back to the staging: ${String(error)}`
+        );
+        restage();
+        throw error;
+      }
       // THE ROW AS IT IS NOW, not the snapshot taken before the two awaits above: a Remove merged
       // during the barrier - the first half of a re-admission writes the row `pending` - is exactly
-      // what this refusal is for. A file is not queued until the group is usable, so it stays staged.
+      // what this refusal is for. A file is not queued until the group is usable, so it goes back
+      // to the staging.
       const lifecycle = ctx.conversations.get(sentFrom)?.lifecycle;
+      ctx.log(
+        `[SEND] media barrier: done after ${Math.round(performance.now() - barrierStartedAt)} ms (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
+      );
+      // THE ACCOUNT THAT TAPPED SEND LEFT DURING THE BARRIER: `forgetAccount` has cleared the
+      // staging, and neither a queue entry nor a re-staged file of the leaving account may reach
+      // the next one.
+      if (signOutGeneration() !== generation) {
+        ctx.log(
+          `[SEND] media dropped: signed out during the barrier, ${fileEntries.length} file(s) neither queued nor re-staged`
+        );
+        return;
+      }
       if (!stillMember || lifecycle !== 'active') {
         ctx.log(
-          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is not usable yet (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'}) - the file stays staged`
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is not usable yet (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'}) - the file goes back to the staging`
         );
+        restage();
         ctx.setSendError(m.chat_send_session_establishing());
         return;
       }
@@ -1472,15 +1523,7 @@ export function useMessaging() {
             : 'file';
 
     if (fileEntries.length > 0) {
-      // Only the queue's own send empties it; a voice note never entered it.
-      // ONLY WHAT THIS SEND TOOK leaves the staging: the membership barrier above awaits, and a file
-      // staged in the same conversation meanwhile belongs to the NEXT send, not to this one's clear.
-      if (sendsQueue) {
-        setPendingMediaFiles(
-          sentFrom,
-          pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
-        );
-      }
+      // The staging was claimed before the barrier, above; a failure below re-stages what is unsent.
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];

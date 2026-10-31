@@ -17,6 +17,13 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+// The sign-out counter, moved by hand: a sign-out begins by bumping it (`clearAuthCounted`).
+const signOut = vi.hoisted(() => ({ count: 0 }));
+vi.mock('$lib/stores/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/auth')>()),
+  signOutGeneration: () => signOut.count,
+}));
+
 const enqueueMock = vi.fn();
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
@@ -218,6 +225,90 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     await sending;
 
     expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['second.pdf']);
+  });
+
+  // REPRO 2026-10-31: one staged video, Send tapped 13 times while the membership round trip of the
+  // first tap hung for 18 s on a stalled link - 13 copies went out, each under a new message id.
+  it('Send tapped again during the barrier queues the staged file ONCE', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    enqueueMock.mockResolvedValue(undefined);
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(1);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const taps = [1, 2, 3].map(() => messaging.handleSendChat(ctx, ''));
+    await flushMacrotask();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(0);
+    admit(true);
+    await Promise.all(taps);
+
+    const media = enqueueMock.mock.calls.filter(([e]) => (e as { kind: string }).kind === 'media');
+    expect(media).toHaveLength(1);
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(1);
+    expect(
+      vi.mocked(ctx.log).mock.calls.filter(([l]) => l === '[SEND] Abort: no text and no file')
+    ).toHaveLength(2);
+  });
+
+  it('a refusal after the barrier gives the claimed file back to the staging', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    ctx.verifyCurrentUserMembership = async () => false;
+
+    await messaging.handleSendChat(ctx, '');
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+  });
+
+  it('a membership check that throws gives the claimed file back before the throw', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    ctx.verifyCurrentUserMembership = async () => {
+      throw new Error('local state unreadable');
+    };
+
+    await expect(messaging.handleSendChat(ctx, '')).rejects.toThrow('local state unreadable');
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+  });
+
+  it('a sign-out during the barrier neither queues nor re-stages the claimed file', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+    admit(false);
+    await sending;
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+  });
+
+  it('logs the start and the end of the media barrier', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    enqueueMock.mockResolvedValue(undefined);
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+
+    await messaging.handleSendChat(ctx, '');
+
+    const lines = vi.mocked(ctx.log).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.startsWith('[SEND] media barrier: waiting'))).toBe(true);
+    expect(
+      lines.some((l) => /^\[SEND\] media barrier: done after \d+ ms \(member=true/.test(l))
+    ).toBe(true);
   });
 
   it('a sign-out forgets every staged file and armed reply', async () => {
