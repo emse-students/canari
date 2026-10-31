@@ -54,6 +54,17 @@ describe('describeCallFailure', () => {
     }
   );
 
+  it.each([['initiate'], ['ring'], ['room-token']] as const)(
+    'reads a REVIEW_COHORT_BOUNDARY refusal from %s as the same neutral "cannot be placed"',
+    (step) => {
+      const out = describeCallFailure(
+        new CallInitiateError(step, 403, 'calls failed (403)', 'REVIEW_COHORT_BOUNDARY')
+      );
+
+      expect(out).toBe(m.call_unavailable());
+    }
+  );
+
   it.each([['initiate'], ['ring'], ['room-token'], ['ice-servers']] as const)(
     'reads the kill switch (CALLS_DISABLED) from %s as "calls are unavailable", not as a failure',
     (step) => {

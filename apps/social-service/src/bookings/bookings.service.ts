@@ -24,6 +24,11 @@ import {
   type ConditionalItem,
 } from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
+import {
+  ReviewCohortBoundaryException,
+  reviewCohort,
+  sameSideOfReviewCohort,
+} from '../review-cohort';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
@@ -188,10 +193,25 @@ export class BookingsService {
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
    */
   private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
+    this.assertSameSideAsSpace(space, [actor.userId]);
     if (canManage || !space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
     throw new ForbiddenException({ code: 'audience' });
+  }
+
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) anybody in `people` on the other side of the review
+   * cohort's boundary from the space's creator (`review-cohort.ts`): a review account uses only a
+   * review account's space, and nobody else uses one - a link reaches the space, never across. Asked
+   * before the audience and before management, both ways, on every read and write a use goes through.
+   */
+  private assertSameSideAsSpace(space: BookingSpace, people: readonly string[]) {
+    if (people.every((id) => sameSideOfReviewCohort(id, space.ownerId))) return;
+    this.logger.log(
+      `[REVIEW_COHORT] booking space=${space.id.slice(0, 8)} refused: across the review cohort's boundary`
+    );
+    throw new ReviewCohortBoundaryException();
   }
 
   // -- Reads -------------------------------------------------------------------------------------
@@ -388,7 +408,9 @@ export class BookingsService {
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
    * - an association space only while its association is not ARCHIVED;
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
-   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code.
+   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
+   * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
+   *   space (`review-cohort.ts`): a store reviewer and a member never list each other's spaces.
    *
    * The audience (D6) is judged here with the facts `assertMayUse` judges a read with, so a listed
    * space always opens - but built ONCE for the page, never per space: the rights in one bulk
@@ -403,7 +425,7 @@ export class BookingsService {
    */
   async listedSpaces(actor: Actor) {
     this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
-    const rows = await this.spaces
+    const listed = this.spaces
       .createQueryBuilder('s')
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
@@ -413,8 +435,15 @@ export class BookingsService {
       )
       .orderBy('s.name', 'ASC')
       .addOrderBy('s.id', 'ASC')
-      .limit(LISTED_SPACES_LIMIT)
-      .getMany();
+      .limit(LISTED_SPACES_LIMIT);
+    const cohort = reviewCohort();
+    if (cohort.length > 0) {
+      const inCohort = cohort.includes(actor.userId);
+      listed.andWhere(`s.ownerId ${inCohort ? 'IN' : 'NOT IN'} (:...reviewCohort)`, {
+        reviewCohort: [...cohort],
+      });
+    }
+    const rows = await listed.getMany();
     if (rows.length === 0) return [];
 
     const associationIds = [
@@ -786,9 +815,11 @@ export class BookingsService {
     if (participantIds.includes(holderId)) {
       throw new BadRequestException({ code: 'holder-is-participant' });
     }
+    const people = [holderId, ...participantIds];
+    // The holder a manager books for, and every participant, as much as the actor.
+    this.assertSameSideAsSpace(before, [actor.userId, ...people]);
     const answers = await this.validAnswers(before, holderId, dto.answers ?? {});
     const fileAnswers = this.fileAnswersIn(before, answers);
-    const people = [holderId, ...participantIds];
 
     try {
       const booked = await this.bookings.manager.transaction(async (m) => {

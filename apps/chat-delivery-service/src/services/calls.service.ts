@@ -21,6 +21,7 @@ import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
@@ -942,6 +943,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    */
   private async refuseIfBlocked(userId: string, others: string[], scope: string): Promise<void> {
     for (const other of others) {
+      // Never across the review cohort's boundary either (review-cohort.ts).
+      if (!sameSideOfReviewCohort(userId, other)) {
+        this.logger.log(
+          `[call] ${scope} REFUSED user=${userId}: across the review cohort's boundary`
+        );
+        throw new ReviewCohortBoundaryException('This call cannot be placed.');
+      }
       if (await isBlockedBetween(this.groupMemberRepo.manager, userId, other)) {
         this.logger.log(`[call] ${scope} REFUSED user=${userId}: a block stands between the two`);
         throw new ForbiddenException({
