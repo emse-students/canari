@@ -1397,7 +1397,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
                 return@synchronized false
             }
-            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false)
+            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false) != null
             Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
             sent
         }
@@ -1425,7 +1425,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return entries.size
             }
             val deadline = System.currentTimeMillis() + DRAIN_POST_BUDGET_MS
-            val sentIds = mutableListOf<String>()
+            // Each delivered id WITH the server's receive time it was answered (0 when the answer
+            // carried none): the app dates its own copy by it, as it does a foreground send.
+            val sentIds = mutableListOf<SentOutboxId>()
             val remaining = mutableListOf<OutboxMirrorEntry>()
             var checkpointed = 0
             var index = 0
@@ -1442,8 +1444,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(entry)
                     continue
                 }
-                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)) {
-                    sentIds.add(entry.id)
+                val receivedAt = sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)
+                if (receivedAt != null) {
+                    sentIds.add(SentOutboxId(entry.id, receivedAt))
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
                     remaining.add(entry)
@@ -1538,7 +1541,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns true if delivered. */
+        /**
+         * POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns `null` when it
+         * was not delivered, else the server's receive time (`receivedAt`, 0 when the answer has none).
+         */
         private fun sendQueuedMessagePush(
             ctx: PushContext,
             secret: String,
@@ -1547,7 +1553,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             messageId: String,
             silent: Boolean,
             durable: Boolean,
-        ): Boolean {
+        ): Long? {
             return try {
                 val url = URL("${ctx.baseUrl}/api/mls/push/send")
                 val body = JSONObject().apply {
@@ -1571,13 +1577,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                    code == 200 || code == 201
+                    if (code != 200 && code != 201) return null
+                    // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
+                    // app orders this message by it (messageOrder.ts). An answer without it (an older
+                    // server, an unreadable body) still counts as sent, undated: 0.
+                    val receivedAt = try {
+                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
+                        0L
+                    }
+                    if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
+                    receivedAt.coerceAtLeast(0L)
                 } finally {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
-                false
+                null
             }
         }
 
@@ -1723,12 +1740,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
-        private fun appendOutboxSent(context: Context, ids: List<String>) {
+        /** One delivered entry: its id and the server's receive time (`receivedAt`, 0 when unknown). */
+        internal data class SentOutboxId(val id: String, val receivedAt: Long)
+
+        /**
+         * Appends the delivered messageIds to the reconciliation log read by the TS at login, one
+         * line each: `id` alone, or `id<TAB>receivedAt` when the server answered its receive time.
+         * The TS reads both shapes (`reconcileOutboxSent`, outboxMirror.ts), so a file an older
+         * build wrote still reconciles.
+         */
+        private fun appendOutboxSent(context: Context, ids: List<SentOutboxId>) {
             try {
                 val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_SENT_FILE)
                 val existing = if (file.exists()) file.readText() else ""
-                file.writeText(existing + ids.joinToString("\n") + "\n")
+                val lines = ids.joinToString("\n") { if (it.receivedAt > 0L) "${it.id}\t${it.receivedAt}" else it.id }
+                file.writeText(existing + lines + "\n")
             } catch (e: Exception) {
                 Log.w(TAG, "appendOutboxSent: ${e.message}")
             }

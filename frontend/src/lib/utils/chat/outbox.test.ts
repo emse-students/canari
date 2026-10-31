@@ -1654,7 +1654,69 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
 
     await outbox.flush();
 
-    expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith('m1', undefined);
+    // With the server's receive time, so the follower's echo is ordered like every other copy.
+    expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith(
+      'm1',
+      undefined,
+      1_700_000_000_000
+    );
+  });
+
+  it('a sent reply takes its place by the receivedAt the send answered (server-clock order)', async () => {
+    // The owner's case (2026-10-31): the reply's `sentAt` (1 000) is OLDER than the peer message
+    // that came in while it was typed. Pending, it sits below every dated row; sent, it is placed
+    // by the server's receive time - here after the peer's, so below it, on every device.
+    const convo = convoWith('g1', ['m1']);
+    const peer = {
+      id: 'peer',
+      senderId: 'p',
+      content: 'x',
+      timestamp: new Date(2_000),
+      isOwn: false,
+      serverTimestamp: 1_699_999_999_000,
+    };
+    convo.messages = [peer, ...convo.messages];
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage: makeStorage([textEntry('m1', 'g1', 100)]),
+        conversations,
+      })
+    );
+
+    await outbox.flush();
+
+    const after = conversations.get('g1')!.messages;
+    expect(after.map((m) => m.id)).toEqual(['peer', 'm1']);
+    expect(after[1]).toMatchObject({ status: 'sent', serverTimestamp: 1_700_000_000_000 });
+    outbox.dispose();
+  });
+
+  it('a follower places its echo by the receivedAt the leader reports', () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const convo = convoWith('g1', ['t1']);
+    const later = {
+      id: 'later',
+      senderId: 'p',
+      content: 'x',
+      timestamp: new Date(5_000),
+      isOwn: false,
+      serverTimestamp: 5_000,
+    };
+    convo.messages = [later, ...convo.messages];
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1', receivedAt: 4_000 });
+    expect(conversations.get('g1')!.messages.map((m) => m.id)).toEqual(['t1', 'later']);
+    expect(conversations.get('g1')!.messages[0]).toMatchObject({
+      status: 'sent',
+      serverTimestamp: 4_000,
+    });
+    outbox.dispose();
   });
 });
 

@@ -6,6 +6,8 @@ import {
   mergeReadWatermark,
   mergeReadWatermarks,
   readMarkTarget,
+  readWatermarkFrameData,
+  readWatermarkFrameMark,
   readersOf,
   seenByAnchors,
   watermarkAfterReading,
@@ -334,27 +336,27 @@ describe('withOwnReadAdvanced - the count follows my own read point', () => {
   });
 
   it('clears the count when the watermark passes every held message', () => {
-    const next = withOwnReadAdvanced(convo(3), 'Me', 3000);
+    const next = withOwnReadAdvanced(convo(3), 'Me', 3000, 'stamped');
     expect(next.unreadCount).toBe(0);
     expect(next.readWatermarks).toEqual({ me: 3000 });
   });
 
   it('keeps a message newer than what was read counted - never an unconditional zero', () => {
-    expect(withOwnReadAdvanced(convo(3), 'me', 2000).unreadCount).toBe(1);
+    expect(withOwnReadAdvanced(convo(3), 'me', 2000, 'stamped').unreadCount).toBe(1);
   });
 
   it('never raises a count, whatever the held messages say', () => {
-    expect(withOwnReadAdvanced(convo(1), 'me', 500).unreadCount).toBe(1);
+    expect(withOwnReadAdvanced(convo(1), 'me', 500, 'stamped').unreadCount).toBe(1);
   });
 
   it('clears a stale count even when the watermark was already there', () => {
-    const next = withOwnReadAdvanced(convo(2, { me: 3000 }), 'me', 3000);
+    const next = withOwnReadAdvanced(convo(2, { me: 3000 }), 'me', 3000, 'stamped');
     expect(next.unreadCount).toBe(0);
   });
 
   it('returns the same object when nothing moves, so a repeat costs no re-render', () => {
     const c = convo(0, { me: 3000 });
-    expect(withOwnReadAdvanced(c, 'me', 3000)).toBe(c);
+    expect(withOwnReadAdvanced(c, 'me', 3000, 'stamped')).toBe(c);
   });
 });
 
@@ -385,5 +387,105 @@ describe('readMarkTarget - the sender says only what is new', () => {
     ];
     expect(readMarkTarget(msgs, 0, true)).toBe(watermarkAfterReading(msgs, 0, true));
     expect(readMarkTarget(msgs, 0, true)).toBe(4000);
+  });
+});
+
+/**
+ * THE SERVER'S CLOCK (owner, 2026-10-31). A DM or group is ordered by the time the server accepted
+ * each message, and a mark this build takes is on that clock, in its own map. The stamped map - every
+ * mark before the change, an older client's frame, the native shade - is kept and still counts.
+ */
+/** A message stamped `sentAt` by its author and accepted by the server at `serverAt`. */
+const dated = (id: string, sentAt: number, serverAt: number, senderId = PEER) =>
+  msg(id, sentAt, senderId, { serverTimestamp: serverAt });
+
+/** The read state a conversation carries, as `withOwnReadAdvanced` reads and writes it. */
+type HeldConvo = {
+  messages: ChatMessage[];
+  readWatermarks?: ReadWatermarks;
+  serverReadWatermarks?: ReadWatermarks;
+  unreadCount: number;
+};
+
+describe('read marks on the server clock', () => {
+  it('a LATE message - written before the mark, accepted after it - is unread and notifies', () => {
+    // Read up to the server's 10 000. The late message was composed at 5 000 (author's clock) and
+    // the server took it at 12 000: by the author's clock it is "already read", by the server's not.
+    const late = dated('late', 5_000, 12_000);
+    expect(isUnreadForUser(late, 0, 10_000)).toBe(true);
+    expect(hasRead(undefined, ME, late, { [ME]: 10_000 })).toBe(false);
+    // The stamped clock alone would have called it read - the defect this change ends.
+    expect(isUnreadForUser(late, 10_000, 0)).toBe(false);
+  });
+
+  it('keeps read what a stamped mark from before the change covered, so nothing comes back unread', () => {
+    // Stored stamped mark 5 000 = the sentAt of the last message read. Its server time is later.
+    const old = dated('old', 5_000, 5_400);
+    expect(isUnreadForUser(old, 5_000, 0)).toBe(false);
+    expect(countUnreadForUser([old], 5_000, 0)).toBe(0);
+  });
+
+  it('withOwnReadAdvanced on the server clock writes the server map and counts by both', () => {
+    const convo: HeldConvo = {
+      messages: [dated('a', 1_000, 1_100), dated('late', 900, 3_000)],
+      readWatermarks: { [ME]: 1_000 },
+      unreadCount: 1,
+    };
+    const next = withOwnReadAdvanced(convo, ME, 3_000, 'server');
+    expect(next.serverReadWatermarks).toEqual({ [ME]: 3_000 });
+    expect(next.readWatermarks).toEqual({ [ME]: 1_000 });
+    expect(next.unreadCount).toBe(0);
+  });
+
+  it('readMarkTarget answers on the server clock', () => {
+    const msgs = [dated('a', 1_000, 1_100), dated('late', 900, 3_000)];
+    expect(readMarkTarget(msgs, 0, false)).toBe(3_000);
+  });
+
+  it('places a reader by whichever of their two marks reaches further', () => {
+    const ALICE = 'alice';
+    // Display order is the server's: b (2 000), then late (5 000, written at 1 500).
+    const messages = [dated('b', 2_000, 2_000), dated('late', 1_500, 5_000)];
+    // An OLDER client: its stamped mark 2 000 covers `late` by its sentAt, and nothing newer says
+    // otherwise for it - the residue legacy-compatibility.md names.
+    expect(seenByAnchors(messages, { [ALICE]: 2_000 }, ME).get('late')).toEqual([ALICE]);
+    // A client on this build read up to the server's 2 000: `late` arrived after, so not read.
+    expect(seenByAnchors(messages, undefined, ME, { [ALICE]: 2_000 }).get('b')).toEqual([ALICE]);
+    expect(readersOf(messages[1], undefined, { [ALICE]: 2_000 })).toEqual([]);
+  });
+});
+
+describe('the read_watermark frame, old and new', () => {
+  it('this build says the mark twice: `serverAt` for itself, `at` for an older client', () => {
+    expect(readWatermarkFrameData(7_000)).toEqual({ at: 7_000, serverAt: 7_000 });
+  });
+
+  it('reads `serverAt` as the server clock and a bare `at` as the stamped one', () => {
+    expect(readWatermarkFrameMark({ at: 7_000, serverAt: 7_000 })).toEqual({
+      at: 7_000,
+      clock: 'server',
+    });
+    expect(readWatermarkFrameMark({ at: 6_000 })).toEqual({ at: 6_000, clock: 'stamped' });
+    expect(readWatermarkFrameMark({ at: 'x' })).toBeNull();
+    expect(readWatermarkFrameMark({})).toBeNull();
+  });
+
+  it('mixed frames from one reader land in their own maps and both count', () => {
+    // An older device of the reader says at=4 000 (stamped), a newer one serverAt=3 000.
+    const old = readWatermarkFrameMark({ at: 4_000 })!;
+    const fresh = readWatermarkFrameMark({ at: 3_000, serverAt: 3_000 })!;
+    let convo: HeldConvo = { messages: [], unreadCount: 0 };
+    convo = withOwnReadAdvanced(convo, PEER, old.at, old.clock);
+    convo = withOwnReadAdvanced(convo, PEER, fresh.at, fresh.clock);
+    expect(convo).toMatchObject({
+      readWatermarks: { [PEER]: 4_000 },
+      serverReadWatermarks: { [PEER]: 3_000 },
+    });
+    // Written at 3 500 and accepted at 3 600: read by the older device's mark, which says so.
+    const m = dated('m', 3_500, 3_600, ME);
+    expect(hasRead(convo.readWatermarks, PEER, m, convo.serverReadWatermarks)).toBe(true);
+    // Written at 4 500, accepted at 4 600: neither covers it.
+    const n = dated('n', 4_500, 4_600, ME);
+    expect(hasRead(convo.readWatermarks, PEER, n, convo.serverReadWatermarks)).toBe(false);
   });
 });

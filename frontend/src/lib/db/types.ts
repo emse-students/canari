@@ -27,6 +27,12 @@ export interface ConversationMeta {
    */
   readWatermarks?: ReadWatermarks;
   /**
+   * The same read state on the SERVER's clock - compared against a message's server time, the key
+   * the conversation is sorted by. Next to `readWatermarks`, never instead of it: see
+   * `$lib/utils/chat/readState` for which map a mark belongs to.
+   */
+  serverReadWatermarks?: ReadWatermarks;
+  /**
    * Where the shared history of this conversation begins, merged as `max` across members. Stored
    * next to the read state because both are properties of the conversation rather than of any
    * message, and both travel in the same reconciliation frames.

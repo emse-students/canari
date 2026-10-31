@@ -38,9 +38,10 @@ export interface MessageReaction {
 }
 
 /**
- * Read state for a conversation: `userId (lowercase) -> the instant that user has read up to`,
- * compared against a message's own client timestamp. Merged as `max`, which is what makes it
- * converge. See `$lib/utils/chat/readState` for the merge and every derived question.
+ * Read state for a conversation: `userId (lowercase) -> the instant that user has read up to`.
+ * Merged as `max`, which is what makes it converge. A conversation holds two such maps, one per
+ * clock (`readWatermarks`, `serverReadWatermarks`); see `$lib/utils/chat/readState` for which is
+ * compared against what, the merge and every derived question.
  */
 export type ReadWatermarks = Record<string, number>;
 
@@ -91,9 +92,9 @@ export interface AddMessageToChatOptions {
   /** Monotonic catch-up index (MLS queue / history replay order); used for in-session ordering only. */
   ingestSequence?: number;
   /**
-   * Server queue creation time (Unix ms).  Persisted to DB as a stable secondary sort key
-   * so messages with identical client `sentAt` values remain correctly ordered after reload.
-   * Set from `queuedCreatedAt` in the MLS delivery envelope.
+   * The server's acceptance of the message (Unix ms): `queuedCreatedAt` in the MLS delivery
+   * envelope. Persisted, and THE key the conversation is ordered, shown and read by when present
+   * (`messageTime`, owner 2026-10-31).
    */
   serverTimestamp?: number;
   /**
@@ -166,8 +167,10 @@ export interface ChatMessage {
   /** In-session ordering during bulk catch-up (not persisted); use serverTimestamp for stable reload ordering. */
   ingestSequence?: number;
   /**
-   * Server queue creation time (Unix ms).  Persisted to DB and used as secondary sort key
-   * when two messages share the same client `sentAt` timestamp.
+   * The server's acceptance of this message (Unix ms): `queued_message.createdAt` on a recipient's
+   * copy, the `receivedAt` the send answered on the author's, a salon row's `createdAt`. Persisted.
+   * When present it is THE instant the row is ordered, shown and read by (`messageTime`, owner
+   * 2026-10-31); `timestamp` - the author's `sentAt` - is the key only of a row without it.
    */
   serverTimestamp?: number;
   /** True when displayed from FCM preview before full MLS envelope arrives. */
@@ -212,6 +215,11 @@ export interface Conversation {
    * state of a conversation cannot live on its messages.
    */
   readWatermarks?: ReadWatermarks;
+  /**
+   * The read state on the SERVER's clock, next to `readWatermarks` (the stamped one). See
+   * `$lib/utils/chat/readState`.
+   */
+  serverReadWatermarks?: ReadWatermarks;
   /**
    * Where the shared history of this conversation begins - below it nobody claims and nobody
    * answers. Monotone, merged as `max`, absent meaning zero. Nothing moves it today; see

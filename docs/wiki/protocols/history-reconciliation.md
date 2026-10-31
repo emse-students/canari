@@ -1522,11 +1522,15 @@ mutation, so silent and durable - and rides on every `history_bundle`. Everythin
 who has read a message, the unread count, how far reading a conversation moves the mark - is in
 `$lib/utils/chat/readState.ts`, which absorbed `unread.ts`.
 
-**T is the message's own client timestamp**, `messageTime` - the PRIMARY key display order uses, not
-`serverTimestamp`, which is only a tie-break. A watermark ordered differently from the list it
-describes would leave a message marked read while the one visibly above it stayed unread. And it is
-drawn from the MESSAGES rather than from the clock: a device an hour fast would otherwise mark an
-hour of unread messages read for everyone, permanently, the merge being `max`.
+**T is on the clock the list is sorted by** - a watermark ordered differently from the list it
+describes would leave a message marked read while the one visibly above it stayed unread. Since
+2026-10-31 that is the SERVER's acceptance time (`messageTime`), and a conversation holds two maps:
+`serverReadWatermarks`, compared against it and written by this build, and `readWatermarks`, the
+stamped (`sentAt`) marks of every earlier build, older clients and the native shade, still honoured -
+a row is read when either covers it ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31),
+[legacy-compatibility](../legacy-compatibility.md)). And T is drawn from the MESSAGES rather than
+from the clock: a device an hour fast would otherwise mark an hour of unread messages read for
+everyone, permanently, the merge being `max`.
 
 What it buys, beyond travelling in the shared log so a reinstall recovers read state with no peer
 online:

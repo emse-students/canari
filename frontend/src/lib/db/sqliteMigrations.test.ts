@@ -1,6 +1,7 @@
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationServerReadWatermarksStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   outboxServerErrorsStatement,
@@ -135,6 +136,34 @@ describe('conversationAwaitingAdmissionStatement (v15)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationAwaitingAdmissionStatement(['id', 'name', 'awaiting_admission'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(15);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(15);
+  });
+});
+
+describe('conversationServerReadWatermarksStatement (v16)', () => {
+  it('adds the server-clock read marks to an existing conversations table, NULL on every row', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, read_watermarks TEXT)'
+    );
+    engine.exec(
+      `INSERT INTO conversations (id, name, read_watermarks) VALUES ('g1', 'Group', '{"me":5}')`
+    );
+    const columnsOf = () =>
+      (engine.prepare('PRAGMA table_info(conversations)').all() as { name: string }[]).map(
+        (c) => c.name
+      );
+
+    const sql = conversationServerReadWatermarksStatement(columnsOf());
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    // The stamped marks are untouched: they keep covering what they covered (readState.ts).
+    expect(
+      engine.prepare('SELECT read_watermarks, server_read_watermarks FROM conversations').get()
+    ).toEqual({ read_watermarks: '{"me":5}', server_read_watermarks: null });
+    expect(conversationServerReadWatermarksStatement(columnsOf())).toBeNull();
+    expect(SCHEMA_VERSION).toBe(16);
   });
 });

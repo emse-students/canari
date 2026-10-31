@@ -327,6 +327,7 @@ describe('the archive replay draws the photo notice too', () => {
       deletedMessages: new Map(),
       editedMessages: new Map(),
       readWatermarkUpdates: {},
+      serverReadWatermarkUpdates: {},
       historyFloorUpdate: { at: 0 },
       pushPendingMessage: (entry: { messageId?: string; senderId: string }) => pushed.push(entry),
       dropOwnExcluded: async (messages: unknown) => messages,

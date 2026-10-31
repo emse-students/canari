@@ -16,7 +16,7 @@
 import type { Conversation } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { countUnreadForUser, mergeReadWatermark, watermarkFor } from './readState';
+import { countUnreadForUser, mergeReadWatermark, readPointFor } from './readState';
 
 /**
  * One line of `read_watermarks.ndjson`, written by `appendReadWatermark`
@@ -64,12 +64,15 @@ export function applyNativeReadWatermarks(
   for (const [key, convo] of conversations.entries()) {
     const at = highest.get(convo.id);
     if (at === undefined) continue;
+    // THE SHADE'S MARK IS ON THE STAMPED CLOCK: it is the `sentAt` of the newest message the banner
+    // showed (readState.ts). The server-clock mark this device already holds still counts.
     const merged = mergeReadWatermark(convo.readWatermarks, meNorm, at);
     if (!merged) continue;
+    const mine = readPointFor({ ...convo, readWatermarks: merged }, meNorm);
     conversations.set(key, {
       ...convo,
       readWatermarks: merged,
-      unreadCount: countUnreadForUser(convo.messages, watermarkFor(merged, meNorm)),
+      unreadCount: countUnreadForUser(convo.messages, mine.stamped, mine.server),
     });
     changed.push(key);
     appendLog(`[READ_WATERMARK] ${convo.id.slice(0, 8)} read up to ${new Date(at).toISOString()}`);

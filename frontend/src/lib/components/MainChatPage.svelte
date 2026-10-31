@@ -730,7 +730,14 @@
     if (!convo || convo.lifecycle !== 'active') return;
 
     const meNorm = session.userId.toLowerCase();
-    const held = watermarkFor(convo.readWatermarks, meNorm);
+    // A DM OR GROUP MARK IS TAKEN ON THE SERVER'S CLOCK (`serverReadWatermarks`, readState.ts), the
+    // key its rows are sorted by; a salon's lives in the stamped map, where its rows' stamp IS the
+    // server's time.
+    const clock = isSelectedChannel ? 'stamped' : 'server';
+    const held = watermarkFor(
+      isSelectedChannel ? convo.readWatermarks : convo.serverReadWatermarks,
+      meNorm
+    );
     // A DM or group mark moves over FOREIGN messages only: one moved over this reader's own send
     // told nobody anything and cost every member a decrypt and a checkpoint (`readMarkTarget`).
     const target = readMarkTarget(convo.messages, held, isSelectedChannel);
@@ -752,7 +759,7 @@
         // The count moves with the watermark (the open conversation is read, so it falls to 0),
         // and the OTHER TABS of this account are told: a leader tab that counted the arrival while
         // this tab had the conversation open would otherwise keep its `(N)` for good.
-        const next = withOwnReadAdvanced(fresh, meNorm, target);
+        const next = withOwnReadAdvanced(fresh, meNorm, target, clock);
         if (next === fresh) return;
         convs.conversations.set(currentContact, next);
         publishConversationRead(currentContact, next.lastMessageAt ?? 0);

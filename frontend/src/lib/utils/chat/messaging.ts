@@ -51,6 +51,7 @@ import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
+import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -972,9 +973,13 @@ export async function sendReadWatermark(at: number, deps: MessageActionDeps): Pr
   return true;
 }
 
+/**
+ * The frame and its latest-wins key. `at` is on the SERVER's clock (`readMarkTarget`), and the frame
+ * says so with `serverAt`; the same value rides as `at` for an older client (readState.ts).
+ */
 function readWatermarkFrame(at: number): [Uint8Array, LatestWins] {
   return [
-    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+    encodeAppMessage(mkSystem('read_watermark', JSON.stringify(readWatermarkFrameData(at)))),
     { value: at, valueOf: queuedReadWatermarkAt },
   ];
 }
@@ -1024,8 +1029,8 @@ export function queuedReadWatermarkAt(entry: OutboxEntry): number | null {
   const system = decodeAppMessage(entry.controlProto)?.system;
   if (system?.event !== 'read_watermark') return null;
   try {
-    const at = Number((JSON.parse(system.data ?? '') as { at?: unknown }).at);
-    return Number.isFinite(at) && at > 0 ? at : null;
+    // The mark under whichever name it was queued with: a frame queued before 2026-10-31 says `at`.
+    return readWatermarkFrameMark(JSON.parse(system.data ?? '') as object)?.at ?? null;
   } catch (e) {
     console.warn(
       `[OUTBOX] queued read_watermark ${entry.id.slice(0, 8)}… has unreadable data, left alone:`,

@@ -685,6 +685,30 @@ already runs. It is cheap; what it must not become is the reason nobody notices 
 mean subtly different things - ids are a SET and an instant is an ORDER, and the translation is
 lossy in exactly one direction.
 
+### No date yet - read marks on the `sentAt` clock: the stamped map, and the `at` of a `read_watermark` frame (2026-10-31)
+
+**Site:** `readState.ts` (`readWatermarks` beside `serverReadWatermarks`, `isCoveredBy`,
+`readWatermarkFrameMark`), `systemMessageHandler.ts` and `historySystemEvents.ts` (a frame with no
+`serverAt`), `readWatermarkCache.ts` (the native shade), `readWatermarkFrameData` (the `at` this build
+still sends).
+**Shim:** since 2026-10-31 a DM or group is ordered and read on the SERVER's clock
+([chat](frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+Every mark written before, every frame from an older client, and the native shade's "mark as read"
+are on the author's `sentAt` clock, and a bare number cannot say which. So they are KEPT in the
+stamped map and compared against the row's `timestamp`, and a row is read when either map covers it.
+In the other direction this build sends `{ at, serverAt }` with the same value: an older client reads
+`at` and compares a server instant against `sentAt` - off by the delivery latency, which it already
+was against its own peers' clocks.
+**What it costs:** a late message whose `sentAt` is older than a STAMPED mark still reads as read, the
+pre-2026-10-31 behaviour, wherever that stamped mark is the newer of a reader's two. An upgraded
+reader's stamped mark stops moving (its own reads write the server map), so the residue shrinks to the
+native shade and older peers.
+**Removal condition:** the native shade sends `serverAt` (Android and iOS hand the push's `createdAt`
+down to `build_read_watermark_app_message` and `read_watermarks.ndjson` - owed), the floor passes the
+first release that does, AND no frame with a bare `at` is observed in a history bundle for a full
+retention window (90 days) - a frame outlives the client that wrote it, as for `read_receipt` above.
+Then the stamped map is read for salons only (whose two clocks are one) and the `at` alias goes.
+
 ### No date yet - the refresh COOKIE accepted from a `tauri://localhost` client
 
 **Site:** `presentedRefreshToken()` in `apps/core-service/src/auth/auth.controller.ts` - the last

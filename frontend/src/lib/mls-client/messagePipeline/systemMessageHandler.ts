@@ -49,12 +49,13 @@ import {
 } from '$lib/utils/chat/groupActions';
 import {
   countUnreadForUser,
-  mergeReadWatermark,
   mergeReadWatermarks,
   parseReadWatermarks,
+  readPointFor,
+  readWatermarkFrameMark,
   watermarkAfterReading,
-  watermarkFor,
   withOwnReadAdvanced,
+  withReadMark,
 } from '$lib/utils/chat/readState';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -732,23 +733,26 @@ export async function handleSystemEvent(
       // `read_receipt` is the shape senders used before the watermark, and it names message ids
       // instead of an instant. Translated rather than dropped: the ids we hold give the instant
       // directly, and ids we do not hold say nothing we could act on anyway.
-      const at =
+      // A `read_watermark` says which clock it is on (`serverAt` from this build, a bare `at` from an
+      // older one); ids translate through the rows we hold, whose key is the server's clock.
+      const mark =
         event === 'read_watermark'
-          ? Number(data.at)
-          : watermarkAfterReading(
-              c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
-              0
-            );
-      const merged = mergeReadWatermark(c.readWatermarks, senderNorm, at);
+          ? readWatermarkFrameMark(data)
+          : {
+              at: watermarkAfterReading(
+                c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
+                0
+              ),
+              clock: 'server' as const,
+            };
+      const at = mark?.at ?? 0;
+      const merged = mark ? withReadMark(c, senderNorm, mark.at, mark.clock) : null;
       // Read by OURSELVES on another device: clear the badge here too, which is the whole point of
       // the watermark travelling between our own devices. The count follows the watermark rather
       // than being zeroed, so a message newer than what was read there stays counted.
       const selfRead = senderNorm === userId;
-      const next = selfRead
-        ? withOwnReadAdvanced(c, senderNorm, at)
-        : merged
-          ? { ...c, readWatermarks: merged }
-          : c;
+      const next =
+        selfRead && mark ? withOwnReadAdvanced(c, senderNorm, mark.at, mark.clock) : (merged ?? c);
       if (next !== c) {
         conversations.set(convoKey, next);
         // The read state lives on the conversation row, so this save is what persists it - for a
@@ -756,7 +760,9 @@ export async function handleSystemEvent(
         await saveConversation?.(convoKey).catch(() => {});
       }
       if (merged) {
-        log(`[READ] ${senderNorm} has read up to ${new Date(at).toISOString()}`);
+        log(
+          `[READ] ${senderNorm} has read up to ${new Date(at).toISOString()} (${mark?.clock} clock)`
+        );
         onReadStateAdvanced?.({ conversationKey: convoKey, senderId: senderNorm, at });
       }
     }
@@ -980,11 +986,17 @@ export async function handleSystemEvent(
           beforeMerge.readWatermarks,
           parseReadWatermarks(data.readWatermarks)
         );
+        // The server-clock marks travel beside the stamped ones; an older sender has none.
+        const mergedServerWatermarks = mergeReadWatermarks(
+          beforeMerge.serverReadWatermarks,
+          parseReadWatermarks(data.serverReadWatermarks)
+        );
         const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
-        if (mergedWatermarks || mergedFloor !== null) {
+        if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
           conversations.set(convoKey, {
             ...beforeMerge,
             ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+            ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
             ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
           });
           await saveConversation?.(convoKey).catch((e: unknown) => {
@@ -1147,10 +1159,8 @@ export async function handleSystemEvent(
           //    Clamped to the current value: an open conversation was already zeroed by the
           //    add-path and must never regain a badge, and a genuine new member - whose watermark
           //    is 0 - keeps the full count.
-          const stillUnread = countUnreadForUser(
-            nextMessages,
-            watermarkFor(c.readWatermarks, userId.toLowerCase())
-          );
+          const mine = readPointFor(c, userId.toLowerCase());
+          const stillUnread = countUnreadForUser(nextMessages, mine.stamped, mine.server);
           const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
           if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
             conversations.set(convoKey, {

@@ -77,6 +77,7 @@ import {
   publishOutboxEntryFailed,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
+import { replaceMessageOrdered } from './messageOrder';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -577,8 +578,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * failed message could be overtaken by the next one.
    *
    * ONE EXCEPTION, BY DESIGN (WP-OFF-9): an attachment whose UPLOAD runs or is owed does not hold its
-   * successors - only what depends on it. Display order is `sentAt`, so it still sorts at its compose
-   * time on every device; only the wire order changes.
+   * successors - only what depends on it. Display order is the SERVER's acceptance time
+   * (`messageOrder.ts`, owner 2026-10-31), so a text sent after the file and accepted before it is
+   * drawn above it on every device - the author's included: until its send answers, the file sits
+   * below every dated row, and it then takes its `receivedAt`.
    */
   /**
    * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
@@ -853,6 +856,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       showServerFailure(event.messageId, event.serverErrors);
       return;
     }
+    // The server time FIRST, then the status: a row that left the "awaiting its server time" tier
+    // with no time would be placed at its `sentAt` for the length of one render.
+    if (typeof event.receivedAt === 'number')
+      patchServerTimestamp(event.messageId, event.receivedAt);
     patchStatus(event.messageId, 'sent');
     // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
     clearUpload(event.messageId);
@@ -870,22 +877,37 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return null;
   }
 
-  /** Patch a message's status in the reactive map (in-memory; status is derived, not persisted). */
+  /**
+   * Patch a message's status in the reactive map (in-memory; status is derived, not persisted).
+   *
+   * MOVED, NOT ONLY PATCHED: an own row without a server time is ordered BELOW every dated row while
+   * it is unsent (`awaitsServerTime`), so a status change can change its place (`messageOrder.ts`).
+   */
   function patchStatus(messageId: string, status: ChatMessage['status']): void {
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    if (messages[found.idx].status === status) return;
-    messages[found.idx] = { ...messages[found.idx], status };
+    if (found.convo.messages[found.idx].status === status) return;
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      status,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
-  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  /**
+   * Record the server's receive time on a sent message in the reactive map; `persistSent` writes it.
+   *
+   * THE ROW TAKES ITS PLACE HERE: until now it sat below every dated row, and from now it is ordered
+   * by this time on every device - above a peer's message the server accepted after it, below one it
+   * accepted before (`messageOrder.ts`, owner 2026-10-31).
+   */
   function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      serverTimestamp,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -2096,7 +2118,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         uploadTasks.delete(entry.id);
         uploadOwed.delete(entry.id);
         // The tab that composed this may be a follower, whose own echo is still showing `pending`.
-        publishOutboxEntrySent(entry.id, mediaContent);
+        publishOutboxEntrySent(
+          entry.id,
+          mediaContent,
+          entry.kind !== 'control' ? sent.receivedAt : null
+        );
         // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
         // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
         await storage

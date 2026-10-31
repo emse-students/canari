@@ -53,6 +53,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationServerReadWatermarksStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   outboxServerErrorsStatement,
@@ -177,7 +178,8 @@ export class SqliteStorage implements IStorage {
                 read_watermarks  TEXT,
                 history_floor    INTEGER,
                 image_media_id   TEXT,
-                awaiting_admission INTEGER
+                awaiting_admission INTEGER,
+                server_read_watermarks TEXT
             )
         `);
 
@@ -458,6 +460,16 @@ export class SqliteStorage implements IStorage {
       // Stamped at 15, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 15');
     }
+
+    if (currentVersion < 16) {
+      // v15->v16: the read marks on the SERVER's clock get their own column (`readState.ts`), next
+      // to the stamped ones it does not replace. Additive and NULL on arrival.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const add = conversationServerReadWatermarksStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 16, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 16');
+    }
   }
 
   // -- Conversations -------------------------------------------------------
@@ -465,7 +477,7 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
       [
         conv.id,
         conv.name,
@@ -475,6 +487,7 @@ export class SqliteStorage implements IStorage {
         conv.historyFloor ?? null,
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
+        conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
       ]
     );
   }
@@ -491,6 +504,7 @@ export class SqliteStorage implements IStorage {
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
       readWatermarks: parseReadWatermarks(r.read_watermarks),
+      serverReadWatermarks: parseReadWatermarks(r.server_read_watermarks),
       historyFloor: parseHistoryFloor(r.history_floor),
       imageMediaId:
         typeof r.image_media_id === 'string' && r.image_media_id ? r.image_media_id : null,
@@ -754,7 +768,7 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
       [
         conv.id,
         conv.name,
@@ -764,6 +778,7 @@ export class SqliteStorage implements IStorage {
         conv.historyFloor ?? null,
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
+        conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
       ]
     );
   }

@@ -1357,7 +1357,8 @@ drains its own entries oldest first. Rules that came with it:
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
 - **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
   lane starts it and moves on, so a text written after a big file is not held by it; only the media
-  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  message's small MLS send takes the lane once the upload ended. Display order is the server's
+  acceptance time ([below](#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)); the
   rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
@@ -3266,6 +3267,81 @@ the socket was down misses what was posted before the reconnect) and, on the rec
 salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
 their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
 
+## Conversations are ordered by the server's clock (decided by the owner 2026-10-31)
+
+**A DM or a group is ordered by the time the SERVER accepted each message, as a salon always was**
+([offline-and-weak-network 6.4](../offline-and-weak-network.md#64-salon-graine-v2-replay-rules)).
+The author's `sentAt` decided the order until then, and a message delivered late - an outbox that held
+it for minutes on a stalled link, a sender whose clock runs slow - slotted in ABOVE what everyone had
+already read: silently, and already "read", because the read marks compared against the same
+`sentAt`. Measured on a peer's iPhone log the same day: one message queued at 18:16:31 and sent at
+18:20:36 by the SAME device clock - four minutes of real delay, not skew.
+
+**One key per row** (`messageTime`, [messageOrder.ts](../../../../frontend/src/lib/utils/chat/messageOrder.ts)):
+`serverTimestamp ?? timestamp`. The server time is `queued_message.createdAt` on a recipient's copy and
+the `receivedAt` the send answered on the author's (one `Date` per send, so the same value on every
+device); a row without it - a copy older than the field, a bundle from a source that lacked it - keeps
+its `sentAt`. Everything that says "when" reads this one function: the sort, the bubble's time (no
+"written at" hint, owner's decision), the day and gap separators (`groupMessages`), the arrival
+animation, the conversation's recency, the shared-content panel, and the read marks.
+
+**The order is total and transitive**: `compareMessageOrder` is lexicographic on (tier, key, id). Tier 1
+is the author's own copy the server has not dated YET (`awaitsServerTime`: a salon echo, or an own row
+`pending`/`sending`/`error`/`unconfirmed` with no `serverTimestamp`); it sorts after every dated row,
+by `sentAt` among its kind, and takes its place when the send answers (`patchServerTimestamp`, which
+moves the row with `replaceMessageOrdered`; a follower tab gets the same `receivedAt` in
+`outbox_entry_sent`). An own row with no status and no server time is a copy older than the field and
+keeps its `sentAt` - otherwise every message sent before this change would sink to the bottom for ever.
+`serverTimestamp` and `ingestSequence` are no longer tie-breaks; that mix was the recorded intransitive
+cycle (see the next section).
+
+**The read marks move to the same key in the same change, as a second map** (`readState.ts`). A
+watermark is a number with no unit, and every mark written before 2026-10-31 is on the `sentAt` clock:
+switching the one map's clock would have turned the last-read message of every conversation unread on
+upgrade (its server time is later than its `sentAt` by the delivery latency). So:
+`serverReadWatermarks` is compared against `messageTime` and is what this build writes for a DM or a
+group; `readWatermarks` (stamped) keeps every older mark, an older client's frame and the native
+shade's, and is compared against the row's `timestamp`. **A row is read when either map covers it.**
+Salons keep their marks in the stamped map, where a salon row's stamp IS its server time. The frame
+says `{ at, serverAt }` (the same value); a frame with no `serverAt` lands in the stamped map
+([legacy-compatibility](../../legacy-compatibility.md)). Bundles carry both maps; SQLite schema v16
+adds `server_read_watermarks`. `seenByAnchors` scans from the bottom (a stamped mark is not monotone
+in a server-sorted list, so the binary search went).
+
+**What a late message does now**: it sorts where it arrived, counts as unread and notifies - unless a
+STAMPED mark newer than its `sentAt` covers it, which only an older client, the native shade's "mark
+as read" (still `sentAt`-keyed, see below) or a mark from before the change can produce.
+
+**Edge cases, checked**:
+
+- **Edits, reactions, deletions and pins never move a row**: none of them writes `serverTimestamp`
+  (an outbox `control` entry's id names the message it mutates, and `patchServerTimestamp` is skipped
+  for it).
+- **The newcomer cut and the exclusion windows** (#2800, `historyEntitlement.ts`) were already placed
+  on the server's clock (`messageServerTime`), with a widened margin for undated copies - unchanged.
+- **The re-admission replay** (#2804) re-delivers queued rows with their stored `createdAt`, so a
+  replayed message keeps its first server time.
+- **The history manifest is keyed by message ID, not by time** (`historyRangeOf`, see "The unit is a
+  slice of the ID SPACE" below) - no clock enters it, so it needs nothing.
+- **Local pages are still cut on the stored `timestamp` column (`sentAt`)**: the scrollback cursor is
+  the smallest `sentAt` held, which loses nothing (it can only re-read rows, merged by id). Residue: a
+  message delivered more than one page of messages late is absent from the FIRST page after a reload
+  until scrollback reaches its `sentAt`; then it is drawn where it arrived.
+- **A background send** (the notification quick reply, a drain while the app was shut) now writes
+  `id<TAB>receivedAt` to `outbox_sent.ndjson` on Android; `reconcileOutboxSent` dates the stored and
+  the in-memory row. iOS writes bare ids, so its background-sent copies keep their `sentAt`.
+
+**Logs**: `[ADD_MSG] ✓ Message added` carries `sentAt=… serverAt=… gap=…ms`, and a batch line the
+largest gap of the batch (`clockGapNote`). A gap of minutes on a positive sign is delay; a negative
+gap, or one constant per sender, is a clock.
+
+**Not done, owed**: the native shade's "mark as read" and quick reply still announce the banner's
+`sentAt` (`build_read_watermark_app_message`, `read_watermarks.ndjson`); handing the push's
+`createdAt` down to them would put those marks on the server clock too. Tests: `messageOrder.test.ts`,
+`readState.test.ts`, `outbox.test.ts` ("takes its place by the receivedAt"),
+`outboxMirror.serverTime.test.ts`, `systemMessageHandler.readState.test.ts`,
+`historySystemEvents.test.ts`.
+
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 
 `mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
@@ -3276,12 +3352,11 @@ conversation. It is now one stable sort of `existing ++ incoming`: 0.1 ms on the
 sort of `sort(A) ++ [x]` orders equal elements exactly as a stable sort of `A ++ [x]`, so the two
 give the same array whenever `compareMessageOrder` is a consistent order - pinned against the old
 loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
-**One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
-of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
-already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
-carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
-incoming message in the same millisecond compare by id alone and three of them can form a cycle
-(pinned in the test). Such ties may come out in a different order than on the old loop.
+**The edge that had no defined answer is gone (2026-10-31)**: messages with the SAME millisecond and
+MIXED presence of `serverTimestamp` / `ingestSequence` made the old comparator intransitive - held
+messages carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so three of
+them could form a cycle. The comparator now reads one key per row and the id, which is a total order
+(see the section above; the cycle's former shape is pinned as ordered in the test).
 
 ## The workspace list prunes only what existed when it asked
 
@@ -4039,7 +4114,7 @@ transport failure.** Three fixes:
 
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
 
-Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the sent time of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the time (`messageTime`: the server's acceptance, else `sentAt`) of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
 
 ### A reply belongs to ONE conversation (2026-10-06)
 

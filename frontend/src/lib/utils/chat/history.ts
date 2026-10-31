@@ -897,6 +897,7 @@ export async function replayConversationHistory(params: {
     // affected by the batch save below at all - which is exactly what made the per-message version
     // fragile enough to need a repair pass of its own.
     const readWatermarkUpdates: ReadWatermarks = {};
+    const serverReadWatermarkUpdates: ReadWatermarks = {};
     // The shared history floor the page carried, merged the same way and applied in the same write.
     // A box rather than a number, because the handler that fills it cannot reassign a local.
     const historyFloorUpdate = { at: 0 };
@@ -1225,6 +1226,7 @@ export async function replayConversationHistory(params: {
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
+              serverReadWatermarkUpdates,
               historyFloorUpdate,
               pushPendingMessage,
               dropOwnExcluded: (messages) =>
@@ -1470,11 +1472,16 @@ export async function replayConversationHistory(params: {
         convoForRead.readWatermarks,
         readWatermarkUpdates
       );
+      const mergedServerWatermarks = mergeReadWatermarks(
+        convoForRead.serverReadWatermarks,
+        serverReadWatermarkUpdates
+      );
       const mergedFloor = mergeHistoryFloor(convoForRead.historyFloor, historyFloorUpdate.at);
-      if (mergedWatermarks || mergedFloor !== null) {
+      if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
         setConversation(contactName, {
           ...convoForRead,
           ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+          ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
           ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
         });
         await saveConversation?.(contactName).catch(() => {});

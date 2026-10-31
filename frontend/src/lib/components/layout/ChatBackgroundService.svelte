@@ -99,7 +99,7 @@
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
-  import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+  import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
@@ -1858,7 +1858,13 @@
           // right after the reload, so a group joined while away is registered before the drain.
           await takeKeyGroupPushJoins(globalSession.ensureMls(), (line) => console.log(line));
           stepDone('key-group-joins');
-          if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          if (storage) {
+            await reconcileOutboxSent(storage, {
+              deviceKeyB64: globalSession.deviceKeyB64,
+              onDated: (id, receivedAt) =>
+                dateBackgroundSentRow(globalConvs.conversations, id, receivedAt),
+            }).catch((e) => appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`));
+          }
           stepDone('outbox');
           // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
           // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).

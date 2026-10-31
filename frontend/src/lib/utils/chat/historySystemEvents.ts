@@ -16,7 +16,9 @@ import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   mergeReadWatermark,
   parseReadWatermarks,
+  readWatermarkFrameMark,
   watermarkAfterReading,
+  type ReadClock,
 } from '$lib/utils/chat/readState';
 import {
   chat_system_message_deleted,
@@ -133,6 +135,8 @@ export interface ReplaySystemEventCtx {
    * whole economy of the watermark: a page of a thousand messages costs one entry per reader.
    */
   readWatermarkUpdates: ReadWatermarks;
+  /** The same, for the marks on the SERVER's clock (`serverReadWatermarks`, see `readState.ts`). */
+  serverReadWatermarkUpdates: ReadWatermarks;
   /**
    * The shared history floor seen over the page, kept as a mutable box because it is ONE value
    * rather than a map: the accumulators are written by the handler and read by the caller once the
@@ -217,14 +221,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     deletedMessages,
     editedMessages,
     readWatermarkUpdates,
+    serverReadWatermarkUpdates,
     historyFloorUpdate,
     pushPendingMessage,
   } = ctx;
 
-  /** Records a participant's read state into the page accumulator, keeping the later instant. */
-  const noteReadUpTo = (userNorm: string, at: number): void => {
-    const merged = mergeReadWatermark(readWatermarkUpdates, userNorm, at);
-    if (merged) Object.assign(readWatermarkUpdates, merged);
+  /**
+   * Records a participant's read state into the page accumulator of its clock, keeping the later
+   * instant.
+   */
+  const noteReadUpTo = (userNorm: string, at: number, clock: ReadClock): void => {
+    const into = clock === 'server' ? serverReadWatermarkUpdates : readWatermarkUpdates;
+    const merged = mergeReadWatermark(into, userNorm, at);
+    if (merged) Object.assign(into, merged);
   };
 
   if (!parsed.system) return;
@@ -305,7 +314,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const getName = await resolveDisplayNames([senderNorm]);
       systemContent = chat_system_conversation_deleted({ sender: getName(senderNorm) });
     } else if (parsed.system.event === 'read_watermark') {
-      noteReadUpTo(senderNorm, Number(data.at));
+      const mark = readWatermarkFrameMark(data);
+      if (mark) noteReadUpTo(senderNorm, mark.at, mark.clock);
     } else if (parsed.system.event === 'read_receipt') {
       // The pre-watermark shape, which names message ids instead of an instant. Translated using
       // the messages we hold: an id we do not have says nothing this could act on.
@@ -318,7 +328,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           watermarkAfterReading(
             convo.messages.filter((mm) => idSet.has(mm.id)),
             0
-          )
+          ),
+          'server'
         );
       }
     } else if (parsed.system.event === 'delete_message' && data.messageId) {
@@ -434,7 +445,15 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // carrying no messages at all - "you are missing nothing, and here is who has read what".
       const bundleWatermarks = parseReadWatermarks(data.readWatermarks);
       if (bundleWatermarks) {
-        for (const [userNorm, at] of Object.entries(bundleWatermarks)) noteReadUpTo(userNorm, at);
+        for (const [userNorm, at] of Object.entries(bundleWatermarks)) {
+          noteReadUpTo(userNorm, at, 'stamped');
+        }
+      }
+      const bundleServerWatermarks = parseReadWatermarks(data.serverReadWatermarks);
+      if (bundleServerWatermarks) {
+        for (const [userNorm, at] of Object.entries(bundleServerWatermarks)) {
+          noteReadUpTo(userNorm, at, 'server');
+        }
       }
       // The floor rides on the same frames, for the same reason and with the same merge.
       const mergedFloor = mergeHistoryFloor(historyFloorUpdate.at, data.floor);

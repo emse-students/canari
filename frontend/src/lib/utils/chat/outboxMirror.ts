@@ -42,6 +42,8 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
+import type { Conversation } from '$lib/types';
+import { replaceMessageOrdered } from './messageOrder';
 
 /** One line of `outbox_pending.ndjson`, consumed natively. `proto` is base64(plaintext AppMessage). */
 export interface OutboxMirrorEntry {
@@ -111,28 +113,65 @@ export async function syncOutboxMirror(entries: OutboxEntry[]): Promise<void> {
 }
 
 /**
+ * One line of `outbox_sent.ndjson`: `id`, or `id<TAB>receivedAt` from a native build that reads the
+ * server's answer (`CanariFirebaseMessagingService.appendOutboxSent`). `receivedAt` is absent when
+ * the line has none - an older native build, or a server that answered no receive time.
+ */
+export function parseOutboxSentLine(line: string): { id: string; receivedAt?: number } | null {
+  const [id, at] = line.trim().split('\t');
+  if (!id) return null;
+  const receivedAt = Number(at);
+  return Number.isFinite(receivedAt) && receivedAt > 0 ? { id, receivedAt } : { id };
+}
+
+/**
  * Drain `outbox_sent.ndjson` (messageIds the background service already delivered) and delete the
  * matching outbox entries. Tauri only; no-op elsewhere. Idempotent: deleting an absent entry is a
  * no-op, and a duplicate send is deduplicated by the receiver.
+ *
+ * A LINE THAT CARRIES THE SERVER'S RECEIVE TIME DATES THE AUTHOR'S OWN COPY, as a foreground send
+ * does (`patchServerTimestamp` in outbox.ts): the stored row takes it as `serverTimestamp`, and
+ * `onDated` hands it to the rows already in memory. Without it the copy is ordered by its `sentAt`
+ * (`messageTime`), the only clock it has.
  */
-export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
+export async function reconcileOutboxSent(
+  storage: IStorage,
+  dating?: {
+    deviceKeyB64: string;
+    onDated?: (messageId: string, receivedAt: number) => void;
+  }
+): Promise<void> {
   if (!isTauriRuntime()) return;
-  let sentIds: string[];
+  let lines: string[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    sentIds = await invoke<string[]>('read_and_clear_outbox_sent');
+    lines = await invoke<string[]>('read_and_clear_outbox_sent');
   } catch (e) {
     appendLog(`[OUTBOX_MIRROR] outbox_sent read failed: ${String(e)}`);
     return;
   }
-  if (!sentIds.length) return;
-  appendLog(`[OUTBOX_MIRROR] ${sentIds.length} message(s) sent in the background to reconcile`);
-  for (const id of sentIds) {
+  const sent = lines.map(parseOutboxSentLine).filter((l) => l !== null);
+  if (!sent.length) return;
+  const dated = sent.filter((l) => l.receivedAt !== undefined).length;
+  appendLog(
+    `[OUTBOX_MIRROR] ${sent.length} message(s) sent in the background to reconcile, ${dated} with the server's receive time`
+  );
+  for (const { id, receivedAt } of sent) {
     await storage
       .deleteOutboxEntry(id)
       .catch((e) =>
         appendLog(
           `[OUTBOX_MIRROR] could not drop background-sent ${id} from the outbox: ${String(e)}`
+        )
+      );
+    if (receivedAt === undefined || !dating) continue;
+    // A control frame's id names no stored row: `updateMessage` is then a no-op.
+    await storage
+      .updateMessage(id, { serverTimestamp: receivedAt }, dating.deviceKeyB64)
+      .then(() => dating.onDated?.(id, receivedAt))
+      .catch((e) =>
+        appendLog(
+          `[OUTBOX_MIRROR] background-sent ${id.slice(0, 8)}… not dated (it keeps its sentAt): ${String(e)}`
         )
       );
   }
@@ -285,4 +324,38 @@ export async function adoptOrphanedMirrorEntries(
   }
   appendLog(`[OUTBOX_MIRROR] ${adopted}/${orphans.length} orphan entr(y/ies) adopted`);
   return adopted;
+}
+
+/**
+ * The in-memory half of dating a background-sent message (`reconcileOutboxSent`'s `onDated`): the
+ * row takes the server's receive time and its place by it (`replaceMessageOrdered`), and a row still
+ * drawn as unsent is drawn sent - the background service delivered it.
+ *
+ * @returns whether a row changed.
+ */
+export function dateBackgroundSentRow(
+  conversations: {
+    entries(): IterableIterator<[string, Conversation]>;
+    set(key: string, value: Conversation): unknown;
+  },
+  messageId: string,
+  receivedAt: number
+): boolean {
+  for (const [key, convo] of conversations.entries()) {
+    const idx = convo.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) continue;
+    const row = convo.messages[idx];
+    if (row.serverTimestamp === receivedAt && row.status !== 'pending') return false;
+    const unsent = row.status === 'pending' || row.status === 'sending';
+    conversations.set(key, {
+      ...convo,
+      messages: replaceMessageOrdered(convo.messages, idx, {
+        ...row,
+        serverTimestamp: receivedAt,
+        ...(unsent ? { status: 'sent' as const } : {}),
+      }),
+    });
+    return true;
+  }
+  return false;
 }

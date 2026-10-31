@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -86,4 +86,18 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
   return columns.includes('awaiting_admission')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN awaiting_admission INTEGER';
+}
+
+/**
+ * The v15 -> v16 step: the conversation row gains `server_read_watermarks`, the read marks taken on
+ * the SERVER's clock (`$lib/utils/chat/readState`, owner 2026-10-31). Additive and NULL on arrival:
+ * the stamped marks already held keep covering what they covered, and the next reading writes the
+ * first server mark.
+ */
+export function conversationServerReadWatermarksStatement(
+  columns: readonly string[]
+): string | null {
+  return columns.includes('server_read_watermarks')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN server_read_watermarks TEXT';
 }

@@ -105,7 +105,18 @@ describe('handleSystemEvent - read_watermark', () => {
 
     await handleSystemEvent('read_receipt', { messageIds: ['m1'] }, ctx as any);
 
-    expect(watermarks(ctx)).toEqual({ peer: 1000 });
+    // On the server clock: the instant is the row's sort key (`readOrderKey`).
+    expect((ctx.conversations.get('g1') as any).serverReadWatermarks).toEqual({ peer: 1000 });
+  });
+
+  it('a frame that says `serverAt` moves the server-clock map and leaves the stamped one', async () => {
+    const ctx = makeCtx({ senderNorm: 'peer', userId: 'me' });
+
+    await handleSystemEvent('read_watermark', { at: 7000, serverAt: 7000 }, ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).serverReadWatermarks).toEqual({ peer: 7000 });
+    expect(watermarks(ctx)).toEqual({});
+    expect(ctx.onReadStateAdvanced).toHaveBeenCalledOnce();
   });
 
   it('takes nothing from a legacy receipt naming messages we do not hold', async () => {

@@ -74,6 +74,7 @@ async function replay(
   >;
   reactionUpdates: Map<string, MessageReaction[]>;
   readWatermarkUpdates: ReadWatermarks;
+  serverReadWatermarkUpdates: ReadWatermarks;
   historyFloorUpdate: { at: number };
   pushed: unknown[];
 }> {
@@ -86,6 +87,7 @@ async function replay(
     >(),
     reactionUpdates: new Map<string, MessageReaction[]>(),
     readWatermarkUpdates: {} as ReadWatermarks,
+    serverReadWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },
     pushed: [] as unknown[],
   };
@@ -107,6 +109,7 @@ async function replay(
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,
+    serverReadWatermarkUpdates: sinks.serverReadWatermarkUpdates,
     historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
     dropOwnExcluded,
@@ -340,7 +343,33 @@ describe('replaying read state', () => {
       message('m1', OWNER),
     ]);
 
-    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
+    // The ids translate through the rows held, whose key is the server's clock (`readOrderKey`).
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
+    expect(result.readWatermarkUpdates).toEqual({});
+  });
+
+  it('puts a frame that says `serverAt` on the server clock, a bare `at` on the stamped one', async () => {
+    const fresh = await replay(
+      systemEvent('read_watermark', { at: 3_000, serverAt: 3_000 }),
+      OTHER,
+      []
+    );
+    expect(fresh.serverReadWatermarkUpdates).toEqual({ [OTHER]: 3_000 });
+    expect(fresh.readWatermarkUpdates).toEqual({});
+  });
+
+  it('takes the server-clock map a bundle carries beside the stamped one', async () => {
+    const result = await replay(
+      systemEvent('history_bundle', {
+        messages: [],
+        readWatermarks: { [OTHER]: 4_000 },
+        serverReadWatermarks: { [OTHER]: 4_500 },
+      }),
+      OTHER,
+      [message('m1', OWNER)]
+    );
+    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 4_000 });
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OTHER]: 4_500 });
   });
 
   it('takes nothing from a legacy receipt naming messages this device does not hold', async () => {

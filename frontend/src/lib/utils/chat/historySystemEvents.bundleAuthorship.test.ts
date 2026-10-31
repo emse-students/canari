@@ -84,6 +84,7 @@ async function replayBundle(
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: {} as ReadWatermarks,
+    serverReadWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },
     pushPendingMessage: (entry) => sinks.pushed.push(entry as Record<string, unknown>),
     dropOwnExcluded: async (m) => m,
