@@ -63,10 +63,10 @@
 "notif.form.open.body" = "The form is available - hurry, spots are limited!";
 "notif.form.paid_over_capacity.title" = "Payment on a full form";
 "notif.form.paid_over_capacity.body" = "“%1$@”: a payment arrived after the form was full. A refund is owed.";
-"notif.lydia.payments_active.title" = "Lydia payments active";
-"notif.lydia.payments_active.body" = "Lydia payments for %1$@ are active.";
-"notif.lydia.payments_paused.title" = "Lydia payments paused";
-"notif.lydia.payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
+"notif.lydia_payments_active.title" = "Lydia payments active";
+"notif.lydia_payments_active.body" = "Lydia payments for %1$@ are active.";
+"notif.lydia_payments_paused.title" = "Lydia payments paused";
+"notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";

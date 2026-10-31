@@ -76,10 +76,10 @@
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
-"notif.lydia.payments_active.title" = "Paiements Lydia actifs";
-"notif.lydia.payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
-"notif.lydia.payments_paused.title" = "Paiements Lydia suspendus";
-"notif.lydia.payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
+"notif.lydia_payments_active.title" = "Paiements Lydia actifs";
+"notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
+"notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";
+"notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";
