@@ -44,6 +44,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   bumpSeatGeneration,
   readSeatGeneration,
@@ -611,6 +612,15 @@ export class MembersController {
         message: 'This person cannot be added.',
       });
     }
+
+    // Nor across the review cohort's boundary (review-cohort-groups.ts), by the same reasoning.
+    await assertGroupStaysOnOneSide(
+      this.dataSource.manager,
+      safeGroupId,
+      safeUserId,
+      caller,
+      `[ADD_MEMBER][${traceId}]`
+    );
 
     this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 

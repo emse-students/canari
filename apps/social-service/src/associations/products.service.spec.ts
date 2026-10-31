@@ -2376,6 +2376,52 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  /**
+   * THE SHOP IS CLOSED TO A REVIEW ACCOUNT (review-cohort-reach.ts, owner 2026-10-31: "Tout
+   * fermer"): it sees and buys only what an association it is a member of sells, and a review
+   * account is a member of no real one. A member is not restricted (the cases above).
+   */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    beforeEach(() => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'user1';
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it("lists nothing of a real association to a review account, and its own association's products", async () => {
+      const { service, productRepo, assoRepo, manager } = makeService();
+      const items = [
+        product({ id: 'real', associationId: 'asso1' }),
+        product({ id: 'demo', associationId: 'asso-demo' }),
+      ];
+      productRepo.find.mockResolvedValue(items);
+      assoRepo.find.mockResolvedValue([asso(), asso({ id: 'asso-demo', slug: 'demo' })]);
+      manager.query.mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('FROM association_members') ? [{ associationId: 'asso-demo' }] : []
+        )
+      );
+
+      const listed = await service.listAllActive('user1');
+      expect(listed.map((p) => p.id)).toEqual(['demo']);
+    });
+
+    it('refuses a review account a checkout on a real association, typed, before anything is read', async () => {
+      const { service, productRepo } = makeService();
+      const err = await service
+        .createCheckoutSession('asso1', 'prod1', 'user1')
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'REVIEW_COHORT_BOUNDARY',
+      });
+      expect(productRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a tier is bought only as a RISE over the tier held (user, 2026-10-26)', () => {
     // Production's two Cercle tiers: no grid, no variantLevel; the dearer one carries the admin's
     // preferential price for holders of the cheaper one.

@@ -52,8 +52,10 @@ import {
 import {
   postVisibleToViewerSql,
   readInFeedAudience,
+  reviewCohortAuthorFilterSql,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
+import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
@@ -168,17 +170,6 @@ interface PostCapabilities {
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
   private static readonly LIST_CACHE_TTL = 30; // seconds
-
-  /**
-   * Verification service account (Google/Apple app review). Its authored posts are hidden
-   * from the feed for everyone except global admins and the account itself. Configurable via
-   * the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed). Only a hex user id is accepted
-   * so it can be safely inlined into raw SQL; anything else disables the restriction.
-   */
-  private readonly serviceAccountId = (() => {
-    const raw = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
-    return /^[a-f0-9]{1,128}$/i.test(raw) ? raw : '';
-  })();
 
   /** PostgreSQL BIGINT fields break JSON.stringify - convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
@@ -892,8 +883,11 @@ export class PostsService {
     // Extract mentions before saving so we can populate post.mentions
     const markdown: string = typeof data.markdown === 'string' ? data.markdown : '';
     const authorId: string = typeof data.authorId === 'string' ? data.authorId : '';
+    // A mention never crosses the review cohort's boundary: it is neither stored nor notified.
     const mentionedIds = markdown
-      ? this.notifications.resolveMentionedUserIds(markdown).filter((id) => id !== authorId)
+      ? this.notifications
+          .resolveMentionedUserIds(markdown)
+          .filter((id) => id !== authorId && sameSideOfReviewCohort(authorId, id))
       : [];
     if (mentionedIds.length > 0) {
       data.mentions = mentionedIds;
@@ -1031,7 +1025,7 @@ export class PostsService {
          ${promoSql}
          ${this.hiddenFilterSql(isAdmin)}
          ${this.liveReelFilterSql()}
-         ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
+         ${reviewCohortAuthorFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
        ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC
@@ -1160,16 +1154,6 @@ export class PostsService {
   }
 
   /**
-   * The store-review service account is invisible to every reader but itself and a platform admin.
-   *
-   * `serviceAccountId` is validated as hex at construction, so inlining it is safe.
-   */
-  private serviceAccountFilterSql(isAdmin: boolean, viewerId: string | undefined): string {
-    if (!this.serviceAccountId || isAdmin || viewerId === this.serviceAccountId) return '';
-    return `AND posts."authorId" <> '${this.serviceAccountId}'`;
-  }
-
-  /**
    * The clause that keeps a blocked account's posts out of one viewer's feed.
    *
    * IT COVERS ONLY A POST WHOSE AUTHOR THAT VIEWER COULD ALREADY SEE, and the exemption is the
@@ -1286,7 +1270,7 @@ export class PostsService {
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
     const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singlePhotos)}`;
-    const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
+    const serviceAccountFilter = reviewCohortAuthorFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
     const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
@@ -1821,7 +1805,7 @@ export class PostsService {
     const mentionedIds = post.markdown
       ? this.notifications
           .resolveMentionedUserIds(post.markdown)
-          .filter((id) => id !== post.authorId)
+          .filter((id) => id !== post.authorId && sameSideOfReviewCohort(post.authorId, id))
       : [];
     post.mentions = mentionedIds;
 

@@ -1,3 +1,4 @@
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
@@ -8,6 +9,7 @@ import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-targe
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService, short } from './follows.service';
+import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
 /** The bell row a request writes for the person asked, and the one an acceptance writes back. */
 export const FOLLOW_REQUEST_NOTIFICATION = 'follow_request';
@@ -120,6 +122,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."createdAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]
@@ -133,7 +136,8 @@ export class FollowRequestsService {
     const rows: { n: string }[] = await this.dataSource.query(
       `SELECT count(*) AS n FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}`,
+          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}`,
       [userId, FOLLOW_PENDING]
     );
     return { pending: Number(rows[0]?.n ?? 0) };
@@ -145,6 +149,14 @@ export class FollowRequestsService {
    * best-effort cross-service call, so the statement does not trust it to have run).
    */
   async accept(userId: string, followerUserId: string): Promise<{ ok: boolean }> {
+    // A request recorded across the review cohort's boundary before the rule existed is never
+    // accepted (review-cohort.ts).
+    if (!sameSideOfReviewCohort(userId, followerUserId)) {
+      this.logger.log(
+        `[FOLLOW-REQ] ${short(userId)} accept of ${short(followerUserId)}: refused, across the review cohort's boundary`
+      );
+      throw new ReviewCohortBoundaryException();
+    }
     const updated = returnedRows<{ id: string }>(
       await this.dataSource.query(
         `UPDATE user_follows f SET status = $3, "acceptedAt" = now()
@@ -201,6 +213,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."acceptedAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_ACCEPTED, clampLimit(limit), Math.max(0, offset)]
@@ -255,6 +268,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followerUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."createdAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]

@@ -223,4 +223,72 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
       expect(transaction).not.toHaveBeenCalled();
     }
   );
+
+  /**
+   * The review cohort (review-cohort.ts) is held here by the same reasoning as a block: no
+   * conversation ever holds a review account and a member, whichever side asks.
+   */
+  describe('the review cohort', () => {
+    const REVIEWER = 'reviewer-1';
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    /** The group already holds somebody on the other side of the boundary from the target. */
+    let groupCrosses: boolean;
+
+    beforeEach(() => {
+      process.env.SERVICE_ACCOUNT_USER_ID = REVIEWER;
+      groupCrosses = false;
+      jest.mocked(writePendingSeats).mockClear();
+      blockQuery.mockImplementation((sql: string) =>
+        Promise.resolve(sql.includes('dm_group_members') && groupCrosses ? [{ '?column?': 1 }] : [])
+      );
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it.each([
+      ['a member adding a review account', CALLER, REVIEWER],
+      ['a review account adding a member', REVIEWER, TARGET],
+    ])(
+      'refuses %s with REVIEW_COHORT_BOUNDARY and writes nothing',
+      async (_case, caller, target) => {
+        groupRepo.findOne.mockResolvedValue({ id: GROUP, createdBy: caller });
+        const err = await controller
+          .addGroupMember(GROUP, { userId: target }, caller, undefined)
+          .catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'REVIEW_COHORT_BOUNDARY',
+        });
+        expect(JSON.stringify((err as ForbiddenException).getResponse())).not.toContain(REVIEWER);
+        expect(writePendingSeats).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses an add on one side into a group already holding the other side', async () => {
+      groupCrosses = true;
+      const err = await controller
+        .addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+        .catch((e: unknown) => e);
+
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'REVIEW_COHORT_BOUNDARY',
+      });
+      expect(writePendingSeats).not.toHaveBeenCalled();
+    });
+
+    it('lets two members, and two review accounts, add each other', async () => {
+      jest.mocked(writePendingSeats).mockResolvedValue('written');
+      await expect(
+        controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+      ).resolves.toEqual({ status: 'added' });
+      process.env.SERVICE_ACCOUNT_USER_ID = `${CALLER},${TARGET}`;
+      await expect(
+        controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+      ).resolves.toEqual({ status: 'added' });
+    });
+  });
 });

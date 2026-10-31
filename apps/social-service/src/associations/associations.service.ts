@@ -34,6 +34,11 @@ import {
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import {
+  assertReviewerReachesAssociation,
+  assertRosterStaysOnOneSide,
+} from './review-cohort-reach';
+import { isInReviewCohort } from '../review-cohort';
 import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import {
@@ -1041,6 +1046,19 @@ export class AssociationsService {
   // ── Members ───────────────────────────────────────────────────────────────
 
   /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) a review account reading the roster of an association it
+   * is not a member of (review-cohort-reach.ts). A no-op for anybody else.
+   */
+  async assertReviewerMayReadRoster(userId: string, associationId: string): Promise<void> {
+    await assertReviewerReachesAssociation(
+      this.memberRepo.manager,
+      userId,
+      associationId,
+      'member list'
+    );
+  }
+
+  /**
    * Lists all members of an association.
    * Returns `isAdmin` (permissions > 0) for public callers; the raw `permissions`
    * bitmask is included for every member when `includePermissions` is true (caller has
@@ -1107,19 +1125,22 @@ export class AssociationsService {
       .addOrderBy('m."createdAt"', 'ASC')
       .getRawMany();
 
-    return rows.map((r) => ({
-      id: r.m_id,
-      userId: r.m_userId,
-      role: r.m_role,
-      isAdmin: Number(r.m_permissions ?? 0) > 0,
-      // The same precedence every other surface uses - this line built its own, preferring
-      // `displayName`, so the vitrine could name a member differently from the app.
-      displayName: formatUserDisplayNameFromRaw(r as Record<string, unknown>) || null,
-      firstName: r.firstName || null,
-      lastName: r.lastName || null,
-      promo: r.promo ?? null,
-      createdAt: r.m_createdAt,
-    }));
+    // A review account has no public identity (review-cohort.ts): never on a public roster.
+    return rows
+      .filter((r) => !isInReviewCohort(r.m_userId))
+      .map((r) => ({
+        id: r.m_id,
+        userId: r.m_userId,
+        role: r.m_role,
+        isAdmin: Number(r.m_permissions ?? 0) > 0,
+        // The same precedence every other surface uses - this line built its own, preferring
+        // `displayName`, so the vitrine could name a member differently from the app.
+        displayName: formatUserDisplayNameFromRaw(r as Record<string, unknown>) || null,
+        firstName: r.firstName || null,
+        lastName: r.lastName || null,
+        promo: r.promo ?? null,
+        createdAt: r.m_createdAt,
+      }));
   }
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
@@ -1131,6 +1152,8 @@ export class AssociationsService {
     if (existing) {
       throw new BadRequestException('User is already a member');
     }
+    // Never across the review cohort's boundary (review-cohort-reach.ts).
+    await assertRosterStaysOnOneSide(this.memberRepo.manager, associationId, userId);
 
     // Append new members at the END of the ordered list (not the top): take the current
     // max sortOrder + 1. `listMembers` orders by sortOrder ASC, so without this a new
@@ -2141,6 +2164,7 @@ export class AssociationsService {
     let campusWide: string | null = null;
     if (spaces.length === 0) {
       const rows = (await this.assoRepo.manager.query(READER_PROFILE_SQL, [userId])) as Array<{
+        id: string;
         campus: string | null;
         cursus: unknown;
       }>;

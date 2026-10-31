@@ -29,6 +29,13 @@ import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
 import { UserIdTakenError, UserRowGoneError, updateUserColumns } from './user-write';
+import {
+  assertReviewCohortConfigured,
+  isInReviewCohort,
+  reviewCohort,
+  sameSideOfReviewCohort,
+  ReviewCohortBoundaryException,
+} from '../review-cohort';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 /** Service managing user persistence and OIDC upsert logic. */
@@ -37,14 +44,6 @@ export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
-  /**
-   * Verification service account used by Google/Apple app reviewers. It is hidden from
-   * non-admin users (search + directory) and can itself only discover global admins.
-   * Configurable via the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed); empty
-   * disables all service-account restrictions.
-   */
-  private readonly serviceAccountId = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
-
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -57,6 +56,8 @@ export class UsersService implements OnModuleInit {
    * matching) and `pg_trgm` (trigram similarity, for typo-tolerant fuzzy matching and ranking).
    */
   async onModuleInit(): Promise<void> {
+    // A bad SERVICE_ACCOUNT_USER_ID entry stops the boot HERE, before anything is served.
+    this.logger.log(`[REVIEW_COHORT] ${assertReviewCohortConfigured()} review account(s)`);
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS unaccent');
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
     this.logger.log('unaccent + pg_trgm extensions ready');
@@ -308,6 +309,35 @@ export class UsersService implements OnModuleInit {
     await updateUserColumns(this.userRepository, targetId, { admin }, 'admin.set', this.logger);
   }
 
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) a profile the requester may not open across the review
+   * cohort's boundary (`review-cohort.ts`): a review account opens only the cohort's, and anybody
+   * but a global admin never opens a review account's. Asked BEFORE the row is read, so the answer
+   * does not depend on whether the target exists.
+   */
+  async assertMayOpenProfile(requesterId: string, targetId: string): Promise<void> {
+    if (sameSideOfReviewCohort(requesterId, targetId)) return;
+    if (!isInReviewCohort(requesterId) && (await this.isUserAdmin(requesterId))) return;
+    this.logger.log(
+      `[REVIEW_COHORT] profile refused: requester=${requesterId.slice(0, 8)} target=${targetId.slice(0, 8)}`
+    );
+    throw new ReviewCohortBoundaryException();
+  }
+
+  /**
+   * The ids among `ids` whose profile `requesterId` may read across the review cohort's boundary -
+   * the batch form of {@link assertMayOpenProfile}. An id left out is answered like an unknown one.
+   */
+  async profilesOpenTo(requesterId: string, ids: string[]): Promise<string[]> {
+    if (ids.every((id) => sameSideOfReviewCohort(requesterId, id))) return ids;
+    if (!isInReviewCohort(requesterId) && (await this.isUserAdmin(requesterId))) return ids;
+    const open = ids.filter((id) => sameSideOfReviewCohort(requesterId, id));
+    this.logger.debug(
+      `[REVIEW_COHORT] batch for ${requesterId.slice(0, 8)}: ${ids.length - open.length} id(s) across the boundary left out`
+    );
+    return open;
+  }
+
   /** Returns all users (id, displayName, admin) - admin-only listing. */
   async listAll(): Promise<Pick<User, 'id' | 'displayName' | 'admin'>[]> {
     return this.userRepository
@@ -333,24 +363,25 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Restricts a user query builder (alias `user`) to enforce service-account visibility:
-   * - The service account itself may only discover global admins.
-   * - Non-admin requesters never see the service account.
-   * - Global admins are unaffected. No-op when no service account is configured.
+   * Restricts a user query builder (alias `user`) to the review cohort's rule (`review-cohort.ts`):
+   * - a review account finds the cohort and nobody else - no member, no admin, so no real name;
+   * - anybody else but a global admin never finds a review account;
+   * - a global admin finds everybody, so the team can reach the review accounts.
+   * No-op when no cohort is configured.
    */
-  private async applyServiceAccountVisibility(
+  private async applyReviewCohortVisibility(
     qb: SelectQueryBuilder<User>,
     requesterId?: string
   ): Promise<void> {
-    const sa = this.serviceAccountId;
-    if (!sa) return;
-    if (requesterId && requesterId === sa) {
-      // The verification account must not be able to browse the wider student body.
-      qb.andWhere('user.admin = :saAdminOnly', { saAdminOnly: true });
+    const cohort = reviewCohort();
+    if (cohort.length === 0) return;
+    if (requesterId && cohort.includes(requesterId)) {
+      this.logger.debug(`[REVIEW_COHORT] ${requesterId.slice(0, 8)} finds the cohort only`);
+      qb.andWhere('user.id IN (:...reviewCohort)', { reviewCohort: [...cohort] });
       return;
     }
     if (!(await this.isUserAdmin(requesterId ?? ''))) {
-      qb.andWhere('user.id != :serviceAccountId', { serviceAccountId: sa });
+      qb.andWhere('user.id NOT IN (:...reviewCohort)', { reviewCohort: [...cohort] });
     }
   }
 
@@ -405,7 +436,7 @@ export class UsersService implements OnModuleInit {
     const applied = applyFuzzyNameSearch(qb, query);
     if (!applied) return [];
 
-    await this.applyServiceAccountVisibility(qb, requesterId);
+    await this.applyReviewCohortVisibility(qb, requesterId);
     await this.applyBlockVisibility(qb, requesterId);
 
     return qb.take(10).getMany();
@@ -491,7 +522,7 @@ export class UsersService implements OnModuleInit {
       qb.andWhere('user.id IN (:...memberUserIds)', { memberUserIds });
     }
 
-    await this.applyServiceAccountVisibility(qb, requesterId);
+    await this.applyReviewCohortVisibility(qb, requesterId);
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {

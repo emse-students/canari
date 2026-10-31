@@ -414,6 +414,26 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     });
   });
 
+  // The review cohort (review-cohort.ts) is refused at the same gate, whichever side commits.
+  it.each([
+    ['the invitee is a review account', () => INVITEE.userId],
+    ['the inviter is a review account', () => INVITER.userId],
+  ])(
+    'refuses an Add across the review cohort whole when %s: nothing advanced, nobody enrolled',
+    async (_case, reviewer) => {
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer();
+      try {
+        await expect(addCommit(1)).resolves.toMatchObject(refusedAdmit);
+        expect(await epoch()).toBe(1);
+        expect(await enrolment()).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    }
+  );
+
   it('a refusal of one person enrols nobody else, and logs no admission for the rolled-back advance', async () => {
     const OTHER = { userId: 'other', deviceId: 'dev-o' };
     await q(

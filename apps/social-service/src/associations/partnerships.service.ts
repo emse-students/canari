@@ -10,6 +10,10 @@ import { In, IsNull, Not, Repository } from 'typeorm';
 import { PartnershipCard, PartnershipClaimMode } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
+import {
+  assertReviewerReachesAssociation,
+  associationsReachedByReviewer,
+} from './review-cohort-reach';
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
 import { isUniqueViolation } from '../common/pg-errors';
@@ -112,10 +116,17 @@ export class PartnershipsService {
 
   /** Active partnership cards across every association, shown on the shop page. */
   async listAllActive(userId: string): Promise<PartnershipCardView[]> {
-    const cards = await this.cardRepo.find({
+    const all = await this.cardRepo.find({
       where: { isActive: true },
       order: { associationId: 'ASC', createdAt: 'ASC' },
     });
+    // A review account sees only the cards of associations it is a member of (review-cohort-reach.ts).
+    const reached = await associationsReachedByReviewer(
+      this.cardRepo.manager,
+      userId,
+      all.map((c) => c.associationId)
+    );
+    const cards = reached === null ? all : all.filter((c) => reached.has(c.associationId));
     return this.annotateViewerCotisant(cards, userId);
   }
 
@@ -378,6 +389,12 @@ export class PartnershipsService {
   async claimCard(cardId: string, userId: string): Promise<PartnershipClaimResult> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, isActive: true } });
     if (!card) throw partnershipNotFound();
+    await assertReviewerReachesAssociation(
+      this.cardRepo.manager,
+      userId,
+      card.associationId,
+      'partnership claim'
+    );
 
     if (card.membersOnly) {
       const asso = await this.assoRepo.findOne({ where: { id: card.associationId } });

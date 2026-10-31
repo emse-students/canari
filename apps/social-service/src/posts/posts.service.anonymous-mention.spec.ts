@@ -89,4 +89,25 @@ describe('PostsService.createPost mention notifications mask an anonymous author
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ actorId: 'author-1', actorName: 'Real Name' });
   });
+
+  /** The review cohort (review-cohort.ts): a mention never notifies across it, either way. */
+  it.each([
+    ['a review account mentioning a member', 'author-1'],
+    ['a member mentioning a review account', RECIPIENT],
+  ])('tells nobody when %s', async (_case, cohort) => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = cohort;
+    try {
+      const { service, created } = makeService();
+      await service.createPost(
+        { markdown: MARKDOWN, authorId: 'author-1', anonymous: false },
+        false
+      );
+      await flush();
+      expect(created).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    }
+  });
 });

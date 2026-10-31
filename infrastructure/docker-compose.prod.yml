@@ -234,6 +234,8 @@ services:
     expose:
       - "3010"
     environment:
+      # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
       NODE_ENV: ${NODE_ENV:-production}
       # Same as core/social: browser origin for CORS (same-site prod usually unaffected).

@@ -98,4 +98,67 @@ describe('PostInteractionsService.addComment notifications', () => {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
   });
+
+  /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */
+  it.each([
+    ['a review account commenting', 'reader'],
+    ['a member commenting among review accounts', 'author,parent-author,mentioned'],
+  ])('tells nobody across the review cohort: %s', async (_case, cohort) => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = cohort;
+    try {
+      const { service, created, push, notifications } = makeService({
+        id: 'p1',
+        authorId: 'author',
+        associationId: null,
+        comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
+      });
+      notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
+      await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
+      await flush();
+      expect(created).toEqual([]);
+      expect(push.notifyContent).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    }
+  });
+});
+
+describe('PostInteractionsService.addReaction across the review cohort', () => {
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it.each([
+    ['a review account reacting to a member', 'reader'],
+    ["a member reacting to a review account's post", 'author'],
+    ['nobody in the cohort: the author is told', ''],
+  ])('%s', async (_case, cohort) => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = cohort;
+    try {
+      const notifications = {
+        createNotification: jest.fn(() => Promise.resolve()),
+        resolveActorName: jest.fn(() => Promise.resolve('Actor')),
+      };
+      const push = { notifyContent: jest.fn(() => Promise.resolve()) };
+      const post = { id: 'p1', authorId: 'author', reactions: {} };
+      const service = new PostInteractionsService(
+        {
+          findOne: jest.fn(() => Promise.resolve(post)),
+          save: jest.fn((p: unknown) => Promise.resolve(p)),
+        } as unknown as Repository<Post>,
+        notifications as unknown as PostNotificationsService,
+        push as unknown as PushService,
+        {} as PostMediaRetentionService,
+        {} as CommentIdentityService
+      );
+      await service.addReaction('p1', 'reader', 'Rire');
+      await flush();
+      expect(notifications.createNotification).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
+      expect(push.notifyContent).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    }
+  });
 });

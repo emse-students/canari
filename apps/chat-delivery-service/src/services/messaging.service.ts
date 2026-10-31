@@ -79,6 +79,7 @@ import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
@@ -4163,6 +4164,10 @@ export class MessagingService {
       }
       if (await isBlockedBetween(m, committer, userId)) {
         refuse(userId, 'blocked');
+        continue;
+      }
+      if (!sameSideOfReviewCohort(committer, userId)) {
+        refuse(userId, 'review_cohort_boundary');
         continue;
       }
       // An awaiting seat is lifted by the caller, never re-enrolled.

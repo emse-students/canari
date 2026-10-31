@@ -456,6 +456,26 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       await expect(lives.manifest(CAROL, live.id)).resolves.toMatchObject({ nextIndex: 1 });
     });
 
+    it("opens a review account's live to an admin for the key and the manifest only - never its chat - and to no member", async () => {
+      // review-cohort.ts: no admin shares the cohort's space, so `adminSeesCohort` is what lets a
+      // report be judged; a write to the live stays refused (live-chat.controller via mayWatch).
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = ALICE;
+      await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+      try {
+        const live = await start();
+        await expect(lives.get(FRANK, live.id)).resolves.toMatchObject({ key: KEY });
+        await expect(lives.manifest(FRANK, live.id)).resolves.toMatchObject({ nextIndex: 0 });
+        expect((await refusal(lives.mayWatch(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
+        expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_NOT_FOUND');
+        await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
+      } finally {
+        await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
     it('lets only the broadcaster remove, and never themselves', async () => {
       const live = await start();
       // 404, the answer to a live that does not exist: a write route is no existence oracle.

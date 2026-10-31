@@ -20,7 +20,7 @@ import {
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
-import { DEVICE_REVOKED_BY_OWNER } from '$lib/utils/refusalCodes';
+import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -681,6 +681,19 @@ export class UserBlockedError extends Error {
   constructor(readonly userId: string) {
     super(`A block stands between the caller and ${userId}`);
     this.name = 'UserBlockedError';
+  }
+}
+
+/**
+ * The server refused a membership mutation across the review cohort's boundary (the store
+ * reviewers' accounts and the members never share a conversation): `REVIEW_COHORT_BOUNDARY`.
+ * Typed like {@link UserBlockedError} and for the same reason - the flow stops on it, cleanly, and
+ * nothing reads the server's sentence. Neutral: it never says the other account is a review account.
+ */
+export class ReviewCohortBoundaryError extends Error {
+  constructor(readonly userId: string) {
+    super(`${userId} cannot be added from this account`);
+    this.name = 'ReviewCohortBoundaryError';
   }
 }
 
@@ -1459,9 +1472,9 @@ export class MlsDeliveryApi {
    * Writes the device seats of `userId` in `groupId` once an accepted commit admitted them (and, for
    * a new group's creator, enrols them into its empty roster). Idempotent.
    *
-   * TWO refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`: the
-   * person may not be added, and a group that pretended otherwise would show a member the server does
-   * not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
+   * THREE refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`
+   * and `REVIEW_COHORT_BOUNDARY` ({@link ReviewCohortBoundaryError}): the person may not be added, and
+   * a group that pretended otherwise would show a member the server does not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
    * them - a Decline or a departure came before the Add was decided - so the caller withholds the
    * Welcome. Every other non-2xx keeps the historical tolerance of this call, which callers up and
    * down the invite path rely on, logged: `f` resolves rather than throwing on a bad status.
@@ -1476,10 +1489,17 @@ export class MlsDeliveryApi {
       if (res.ok) return;
       const refusal = await refusalFromResponse(res, 'registerMember refused');
       if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
+      if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
       if (refusal.code === 'MEMBER_NOT_ADMITTED') throw new MemberNotAdmittedError(groupId, userId);
       console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
-      if (e instanceof UserBlockedError || e instanceof MemberNotAdmittedError) throw e;
+      if (
+        e instanceof UserBlockedError ||
+        e instanceof ReviewCohortBoundaryError ||
+        e instanceof MemberNotAdmittedError
+      ) {
+        throw e;
+      }
       console.error('Failed to register member', e);
     }
   }

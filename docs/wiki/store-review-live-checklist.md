@@ -41,15 +41,19 @@ frame. Target 2-3 minutes, English captions added after capture, under 20 % of t
 | 5 | The broadcaster hides a chat line and removes a viewer | `LiveBroadcasterChat` | B |
 | 6 | The viewer reports the live (reason), is offered the block, blocks; the Settings blocked list | Flag, dialog, confirm, list | A |
 | 7 | The viewer reports one chat line | chat line report | A |
-| 8 | Staff side: the report in `/admin/moderation`, the standing, "Couper le live", confirm | admin queue, desktop browser cropped to the page | moderator M |
+| 8 | Staff side: the report in `/admin/moderation`, the standing, "Couper le live", confirm | admin queue, desktop browser cropped to the page | a real moderator of the team, recorded and blurred - never a review account |
 | 9 | The cut reaches both: the viewer's end screen, the broadcaster's bell row | both phones | A, B |
 | 10 | Report and block a post or person (non-live UGC: a reviewer judges the app) | profile menu | A |
 
-**Accounts needed** (the owner creates them: a sign-in is production-adjacent, see
-[store-listings](store-listings.md#4-privacy-the-constraint-that-shapes-the-pipeline)): the store-review
-service account A, a fictional broadcaster B, a moderator M holding the moderation right, all on the
-estate the review build points at, with A and B sharing a space so A sees B's live
-([lives](services/lives.md#who-may-watch-the-rule-of-a-post)).
+**Accounts needed** (decided 2026-10-31): the review account A the reviewer signs in with (it serves
+Google Play's review too), and a fictional counterpart B that posts, broadcasts and calls. Both are in
+the **review cohort**, a space of its own: A reads only what the cohort writes, and no member ever
+reads it ([profiles-and-access](profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)),
+so B's live reaches A and nobody else. **No moderator account is given to a reviewer**: every
+moderator reads the GLOBAL queue (D23), real reports and real reporters included, so the moderation
+scene is the video's, recorded by a real moderator and blurred. B's sign-in and PIN go in the notes for
+a second device, with no staffed window; the accounts and their credentials are in the private
+operations notes.
 
 **To blur or avoid**: any real name in the directory, member lists and search (not scoped); the
 "Environnement de test" banner on dev; the status bar and any notification; the admin queue's other
@@ -90,19 +94,23 @@ Brackets are the owner's values.
 > - Terms: members accept the live rules before their first broadcast; the terms of use define
 >   objectionable content (section 6). Contact: terms of use, section 15 [support address].
 >
-> To review: sign in with "Connexion externe (service-account)" using [login / password]. This
-> account can watch a live that a member of our team broadcasts during [window, Europe/Paris];
-> contact [address] to arrange another time. The Flag button is in the top bar of the live. The
-> moderation queue is shown in the attached video: [link].
+> To review: sign in with "Connexion externe (service-account)" using [login / password]. To see a
+> live, sign in on a second device with the demo counterpart [login / password / PIN] and start a
+> live from it; the first device sees it on the Home feed. The Flag button is in the top bar of the
+> live. The moderation queue is shown in the video: [link].
+
+**App Store Connect caps the Notes field at about 4000 characters** _(unverified against today's
+form)_, so the UGC statement goes in an attachment and the Notes point at it.
 
 ## 4. What the owner must provide
 
-1. The reviewer sign-in (service account A) and its secret, kept out of the repository; the broadcaster B and the moderator M.
-2. A staffed window, or a standing arrangement, in which a team member goes live for the reviewer.
+1. The reviewer sign-in (review account A) and the counterpart B, both in the review cohort; their secrets kept out of the repository. No moderator account (above).
+2. No staffed window (2026-10-31): B's sign-in for a second device, plus the videos.
 3. The filtering statement (R1), the terms' lives paragraph and the support address (R4, R5): [store-ugc-answers](store-ugc-answers.md#owed-before-a-submission-carrying-lives).
 4. The build the reviewer gets: an external TestFlight pre-release (Beta App Review, the exposure of the 2.5.4 refusal, [mobile](frontend/mobile.md)) or a stable with lives flipped on.
 5. A private link for the video, and a look at every frame.
 6. Confirmation that the broadcaster's strike screens and the live-chat report control are in the review build.
+7. The review cohort's secret changed in its order: the release ships with the CURRENT value, then - once no community seat, association membership or booking crosses the full list - the secret becomes the full list, then the same release is redeployed ([profiles-and-access](profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)). The counterpart's posts are seeded before any of it.
 
 ## See also
 

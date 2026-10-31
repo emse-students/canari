@@ -1,3 +1,5 @@
+import { REVIEW_COHORT_BOUNDARY } from '../review-cohort';
+
 /**
  * THE STABLE `code` OF EVERY REFUSAL A USER CAN ACT ON, one name each.
  *
@@ -32,6 +34,11 @@ export const RefusalCode = {
   KEY_DISTRIBUTION_GROUP: 'KEY_DISTRIBUTION_GROUP',
   /** 403 - a block stands between two people. Neutral: never who blocked whom. */
   USER_BLOCKED: 'USER_BLOCKED',
+  /**
+   * 403 - an act across the review cohort's boundary (`review-cohort.ts`, which names the value and
+   * throws it as `ReviewCohortBoundaryException`, a `refusalBody`-shaped body). Neutral, like a block.
+   */
+  REVIEW_COHORT_BOUNDARY: REVIEW_COHORT_BOUNDARY,
   /** 403 - the caller is not a member of the conversation it addressed. */
   NOT_A_MEMBER: 'NOT_A_MEMBER',
   /** 403 - the caller may not change this group's roster. */

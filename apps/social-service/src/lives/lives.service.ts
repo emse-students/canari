@@ -236,6 +236,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * So no segment is recorded after its live's end, and none is stored after its purge - except a
  * write that outlives the store's own timeout, which the orphan reaper takes.
  */
+/**
+ * The key and the manifest of a live: the one read a platform admin may make of a review account's
+ * live, by its id, to judge a report (`liveVisibleToUserSql`'s `adminSeesCohort`). Never a write.
+ */
+const WATCH_ONLY = { adminSeesCohort: true } as const;
+
 @Injectable()
 export class LivesService implements OnModuleDestroy {
   private readonly logger = new Logger(LivesService.name);
@@ -436,7 +442,7 @@ export class LivesService implements OnModuleDestroy {
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveView> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
     const key = openLiveKeyOr503(row.id, row);
     await this.takeSeat(row, viewerId);
@@ -449,7 +455,7 @@ export class LivesService implements OnModuleDestroy {
    * 410 from the moment the live has ended: the manifest stops at `endedAt`.
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
@@ -1565,7 +1571,9 @@ export class LivesService implements OnModuleDestroy {
    * writes (WP-L6), which are refused exactly as the key is. Throws the same typed refusals.
    */
   async mayWatch(viewerId: string, liveId: string): Promise<void> {
-    await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    // A WRITE to the live (a chat line, a burst): never by an admin across the review cohort's
+    // boundary - `adminSeesCohort` opens the key and the manifest to judge a report, nothing more.
+    await this.assertMayWatch(this.db.manager, viewerId, liveId, { adminSeesCohort: false });
   }
 
   /**
@@ -1581,12 +1589,13 @@ export class LivesService implements OnModuleDestroy {
   private async assertMayWatch(
     manager: EntityManager,
     viewerId: string,
-    liveId: string
+    liveId: string,
+    opts: { adminSeesCohort: boolean }
   ): Promise<LiveRow & { serverNow: Date }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
     const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
       `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
-              ${liveVisibleToViewerSql('lives', '$2')} AS visible
+              ${liveVisibleToViewerSql('lives', '$2', opts)} AS visible
          FROM lives WHERE id = $1`,
       [liveId, viewerId]
     );

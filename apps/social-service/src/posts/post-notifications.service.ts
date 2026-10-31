@@ -43,6 +43,7 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
+import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
 /**
  * What a notification ABOUT an anonymous post carries instead of the real author - the identity
@@ -483,13 +484,19 @@ export class PostNotificationsService {
     });
   }
 
-  /** Returns the most recent notifications for a user, newest first. */
+  /**
+   * Returns the most recent notifications for a user, newest first - never one whose actor stands
+   * across the review cohort's boundary (`review-cohort.ts`): a row written before the rule is left
+   * out, so nobody has to delete it.
+   */
   async getNotifications(userId: string, limit = 30) {
-    return this.notifRepo.find({
-      where: { recipientId: userId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
+    return this.notifRepo
+      .createQueryBuilder('n')
+      .where('n."recipientId" = :userId', { userId })
+      .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
+      .orderBy('n.createdAt', 'DESC')
+      .take(limit)
+      .getMany();
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

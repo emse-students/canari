@@ -98,6 +98,41 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
     });
   });
 
+  /** Closed to a review account (review-cohort-reach.ts): no real association's card, listed or claimed. */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    beforeEach(() => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it("lists no real association's card to a review account, and every one to a member", async () => {
+      const { service, cardRepo, assoRepo, manager } = makeService();
+      Object.assign(cardRepo, { manager });
+      cardRepo.find.mockResolvedValue([card()]);
+      assoRepo.find.mockResolvedValue([asso()]);
+      expect(await service.listAllActive('reviewer')).toEqual([]);
+      expect(await service.listAllActive('user1')).toHaveLength(1);
+    });
+
+    it('refuses a review account a claim on a real association, typed, and claims nothing', async () => {
+      const { service, cardRepo, manager } = makeService();
+      Object.assign(cardRepo, { manager });
+      cardRepo.findOne.mockResolvedValue(card({ claimMode: 'text', staticText: 'Show your ID' }));
+      await expect(service.claimCard('card1', 'reviewer')).rejects.toMatchObject({
+        response: { code: 'REVIEW_COHORT_BOUNDARY' },
+      });
+      expect(manager.transaction).not.toHaveBeenCalled();
+      await expect(service.claimCard('card1', 'user1')).resolves.toEqual({
+        mode: 'text',
+        staticText: 'Show your ID',
+      });
+    });
+  });
+
   describe('claimCard - code_pool idempotency', () => {
     it('assigns a code on first claim and returns the SAME code on a revisit, without a second write', async () => {
       const { service, cardRepo, codeRepo, manager } = makeService();

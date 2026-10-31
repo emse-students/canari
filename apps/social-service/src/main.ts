@@ -1,4 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { assertReviewCohortConfigured } from './review-cohort';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
@@ -7,6 +9,11 @@ import { drainOnSigterm } from './drain-on-sigterm';
 import { ChannelService } from './channels/channel.service';
 
 async function bootstrap() {
+  // A bad SERVICE_ACCOUNT_USER_ID entry stops the boot HERE, before anything is served
+  // (review-cohort.ts): the review accounts are never left visible by a typo.
+  new Logger('ReviewCohort').log(
+    `[REVIEW_COHORT] ${assertReviewCohortConfigured()} review account(s)`
+  );
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
 

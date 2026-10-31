@@ -7,7 +7,7 @@ import {
   refusalStatus,
 } from '$lib/utils/apiRefusal';
 import { USER_BLOCKED_CODE } from '$lib/users/blocks';
-import { describeRefusalCode } from '$lib/utils/refusalCodes';
+import { REVIEW_COHORT_BOUNDARY_CODE, describeRefusalCode } from '$lib/utils/refusalCodes';
 
 /** The server's kill switch refused (`platform_config.calls_mode`): every call, or video only. */
 const CALLS_CLOSED_CODES: readonly string[] = ['CALLS_DISABLED', 'CALLS_VIDEO_DISABLED'];
@@ -173,8 +173,12 @@ export function describeCallFailure(error: unknown): string {
     // Off by configuration is not "unavailable right now": it will be the same on the next try.
     return error.code === TURN_DISABLED_CODE ? m.call_relay_disabled() : m.call_relay_withheld();
   }
-  // A block, on either side: neutral, as every block refusal is - never who blocked whom.
-  if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
+  // A block, on either side, or the review cohort's boundary: neutral, as every block refusal is -
+  // never who blocked whom, never that the other account is a review account.
+  const refused = refusalCode(error);
+  if (refused === USER_BLOCKED_CODE || refused === REVIEW_COHORT_BOUNDARY_CODE) {
+    return m.call_unavailable();
+  }
   // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
   const code = refusalCode(error);
   if (code && CALLS_CLOSED_CODES.includes(code)) {

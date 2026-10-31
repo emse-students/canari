@@ -18,6 +18,7 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 import { ModerationService } from '../moderation/moderation.service';
 import { FOLLOW_PAGE_MAX, FollowRequestsService } from './follow-requests.service';
 import { FollowsService } from './follows.service';
+import { sameSideOfReviewCohort } from '../review-cohort';
 
 /**
  * Asks one account may make per minute, ALL targets together: the route's parameter is `:userId`,
@@ -82,6 +83,9 @@ export class FollowRequestsController {
     @Headers('x-user-id') xUserId: string,
     @Param('userId') userId: string
   ) {
+    // Across the review cohort's boundary there is no follow to report, even one written before
+    // the rule (review-cohort.ts): it reads as none, as it does in every list.
+    if (!sameSideOfReviewCohort(xUserId, userId)) return { following: false, status: null };
     const status = await this.follows.userFollowStatus(xUserId, userId);
     return { following: status !== null, status };
   }

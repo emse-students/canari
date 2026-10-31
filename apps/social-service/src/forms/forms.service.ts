@@ -47,6 +47,8 @@ import {
   hasFileQuestion,
   type AnswerFileState,
 } from './form-files.service';
+import { assertReviewerReachesAssociation } from '../associations/review-cohort-reach';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -1239,6 +1241,24 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
+    // Across the review cohort's boundary nothing is submitted or bought: a review account answers
+    // only its own associations' forms, and nobody answers a review account's personal form
+    // (review-cohort-reach.ts, review-cohort.ts).
+    if (!guest && input.userId) {
+      if (form.associationId) {
+        await assertReviewerReachesAssociation(
+          this.formRepo.manager,
+          input.userId,
+          form.associationId,
+          'form submission'
+        );
+      } else if (!sameSideOfReviewCohort(input.userId, form.ownerId)) {
+        this.logger.log(
+          `[REVIEW_COHORT] form submission refused: form=${id.slice(0, 8)} across the boundary`
+        );
+        throw new ReviewCohortBoundaryException();
+      }
+    }
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
       throw new BadRequestException('The form is not open yet.');

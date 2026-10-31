@@ -54,4 +54,21 @@ describe('FollowRequestsController', () => {
       status: 'pending',
     });
   });
+
+  it('answers no follow across the review cohort, either way, and asks the service nothing', async () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    try {
+      const { ctl } = controller(false);
+      for (const [me, you] of [
+        ['me', 'reviewer'],
+        ['reviewer', 'me'],
+      ]) {
+        expect(await ctl.getUserFollowStatus(me, you)).toEqual({ following: false, status: null });
+      }
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    }
+  });
 });
