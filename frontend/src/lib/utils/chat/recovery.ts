@@ -22,7 +22,6 @@ import { reconcileGroup } from './historyReconcile';
 import { pendingGroupExitIds } from './pendingGroupExits';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
-import { admissionFreezeOf, isFrozenByAdmissionRefusal } from './admissionFreeze';
 import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
@@ -364,24 +363,6 @@ export interface ReAddOptions {
 }
 
 /**
- * Whether `groupId` is frozen by a refused admission, said out loud - the gate EVERY seam that
- * forgets a group or rebuilds this device from the server's state reads first (`admissionFreeze.ts`).
- *
- * The server, if it is the party that let a person in without a member, has moved the group on, so
- * its group info and its commit log both hold them: an external join or a re-Welcome would rebuild
- * this device from the very state that was refused. A frozen group is lifted by a person, never
- * repaired - and it is WARN rather than silent, because the group stops following the server.
- */
-function refusedWhileFrozen(groupId: string, deps: RecoveryDeps, seam: string): boolean {
-  const freeze = admissionFreezeOf(groupId);
-  if (!freeze) return false;
-  deps.log(
-    `[ADMISSION] ${seam} refused for ${groupId.slice(0, 8)}... - a commit admitted ${freeze.entrant}, whom no member added, so this device does not rebuild from the server's state`
-  );
-  return true;
-}
-
-/**
  * Recovers `groupId` when the local MLS state is absent or out of sync. Single recovery ACTION seam,
  * self-throttled via {@link RECOVERY_TIMEOUT_MS}; the SYNC_WATCHDOG drives the cadence, reactive
  * paths call it on demand. No private timer, no reboot/successor - the self-service external-commit
@@ -410,7 +391,6 @@ export async function requestReAdd(
   deps: RecoveryDeps,
   opts: ReAddOptions = {}
 ): Promise<void> {
-  if (refusedWhileFrozen(groupId, deps, 'requestReAdd')) return;
   // Idempotence: an already-dead conversation does not restart a network recovery.
   const known = findByGroupId(deps.conversations, groupId)?.[1];
   if (known?.lifecycle === 'removed') return;
@@ -1327,7 +1307,6 @@ export async function recoverForkedGroup(
   deps: RecoveryDeps,
   minEpoch = 0
 ): Promise<void> {
-  if (refusedWhileFrozen(groupId, deps, 'recoverForkedGroup')) return;
   deps.log(`[FORK] ${groupId.slice(0, 8)}... local state forked behind server - forget + re-add`);
   // minEpoch = known server epoch: rejects a stale re-Welcome from a diverged branch
   // (a commit queued at the old epoch must not re-fork us). Awaited BEFORE the re-add is asked for:
@@ -1384,7 +1363,6 @@ export async function recoverRosterDisagreement(
   deps: RecoveryDeps
 ): Promise<void> {
   if (!isReAddDue(groupId)) return;
-  if (refusedWhileFrozen(groupId, deps, 'recoverRosterDisagreement')) return;
 
   deps.log(
     `[ROSTER] ${groupId.slice(0, 8)}... the server refuses our frames while WASM holds the group` +
@@ -1421,9 +1399,6 @@ export async function recoverRosterDisagreement(
  * (a tombstone, a refused membership, a group nobody can repair), and none of those is here.
  */
 export function isReAddDue(groupId: string): boolean {
-  // A group frozen by a refused admission is never due: it is lifted by a person, and a cadence that
-  // polled it would say so every tick.
-  if (isFrozenByAdmissionRefusal(groupId)) return false;
   return Date.now() - (lastReAddAt.get(groupId) ?? 0) >= RECOVERY_TIMEOUT_MS;
 }
 

@@ -46,6 +46,7 @@
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
+  import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
@@ -709,6 +710,7 @@
          transient. -->
     <TabFollowerBanner />
     <OfflineBanner />
+    <SlowLinkAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />
   </div>

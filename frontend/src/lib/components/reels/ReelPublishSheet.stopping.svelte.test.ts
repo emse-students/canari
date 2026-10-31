@@ -132,6 +132,7 @@ describe('ReelPublishSheet - a Back during a publish it cannot stop', () => {
         }
         throw new Error('the re-encode ran although the publish was stopped');
       }),
+      placeholder: vi.fn(async () => null),
       upload: vi.fn(),
       createPost: vi.fn(),
     };

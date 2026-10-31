@@ -895,6 +895,7 @@
         globalSession.authToken = v;
       },
       selectedContact: globalConvs.selectedContact,
+      selectedNow: () => globalConvs.selectedContact,
       getSendError: () => globalConvs.sendError,
       setSendError: (v: string) => {
         globalConvs.sendError = v;

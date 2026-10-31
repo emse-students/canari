@@ -38,6 +38,24 @@ describe('MainChatPage draft wiring', () => {
     expect(source).toContain("messaging.lateDraftWriter(contact, 'resumed salon text')");
   });
 
+  it('gives the text back on a send that THREW, and says it only where the send was made', () => {
+    // A refused send answers `false`; one that threw queued nothing either, and the caption cleared
+    // at the tap was lost with it (review of #2821, 2026-10-31).
+    const start = source.indexOf('function sendTextNow(');
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('\n  }\n', start));
+    const catchBlock = body.slice(body.indexOf('.catch('));
+    expect(catchBlock).toContain('onRefused?.()');
+    expect(body).toContain('const sentFrom = convs.selectedContact;');
+    expect(catchBlock).toMatch(
+      /if \(convs\.selectedContact === sentFrom\) convs\.sendError = m\.chat_send_error_generic\(\);/
+    );
+  });
+
+  it('gives the messaging context a LIVE reading of the selection, beside the snapshot', () => {
+    expect(source).toContain('selectedNow: () => convs.selectedContact,');
+  });
+
   /** `source` from the first `from` after `anchor` up to the first `to` after it. */
   function between(anchor: string, from: string, to: string): [number, number] {
     const at = source.indexOf(anchor);

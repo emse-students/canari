@@ -76,6 +76,10 @@ function makeContext() {
     // A non-empty copy that has long expired: the old code trusted it.
     authToken: 'stale-copy-from-sign-in',
     selectedContact: CHANNEL,
+    // Live, like the page's: a test that moves the selection moves what is on screen.
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     setAuthToken: vi.fn(),
     setSendError: vi.fn(),
     log: vi.fn(),

@@ -30,6 +30,7 @@ import {
   type PreparedVideo,
 } from '$lib/video/prepareVideoForUpload';
 import type { ReelClip } from './reelCapture';
+import { firstFramePlaceholder } from './reelFirstFrame';
 
 /** What the publish step needs from the outside world. */
 export interface PublishReelDeps {
@@ -38,6 +39,11 @@ export interface PublishReelDeps {
   uploadLimits: () => Promise<{ maxPlaintextBytes: number } | null>;
   prepare: (source: Blob, options: PrepareVideoOptions) => Promise<PreparedVideo>;
   upload: (file: File, token: string, dims: ImageDimensions) => Promise<MediaRef>;
+  /**
+   * The ThumbHash of the prepared file's FIRST FRAME (`MediaRef.placeholder`), or `null`: every
+   * reader paints it while the reel loads, since the server makes no thumbnail. Never throws.
+   */
+  placeholder: (file: File) => Promise<string | null>;
   createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
 }
 
@@ -59,6 +65,7 @@ export function defaultPublishReelDeps(): PublishReelDeps {
     prepare: prepareVideoForUpload,
     upload: (file, token, dims) =>
       media.encryptAndUpload(file, token, dims, FEED_REEL_UPLOAD_CLASS),
+    placeholder: firstFramePlaceholder,
     createPost,
   };
 }
@@ -165,11 +172,16 @@ export async function publishReel(
       ...video,
     });
 
+    // Decoded from the very file uploaded, so the blur is of the frame every reader will see first.
+    const placeholder = await deps.placeholder(prepared.file);
+    if (!placeholder) console.warn('[reel-publish] published without a first-frame placeholder');
+
     enter('mediaUpload');
-    const ref = await deps.upload(prepared.file, token, {
+    const uploaded = await deps.upload(prepared.file, token, {
       width: prepared.width,
       height: prepared.height,
     });
+    const ref: MediaRef = placeholder ? { ...uploaded, placeholder } : uploaded;
 
     enter('createPost');
     const post = await deps.createPost({

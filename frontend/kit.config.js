@@ -91,9 +91,11 @@ const config = {
   // Absolute paths cost the web build nothing: it is served from the origin root by nginx and by
   // adapter-node alike. So the polarity follows the adapter, exactly as it does above.
   paths: { relative: !buildsForWeb },
-  // `pollInterval: 0` keeps SvelteKit 2's behaviour: SvelteKit 3 polls `/_app/version.json` hourly by
-  // default, and the app already owns its stale-build recovery (`src/lib/utils/staleBuild.ts`), so a
-  // second, unmeasured poller would be a second owner of the same question.
+  // `pollInterval: 0` turns off SvelteKit 3's HOURLY poll of `/_app/version.json` only: the app owns
+  // its stale-build recovery (`src/lib/utils/staleBuild.ts`). It does NOT keep SvelteKit 2's
+  // behaviour - Kit 3 still checks that file on every `visibilitychange` to visible and every window
+  // `focus` (`client.js`), one fetch per resume, whatever this says (docs/wiki/backlog.md, "SvelteKit
+  // 3: what the audit of #2613 left open").
   version: { name: buildVersionName(), pollInterval: 0 },
   // THE WEB PAGE'S CONTENT-SECURITY-POLICY IS WRITTEN HERE, AND ONLY FOR THE WEB BUILD.
   // SvelteKit knows the one inline script it emits and hashes it; the template's own inline

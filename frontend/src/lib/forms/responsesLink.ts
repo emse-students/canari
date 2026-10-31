@@ -1,3 +1,5 @@
+import type { AppPath } from '$lib/utils/internalPath';
+
 /**
  * The query parameter that opens ONE form's responses on the forms list.
  *
@@ -9,6 +11,6 @@
 export const FORM_RESPONSES_PARAM = 'responses';
 
 /** The app route that opens `formId`'s responses on the forms list. */
-export function formResponsesRoute(formId: string): string {
+export function formResponsesRoute(formId: string): AppPath {
   return `/forms?${FORM_RESPONSES_PARAM}=${encodeURIComponent(formId)}`;
 }
