@@ -67,6 +67,8 @@
 "notif.lydia_payments_active.body" = "Lydia payments for %1$@ are active.";
 "notif.lydia_payments_paused.title" = "Lydia payments paused";
 "notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
+"notif.lydia_refund_issued.title" = "Refund";
+"notif.lydia_refund_issued.body" = "%1$@ refunded one of your payments.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";

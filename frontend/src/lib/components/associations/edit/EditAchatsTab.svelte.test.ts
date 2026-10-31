@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
   close: vi.fn(),
   quote: vi.fn(),
   grant: vi.fn(),
+  // The refund standings; a rejection stands for a member without MANAGE_PAYOUT_ACCOUNT.
+  refunds: vi.fn(),
 }));
 
 vi.mock('$lib/associations/api', async (importOriginal) => ({
@@ -34,6 +36,7 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
   closePaidNotGranted: state.close,
   quoteCashSale: state.quote,
   grantProductPurchase: state.grant,
+  listAssociationRefunds: state.refunds,
 }));
 
 vi.mock('$lib/utils/apiFetch', () => ({
@@ -82,6 +85,7 @@ afterEach(() => {
   state.close.mockReset();
   state.quote.mockReset();
   state.grant.mockReset();
+  state.refunds.mockReset();
   state.products = [];
   state.confirmed = [];
   state.confirm = true;
@@ -89,6 +93,9 @@ afterEach(() => {
 
 async function render(rows: AssociationPurchase[]): Promise<HTMLElement> {
   state.rows = rows;
+  if (!state.refunds.getMockImplementation()) {
+    state.refunds.mockRejectedValue(new SocialApiError('forbidden', null, 403));
+  }
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(EditAchatsTab, {
@@ -373,5 +380,153 @@ describe('EditAchatsTab, the amount a cash sale records', () => {
     await settle();
 
     expect(shownQuote(target)).toBeUndefined();
+  });
+});
+
+/**
+ * LYDIA REFUNDS ON THE PURCHASES LIST (lot 4): only a MANAGE_PAYOUT_ACCOUNT holder sees them - the
+ * server answers anyone else 403 and the list shows no refund control at all.
+ */
+describe('EditAchatsTab, Lydia refunds', () => {
+  const paid: AssociationPurchase = { ...open, id: 'rec-9', notGranted: false };
+  const standing = (over: Record<string, unknown> = {}) => ({
+    purchaseRecordId: 'rec-9',
+    refundable: true,
+    reason: null,
+    withdrawal: 'shop',
+    paidCents: 3000,
+    refundedCents: 0,
+    openRefund: null,
+    ...over,
+  });
+
+  it('shows no refund control to a member without the payout permission', async () => {
+    const target = await render([paid]);
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+    expect(button(target, m.asso_statement_button())).toBeUndefined();
+  });
+
+  it('offers "Refund" on a refundable payment, and the statement', async () => {
+    state.refunds.mockResolvedValue({ standings: [standing()], refunds: [] });
+    const target = await render([paid]);
+    expect(button(target, m.asso_refund_button())).toBeDefined();
+    expect(button(target, m.asso_statement_button())).toBeDefined();
+  });
+
+  it('shows a refunded payment as refunded, with no second refund offered', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ refundedCents: 3000 })],
+      refunds: [],
+    });
+    const target = await render([paid]);
+    expect(target.querySelector('[data-testid="refund-state"]')!.textContent).toBe(
+      m.asso_refund_state_refunded()
+    );
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+  });
+
+  it('a refund Lydia has not confirmed offers the check, never a new refund', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ openRefund: { id: 'ref-1', state: 'unconfirmed' } })],
+      refunds: [
+        {
+          id: 'ref-1',
+          purchaseRecordId: 'rec-9',
+          kind: 'partial',
+          amountCents: 500,
+          reason: 'r',
+          state: 'unconfirmed',
+          refusal: null,
+          lateAnswer: null,
+          sideEffect: null,
+          requestedAt: '2026-10-30T10:00:00.000Z',
+          answeredAt: null,
+          resolvedAt: null,
+        },
+      ],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_state_unconfirmed());
+    expect(button(target, m.asso_refund_check_button())).toBeDefined();
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+  });
+
+  it('a refund in progress shows its state and offers nothing: no check, no new refund', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ openRefund: { id: 'ref-2', state: 'in-progress' } })],
+      refunds: [],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_state_in_progress());
+    expect(button(target, m.asso_refund_check_button())).toBeUndefined();
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+  });
+
+  it('a refund Lydia confirmed and Canari did not save offers to save it, never a check', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ openRefund: { id: 'ref-3', state: 'unrecorded' } })],
+      refunds: [
+        {
+          id: 'ref-3',
+          purchaseRecordId: 'rec-9',
+          kind: 'total',
+          amountCents: 3000,
+          reason: 'r',
+          state: 'unrecorded',
+          refusal: null,
+          lateAnswer: null,
+          sideEffect: null,
+          requestedAt: '2026-10-30T10:00:00.000Z',
+          answeredAt: '2026-10-30T10:00:05.000Z',
+          resolvedAt: null,
+        },
+      ],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_state_unrecorded());
+    expect(button(target, m.asso_refund_check_button())).toBeUndefined();
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+    // The dialog it opens only saves: "it did not go through" is not offered.
+    button(target, m.asso_refund_record_button())!.click();
+    flushSync();
+    const dialog = document.querySelector('[data-testid="refund-check-dialog"]')!;
+    expect(dialog.querySelector('[data-testid="refund-record"]')).not.toBeNull();
+    expect(dialog.querySelector('[data-testid="refund-check-no"]')).toBeNull();
+  });
+
+  it('warns, in plain words, when Lydia answered a refund later against how it was settled', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ refundedCents: 0 })],
+      refunds: [
+        {
+          id: 'ref-4',
+          purchaseRecordId: 'rec-9',
+          kind: 'partial',
+          amountCents: 500,
+          reason: 'r',
+          state: 'refused',
+          refusal: 'declared-not-refunded',
+          lateAnswer: 'refunded',
+          sideEffect: null,
+          requestedAt: '2026-10-30T10:00:00.000Z',
+          answeredAt: null,
+          resolvedAt: '2026-10-30T10:05:00.000Z',
+        },
+      ],
+    });
+    const target = await render([paid]);
+    expect(target.querySelector('[data-testid="refund-late"]')!.textContent).toBe(
+      m.asso_refund_late_refunded()
+    );
+  });
+
+  it('says why a payment Canari cannot trace has no refund', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ refundable: false, reason: 'untraceable', withdrawal: null })],
+      refunds: [],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_untraceable());
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
   });
 });

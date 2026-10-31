@@ -77,6 +77,8 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // category older clients cannot draw a switch for).
   lydia_payments_active: 'forms',
   lydia_payments_paused: 'forms',
+  // A payer refunded by an association (Lydia refunds, lot 4): a money matter, same EXISTING id.
+  lydia_refund_issued: 'forms',
   event_proposed: 'events',
   event_validated: 'events',
   event_rejected: 'events',

@@ -132,6 +132,8 @@
     <string name="notif_lydia_payments_active_body">Les paiements Lydia de %1$s sont actifs.</string>
     <string name="notif_lydia_payments_paused_title">Paiements Lydia suspendus</string>
     <string name="notif_lydia_payments_paused_body">Les paiements Lydia de %1$s sont suspendus : Lydia a refusé une demande de paiement.</string>
+    <string name="notif_lydia_refund_issued_title">Remboursement</string>
+    <string name="notif_lydia_refund_issued_body">%1$s vous a remboursé un paiement.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".

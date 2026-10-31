@@ -58,7 +58,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(33);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(34);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -116,6 +116,13 @@ describe('resolveNotificationHref', () => {
       resolveNotificationHref({ type: 'coorganise_proposed', postId: 'assoc-2' }, lookup)
     ).resolves.toBe('/associations/club/edit/republications');
     expect(lookup).toHaveBeenCalledWith('assoc-2');
+  });
+
+  it('a refund opens the purchases of the payer, where the payment reads as refunded', () => {
+    // `postId` is the ASSOCIATION's id, which that page does not need.
+    expect(notificationHref({ type: 'lydia_refund_issued', postId: 'assoc-9' })).toBe(
+      '/account/purchases'
+    );
   });
 
   it.each(['lydia_payments_active', 'lydia_payments_paused'])(

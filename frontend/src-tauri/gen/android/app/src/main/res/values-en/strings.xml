@@ -101,6 +101,8 @@
     <string name="notif_lydia_payments_active_body">Lydia payments for %1$s are active.</string>
     <string name="notif_lydia_payments_paused_title">Lydia payments paused</string>
     <string name="notif_lydia_payments_paused_body">Lydia payments for %1$s are paused: Lydia refused a payment request.</string>
+    <string name="notif_lydia_refund_issued_title">Refund</string>
+    <string name="notif_lydia_refund_issued_body">%1$s refunded one of your payments.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>

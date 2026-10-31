@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import {
   PurchaseRecord,
+  LISTED_PURCHASE_STATUSES,
   RECEIVED_PURCHASE_STATUSES,
   type PurchasePaymentMethod,
   type PurchaseStatus,
@@ -15,6 +16,8 @@ export interface CreatePurchaseData {
   source: 'form' | 'product';
   formId?: string | null;
   productId?: string | null;
+  /** The form answer a form payment's record was written for (migration 120). */
+  submissionId?: string | null;
   amountCents: number;
   paymentMethod: PurchasePaymentMethod;
   status: PurchaseStatus;
@@ -43,6 +46,7 @@ export class PurchaseRecordService {
       source: data.source,
       formId: data.formId ?? null,
       productId: data.productId ?? null,
+      submissionId: data.submissionId ?? null,
       amountCents: data.amountCents,
       paymentMethod: data.paymentMethod,
       status: data.status,
@@ -140,11 +144,12 @@ export class PurchaseRecordService {
 
   /**
    * Lists the money an association received (boutique + formulaires), newest first, `paid_not_granted`
-   * included: those rows are where the association sees a tier paid for and not granted.
+   * included: those rows are where the association sees a tier paid for and not granted; `refunded`
+   * too, so a payment given back in full stays on the list with its refund beside it.
    */
   async listPaidByAssociation(associationId: string): Promise<PurchaseRecord[]> {
     return this.repo.find({
-      where: { associationId, status: In(RECEIVED_PURCHASE_STATUSES) },
+      where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
       order: { paidAt: 'DESC' },
     });
   }

@@ -698,6 +698,12 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.lydia_payments_paused.body"), arg];
     return;
   }
+  // A payer refunded by an association: `arg` is the association's name only.
+  if ([key isEqualToString:@"lydia_refund_issued"]) {
+    *title = CanariLocalized(@"notif.lydia_refund_issued.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.lydia_refund_issued.body"), arg];
+    return;
+  }
   // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
   if ([key isEqualToString:@"event_proposed"]) {
     *title = CanariLocalized(@"notif.event.proposed.title");

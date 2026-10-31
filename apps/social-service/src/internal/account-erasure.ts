@@ -148,6 +148,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // Who recorded how a payment paid and not granted was settled (migration 113): an accounting
   // record, kept, its author anonymised like every other authorship column.
   'purchase_record_closings.closedByUserId': { action: 'anonymise' },
+  // Who asked for a Lydia refund, and who settled one Lydia never confirmed (migration 120): an
+  // accounting record kept as long as the payment it refunds, its authors anonymised.
+  'lydia_refunds.requestedByUserId': { action: 'anonymise' },
+  'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -619,6 +623,14 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'purchase_closings',
     sql: `UPDATE purchase_record_closings SET "closedByUserId" = $2 WHERE "closedByUserId" = $1`,
+  },
+  {
+    label: 'lydia_refunds_requested_by',
+    sql: `UPDATE lydia_refunds SET "requestedByUserId" = $2 WHERE "requestedByUserId" = $1`,
+  },
+  {
+    label: 'lydia_refunds_resolved_by',
+    sql: `UPDATE lydia_refunds SET "resolvedByUserId" = $2 WHERE "resolvedByUserId" = $1`,
   },
   {
     label: 'moderation_muted',
