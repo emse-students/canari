@@ -32,6 +32,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.BackgroundWelcomeAnswer
+import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
@@ -1032,6 +1033,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** Whether [callId] still rings on this device - the call screen asks before it shows. */
         internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
+
+        /**
+         * Whether a call holds the phone's sound - the ongoing-call service holds one, or a call rings
+         * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
+         */
+        internal fun callHoldsSound(): Boolean =
+            CallSoundHold.held(CallForegroundService.running, activeCallRings.size)
 
         /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
@@ -2400,14 +2408,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
             // see [RepostAlert].
-            val alertMode = RepostAlert.of(
+            val repostMode = RepostAlert.of(
                 redraw = alreadyPosted || supersedes != 0L,
                 switchesChannel = switchesChannel,
                 hasExistingPost = existingNotif != null,
             )
-            if (alertMode == RepostAlert.Mode.SILENT) {
+            if (repostMode == RepostAlert.Mode.SILENT) {
                 Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
             }
+            // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
+            val callHolds = callHoldsSound()
+            if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
+                Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
+            }
+            val alertMode = CallSoundHold.alert(repostMode, callHolds)
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
@@ -4774,6 +4788,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             this, notifId, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val callHolds = callHoldsSound()
         val notification = NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -4783,8 +4798,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .apply { largeIcon?.let { setLargeIcon(it) } }
+            // A call holds the sound ([CallSoundHold]): shown, without its sound.
+            .setSilent(callHolds)
             .build()
-        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds")
         manager.notify(notifId, notification)
     }
 

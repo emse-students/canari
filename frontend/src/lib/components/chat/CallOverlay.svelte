@@ -63,6 +63,8 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
   import { startCallVoice } from '$lib/utils/callVoice';
+  import { CallRingback } from '$lib/utils/callRingback';
+  import { untrack } from 'svelte';
   import { ScreenWakeLock } from '$lib/live/liveDevice';
 
   let {
@@ -176,6 +178,26 @@
     if (activation?.isActive) primeVoice('mounted within the dialling tap');
   });
 
+  // -- The caller's ringback: plays exactly while `CallService.ringingOut` says so -------------
+  let ringbackSink: HTMLAudioElement | undefined = $state();
+  let ringback = $derived(ringbackSink ? new CallRingback(ringbackSink) : null);
+  $effect(() => {
+    if (!ringback) return;
+    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+      .userActivation;
+    // Only the caller rings out, and only the dialling tap can unlock the element for it.
+    if (activation?.isActive && call.callState === 'calling') {
+      untrack(() => ringback.prime('mounted within the dialling tap'));
+    }
+  });
+  $effect(() => {
+    if (!ringback) return;
+    if (call.ringingOut) ringback.start('the other phone rings');
+    else ringback.stop('the ring is over');
+  });
+  // The overlay unmounts with the call: nothing may keep looping after it.
+  $effect(() => () => ringback?.stop('the call surface closed'));
+
   $effect(() => {
     // While ringing too: the Accept tap may land on the BANNER, which cannot reach this element.
     if (!callView.audioBlocked && !isIncoming) return;
@@ -265,6 +287,12 @@
 
   $effect(() => {
     const sink = remoteAudioSink;
+    if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
+    void applySpeakerRouting(sink, isSpeakerOn);
+  });
+  // The ringback takes the voice's route: the earpiece unless the speaker is asked.
+  $effect(() => {
+    const sink = ringbackSink;
     if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
     void applySpeakerRouting(sink, isSpeakerOn);
   });
@@ -556,6 +584,8 @@
 
 <!-- The voice: hidden, mounted for the whole call, in either shape. -->
 <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+<!-- The caller's ringback (`utils/callRingback.ts`): beside the voice, on the same output. -->
+<audio bind:this={ringbackSink} preload="auto" class="hidden"></audio>
 <!-- ONE live region for both shapes, so a minimised call still announces "Reconnexion...". -->
 <span class="sr-only" role="status" data-testid="call-announcer">{announcement}</span>
 

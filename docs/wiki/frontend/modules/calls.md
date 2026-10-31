@@ -2501,6 +2501,87 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
   holds every button of the ring and of the call to `ui-icon-button` or `size-16`; the bar's buttons
   are plain markup and stay under the scan.
 
+### The caller's ringback (2026-10-31)
+
+**Before it, the caller heard nothing** between the dial tap and the answer: the screen said
+"Appel..." and no sound said the other phone rang (read in `CallService` and `CallOverlay`: no
+element, no tone on the `calling` side). The owner asked for one *"mieux qu'une tonalite de
+telephone, dans le style d'un canari qui chante"*.
+
+- **The sound.** `RINGBACK_PHRASE` in [soundPalette.ts](../../../../frontend/src/lib/utils/soundPalette.ts):
+  a soft roll of six quick rising syllables (1350 -> 1810 Hz) and two slower falling whistles
+  (2150 -> 1600 Hz, a faint octave partial), below the notification trills so it never gets shrill
+  over a minute of ringing. Rendered by `bun tools/notification-sounds/render.mjs` into
+  `frontend/static/sounds/canari_ringback.wav`: ONE loop of exactly `RINGBACK_PERIOD_S` = 4 s (the
+  phrase, its small room, then silence - 1.2 s of phrase, its room fading under it, then about 2 s of
+pause, a phone's rhythm),
+  loudest peak -14 dBFS, 11 dB under the notifications. `--check` covers it like the three channel
+  sounds (`notificationSoundsDrift.test.ts`).
+- **What drives it: state, not a timer.** `CallService.ringingOut` is written by `syncRingingOut(why)`
+  from three facts - the caller's ring window is open (set in `armRingTimer('calling')`, i.e. once
+  the invite has left), nobody answered (`peerArrived`), and the state is still `calling`. It moves
+  at the invite, at `PeerReady` (answered), at `endCall` (declined, busy, cancelled, not answered,
+  setup failed - the outcome is the reason) and at any state change (the backstop). Each move is
+  logged: `[Call] ringback starts - the invite left (call=...)`, `[Call] ringback stops - the call
+  ends (outcome=declined) (call=...)`. Never `true` on the callee: only the caller opens that window.
+- **What plays it.** `CallOverlay` mounts a second hidden `<audio>` beside the voice sink and hands it
+  to [callRingback.ts](../../../../frontend/src/lib/utils/callRingback.ts): `start` / `stop` follow
+  `ringingOut`; the element's own `loop` repeats the file. `prime` - a muted play paused at once -
+  runs inside the dialling tap (the overlay mounts within it), so the `play()` seconds later is not
+  refused by a WebView's gesture rule; a refusal still says `[Call] WARN ringback refused without a
+  gesture`. Logged: `ringback primed`, `ringback playing (...)`, `ringback stopped (...)`.
+- **The output.** The microphone is held BEFORE the invite (`setupMedia`), so on Android the
+  ongoing-call service already holds the call's communication route when the ringback starts, and
+  the WebView plays in communication mode: earpiece, or the speaker / headset the route says. On the
+  iPhone the ringback element takes the same label-matched `setSinkId` as the voice. It is an output
+  only: never added to a peer connection, and it stops at the pairing, before any media can flow.
+- **Pinned by** `CallService.p2p.test.ts` ("the caller's ringback and the app's sound gate": start at
+  the invite; stop on answer, decline, busy, cancel, setup failure, window closed; never on the
+  callee) and `callRingback.test.ts` (loop, start, stop, a stop racing a pending `play()`, prime).
+- **Owed on the bench phones:** heard on the Mi 9T and the iPhone 12 placing a call: (1) it starts
+  within a second of "Appel...", (2) it comes out of the EARPIECE at a comfortable level and moves to
+  the loudspeaker with the speaker button, (3) it stops the instant the other side answers or
+  declines, (4) `adb shell dumpsys audio` during the ring shows the ringback's track with usage
+  `VOICE_COMMUNICATION` (if it reads `MEDIA`, it is on the media volume through the speaker, and the
+  route must be applied to it natively), (5) the callee hears nothing of it.
+
+### The app's other sounds during a call (2026-10-31)
+
+**Read on a production call** (owner's log): a native banner sounded for a message during an outgoing
+ring; a message landing in the open conversation trilled while a call rang; a read trill played in
+the call's own conversation. **Rule: from the ring (out or in) to the end, the app plays nothing but
+the call. Messages still arrive and are shown; only their sound goes.**
+
+| Sound | How it is silenced during a call |
+|---|---|
+| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing (`[AUDIO] <name> tone silenced - a call holds the app's sound`). The incoming ring passes `purpose: 'call'` and is exempt |
+| Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on. Nothing resumes on the call's end - the reader presses play |
+| Browser notification (web, desktop browser) | raised with `silent: true` |
+| Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
+| iOS banners drawn by the notification service extension | `content.sound = nil` while `CXCallObserver` lists a call not ended (the CallKit ring, a call answered on it, a cellular call). In the foreground the app already presents no banner at all |
+
+**The one gate.** Each `CallService` states its `callState` under its holder id; the gate is held while
+any holder is `calling`, `incoming` or `incall` and released at `ended` / `idle`, or when a replaced
+service is retired (`retireFromPageRing`). Logged once per change: `[AUDIO] a call holds the app's
+sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
+`toneOutput.test.ts`, `playbackArbiter.test.ts`, the p2p block above and `CallSoundHoldTest.kt`.
+
+**What is NOT covered, and what would lift it:**
+- **Android, an in-app incoming ring before the answer.** The page rings (`incoming`), no foreground
+  service runs yet and no native ring is up, so a native banner in those seconds still sounds. The
+  JS tones are gated. Lifted by exposing `page_ring.rs`'s ringing fact over JNI (it already knows
+  the page rings a call) and adding it to `CallSoundHold.held`.
+- **iOS, a call CallKit does not know** (every outgoing call, an in-app ring, a call after the
+  handover ended its CallKit session): the extension cannot see it. Lifted by CallKit for every call
+  (owed, [the call in the background](#the-call-in-the-background-2026-10-19)); an app-group flag was
+  refused because a crash mid-call would leave every later banner silent.
+- **Desktop Tauri** notifications (`notify-rust`): unmeasured, not gated.
+
+**Owed on the bench phones:** during a Mi 9T call (ringing out, then live) a message from a third
+account arrives shown and SILENT (`dumpsys notification` shows it; no sound), and a voice note or a
+reel cannot play aloud; on the iPhone 12, a message arriving during a CallKit-answered call is
+delivered without sound (`[CanariNSE] a call is up - delivered without sound`).
+
 ## The call in the background (2026-10-19)
 
 **The timer is a function of timestamps**: `CallService.connectedAt` (first `connected`, not the

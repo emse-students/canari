@@ -18,6 +18,7 @@ import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../test/flush';
+import { callHoldsAppSound, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -4392,5 +4393,154 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(order).toHaveLength(0);
     expect(FakeSocket.instances).toHaveLength(1);
     expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('WARN'))).toBe(false);
+  });
+});
+
+describe("the caller's ringback and the app's sound gate (2026-10-31)", () => {
+  beforeEach(() => resetCallSoundGateForTest());
+
+  /** Every value `ringingOut` took, the initial `false` included. */
+  const ringbackOf = (service: CallService) => {
+    const seen: boolean[] = [];
+    service.ringingOut.subscribe((v) => seen.push(v));
+    return seen;
+  };
+  const incoming = { callId: 'room-1', offerSdp: 'START', ringTimeoutMs: 60_000, deviceId: 'd-2' };
+
+  it('starts once the invite has left, and stops when the callee answers', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    const ws = await callerJoined(service);
+    expect(seen).toEqual([false, true]);
+
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    expect(seen).toEqual([false, true, false]);
+    // Answered, still `calling` until the media connects: the ringback does not come back.
+    expect(get(service.callState)).toBe('calling');
+  });
+
+  it('stops when the callee declines', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true, endReason: canari.CallEndReason.CALL_END_REASON_DECLINED },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the callee is busy', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', busy: true, deviceId: 'device-9' },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the caller cancels, and names the outcome in the log', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+
+    service.endCall();
+
+    expect(seen).toEqual([false, true, false]);
+    expect(
+      vi
+        .mocked(appendLog)
+        .mock.calls.some(([l]) =>
+          String(l).includes('ringback stops - the call ends (outcome=cancelled)')
+        )
+    ).toBe(true);
+  });
+
+  it('stops when a setup step fails after the invite', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    (service as unknown as { failCall: (r: string) => void }).failCall('signalling closed');
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the ring window closes unanswered', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server.ringTimeoutMs = 5;
+      const service = new CallService(fakeMls);
+      const seen = ringbackOf(service);
+      await callerJoined(service);
+      expect(seen).toEqual([false, true]);
+
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(seen).toEqual([false, true, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never plays for the callee, from the ring to the decline', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(service.callState)).toBe('incoming');
+
+    service.endCall();
+
+    expect(seen).toEqual([false]);
+  });
+
+  it("holds the app's sound from the outgoing ring to the end, and releases it at the summary", async () => {
+    const service = new CallService(fakeMls);
+    expect(callHoldsAppSound()).toBe(false);
+    await callerJoined(service);
+    expect(callHoldsAppSound()).toBe(true);
+
+    service.endCall();
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(callHoldsAppSound()).toBe(false);
+  });
+
+  it("holds the app's sound while a call rings in, and a retired service lets go", async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+    expect(callHoldsAppSound()).toBe(true);
+
+    service.retireFromPageRing();
+
+    expect(callHoldsAppSound()).toBe(false);
   });
 });

@@ -63,6 +63,7 @@ import {
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
+import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -301,6 +302,11 @@ export class CallService {
   private inviteSent = false;
   /** The relay paired the two parties: the ring is over whatever the media then does. */
   private peerArrived = false;
+  /**
+   * The caller's ring window is open: the invite left and its timer is armed ({@link armRingTimer}).
+   * One of the three facts {@link syncRingingOut} reads; cleared when the call ends.
+   */
+  private ringWindowOpen = false;
   /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms` / `setup_ms`. */
   private tapAt: number | null = null;
   /** Tap to the first unmuted remote audio track - the report's `setup_ms`. */
@@ -504,6 +510,15 @@ export class CallService {
 
   public callState = writable<CallState>('idle');
   /**
+   * THE CALLER HEARS IT RING (owner, 2026-10-31): `true` from the moment the invite has left and the
+   * ring window opened, until the callee answers (the relay pairs the two), declines, is busy, the
+   * caller cancels, the window closes unanswered or the setup fails - every one of them a STATE
+   * TRANSITION, each written by {@link syncRingingOut} with its reason. `CallOverlay` plays the
+   * ringback (`utils/callRingback.ts`) exactly while it is `true`; it has no timer of its own.
+   * Never `true` on the callee: only the `calling` side opens a ring window.
+   */
+  public ringingOut = writable<boolean>(false);
+  /**
    * THE UI's "Reconnexion..." flag (`m.call_reconnecting()`): `true` while a call that had
    * connected is getting its connection back - this device's signalling is being resumed, the
    * other party's is (`PeerAway`), or the media path is down and being restarted. A network blip
@@ -565,7 +580,7 @@ export class CallService {
   /** The group {@link releaseLeafRefreshHold} is for. */
   private leafRefreshHeldGroup: string | null = null;
 
-  /** This instance's name in the native ring's facts (`page_ring.rs`). */
+  /** This instance's name in the native ring's facts (`page_ring.rs`) and in `callSoundGate`. */
   private readonly pageRingHolder = nextPageRingHolder('call-service');
   /** The call last told to the native side as ringing in this page, or null. */
   private pageRingingCall: string | null = null;
@@ -585,6 +600,13 @@ export class CallService {
     // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
     // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
     this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+    // A CALL HOLDS THE APP'S SOUND from ringing (out or in) to its end (`callSoundGate`), and the
+    // ringback stops on ANY move out of `calling` - the second line is the backstop of the explicit
+    // stops, which name their reason first.
+    this.callState.subscribe((state) => {
+      reportCallSoundPhase(this.pageRingHolder, state);
+      this.syncRingingOut(`state=${state}`);
+    });
     // THE CALL THIS PAGE RINGS, told to the native side (`page_ring.rs`): the iPhone's handover ends
     // an unanswered CallKit ring only when the page rings THAT call. Holding the socket does not
     // say it: the invite of a call rung at the PIN gate was skipped, and the socket the unlock then
@@ -616,6 +638,9 @@ export class CallService {
    * holder nobody withdraws until the next page load.
    */
   public retireFromPageRing(): void {
+    // The app's sound gate too (on every platform, hence before the Tauri-only return): a replaced
+    // service left in a call would otherwise hold the app's sound until the next page load.
+    retireCallSoundHolder(this.pageRingHolder);
     if (!this.reportsPageRinging) return;
     this.reportsPageRinging = false;
     this.pageRingUnsubscribe?.();
@@ -928,6 +953,11 @@ export class CallService {
    */
   private armRingTimer(callId: string, ringTimeoutMs: number, side: 'calling' | 'incoming') {
     this.clearRingTimer();
+    if (side === 'calling') {
+      // The invite has left and the caller's window opens: from here the caller hears it ring.
+      this.ringWindowOpen = true;
+      this.syncRingingOut('the invite left');
+    }
     this.ringTimer = window.setTimeout(() => {
       this.ringTimer = null;
       if (this.currentCallId !== callId || get(this.callState) !== side || this.peerArrived) {
@@ -937,6 +967,20 @@ export class CallService {
       if (side === 'calling') this.endCall(true, 'not-answered');
       else this.dismissIncomingCall();
     }, ringTimeoutMs);
+  }
+
+  /**
+   * Writes {@link ringingOut} from the three facts that decide it - the caller's ring window is open,
+   * nobody answered yet, and the call is still `calling` - and logs every change with `why`. Called at
+   * each transition that can move it; a repeat changes nothing and says nothing.
+   */
+  private syncRingingOut(why: string): void {
+    const on = this.ringWindowOpen && !this.peerArrived && get(this.callState) === 'calling';
+    if (on === get(this.ringingOut)) return;
+    appendLog(
+      `[Call] ringback ${on ? 'starts' : 'stops'} - ${why} (call=${this.currentCallId ?? 'none'})`
+    );
+    this.ringingOut.set(on);
   }
 
   private clearRingTimer() {
@@ -1161,6 +1205,10 @@ export class CallService {
     appendLog(
       `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`
     );
+    // The ringback stops FIRST, with the outcome as its reason: declined, busy, cancelled, not
+    // answered (the window closed, or the setup failed after the invite).
+    this.ringWindowOpen = false;
+    this.syncRingingOut(`the call ends (outcome=${ended})`);
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
@@ -1286,6 +1334,7 @@ export class CallService {
     this.tapAt = null;
     this.setupMs = null;
     this.inviteSent = false;
+    this.ringWindowOpen = false;
     this.peerArrived = false;
     this.resumeToken = null;
     this.signallingLost = false;
@@ -1935,6 +1984,7 @@ export class CallService {
   private async onPeerReady(initiator: boolean, resumed = false): Promise<void> {
     this.polite = !initiator;
     this.peerArrived = true;
+    this.syncRingingOut('the callee answered (the relay paired the two)');
     this.peerAway = false;
     this.clearRingTimer();
     this.pairEpoch += 1;

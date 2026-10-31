@@ -15,6 +15,7 @@ import {
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
 import { followVideoSound, playWhileVisible } from '$lib/actions/playWhileVisible';
+import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 const runtime = vi.hoisted(() => ({ mobile: false }));
 vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
@@ -254,4 +255,24 @@ it('on Android, the app leaving the screen pauses every media, the voice note in
   expect(note.paused).toBe(true);
   setForeground(true);
   expect(note.paused, 'coming back resumes nothing the reader chose').toBe(true);
+});
+
+it('a call holds the sound: what plays with sound is paused when it starts, a muted video plays on', () => {
+  const note = voice();
+  note.startPlaying();
+  reportCallSoundPhase('call-service-test', 'calling');
+  try {
+    expect(note.paused, 'the voice note is paused by the call').toBe(true);
+
+    const feed = video(true);
+    feed.muted = true;
+    feed.startPlaying();
+    expect(feed.paused, 'a muted video makes no sound and plays on').toBe(false);
+
+    const reel = video();
+    void reel.play();
+    expect(reel.paused, 'a reel starting with sound during the call is paused').toBe(true);
+  } finally {
+    resetCallSoundGateForTest();
+  }
 });
