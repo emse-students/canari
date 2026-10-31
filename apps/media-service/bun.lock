@@ -7,7 +7,7 @@
       "dependencies": {
         "@nestjs/common": "^12.2.0",
         "@nestjs/core": "^12.2.0",
-        "@nestjs/platform-express": "^12.2.0",
+        "@nestjs/platform-express": "^12.3.2",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.15.1",
         "fs-extra": "^11.4.1",
@@ -287,7 +287,7 @@
 
     "@nestjs/core": ["@nestjs/core@12.2.0", "", { "dependencies": { "fast-safe-stringify": "2.1.1", "iterare": "1.2.1", "path-to-regexp": "8.4.2", "tslib": "2.8.1", "uid": "2.0.2" }, "peerDependencies": { "@nestjs/common": "^12.0.0", "@nestjs/microservices": "^12.0.0", "@nestjs/platform-express": "^12.0.0", "@nestjs/websockets": "^12.0.0", "reflect-metadata": "^0.1.12 || ^0.2.0", "rxjs": "^7.1.0" }, "optionalPeers": ["@nestjs/microservices", "@nestjs/platform-express", "@nestjs/websockets"] }, "sha512-OTNlRALw/xlSJ/cXeIo7HzY/TqE9RSyv6uFS+OY41dDelDwMqnAjpRFiN5RVGOI/R4wAhaD0TJVjsfOrpZJCjA=="],
 
-    "@nestjs/platform-express": ["@nestjs/platform-express@12.2.0", "", { "dependencies": { "cors": "2.8.6", "express": "5.3.0", "multer": "2.4.0", "path-to-regexp": "8.4.2", "tslib": "2.8.1" }, "peerDependencies": { "@nestjs/common": "^12.0.0", "@nestjs/core": "^12.0.0" } }, "sha512-ZG4nRgFicwfFKnzz9CfmX6GhSL1Ov6ch25L+7yDFoPeOBZ0EoytsttyURQaDJPRigcIJXQ1E+Z5zWDwUGc9Yyg=="],
+    "@nestjs/platform-express": ["@nestjs/platform-express@12.3.2", "", { "dependencies": { "cors": "2.8.6", "express": "5.3.0", "multer": "2.5.0", "path-to-regexp": "8.4.2", "tslib": "2.8.1" }, "peerDependencies": { "@nestjs/common": "^12.0.0", "@nestjs/core": "^12.0.0" } }, "sha512-wbe1zd6xWLW8qI6t3RP3SqqQnp32pVAfXKqttcp/geL5ys6xw6c/HkASXLNvwlf7IzMLxnpqANtHHwcF4waqRA=="],
 
     "@nestjs/schematics": ["@nestjs/schematics@12.0.10", "", { "dependencies": { "@angular-devkit/core": "22.2.3", "@angular-devkit/schematics": "22.2.3", "comment-json": "5.0.0", "jsonc-parser": "3.3.1", "pluralize": "8.0.0" }, "peerDependencies": { "prettier": "^3.0.0", "typescript": ">=6.0.0" }, "optionalPeers": ["prettier"] }, "sha512-3objKOOQDGxcckj92d7NNiYGVNoMoUqqw7eX8O/25ZL4V6ih/Hkx4WgOJ/H/2fkfag4UdiYN/GySHimn682+nQ=="],
 
