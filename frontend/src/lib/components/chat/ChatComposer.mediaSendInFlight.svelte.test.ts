@@ -86,6 +86,10 @@ function heldContext(): { ctx: MessagingContext; admit: () => void } {
     ]),
     userId: 'me',
     selectedContact: CONVO,
+    // Live, like the page's: a test that moves the selection moves what is on screen.
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     setSendError: vi.fn(),
     log: vi.fn(),
     ensureMls: () => ({ waitForMessageQueueIdle: async () => {} }),
