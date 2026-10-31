@@ -231,6 +231,30 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
   });
 
+  it('a successful external join raises the group-ready seam, as a Welcome does', async () => {
+    // It set the row `active` and said nothing to the outbox, so a message held while the device
+    // was out waited for its own backoff (review, 2026-10-31).
+    const onGroupReady = vi.fn();
+    const deps = { ...makeDeps(), onGroupReady };
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'active')]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps);
+
+    expect(onGroupReady).toHaveBeenCalledWith('g1');
+  });
+
+  it('a join that does not land raises no group-ready', async () => {
+    const onGroupReady = vi.fn();
+    const deps = { ...makeDeps(), onGroupReady };
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'active')]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: false });
+
+    await requestReAdd('g1', deps);
+
+    expect(onGroupReady).not.toHaveBeenCalled();
+  });
+
   it('waits when a Welcome is actually queued for this device and this group', async () => {
     // `welcomeQueued` is the healthy half of `pending`: the Add worked, delivery is owed, and the
     // frame arrives the moment this device drains its queue. Serving ourselves an external commit

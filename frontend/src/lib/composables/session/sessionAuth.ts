@@ -114,7 +114,6 @@ import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
-import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
@@ -199,10 +198,12 @@ import {
   markConversationDeletedRemotely,
 } from '$lib/utils/chat/conversations';
 import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
+import { reconcileRestoredLifecycles } from '$lib/utils/chat/admissionState';
 import {
   registerOutbox,
   unregisterOutbox,
   flushOutbox,
+  resumeOutboxGroup,
   applyOutboxPendingStatuses,
   OutboxPrepareRefusedError,
   type PreparedOutboxMedia,
@@ -294,7 +295,47 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
     log: cb.log,
+    // An external join is the other way a group becomes ready, and it owes what a Welcome owes.
+    onGroupReady: (groupId: string) => announceGroupReady(ctx, cb, groupId),
   };
+}
+
+/** The pending debounce of {@link announceGroupReady}'s invitation sweep, one per session. */
+const groupReadySweeps = new WeakMap<SessionContext, ReturnType<typeof setTimeout>>();
+
+/**
+ * ONE GROUP JUST BECAME SENDABLE - a Welcome installed (the message pipeline's `onGroupReady`) or an
+ * external join landed (`requestReAdd`, through `RecoveryDeps.onGroupReady`). ONE function for both,
+ * because what is owed is the same and the external join used to owe it and do none of it: its row
+ * went `active` and nothing resumed the messages held for the group.
+ *
+ * Owed, in order: the entries held for this group are resumed and the queue drained
+ * (`resumeOutboxGroup`, which skips their backoff - a plain flush did not); their statuses are
+ * refreshed; the askers this group kept waiting are served; and the invitation sweep runs, debounced
+ * once per session, since a burst of Welcomes needs one sweep.
+ */
+export function announceGroupReady(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  readyGroupId: string
+): void {
+  resumeOutboxGroup(readyGroupId);
+  void applyOutboxPendingStatuses();
+  // The askers this group kept waiting. Served through the SAME path the socket uses, so one that
+  // is still too early is put back on the queue rather than dropped: "ready" here is the MLS group
+  // becoming sendable, which is not yet this device's conversation row.
+  void drainDeferredWelcomeRequests(makeWelcomeRequestContext(ctx, cb), readyGroupId);
+  const pending = groupReadySweeps.get(ctx);
+  if (pending !== undefined) clearTimeout(pending);
+  groupReadySweeps.set(
+    ctx,
+    setTimeout(() => {
+      groupReadySweeps.delete(ctx);
+      processDeviceInvitationsLocally(ctx, cb).catch((e: unknown) =>
+        cb.log(`[SYNC] invitation sweep after a group became ready failed: ${String(e)}`)
+      );
+    }, 500)
+  );
 }
 
 /**
@@ -2017,24 +2058,8 @@ export async function loginImpl(
             ctx.ensureMls().getDeviceId()
           );
       },
-      onGroupReady: (() => {
-        let t: ReturnType<typeof setTimeout> | null = null;
-        return (readyGroupId: string) => {
-          // The group just became sendable (Welcome processed / external join complete): drain
-          // the outbox to deliver pending messages and refresh their status.
-          flushOutbox();
-          void applyOutboxPendingStatuses();
-          // The askers this group kept waiting. Served through the SAME path the socket uses, so
-          // one that is still too early is put back on the queue rather than dropped: "ready" here
-          // is the MLS group becoming sendable, which is not yet this device's conversation row.
-          void drainDeferredWelcomeRequests(makeWelcomeRequestContext(ctx, cb), readyGroupId);
-          if (t !== null) clearTimeout(t);
-          t = setTimeout(() => {
-            t = null;
-            processDeviceInvitationsLocally(ctx, cb).catch(() => {});
-          }, 500);
-        };
-      })(),
+      // The group just became sendable (a Welcome processed): the one seam an external join shares.
+      onGroupReady: (readyGroupId: string) => announceGroupReady(ctx, cb, readyGroupId),
       onMlsFatalError: (kind) => {
         ctx.setMlsFatalError(kind);
         if (kind === 'oom') {
@@ -2228,20 +2253,23 @@ export async function loginImpl(
         );
       }
       const missingKeys: string[] = [];
-      // Conversations stuck in 'pending' while their local MLS state exists:
-      // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
-      // groups but never promoted the inverse - this adds the mirror promotion.
-      const recoveredKeys: string[] = [];
-      for (const [key, c] of cb.conversations.entries()) {
-        if (isChannelConversationId(c.id)) continue;
-        if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
-          // Admitted once, so never read as a never-admitted ask again.
-          cb.conversations.set(key, { ...c, lifecycle: 'pending', awaitingAdmission: false });
-          missingKeys.push(key);
-        } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, lifecycle: 'active' });
-          recoveredKeys.push(key);
-        }
+      // The demotion of rows whose group is not held, and its mirror: the promotion of `pending`
+      // rows whose group is - on MEMBERSHIP, never on held state alone (`reconcileRestoredLifecycles`).
+      const {
+        demoted,
+        promoted: recoveredKeys,
+        awaiting,
+      } = await reconcileRestoredLifecycles({
+        conversations: cb.conversations,
+        localGroups: localMlsGroups,
+        mlsService,
+        log: cb.log,
+      });
+      missingKeys.push(...demoted);
+      if (awaiting.length > 0) {
+        cb.log(
+          `[INIT] ${awaiting.length} pending conversation(s) hold a group this device is out of - kept pending, awaiting re-admission: ${awaiting.map((k) => k.slice(0, 8)).join(', ')}`
+        );
       }
       if (missingKeys.length > 0) {
         cb.log(

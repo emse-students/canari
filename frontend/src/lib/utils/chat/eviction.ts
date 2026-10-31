@@ -106,6 +106,17 @@ const EVICTION_EVIDENCE: Record<EvictionEvidence, { what: string; missed: boolea
   },
 };
 
+/**
+ * Whether `evidence` is a LOCAL READ of the group state - a Remove commit, or a later reader of the
+ * state it left - as opposed to a statement made by somebody else (the remover's announcement, the
+ * server's refusal). Only a local read can be the Remove half of a re-admission seen again.
+ */
+function isLocalReading(evidence: EvictionEvidence): boolean {
+  return (
+    evidence === 'remove-commit' || evidence === 'inbound-frame' || evidence === 'membership-check'
+  );
+}
+
 /** What {@link recordEviction} needs. `groupId` and not a key: four of the five sites hold nothing else. */
 export interface RecordEvictionDeps {
   conversations: Map<string, Conversation>;
@@ -157,6 +168,20 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     // Not silent, and not an error either: a distribution group and a group whose row was already
     // purged both reach here. Nothing is recorded about them, so there is nothing to retire.
     log(`[EVICT] ${short}… - removed (${what}), but no conversation row carries this group`);
+    return false;
+  }
+
+  // THE ROW ALREADY CLASSIFIED THIS REMOVE AS THE FIRST HALF OF A RE-ADMISSION, and a local read of
+  // the same evicted state is not new evidence against that. `retireIfEvicted` asks `reAddInFlight`
+  // only at the commit; every later reader - a send, a selection, a frame after a reload, when the
+  // in-memory flag is gone - reaches here, and retiring now posts the notice and kills the queue
+  // three seconds before the Welcome makes both false (review, 2026-10-31). The row is the durable
+  // record of that classification, so it is what decides. The server's own word is not a re-read,
+  // and still records.
+  if (isLocalReading(evidence) && awaitsReAdmission(conversations.get(key))) {
+    log(
+      `[EVICT] ${short}… - removed (${what}), but the row awaits the re-admission this Remove began - not recorded, the Welcome decides`
+    );
     return false;
   }
 
@@ -358,6 +383,24 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   }
 
   return recordEviction({ ...rest, groupId, evidence, log });
+}
+
+/**
+ * Whether the row records that this device is WAITING to be let back into its group - `pending` -
+ * so a local membership of `false` is the Remove half of a re-admission, not an eviction.
+ *
+ * READ TOGETHER WITH THAT `false`, NEVER ALONE. A `pending` row is also a placeholder for a group
+ * this device never held, and there `isGroupActive` throws rather than answering. A `pending` row
+ * whose HELD group says we are out has one writer, {@link markAwaitingReAdmission} (the Remove
+ * arriving while this device's own re-add was in flight), and the boot restore keeps it `pending`
+ * rather than promoting it, because it reads the membership and not merely the held state.
+ *
+ * The decision it carries: nothing is sent into such a group (the outbox HOLDS), and nothing records
+ * it as an eviction ({@link recordEviction}) - the Welcome that completes the re-admission resumes
+ * the queue (`resumeOutboxGroup`) and retracts nothing, because nothing was posted.
+ */
+export function awaitsReAdmission(convo: Pick<Conversation, 'lifecycle'> | undefined): boolean {
+  return convo?.lifecycle === 'pending';
 }
 
 /**

@@ -1234,7 +1234,7 @@ backoff timer, and `enqueue`. **THREE are external moments nothing inside the mo
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
-| `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
@@ -1250,9 +1250,57 @@ flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it 
 goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
 flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
 
-`outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
-for each that the same gate refuses it shut and drains it open, and a source check pins the three
-external sites so a fourth has to be argued for rather than added.
+`outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
+`resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
+open, and a source check pins the three external sites so a fourth has to be argued for rather than
+added.
+
+### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
+
+Four defects of one seam, found by a read-only review and fixed together:
+
+- **A message sent during this device's own re-admission was failed for good (P2).** A
+  re-admission is a Remove then an Add, about 3 s apart. After the Remove the group is held, its
+  epoch gap cleared (`isGroupHealthy` yes) and `isGroupActive` false; `retireIfEvicted` has
+  already read `reAddInFlight` and written the row `pending` (`markAwaitingReAdmission`). The send
+  gate then took `failPermanently(..., 'evicted')`, and `recordEviction` retired the row, posted
+  the removal notice and deleted the entry - three seconds before the Welcome re-admitted the
+  device. Now **a `pending` row over a group this device is out of HOLDS the entry**
+  (`holdForGroup`, no re-add asked: one is in flight, and `requestReAdd` stands down on a held
+  group). The same row is honoured by every later local reader: `recordEviction` declines a
+  `remove-commit` / `inbound-frame` / `membership-check` evidence on a row awaiting re-admission
+  (`awaitsReAdmission`, `eviction.ts`) - which covers a frame after a reload, when the in-memory
+  `reAddInFlight` is gone - and `verifyCurrentUserMembership` answers "not a member" without
+  surfacing a removal or caching it, so a media send in the window is refused with the
+  "session establishing" sentence (the row is re-read after the queue barrier, not taken from the
+  snapshot before it). The server's own refusal (`server-refusal`) is not a re-read and still
+  records.
+- **The boot restore undid that row.** It promoted any `pending` row whose group
+  `getLocalGroups()` listed, and an evicted group stays listed. `reconcileRestoredLifecycles`
+  (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` keeps the row
+  `pending` and is logged, `null` promotes nothing.
+- **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
+  flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
+  after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
+  Every hold for the group writes the entry into `repairHeld` (in memory, like `transportHeld`);
+  `resumeGroup(conversationId)` moves that group's ids, and only those, into `resuming` and drains.
+  A group that becomes ready INSIDE the attempt that holds it (an external join landing within the
+  `requestReAdd` that attempt awaited) is caught by a per-group count of ready announcements read at
+  the gate and again after the hold: when it moved, the hold resumes itself and the lane re-runs. A
+  count of events, not a clock.
+- **A successful external join raised nothing (P3).** It set the row `active` and called
+  `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
+  raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE implementation both
+  a Welcome and an external join reach (resume, statuses, deferred welcome requests, the debounced
+  invitation sweep). **Not covered:** the two `RecoveryDeps` built outside the session -
+  `verifyCurrentUserMembership`'s direct-conversation repair and `startNewConversation`'s 1:1 repair
+  (`groupCreation.ts`) - carry no `onGroupReady`, so a join landed from one of them resumes the
+  group's held entries only at their backoff.
+
+**Open, and not decided here:** a re-admission whose Welcome never comes. The row stays `pending`
+and its entries are held - nothing is lost - but `requestReAdd` skips a group whose evicted state is
+still held ("already in WASM"), so nothing asks again; before this change the boot promotion turned
+the row `active` and the next send retired it, which terminated the wait by the defect itself.
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

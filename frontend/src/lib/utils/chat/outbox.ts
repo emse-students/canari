@@ -35,7 +35,8 @@ import { refusalStatus } from '$lib/utils/apiRefusal';
 import { uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
-import { recordEviction } from '$lib/utils/chat/eviction';
+import { awaitsReAdmission, recordEviction } from '$lib/utils/chat/eviction';
+import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -484,6 +485,14 @@ export interface OutboxController {
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /**
+   * ONE GROUP BECAME SENDABLE (a Welcome installed, an external join landed): every entry of it held
+   * for that repair skips its backoff ONCE - the `resuming` mark a reconnect gives `transportHeld` -
+   * and the queue is drained. An ALLOWLIST: only entries of `conversationId` whose last hold was the
+   * group repair. A transport, 5xx or parked hold is about something a group becoming ready does not
+   * change, and keeps its clock.
+   */
+  resumeGroup: (conversationId: string) => Promise<void>;
+  /**
    * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
    * that is on the wire but stalled. The bytes already sent are lost - the media route has no
    * offset - so a retry restarts the upload at zero; a chat reel's resumable session (RC-5) is the
@@ -581,6 +590,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * the trigger.
    */
   const transportHeld = new Set<string>();
+  /**
+   * Ids whose last attempt was HELD FOR THEIR GROUP (not sendable yet, or awaiting the Welcome of a
+   * re-admission), with their conversation: the entries {@link OutboxController.resumeGroup} resumes
+   * when that group becomes ready. In memory, like `transportHeld` and for the same reason.
+   */
+  const repairHeld = new Map<string, string>();
+  /**
+   * How many times each conversation was announced ready in this page life. Read at the gate and
+   * again after a repair hold is written: a group that became ready BETWEEN the two - an external join
+   * completed inside the `requestReAdd` this very attempt awaited, a Welcome processed meanwhile -
+   * found nothing in `repairHeld` to resume, so the hold resumes itself. A count of events, not a clock.
+   */
+  const readyAnnouncements = new Map<string, number>();
   /**
    * Ids that were answered 403: parked, never re-posted by this controller. In memory on purpose -
    * a restart earns ONE more attempt per entry (bounded), and a sign-in builds a new controller.
@@ -1483,6 +1505,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     clearUpload(entry.id);
     uploadTasks.delete(entry.id);
     uploadOwed.delete(entry.id);
+    repairHeld.delete(entry.id);
     // THE ROW GOES, SO ITS SESSION GOES: nothing will resume it. A refusal for good (`too-large`,
     // `refused`) was already released by the uploader that met it.
     if (cause === 'too-large' || cause === 'refused') openSessions.delete(entry.id);
@@ -1555,8 +1578,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    *
    * **The happy path does not pay for the backoff.** A group becoming sendable is not something
    * this module can observe, so it has its own trigger: `sessionAuth`'s `onGroupReady` calls
-   * `flushOutbox()` the moment a Welcome or an external join completes. The backoff below is what
-   * happens when the repair does NOT land, which is the only case that was unbounded.
+   * `resumeOutboxGroup` the moment a Welcome or an external join completes, and every entry held
+   * for that group (`repairHeld`, written here) skips the backoff written below ONCE. It used to call
+   * `flushOutbox()`, which this docblock claimed was enough and was not: a flush respects
+   * `nextAttemptAt`, so the held entry waited for its own timer, up to a minute (review,
+   * 2026-10-31). The backoff below is what happens when the repair does NOT land, which is the only
+   * case that was unbounded.
    */
   async function holdForRetry(
     entry: OutboxEntry,
@@ -1574,6 +1601,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
+    if (opts.repair) repairHeld.set(entry.id, entry.conversationId);
+    else repairHeld.delete(entry.id);
     // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
     if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
@@ -1613,6 +1642,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
+   * Holds an entry for its GROUP - not sendable yet, or awaiting the Welcome of a re-admission - so
+   * that the group becoming ready resumes it ({@link OutboxController.resumeGroup}).
+   *
+   * `readySeen` is the group's ready count read at the gate. When it moved before the hold was
+   * written, the announcement already ran and found this entry in no set: the hold is resumed here,
+   * and the lane re-runs, so the entry goes in the same drain rather than at the end of its backoff.
+   */
+  async function holdForGroup(
+    entry: OutboxEntry,
+    readySeen: number,
+    describe: (attempts: number) => string
+  ): Promise<FlushOutcome> {
+    const outcome = await holdForRetry(entry, describe, { repair: true });
+    if ((readyAnnouncements.get(entry.conversationId) ?? 0) !== readySeen) {
+      repairHeld.delete(entry.id);
+      resuming.add(entry.id);
+      laneRerun.add(entry.conversationId);
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… group ${entry.conversationId.slice(0, 8)}… became ready during this attempt - resumed at once`
+      );
+    }
+    return outcome;
+  }
+
+  /**
    * Parks an entry that keeps failing for a reason retrying cannot mend, with a state the member can
    * SEE and act on (`error`: retry or delete). Kept, never deleted - nothing the user wrote is lost -
    * and terminal until the member acts: a reconnect resumes only `transportHeld` entries.
@@ -1623,6 +1677,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     log(line);
     parked.add(entry.id);
     transportHeld.delete(entry.id);
+    repairHeld.delete(entry.id);
     unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
     patchUpload(entry.id, { phase: 'error' });
@@ -1644,6 +1699,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const first = !serverFailed.has(entry.id);
     serverFailed.add(entry.id);
     transportHeld.delete(entry.id);
+    repairHeld.delete(entry.id);
     showServerFailure(entry.id, entry.serverErrors ?? 0);
     // A follower tab draws the same bubble: it never flushes, so it would not know until a reload.
     if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0);
@@ -1858,6 +1914,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
 
     const terminalId = entry.conversationId;
+    // Read BEFORE the gate: a ready announcement landing after it finds this entry in no set yet.
+    const readySeen = readyAnnouncements.get(terminalId) ?? 0;
     const sendable = deps.isGroupHealthy(terminalId);
 
     // GROUP DELETED SERVER-SIDE - ASKED ONLY WHERE THE ANSWER CHANGES WHAT HAPPENS NEXT.
@@ -1898,11 +1956,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Through `holdForRetry`, which is what this branch did not do: it returned `'retry'` having
       // written nothing, so the entry had neither a clock of its own nor a count of how long it had
       // been held. See that function for what each of the two fields actually decides.
-      return holdForRetry(
+      return holdForGroup(
         entry,
+        readySeen,
         (attempts) =>
-          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`,
-        { repair: true }
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`
       );
     }
 
@@ -1926,6 +1984,24 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'retry';
     }
     if (!stillMember) {
+      // OUT OF THE GROUP, AND WAITING TO BE LET BACK IN - NOT EVICTED. A re-admission is a Remove and
+      // then an Add, three seconds apart, and the Remove half leaves exactly this state: the group
+      // held, the epoch gap cleared, `isGroupActive` false. `retireIfEvicted` already read
+      // `reAddInFlight` when that Remove merged and wrote the row `pending` instead of `removed`
+      // (`markAwaitingReAdmission`), so the fact is in the durable row before anything is sent - and
+      // failing the entry here retired the conversation and lost the message three seconds before
+      // the Welcome re-admitted the device (review, 2026-10-31). Held like a group not sendable yet,
+      // with no re-add asked: one is in flight, and `requestReAdd` stands down on a held group anyway.
+      // The Welcome resumes it (`resumeGroup`).
+      const key = findConversationKeyByGroupId(conversations, terminalId);
+      if (awaitsReAdmission(key ? conversations.get(key) : undefined)) {
+        return holdForGroup(
+          entry,
+          readySeen,
+          (attempts) =>
+            `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… awaits the Welcome of this device's re-admission (attempt ${attempts})`
+        );
+      }
       return failPermanently(entry, terminalId, 'evicted');
     }
 
@@ -2013,6 +2089,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         patchStatus(entry.id, 'sent');
         clearUpload(entry.id);
         transportHeld.delete(entry.id);
+        repairHeld.delete(entry.id);
         unexpected.delete(entry.id);
         uploadTasks.delete(entry.id);
         uploadOwed.delete(entry.id);
@@ -2189,6 +2266,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // attempt that gave up was held as a transport failure - leaving it there would restart it
       // behind a bubble still saying `failed`.
       transportHeld.delete(entry.id);
+      repairHeld.delete(entry.id);
       patchStatus(entry.id, 'pending');
       patchUpload(entry.id, { phase: 'failed' });
       return 'parked';
@@ -2930,6 +3008,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return runFlush();
     },
 
+    resumeGroup(conversationId: string): Promise<void> {
+      readyAnnouncements.set(conversationId, (readyAnnouncements.get(conversationId) ?? 0) + 1);
+      let resumed = 0;
+      for (const [id, heldIn] of repairHeld) {
+        if (heldIn !== conversationId) continue;
+        repairHeld.delete(id);
+        resuming.add(id);
+        resumed++;
+      }
+      // Said only when something was waiting: a redelivered Welcome announces a group already ready on
+      // every cold start, and a line per group there would be one its reader learns to skip.
+      if (resumed > 0) {
+        log(
+          `[OUTBOX] group ${conversationId.slice(0, 8)}… ready - ${resumed} held entr${resumed === 1 ? 'y' : 'ies'} resumed`
+        );
+      }
+      return runFlush();
+    },
+
     retryUpload(messageId: string): void {
       // Still waiting for an upload slot: nothing has left, so there is nothing to restart, and
       // aborting would only send it to the back of the queue (review of #2061). Answered BEFORE any
@@ -3077,7 +3174,7 @@ export function getOutbox(): OutboxController | null {
  * | Site | The moment, and why nothing in here sees it |
  * | --- | --- |
  * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
- * | `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+ * | `sessionAuth`'s `onGroupReady`, through {@link resumeOutboxGroup} | one GROUP became sendable; the network never changed |
  * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
  *
  * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
@@ -3093,6 +3190,20 @@ export function getOutbox(): OutboxController | null {
  */
 export function flushOutbox(): void {
   void active?.flush();
+}
+
+/**
+ * One group became sendable - a Welcome installed, an external join landed: resume the entries held
+ * for it and drain, on the active controller (no-op when none). See
+ * {@link OutboxController.resumeGroup}.
+ *
+ * NOT A PLAIN {@link flushOutbox}, and that was the defect: a held entry carries the backoff its hold
+ * wrote, and a flush skips an entry whose `nextAttemptAt` is in the future unless it is resumed - so
+ * a message held before a Welcome waited up to the ladder's top step, a minute, after the group was
+ * ready (review, 2026-10-31). The event that ends the hold is the one that resumes it.
+ */
+export function resumeOutboxGroup(conversationId: string): void {
+  void active?.resumeGroup(conversationId);
 }
 
 /** Enqueue a message on the active controller. Rejects with {@link OutboxEnqueueError} when it cannot. */
