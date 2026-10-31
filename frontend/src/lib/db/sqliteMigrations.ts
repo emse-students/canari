@@ -94,6 +94,27 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
  * the stamped marks already held keep covering what they covered, and the next reading writes the
  * first server mark.
  */
+/**
+ * The v15 -> v16 step, second half: the message row gains `order_at`, the key a page is read on
+ * (`storedOrderAt`). NULL on arrival, and NULL MEANS "NOT DERIVED YET": the server time it is
+ * derived from is inside the ciphertext, which a migration run before the device key is known cannot
+ * read, so the first page read of each conversation derives its rows (`SqliteStorage`).
+ */
+export function messageOrderAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('order_at') ? null : 'ALTER TABLE messages ADD COLUMN order_at INTEGER';
+}
+
+/**
+ * The page read's index (`getMessagesPage`) on the order key. Created where the column is known to
+ * exist - the fresh schema and the v16 step - never with the unconditional statements that run
+ * before the migrations, where an older file has no `order_at` yet.
+ */
+export const MESSAGE_ORDER_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_conv_order ON messages(conversation_id, order_at)';
+
+/** The `[conversation_id, timestamp]` index the page read used before v16; nothing reads it since. */
+export const LEGACY_MESSAGE_TIME_INDEX_DROP = 'DROP INDEX IF EXISTS idx_messages_conv_time';
+
 export function conversationServerReadWatermarksStatement(
   columns: readonly string[]
 ): string | null {

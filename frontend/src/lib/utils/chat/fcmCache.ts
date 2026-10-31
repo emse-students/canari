@@ -69,6 +69,14 @@ interface FcmCacheEntry {
   isGroup?: boolean;
   content: string;
   timestamp: number;
+  /**
+   * The SERVER's acceptance of the message in ms, the key the conversation is ordered on
+   * (`messageTime`, owner 2026-10-31): the push's `createdAt` for an inbound row, the `receivedAt`
+   * the quick reply's POST answered for our own. Absent from an entry written by an older native
+   * build, or when the server's answer carried none - the row then keeps its `timestamp` until the
+   * delivery pipeline brings the real frame.
+   */
+  serverTimestamp?: number;
   type: string;
   replyTo?: { id: string; senderId: string; preview: string } | null;
   /** `image | video | audio | file | reel` as the Rust push scanner read it; `reel` since WP-RC-7. */
@@ -306,6 +314,9 @@ async function consumeFcmCacheOnce(
       senderId: entry.senderId.toLowerCase(),
       content: entry.content,
       timestamp: entry.timestamp,
+      ...(typeof entry.serverTimestamp === 'number' && entry.serverTimestamp > 0
+        ? { serverTimestamp: entry.serverTimestamp }
+        : {}),
       isFcmPreview: true,
     };
     try {

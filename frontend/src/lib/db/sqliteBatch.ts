@@ -35,7 +35,7 @@ import type { SealedStore } from './types';
 export const MAX_BOUND_PARAMETERS = 999;
 
 /** Columns bound per message row in {@link messageInsertSql}. */
-export const MESSAGE_COLUMNS = 5;
+export const MESSAGE_COLUMNS = 6;
 
 /** Rows per INSERT statement: the largest batch that cannot exceed the parameter ceiling. */
 export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESSAGE_COLUMNS);
@@ -43,7 +43,7 @@ export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESS
 /**
  * `INSERT OR REPLACE` for `rows` message rows, with positional placeholders.
  *
- * The placeholders are numbered across the whole statement (`$1…$5`, `$6…$10`, …) because that is
+ * The placeholders are numbered across the whole statement (`$1…$6`, `$7…$12`, …) because that is
  * what the plugin's SQLite binding expects; a repeated `$1` per tuple would bind every row to the
  * first message.
  */
@@ -60,7 +60,7 @@ export function messageInsertSql(rows: number): string {
     return `(${placeholders.join(', ')})`;
   });
   return (
-    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ' +
+    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at) VALUES ' +
     tuples.join(', ')
   );
 }
@@ -122,6 +122,38 @@ export function sealedSwapStatement(
     sql:
       `UPDATE ${table} SET iv = CASE ${key} ${ivCase} END, ` +
       `cipher_text = CASE ${key} ${cipherCase} END WHERE ${where}`,
+    params,
+  };
+}
+
+/** Parameters bound per row in {@link orderAtFillStatement}: id+key in the CASE, id in the IN list. */
+export const ORDER_AT_FILL_COLUMNS = 3;
+
+/** Rows per order-key fill statement: the largest batch that cannot exceed the parameter ceiling. */
+export const ORDER_AT_FILL_ROWS_PER_STATEMENT = Math.floor(
+  MAX_BOUND_PARAMETERS / ORDER_AT_FILL_COLUMNS
+);
+
+/**
+ * ONE statement that writes the derived `order_at` of `rows.length` messages, and only of those
+ * still NULL: a row the app rewrote between the read and this write already carries the key its
+ * own save computed, and the fill must not replace a fresher value with the one it derived from the
+ * older ciphertext. Placeholders numbered in the order they appear, like {@link sealedSwapStatement}.
+ */
+export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: number }>): {
+  sql: string;
+  params: Array<string | number>;
+} {
+  if (rows.length < 1) throw new Error('orderAtFillStatement needs at least one row');
+  const params: Array<string | number> = [];
+  const next = (value: string | number): string => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  const cases = rows.map((r) => `WHEN ${next(r.id)} THEN ${next(r.orderAt)}`).join(' ');
+  const ids = rows.map((r) => next(r.id)).join(', ');
+  return {
+    sql: `UPDATE messages SET order_at = CASE id ${cases} END WHERE order_at IS NULL AND id IN (${ids})`,
     params,
   };
 }

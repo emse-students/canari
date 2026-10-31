@@ -56,14 +56,25 @@ import {
   conversationServerReadWatermarksStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
+  LEGACY_MESSAGE_TIME_INDEX_DROP,
+  MESSAGE_ORDER_INDEX_STATEMENT,
+  messageOrderAtStatement,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
-import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
+import {
+  compareStoredOrder,
+  fromMessagePayload,
+  mergeStoredMessage,
+  storedOrderAt,
+  toMessagePayload,
+} from './messagePayload';
 import {
   MESSAGE_ROWS_PER_STATEMENT,
+  ORDER_AT_FILL_ROWS_PER_STATEMENT,
   SEALED_SWAP_ROWS_PER_STATEMENT,
   chunk,
   messageInsertSql,
+  orderAtFillStatement,
   sealedStoreTable,
   sealedSwapStatement,
 } from './sqliteBatch';
@@ -195,6 +206,7 @@ export class SqliteStorage implements IStorage {
                 timestamp       INTEGER,
                 iv              TEXT,
                 cipher_text     TEXT,
+                order_at        INTEGER,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         `);
@@ -202,13 +214,9 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
-    // The page read's index (`getMessagesPage`): with it, `WHERE conversation_id = ? ORDER BY
-    // timestamp DESC LIMIT n` walks n entries backwards; without it SQLite collected the whole
-    // conversation into a temp B-tree to sort it (`EXPLAIN QUERY PLAN`: USE TEMP B-TREE FOR ORDER BY).
-    // Unconditional like the one above, so an existing database gains it on its next open.
-    await this.db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, timestamp)'
-    );
+    // The page read's index (`idx_messages_conv_order`, on `order_at`) is NOT created here: an older
+    // file has no `order_at` column until the v16 step below adds it. The fresh branch and that step
+    // create it (`MESSAGE_ORDER_INDEX_STATEMENT`).
 
     // Outbox: queued outgoing messages. Cleartext columns so sorting/re-keying works without the
     // device key; the sensitive payload (text/replyTo/media) is encrypted in cipher_text
@@ -290,6 +298,7 @@ export class SqliteStorage implements IStorage {
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
     if (fresh) {
+      await this.db.execute(MESSAGE_ORDER_INDEX_STATEMENT);
       await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       return;
     }
@@ -467,6 +476,14 @@ export class SqliteStorage implements IStorage {
       const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
       const add = conversationServerReadWatermarksStatement(cols.map((c) => String(c.name)));
       if (add) await this.db.execute(add);
+      // ...and the message rows get the key a page is read on, the same key the timeline sorts on
+      // (`storedOrderAt`). NULL on arrival: it is derived from the ciphertext, so the first page read
+      // of each conversation fills it (`deriveOrderKeys`). The `timestamp` index it replaces goes.
+      const messageCols: any[] = await this.db.select('PRAGMA table_info(messages)');
+      const addOrder = messageOrderAtStatement(messageCols.map((c) => String(c.name)));
+      if (addOrder) await this.db.execute(addOrder);
+      await this.db.execute(LEGACY_MESSAGE_TIME_INDEX_DROP);
+      await this.db.execute(MESSAGE_ORDER_INDEX_STATEMENT);
       // Stamped at 16, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 16');
     }
@@ -595,6 +612,7 @@ export class SqliteStorage implements IStorage {
           item.msg.timestamp,
           uint8ToBase64(item.encrypted.iv),
           uint8ToBase64(item.encrypted.cipherText),
+          storedOrderAt(item.msg),
         ])
       );
     }
@@ -670,7 +688,7 @@ export class SqliteStorage implements IStorage {
         console.warn('Failed to decrypt SQLite row', row.id);
       }
     }
-    return results;
+    return results.sort(compareStoredOrder);
   }
 
   /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */
@@ -697,27 +715,30 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
-   * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
-   * Rows are fetched in descending timestamp order (most recent first) then re-sorted
-   * ascending before return so callers always receive chronological order.
-   * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
-   * Both statements are answered by `idx_messages_conv_time` with no sort step.
+   * Decrypt and return a paginated slice of messages using a server-side LIMIT clause, on the ORDER
+   * KEY (`order_at`, {@link storedOrderAt}): the newest `limit` rows, or those strictly below
+   * `beforeOrderAt` for "load older", handed back oldest first ({@link compareStoredOrder}).
+   * Both statements are answered by `idx_messages_conv_order` with no sort step.
+   *
+   * The conversation's rows not yet keyed (written before v16, or imported from a backup) are keyed
+   * FIRST ({@link deriveOrderKeys}), so no page is drawn over a column with holes in it.
    */
   async getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeTimestamp?: number
+    beforeOrderAt?: number
   ): Promise<StoredMessage[]> {
+    await this.deriveOrderKeys(conversationId, deviceKeyB64);
     let rows: any[];
-    if (beforeTimestamp !== undefined) {
+    if (beforeOrderAt !== undefined) {
       rows = await this.db.select(
-        'SELECT * FROM messages WHERE conversation_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3',
-        [conversationId, beforeTimestamp, limit]
+        'SELECT * FROM messages WHERE conversation_id = $1 AND order_at < $2 ORDER BY order_at DESC LIMIT $3',
+        [conversationId, beforeOrderAt, limit]
       );
     } else {
       rows = await this.db.select(
-        'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY timestamp DESC LIMIT $2',
+        'SELECT * FROM messages WHERE conversation_id = $1 AND order_at IS NOT NULL ORDER BY order_at DESC LIMIT $2',
         [conversationId, limit]
       );
     }
@@ -745,7 +766,51 @@ export class SqliteStorage implements IStorage {
         console.warn('Failed to decrypt SQLite row', row.id);
       }
     }
-    return results.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+    return results.sort(compareStoredOrder);
+  }
+
+  /**
+   * Fills `order_at` for the rows of `conversationId` that have none: decrypts each, takes
+   * {@link storedOrderAt}, writes it back in batched statements that touch only rows still NULL.
+   *
+   * ONCE PER ROW, NEVER PER READ. A NULL is the durable "not derived yet" - written by the v16 step
+   * and by `importEncryptedRow`, whose input is ciphertext - and every save writes the key, so after
+   * the first page of a conversation this is one index probe that finds nothing. A row that cannot
+   * be decrypted is keyed on its `timestamp`, the one date readable without the key, and counted:
+   * it is in no page anyway (the page read skips it), and leaving it NULL would decrypt it again on
+   * every page.
+   */
+  private async deriveOrderKeys(conversationId: string, deviceKeyB64: string): Promise<void> {
+    const rows: any[] = await this.db.select(
+      'SELECT id, timestamp, iv, cipher_text FROM messages WHERE conversation_id = $1 AND order_at IS NULL',
+      [conversationId]
+    );
+    if (rows.length === 0) return;
+    invalidateHistoryStateKey(conversationId);
+    let unreadable = 0;
+    const keyed: Array<{ id: string; orderAt: number }> = [];
+    for (const row of rows) {
+      const timestamp = rowTimestampMs(row.timestamp);
+      try {
+        const payload = (await decryptData(
+          base64ToUint8(row.cipher_text),
+          base64ToUint8(row.iv),
+          deviceKeyB64
+        )) as Record<string, unknown>;
+        const msg = fromMessagePayload({ id: row.id, conversationId, timestamp }, payload);
+        keyed.push({ id: row.id, orderAt: storedOrderAt(msg) });
+      } catch {
+        unreadable++;
+        keyed.push({ id: row.id, orderAt: timestamp });
+      }
+    }
+    for (const batch of chunk(keyed, ORDER_AT_FILL_ROWS_PER_STATEMENT)) {
+      const { sql, params } = orderAtFillStatement(batch);
+      await this.db.execute(sql, params);
+    }
+    appendLog(
+      `[STORE] order keys derived for ${keyed.length} row(s) of ${conversationId.slice(0, 8)}${unreadable > 0 ? ` - ${unreadable} unreadable, keyed on their sentAt` : ''}`
+    );
   }
 
   // -- Backup helpers ------------------------------------------------------

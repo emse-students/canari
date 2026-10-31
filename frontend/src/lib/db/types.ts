@@ -608,12 +608,17 @@ export interface IStorage {
    * no longer names cannot find it through {@link getConversations}.
    */
   getMessageConversationIds(prefix: string): Promise<string[]>;
-  /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
+  /**
+   * Return the most recent `limit` messages on the ORDER key (`storedOrderAt`: the server's receive
+   * time when the row knows it, `sentAt` otherwise - the key the timeline sorts on), optionally
+   * those strictly below `beforeOrderAt`, oldest first. Paging on any other key loses a late
+   * message: older by `sentAt` than the page boundary, newer by the key the screen sorts on.
+   */
   getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeTimestamp?: number
+    beforeOrderAt?: number
   ): Promise<StoredMessage[]>;
 
   // Garbage collection - delete messages older than the given threshold.

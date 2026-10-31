@@ -48,6 +48,30 @@ describe('applyNativeReadWatermarks', () => {
     expect(convs.get('g1')!.unreadCount).toBe(1);
   });
 
+  /**
+   * A line from the Android shade since 2026-10-31 carries the server's `createdAt` too, and it lands
+   * in the server-clock map. `b` was on the banner: its server time is covered although its author's
+   * clock stamped it after the banner's `sentAt`, so only the server mark can call it read. `c`
+   * reached the server after the banner was drawn and stays unread on both clocks.
+   */
+  it('routes the server time of a line into the server-clock map', () => {
+    const dated = (id: string, at: number, serverTimestamp: number) =>
+      ({ ...(msg(id, at) as object), serverTimestamp }) as never;
+    const convs = mapOf(
+      convo('g1', [dated('a', 1000, 7000), dated('b', 2500, 8000), dated('c', 3000, 9000)])
+    );
+    const changed = applyNativeReadWatermarks(
+      [{ groupId: 'g1', at: 2000, serverAt: 8000 }],
+      convs,
+      ME
+    );
+
+    expect(changed).toEqual(['g1']);
+    expect(convs.get('g1')!.serverReadWatermarks![meNorm]).toBe(8000);
+    expect(convs.get('g1')!.readWatermarks![meNorm]).toBe(2000);
+    expect(convs.get('g1')!.unreadCount).toBe(1);
+  });
+
   /** The merge is `max` on both ends, so a replayed or reordered line must change nothing. */
   it('never moves a watermark backwards', () => {
     const convs = mapOf(convo('g1', [msg('a', 1000), msg('b', 5000)], { [meNorm]: 5000 }));

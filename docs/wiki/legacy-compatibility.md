@@ -702,10 +702,11 @@ was against its own peers' clocks.
 **What it costs:** a late message whose `sentAt` is older than a STAMPED mark still reads as read, the
 pre-2026-10-31 behaviour, wherever that stamped mark is the newer of a reader's two. An upgraded
 reader's stamped mark stops moving (its own reads write the server map), so the residue shrinks to the
-native shade and older peers.
-**Removal condition:** the native shade sends `serverAt` (Android and iOS hand the push's `createdAt`
-down to `build_read_watermark_app_message` and `read_watermarks.ndjson` - owed), the floor passes the
-first release that does, AND no frame with a bare `at` is observed in a history bundle for a full
+iOS shade, an Android notification posted by an older build, and older peers.
+**Removal condition:** the native shade sends `serverAt` on BOTH platforms (Android does since
+2026-10-31, `EXTRA_SERVER_AT`; iOS must hand the push's `createdAt` down to
+`canari_native_build_read_watermark_proto` and `CanariAppendReadWatermark` - owed), the floor passes
+the first release where both do, AND no frame with a bare `at` is observed in a history bundle for a full
 retention window (90 days) - a frame outlives the client that wrote it, as for `read_receipt` above.
 Then the stamped map is read for salons only (whose two clocks are one) and the `at` alias goes.
 

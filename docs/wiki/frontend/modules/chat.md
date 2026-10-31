@@ -3309,8 +3309,8 @@ adds `server_read_watermarks`. `seenByAnchors` scans from the bottom (a stamped 
 in a server-sorted list, so the binary search went).
 
 **What a late message does now**: it sorts where it arrived, counts as unread and notifies - unless a
-STAMPED mark newer than its `sentAt` covers it, which only an older client, the native shade's "mark
-as read" (still `sentAt`-keyed, see below) or a mark from before the change can produce.
+STAMPED mark newer than its `sentAt` covers it, which only an older client, the iOS shade's "mark as
+read" (still `sentAt`-keyed, see below) or a mark from before the change can produce.
 
 **Edge cases, checked**:
 
@@ -3323,24 +3323,45 @@ as read" (still `sentAt`-keyed, see below) or a mark from before the change can 
   replayed message keeps its first server time.
 - **The history manifest is keyed by message ID, not by time** (`historyRangeOf`, see "The unit is a
   slice of the ID SPACE" below) - no clock enters it, so it needs nothing.
-- **Local pages are still cut on the stored `timestamp` column (`sentAt`)**: the scrollback cursor is
-  the smallest `sentAt` held, which loses nothing (it can only re-read rows, merged by id). Residue: a
-  message delivered more than one page of messages late is absent from the FIRST page after a reload
-  until scrollback reaches its `sentAt`; then it is drawn where it arrived.
-- **A background send** (the notification quick reply, a drain while the app was shut) now writes
-  `id<TAB>receivedAt` to `outbox_sent.ndjson` on Android; `reconcileOutboxSent` dates the stored and
-  the in-memory row. iOS writes bare ids, so its background-sent copies keep their `sentAt`.
+- **Local pages are cut on the same key** (owner's decision, same day: it must work for conversations
+  of every size). Each stored row carries its order key in the clear beside the ciphertext -
+  `order_at` in SQLite (schema v16, index `idx_messages_conv_order`, which replaces
+  `idx_messages_conv_time`), `orderAt` in IndexedDB (v12, index `byConversationOrder`) - written by
+  every save as `storedOrderAt` (= `messageTime`, one function in `messageTime.ts`). The server time is
+  INSIDE the ciphertext, so the migration cannot derive it: a row stored before, or imported from a
+  backup, is unkeyed (`NULL` / absent) and `deriveOrderKeys` keys a conversation's unkeyed rows on its
+  first page read - once, since every save writes the key; after that it is one index probe (SQLite) or
+  two index counts (IndexedDB) that find nothing. An undecryptable row is keyed on its `timestamp`. The
+  scrollback cursor is the smallest `messageTime` held (`loadOlderMessages`), the key the store pages
+  on, so a message delivered many pages late is on the first page after a reload, and the page below
+  neither skips nor repeats a row (`messagesPage.test.ts`, "a late message more than a page deep").
+  An own row still awaiting its server time is stored under its `sentAt` until the answer re-saves it.
+- **A background send** (a drain while the app was shut) writes `id<TAB>receivedAt` to
+  `outbox_sent.ndjson` on both platforms; `reconcileOutboxSent` dates the stored and the in-memory row.
+  The Android quick reply's own cache row carries the `receivedAt` its POST answered
+  (`writeSentMessageToCache`, `serverTimestamp` in `fcm_message_cache.ndjson`), and so does an inbound
+  push's (the push's `createdAt`). The iOS quick reply's cache row does not: it is injected after
+  `reconcileOutboxSent` ran, so it keeps its `sentAt` until the real frame replaces it.
 
 **Logs**: `[ADD_MSG] ✓ Message added` carries `sentAt=… serverAt=… gap=…ms`, and a batch line the
 largest gap of the batch (`clockGapNote`). A gap of minutes on a positive sign is delay; a negative
 gap, or one constant per sender, is a clock.
 
-**Not done, owed**: the native shade's "mark as read" and quick reply still announce the banner's
-`sentAt` (`build_read_watermark_app_message`, `read_watermarks.ndjson`); handing the push's
-`createdAt` down to them would put those marks on the server clock too. Tests: `messageOrder.test.ts`,
-`readState.test.ts`, `outbox.test.ts` ("takes its place by the receivedAt"),
-`outboxMirror.serverTime.test.ts`, `systemMessageHandler.readState.test.ts`,
-`historySystemEvents.test.ts`.
+**The Android shade states the server clock too**: the push's `createdAt` (and, on the WebSocket
+trigger, the frame's server time, `notifier_message_natif`'s `server_at`) rides the notification as
+`EXTRA_SERVER_AT` beside `EXTRA_SENT_AT`. "Mark as read" and the quick reply's mark then send
+`{ at, serverAt }` (`build_read_watermark_app_message(at, server_at)`, the shape the app sends) and
+write `serverAt` into `read_watermarks.ndjson`, which `applyNativeReadWatermarks` merges into the
+server map. A notification without it (an older build's, a push with no readable `createdAt`) sends
+the stamped `{ at }` and says so in logcat.
+
+**Not done, owed**: the iOS shade's "mark as read" and quick reply still announce the banner's
+`sentAt` (`canari_native_build_read_watermark_proto` passes no server time, `CanariAppendReadWatermark`
+writes `at` alone): the push's `createdAt` would have to reach `userInfo` in the Notification Service
+Extension first. Tests: `messageOrder.test.ts`, `readState.test.ts`, `outbox.test.ts` ("takes its
+place by the receivedAt"), `outboxMirror.serverTime.test.ts`, `systemMessageHandler.readState.test.ts`,
+`historySystemEvents.test.ts`, `messagesPage.test.ts`, `readWatermarkCache.test.ts`,
+`proto_fields.rs` (`build_read_watermark_app_message_*`).
 
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 

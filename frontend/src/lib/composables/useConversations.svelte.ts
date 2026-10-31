@@ -99,7 +99,7 @@ import {
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
-import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
@@ -1546,18 +1546,19 @@ export function useConversations() {
     const convo = conversations.get(contactName);
     if (!convo) return false;
 
-    const timestamps = convo.messages.map((m) =>
-      m.timestamp instanceof Date
-        ? m.timestamp.getTime()
-        : new SvelteDate(m.timestamp as any).getTime()
-    );
-    const beforeTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+    // The cursor is the ORDER key of the oldest row held - the key the store pages on and the
+    // timeline sorts on (`messageTime`, `storedOrderAt`), so the page below it starts exactly where
+    // the screen ends. A cursor on `sentAt` skipped a late message, or fetched one twice.
+    const beforeOrderAt =
+      convo.messages.length > 0
+        ? convo.messages.reduce((min, m) => Math.min(min, messageTime(m)), Infinity)
+        : undefined;
 
     const older = await ctx.storage.getMessagesPage(
       convo.id,
       ctx.deviceKeyB64,
       OLDER_MESSAGES_PAGE,
-      beforeTimestamp
+      beforeOrderAt
     );
     if (older.length === 0) return false;
 

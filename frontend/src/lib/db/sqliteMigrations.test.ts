@@ -4,6 +4,7 @@ import {
   conversationServerReadWatermarksStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
+  messageOrderAtStatement,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
 
@@ -165,5 +166,12 @@ describe('conversationServerReadWatermarksStatement (v16)', () => {
     ).toEqual({ read_watermarks: '{"me":5}', server_read_watermarks: null });
     expect(conversationServerReadWatermarksStatement(columnsOf())).toBeNull();
     expect(SCHEMA_VERSION).toBe(16);
+  });
+
+  it('adds the order key to an existing messages table, NULL ("not derived yet") on every row', () => {
+    expect(messageOrderAtStatement(CURRENT_MESSAGE_COLUMNS)).toBe(
+      'ALTER TABLE messages ADD COLUMN order_at INTEGER'
+    );
+    expect(messageOrderAtStatement([...CURRENT_MESSAGE_COLUMNS, 'order_at'])).toBeNull();
   });
 });

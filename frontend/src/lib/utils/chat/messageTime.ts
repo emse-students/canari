@@ -1,0 +1,43 @@
+/**
+ * The ordering key of a message row, alone in a module with no imports so the storage layer can
+ * page on the very function the timeline sorts on (`$lib/db`, `order_at` / `orderAt`) without
+ * pulling the rendering helpers of `messageOrder.ts` in with it.
+ */
+
+/**
+ * What the key reads: a chat row (`timestamp` a `Date`) or a stored one (`timestamp` in ms), and
+ * the server's receive time when the row knows it.
+ */
+export interface DatedRow {
+  timestamp: Date | number;
+  serverTimestamp?: number;
+}
+
+/**
+ * THE INSTANT A ROW IS ORDERED, SHOWN AND READ AT: the time the SERVER accepted it when the row
+ * knows it, the author's stamped `timestamp` (`sentAt`) otherwise (decided by the owner 2026-10-31).
+ *
+ * A salon row has always been dated by the server (its `timestamp` IS its `createdAt`). A DM or
+ * group row carries the server's receive time as `serverTimestamp` - `queued_message.createdAt` on a
+ * recipient's copy, the `receivedAt` the send answered on the sender's own - and it is the same
+ * value on every device, where `sentAt` is whatever the author's clock said when the bubble was
+ * composed. A message delivered late (an outbox that held it for minutes, a clock that runs slow)
+ * used to slot in ABOVE what everyone had already read, silently and already "read"; ordered by
+ * this key it appears where it arrived. A row with no server time - a copy older than the field, a
+ * history bundle from a source that lacked it - keeps its `sentAt`, the only date it has.
+ *
+ * Every consumer of "when" reads this one function - the sort, the read marks, the bubble's time,
+ * the day separators, the conversation's recency - so none of them can disagree with another.
+ */
+export function messageTime(msg: DatedRow): number {
+  const server = msg.serverTimestamp;
+  if (typeof server === 'number' && Number.isFinite(server) && server > 0) return server;
+  return stampedTime(msg);
+}
+
+/** The row's own stamped `timestamp` in ms: the author's `sentAt` for an MLS row, `createdAt` for a salon row. */
+export function stampedTime(msg: Pick<DatedRow, 'timestamp'>): number {
+  return msg.timestamp instanceof Date
+    ? msg.timestamp.getTime()
+    : new Date(msg.timestamp).getTime();
+}

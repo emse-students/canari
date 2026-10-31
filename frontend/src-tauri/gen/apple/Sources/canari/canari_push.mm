@@ -1908,9 +1908,15 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
   return out;
 }
 
-static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                        NSString *ciphertextB64, NSString *messageId, BOOL silent,
-                                        BOOL durable) {
+/**
+ * POSTs one queued frame. Returns -1 when it was NOT delivered, otherwise the server's receive time
+ * (`receivedAt`, ms) the answer carried - 0 when it carried none, which is logged. The drain writes
+ * it beside the id in `outbox_sent.ndjson` (`id<TAB>receivedAt`, the Android shape), so the app
+ * dates its own copy by the server's clock as it does a foreground send (outboxMirror.ts).
+ */
+static long long CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret,
+                                             NSString *groupId, NSString *ciphertextB64,
+                                             NSString *messageId, BOOL silent, BOOL durable) {
   NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send", ctx.baseUrl]];
   NSDictionary *payload = @{
     @"userId" : ctx.userId,
@@ -1923,9 +1929,26 @@ static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret
   };
   NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
   int status = 0;
-  CanariHttpRequest(@"POST", url, secret, body, &status);
+  NSData *answer = CanariHttpRequest(@"POST", url, secret, body, &status);
   NSLog(@"[CanariPush] sendQueuedMessagePush: HTTP %d group=%@ msg=%@", status, groupId, messageId);
-  return status == 200 || status == 201;
+  if (status != 200 && status != 201) {
+    return -1;
+  }
+  long long receivedAt = 0;
+  id parsed = answer != nil ? [NSJSONSerialization JSONObjectWithData:answer options:0 error:nil]
+                            : nil;
+  if ([parsed isKindOfClass:[NSDictionary class]]) {
+    id value = ((NSDictionary *)parsed)[@"receivedAt"];
+    if ([value isKindOfClass:[NSNumber class]]) {
+      receivedAt = [(NSNumber *)value longLongValue];
+    }
+  }
+  if (receivedAt <= 0) {
+    NSLog(@"[CanariPush] sendQueuedMessagePush: sent, the answer carried no receive time msg=%@",
+          messageId);
+    receivedAt = 0;
+  }
+  return receivedAt;
 }
 
 static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
@@ -1968,9 +1991,13 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
       [remaining addObject:entry];
       continue;
     }
-    if (CanariSendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.entryId,
-                                    entry.silent, entry.durable)) {
-      [sentIds addObject:entry.entryId];
+    long long receivedAt = CanariSendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext,
+                                                       entry.entryId, entry.silent, entry.durable);
+    if (receivedAt >= 0) {
+      // One `outbox_sent.ndjson` line: the id, and the server's receive time when it answered one.
+      [sentIds addObject:receivedAt > 0
+                             ? [NSString stringWithFormat:@"%@\t%lld", entry.entryId, receivedAt]
+                             : entry.entryId];
     } else {
       [remaining addObject:entry];
     }
@@ -2168,7 +2195,7 @@ static void CanariSendCallDecline(NSString *groupId, NSString *callId) {
           callId);
     return;
   }
-  BOOL sent = CanariSendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, YES, NO);
+  BOOL sent = CanariSendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, YES, NO) >= 0;
   NSLog(@"[CanariCallKit] decline call=%@ sent=%d", callId, sent);
 }
 

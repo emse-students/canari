@@ -48,7 +48,13 @@ import {
   toEncryptedGraineRow,
   type GraineClearColumns,
 } from './graineCodec';
-import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
+import {
+  compareStoredOrder,
+  fromMessagePayload,
+  mergeStoredMessage,
+  storedOrderAt,
+  toMessagePayload,
+} from './messagePayload';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 
 // ---------------------------------------------------------------------------
@@ -56,14 +62,28 @@ import { readStoredTimestampMs } from '$lib/utils/dates';
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 11;
+const IDB_SCHEMA_VERSION = 12;
 
 /**
- * The messages index a page is read from: `[conversationId, timestamp]`, so one conversation's rows
- * are CONTIGUOUS and already in time order. `byConversation` orders a conversation's rows by id,
- * which is why a page used to read every row of the conversation and sort them to keep fifty.
+ * The messages index pages were read from until v12: `[conversationId, timestamp]`, so one
+ * conversation's rows are CONTIGUOUS and in `sentAt` order. `byConversation` orders a
+ * conversation's rows by id, which is why a page used to read every row of the conversation and
+ * sort them to keep fifty. Kept because the v11 step repairs string timestamps by walking it.
  */
 const MESSAGES_BY_CONVERSATION_TIME = 'byConversationTime';
+
+/**
+ * The messages index a page is read from since v12: `[conversationId, orderAt]`, the key the
+ * timeline sorts on (`storedOrderAt` - the server's receive time when the row knows it). A row with
+ * no `orderAt` yet (stored before v12, or imported from a backup) is in no compound index entry at
+ * all, which is how `deriveOrderKeys` counts what it still has to key.
+ */
+const MESSAGES_BY_CONVERSATION_ORDER = 'byConversationOrder';
+
+/** One conversation's keyed rows in {@link MESSAGES_BY_CONVERSATION_ORDER}, below `before` when given. */
+function conversationOrderRange(conversationId: string, before?: number): IDBKeyRange {
+  return conversationTimeRange(conversationId, before);
+}
 
 /**
  * The page read's key range: one conversation's rows whose timestamp is a NUMBER, below `before`
@@ -446,6 +466,19 @@ export class IndexedDbStorage implements IStorage {
           if (oldVersion >= 6) normalizeStoredTimestamps(tx);
         }
 
+        if (oldVersion < 12) {
+          // The page read's index on the ORDER key (see `getMessagesPage`). The rows already stored
+          // carry no `orderAt` - it is derived from the ciphertext, which this upgrade cannot read -
+          // so the index starts empty for them and the first page read of each conversation keys
+          // them (`deriveOrderKeys`).
+          const messages = tx.objectStore('messages');
+          if (!messages.indexNames.contains(MESSAGES_BY_CONVERSATION_ORDER)) {
+            messages.createIndex(MESSAGES_BY_CONVERSATION_ORDER, ['conversationId', 'orderAt'], {
+              unique: false,
+            });
+          }
+        }
+
         if (oldVersion < 3 && oldVersion >= 2) {
           // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,
           // and update messages.conversationId accordingly.
@@ -676,6 +709,7 @@ export class IndexedDbStorage implements IStorage {
           id: msg.id,
           conversationId: msg.conversationId,
           timestamp: msg.timestamp,
+          orderAt: storedOrderAt(msg),
           ...encrypted,
         };
       })
@@ -765,7 +799,7 @@ export class IndexedDbStorage implements IStorage {
         console.warn('Failed to decrypt message', row.id);
       }
     }
-    return results.sort((a, b) => a.timestamp - b.timestamp);
+    return results.sort(compareStoredOrder);
   }
 
   /** Rows held for `conversationId`, counted on the index - nothing is read or decrypted. */
@@ -804,19 +838,22 @@ export class IndexedDbStorage implements IStorage {
 
   /**
    * Decrypt and return a paginated slice of messages for `conversationId`: the most recent `limit`
-   * rows (below `beforeTimestamp`, exclusive, for "load older"), in chronological order.
+   * rows on the ORDER key (below `beforeOrderAt`, exclusive, for "load older"), oldest first
+   * ({@link compareStoredOrder}).
    *
-   * READS `limit` ROWS, NOT THE CONVERSATION. A reverse cursor on `[conversationId, timestamp]`
+   * READS `limit` ROWS, NOT THE CONVERSATION. A reverse cursor on `[conversationId, orderAt]`
    * walks newest-first and stops at `limit`; the read it replaces `getAll`ed every row of the
    * conversation through `byConversation` and sorted them in JS to keep fifty - 28-31 ms for 5 000
    * rows on every page, measured in the 2026-10-12 performance audit, and more on every load-older.
+   * The conversation's rows not keyed yet are keyed FIRST ({@link deriveOrderKeys}).
    */
   async getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeTimestamp?: number
+    beforeOrderAt?: number
   ): Promise<StoredMessage[]> {
+    await this.deriveOrderKeys(conversationId, deviceKeyB64);
     const db = this.ensureDb();
     const page: any[] = await new Promise((resolve, reject) => {
       const rows: any[] = [];
@@ -824,8 +861,8 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction('messages', 'readonly');
       const req = tx
         .objectStore('messages')
-        .index(MESSAGES_BY_CONVERSATION_TIME)
-        .openCursor(conversationTimeRange(conversationId, beforeTimestamp), 'prev');
+        .index(MESSAGES_BY_CONVERSATION_ORDER)
+        .openCursor(conversationOrderRange(conversationId, beforeOrderAt), 'prev');
       req.onsuccess = () => {
         const cursor = req.result;
         if (!cursor) return resolve(rows);
@@ -853,7 +890,83 @@ export class IndexedDbStorage implements IStorage {
         console.warn('Failed to decrypt message', row.id);
       }
     }
-    return results.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+    return results.sort(compareStoredOrder);
+  }
+
+  /**
+   * Gives `orderAt` to the rows of `conversationId` that have none, decrypting each once.
+   *
+   * Two index COUNTS decide whether there is anything to do - every row is in `byConversation`, only
+   * a keyed one is in {@link MESSAGES_BY_CONVERSATION_ORDER} - so after the first page of a
+   * conversation this reads nothing. The write re-reads each row inside its own transaction and keys
+   * it only if it is still unkeyed, spreading the CURRENT value: a row the app rewrote meanwhile
+   * already carries the key its save computed, and is never overwritten with the older ciphertext
+   * this pass decrypted. A row that cannot be decrypted is keyed on its `timestamp` and counted - it
+   * is in no page anyway, and left unkeyed it would be decrypted again on every page.
+   */
+  private async deriveOrderKeys(conversationId: string, deviceKeyB64: string): Promise<void> {
+    const db = this.ensureDb();
+    const counts = await new Promise<[number, number]>((resolve, reject) => {
+      const store = db.transaction('messages', 'readonly').objectStore('messages');
+      const all = store.index('byConversation').count(IDBKeyRange.only(conversationId));
+      all.onerror = () => reject(all.error);
+      all.onsuccess = () => {
+        const keyed = store
+          .index(MESSAGES_BY_CONVERSATION_ORDER)
+          .count(conversationOrderRange(conversationId));
+        keyed.onerror = () => reject(keyed.error);
+        keyed.onsuccess = () => resolve([all.result, keyed.result]);
+      };
+    });
+    if (counts[0] === counts[1]) return;
+
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const req = db
+        .transaction('messages', 'readonly')
+        .objectStore('messages')
+        .index('byConversation')
+        .getAll(IDBKeyRange.only(conversationId));
+      req.onsuccess = () =>
+        resolve((req.result as any[]).filter((r) => typeof r.orderAt !== 'number'));
+      req.onerror = () => reject(req.error);
+    });
+    let unreadable = 0;
+    const keyed = new Map<string, number>();
+    for (const row of rows) {
+      const timestamp = readStoredTimestampMs(row.timestamp) ?? 0;
+      try {
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        keyed.set(
+          row.id,
+          storedOrderAt(fromMessagePayload({ id: row.id, conversationId, timestamp }, payload))
+        );
+      } catch {
+        unreadable++;
+        keyed.set(row.id, timestamp);
+      }
+    }
+    if (keyed.size === 0) return;
+
+    invalidateHistoryStateKey(conversationId);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('messages', 'readwrite');
+      const store = tx.objectStore('messages');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      for (const [id, orderAt] of keyed) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          const current = req.result;
+          if (current && typeof current.orderAt !== 'number') store.put({ ...current, orderAt });
+        };
+      }
+    });
+    console.info(
+      `[IDB] order keys derived for ${keyed.size} row(s) of ${conversationId.slice(0, 8)}${unreadable > 0 ? ` - ${unreadable} unreadable, keyed on their sentAt` : ''}`
+    );
   }
 
   // -- Backup helpers ------------------------------------------------------
@@ -992,6 +1105,7 @@ export class IndexedDbStorage implements IStorage {
         id: msg.id,
         conversationId: msg.conversationId,
         timestamp: msg.timestamp,
+        orderAt: storedOrderAt(msg),
         ...encryptedMessage,
       });
       tx.objectStore('outbox').put({ ...outboxClearColumns(entry), ...encryptedEntry });

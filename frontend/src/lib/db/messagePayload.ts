@@ -13,6 +13,7 @@
 
 import type { StoredMessage, StoredMessagePatch } from './types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { messageTime } from '$lib/utils/chat/messageTime';
 
 /** Identity fields stored in plaintext columns rather than inside the encrypted payload. */
 export interface StoredMessageRowKeys {
@@ -20,6 +21,24 @@ export interface StoredMessageRowKeys {
   conversationId: string;
   /** Creation time as Unix ms, already normalised by the caller. */
   timestamp: number;
+}
+
+/**
+ * The key a stored row is PAGED on: {@link messageTime}, the very key the timeline sorts on - the
+ * server's receive time when the row knows it, its stamped `sentAt` otherwise (owner 2026-10-31).
+ *
+ * Written in the clear next to the ciphertext (`order_at` in SQLite, `orderAt` in IndexedDB) because
+ * `serverTimestamp` lives INSIDE the encrypted payload, and a page boundary drawn on `sentAt` while
+ * the screen sorts on server time loses a late message: one whose `sentAt` is older than the first
+ * page's oldest row but whose server time places it among the newest is in neither page.
+ */
+export function storedOrderAt(msg: Pick<StoredMessage, 'timestamp' | 'serverTimestamp'>): number {
+  return messageTime(msg);
+}
+
+/** Oldest first on {@link storedOrderAt}, ties by id - the order a page is handed back in. */
+export function compareStoredOrder(a: StoredMessage, b: StoredMessage): number {
+  return storedOrderAt(a) - storedOrderAt(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 
 /**

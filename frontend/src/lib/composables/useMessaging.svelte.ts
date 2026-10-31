@@ -704,6 +704,7 @@ export function useMessaging() {
         body: notificationBody,
         mentionsMe,
         sentAt,
+        serverAt: serverAt ?? 0,
         covers,
       })
     );
