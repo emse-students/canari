@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 /**
- * A REFUSED ADMISSION IS A PROOF, AND EVERY RECOVERY WOULD UNDO IT.
+ * A FREEZE WRITTEN BY A DEV BUILD OF #2815 DEAFENS NOTHING.
  *
- * `mls-core` refused a commit bringing a new user in on their own
- * (`frontend/mls-core/tests/admission_policy.rs`). The server, if it is the attacker, has accepted
- * that commit and moved the group on - so a commit replay is refused again, and the external join
- * after it rebuilds this device from a GroupInfo that CONTAINS the intruder. The pipeline therefore
- * ACKs the frame, alerts, freezes the group, and starts no recovery.
+ * #2815 stored a device-wide list of "frozen" groups in localStorage (`canari_admission_frozen`)
+ * and ACKed and dropped every later frame of each. The owner disarmed the rule on 2026-10-31 and the
+ * freeze is gone with it: nothing reads that key any more, so a device that ran such a build follows
+ * its conversations exactly like any other - its frames are rendered, and an epoch gap climbs the
+ * ordinary recovery ladder instead of being acknowledged away.
  */
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -99,91 +99,36 @@ function baseDeps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('setupMessageHandler - a refused admission', () => {
-  it('ACKs it, freezes the group, tells the listener and asks for no recovery', async () => {
-    const { requestReAdd } = await import('$lib/utils/chat/recovery');
-    vi.mocked(requestReAdd).mockClear();
-    const { isFrozenByAdmissionRefusal, resetAdmissionFreezes, setAdmissionFreezeListener } =
-      await import('$lib/utils/chat/admissionFreeze');
-    resetAdmissionFreezes();
-    const listener = vi.fn();
-    setAdmissionFreezeListener(listener);
+/** What a dev build of #2815 left behind: `groupId` recorded as frozen. */
+function storeLegacyFreeze(): void {
+  localStorage.setItem(
+    'canari_admission_frozen',
+    JSON.stringify([{ groupId, entrant: 'mallory:dev7', at: 1_700_000_000_000 }])
+  );
+}
+
+describe('setupMessageHandler - a freeze stored by an earlier build', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('renders a readable frame of the group', async () => {
+    storeLegacyFreeze();
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     mls.processIncomingMessage = vi
       .fn()
-      .mockRejectedValue(new Error('ADMISSION_REFUSED: mallory:dev7 entered by external commit'));
-    setupMessageHandler(deps as any);
-    const cb = mls.onMessage.mock.calls[0][0];
-
-    const acked = await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
-
-    // ACKed: the frame is a proof already recorded, and leaving it queued replays the refusal.
-    expect(acked).toBe(true);
-    expect(isFrozenByAdmissionRefusal(groupId)).toBe(true);
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId, entrant: 'mallory:dev7' })
-    );
-    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
-    const said = (deps.log as any).mock.calls.flat().join(' ');
-    expect(said).not.toContain('re-add');
-    expect(said).not.toContain('Out-of-sync');
-  });
-
-  it('does not tell the listener twice for the same group', async () => {
-    const { resetAdmissionFreezes, setAdmissionFreezeListener } =
-      await import('$lib/utils/chat/admissionFreeze');
-    resetAdmissionFreezes();
-    const listener = vi.fn();
-    setAdmissionFreezeListener(listener);
-    const deps = baseDeps();
-    const mls = deps.mlsService as any;
-    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
-    mls.processIncomingMessage = vi
-      .fn()
-      .mockRejectedValue(new Error('ADMISSION_REFUSED: mallory:dev7 entered by external commit'));
-    setupMessageHandler(deps as any);
-    const cb = mls.onMessage.mock.calls[0][0];
-
-    await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
-    await cb('peer', new Uint8Array([6, 6, 7]), groupId, false, undefined, false);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-  });
-
-  it('acknowledges the frames of a frozen group without recovering them: an epoch gap is not escalated', async () => {
-    // The server moved the group on past the refused commit, so every later frame reads as an epoch
-    // gap - and the escalation of an epoch gap is the forget-and-rejoin that rebuilds this device
-    // from the state holding the person.
-    const { requestReAdd } = await import('$lib/utils/chat/recovery');
-    vi.mocked(requestReAdd).mockClear();
-    const { freezeForAdmissionRefusal, resetAdmissionFreezes } =
-      await import('$lib/utils/chat/admissionFreeze');
-    resetAdmissionFreezes();
-    freezeForAdmissionRefusal(groupId, 'mallory:dev7');
-    const deps = baseDeps();
-    const mls = deps.mlsService as any;
-    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
-    mls.processIncomingMessage = vi
-      .fn()
-      .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=5, group_epoch=4]'));
-    mls.forgetGroup = vi.fn();
+      .mockResolvedValue({ plaintext: new Uint8Array([1]), author: 'unsigned' });
     setupMessageHandler(deps as any);
     const cb = mls.onMessage.mock.calls[0][0];
 
     const acked = await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
 
     expect(acked).toBe(true);
-    expect(mls.forgetGroup).not.toHaveBeenCalled();
-    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
+    expect(deps.addMessageToChat).toHaveBeenCalled();
   });
 
-  it('control: the same epoch gap on a group that is not frozen is not acknowledged away', async () => {
-    // Without this, the case above would pass on a pipeline that ACKs every gap.
-    const { resetAdmissionFreezes } = await import('$lib/utils/chat/admissionFreeze');
-    resetAdmissionFreezes();
+  it('climbs the epoch-gap ladder instead of acknowledging the frame away', async () => {
+    storeLegacyFreeze();
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
@@ -196,6 +141,8 @@ describe('setupMessageHandler - a refused admission', () => {
     await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
 
     const said = (deps.log as any).mock.calls.flat().join(' ');
+    expect(said).toContain('[GAP]');
     expect(said).not.toContain('frozen group');
+    expect(said).not.toContain('[ADMISSION]');
   });
 });

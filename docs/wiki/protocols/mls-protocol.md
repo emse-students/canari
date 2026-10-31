@@ -1359,34 +1359,49 @@ durably until the row loads), logs it at ERROR and reports it once (`POST mls/un
 commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
 production before anything is decided about such entries.
 
-**A closed group refuses such an entry (2026-10-24).** `mls-core`'s `admission` module judges an
-EXTERNAL commit before merging it: in a group classified `Closed`, the commit is refused
-(`MlsError::AdmissionRefused`, text `ADMISSION_REFUSED: <identity> entered by external commit`,
-`DecryptErrorKind::AdmissionRefused`) unless its user already holds a leaf in the tree BEFORE the
-commit - a new device of a member, or a device rejoining after losing its state. A member's own
-commit (`Sender::Member`) is never restricted: that is the human invitation. The verdict is a
-function of the tree at the commit's base epoch and the commit alone, so two honest members at the
-same epoch reach the same one whenever each processes it (a late replay included), and a refused
-commit leaves the group exactly as it was.
+**The admission rule is disarmed (owner, 2026-10-31): it judges, and refuses nothing.** #2815
+(2026-10-24 design, merged 2026-10-31) made a group classified `Closed` refuse, unmerged, an
+EXTERNAL commit whose user holds no leaf in the tree BEFORE the commit, and then FREEZE the group:
+no recovery, and every later frame ACKed and dropped. Its post-merge review found that this
+breaks conversations for good on paths that are legitimate, so the refusal and the freeze were
+removed the same day and today's behaviour returned:
 
-- **Three states per group**, persisted in the sealed state (`PersistedState.admission`, keyed by
-  group id so it survives `forget_group` and may be set before a join): `Closed`, `Open` (a key group,
-  entered by external commit by design) and unclassified, which keeps the behaviour every group had
-  before the rule. `mls-core` cannot tell a conversation from a key group; the app can, and classifies
-  only what it positively knows: `closeConversationAdmission` closes a conversation where its row is
-  saved and at every restore (never a group `isDistributionGroup` names), and
-  `registerDistributionGroup` / `noteDistributionGroup` open a key group before it is joined.
-- **A refusal is a proof, so it FREEZES the group and never recovers it** (`admissionFreeze.ts`,
-  durable, lifted only by a person). Every way back into the group runs through the server that served
-  the commit - a commit replay is refused again, and an external join rebuilds this device from the
-  group info that holds the person - so `requestReAdd`, `recoverForkedGroup`,
-  `recoverRosterDisagreement`, `isReAddDue`, the pipeline's epoch-gap escalation and the commit replay
-  all read the freeze first. The refusal is classified BEFORE every other marker
-  (`admission-refused`), because the native layer wraps unrecognised errors as `GAP_QUEUED` and every
-  other arm ends in a recovery.
-- **The member is told** (`announceAdmissionFreeze`, wired with the device notices): one system line
-  `chat_system_admission_refused` in the conversation, written once, and a toast.
-- Tested through the compiled crate (`admission.realWasm.test.ts`, `mls-core/tests/admission_policy.rs`).
+- **Legitimate paths produce exactly that commit.** A peer whose KeyPackage was skipped at creation
+  (a 1:1 included) enters as a person (`external_join_is_a_further_device` false, `welcome.rs`); a
+  user whose only device was revoked had its leaf removed by the stray sweep; a user whose only leaf
+  was evicted while the seat stands rejoins on `unhonoured-seat` (`recovery.ts`). Each was frozen out.
+- **A frozen group dropped every later frame for good**, the freeze had no way to be lifted
+  (`liftAdmissionFreeze` had no caller) and it was stored device-wide.
+- **A malicious member could freeze any conversation on purpose** by enrolling a second account and
+  joining by external commit; and an older client, or a group not yet classified, merged the commit
+  while the frozen members went deaf - the group split.
+
+**What stays.** `mls-core`'s `admission` module still holds the three persisted states per group
+(`PersistedState.admission`, keyed by group id: `Closed`, `Open`, unclassified) and the pure verdict
+`judge_external_commit(policy, tree_before, entrant) -> AdmissionVerdict` - a function of the tree at
+the commit's base epoch and the commit alone, so two honest members at the same epoch reach the same
+one. In a `Closed` group an `Uninvited` verdict is logged at WARN (`[ADMISSION] ... the rule is
+disarmed, so it is merged`) and the commit is MERGED; it then reaches the device observers like any
+entry, so it is written and reported as `[UNINVITED_ENTRY]` exactly as described above. Key groups
+are still classified `Open` where they are registered. **No conversation is classified `Closed` any
+more** (`closeConversationAdmission` and its two call sites are deleted); a group a dev build closed
+keeps the classification, which no longer refuses anything. The `MlsError::AdmissionRefused` /
+`DecryptErrorKind::AdmissionRefused` variants, the `admission-refused` client kind, the freeze
+(`admissionFreeze.ts`, localStorage `canari_admission_frozen` - now read by nothing, so a freeze a dev
+build wrote deafens nothing) and its announcement are deleted. Pinned by
+`mls-core/tests/admission_policy.rs`, `admission.realWasm.test.ts`,
+`setupMessageHandler.staleFreeze.test.ts` and the push path's
+`an_uninvited_external_commit_in_a_closed_group_is_not_refused_for_good`.
+
+**What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
+
+1. **The emission side first.** A user holding no leaf ASKS a member instead of entering alone,
+   mirroring the further-device door, and never in a 1:1 - so the legitimate paths above stop
+   producing the commit before any member refuses it.
+2. **An unfreeze path** - whatever a refusal leaves, a person or a fact lifts it; nothing is permanent.
+3. **Never drop frames.** A refusal may stop a recovery; it may not ACK a conversation's messages away.
+4. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
+   measured before a refusal is re-armed.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
 (`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
