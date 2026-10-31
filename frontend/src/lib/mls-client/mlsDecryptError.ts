@@ -72,6 +72,14 @@ export type MlsDecryptErrorKind =
    * like `own-message`, never a heal, and never a loss to reconcile.
    */
   | 'sender-mismatch'
+  /**
+   * `ADMISSION_REFUSED`: `mls-core` refused, unmerged, a commit that brought a user in on their own
+   * into a CLOSED group (`admission.rs`). A PROOF about the commit, never a desync, and the one kind
+   * here that no recovery may follow: replaying the commit is refused again, and an external join
+   * rebuilds this device from the server's group info - the very state the commit came from.
+   * ACKed, and the group is FROZEN for a human (`admissionFreeze.ts`), never repaired.
+   */
+  | 'admission-refused'
   /** Everything else -> likely out-of-sync; the policy (re-add, log) is up to the caller. */
   | 'unknown';
 
@@ -93,6 +101,11 @@ export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKin
   // rather than by MLS, and the one whose fall-through (`unknown` -> re-add) would be pure damage.
   if (error instanceof SenderMismatchError) return 'sender-mismatch';
   const s = String(error);
+  // BEFORE EVERY OTHER MARKER, for the reason the order is a contract: the native layer wraps what
+  // it does not recognise as `GAP_QUEUED:<group>:<error>`, and `mls-core` embeds raw errors inside
+  // its own `same-epoch refusal` - and every one of those arms ends in a recovery, which is the one
+  // thing a refused admission must never reach.
+  if (s.includes('ADMISSION_REFUSED:')) return 'admission-refused';
   // FIRST, because it is the only kind here that is not about the frame at all but about our
   // membership - and because the fall-through it used to take (`unknown` -> out-of-sync -> re-add)
   // is the single most destructive answer of the set.
@@ -115,4 +128,14 @@ export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKin
   if (s.includes('GAP_QUEUED') || s.includes('epoch gap')) return 'epoch-gap';
   if (s.includes('WrongEpoch')) return 'wrong-epoch';
   return 'unknown';
+}
+
+/**
+ * The identity a refused admission names (`ADMISSION_REFUSED: <userId:deviceId> entered by external
+ * commit`), or `unknown` when the text carries none. Read from the throw's own text because the
+ * refusal crosses WASM and IPC as a string - the TYPE was decided by {@link classifyIncomingDecryptError}
+ * and this only extracts what the alert names.
+ */
+export function admissionRefusedEntrant(error: unknown): string {
+  return /ADMISSION_REFUSED:\s*(\S+)/.exec(String(error))?.[1] ?? 'unknown';
 }

@@ -3519,6 +3519,8 @@
   "chat_system_device_added": "{user} a ajouté un appareil",
   "chat_system_uninvited_entry": "{user} a rejoint la conversation sans qu'un membre ne l'ajoute",
   "chat_system_unvouched_device_entry": "Un appareil jamais vu de {user} est entré dans la conversation de lui-même, sans qu'un membre ne l'ajoute",
+  "chat_system_admission_refused": "{user} est entré dans la conversation sans qu'aucun membre l'y ait ajouté. Cet appareil ne la suit plus.",
+  "admission_frozen_toast": "{user} est entré dans une conversation sans y avoir été ajouté : cet appareil ne la suit plus.",
   "device_notice_title": "Nouvel appareil sur votre compte",
   "device_notice_body": "Un nouvel appareil a été ajouté à votre compte ({when}).",
   "device_notice_body_named": "« {label} » a été ajouté à votre compte ({when}).",

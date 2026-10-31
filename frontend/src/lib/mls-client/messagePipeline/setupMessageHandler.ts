@@ -43,7 +43,11 @@ import {
   noteFrameConsumed,
 } from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
-import { classifyIncomingDecryptError } from '../mlsDecryptError';
+import { admissionRefusedEntrant, classifyIncomingDecryptError } from '../mlsDecryptError';
+import {
+  freezeForAdmissionRefusal,
+  isFrozenByAdmissionRefusal,
+} from '$lib/utils/chat/admissionFreeze';
 import { SenderMismatchError } from '../verifiedSender';
 import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -1296,6 +1300,25 @@ async function handleKnownGroup({
     const kind = classifyIncomingDecryptError(e);
 
     if (kind === 'own-message') return true;
+    // A REFUSED ADMISSION IS A PROOF, AND EVERY RECOVERY WOULD UNDO IT (`mls-core` `admission.rs`).
+    // A commit brought a new user in on their own into a closed group and was refused unmerged. The
+    // server, if it is the party that let them in, has moved the group on, so a commit replay is
+    // refused again and an external join rebuilds this device from the state that contains them.
+    // ACKed - redelivery brings back the same refusal - and the group is FROZEN for a person, which
+    // is also what stops the epoch-gap escalation below from running on every frame that follows.
+    if (kind === 'admission-refused') {
+      freezeForAdmissionRefusal(groupId, admissionRefusedEntrant(e));
+      return true;
+    }
+    // A group already frozen is repaired by nothing: every frame of the epochs the server moved on
+    // to would read as an epoch gap and be escalated into the forget-and-rejoin that rebuilds this
+    // device from the refused state. ACKed and dropped - this device no longer follows the group.
+    if (isFrozenByAdmissionRefusal(groupId)) {
+      log(
+        `[ADMISSION] frame for frozen group ${convoKey.slice(0, 8)}… (${kind}) - ACKed, no recovery`
+      );
+      return true;
+    }
     // REFUSED FOR ITS SENDER (WP-G2-1b): decrypted, so its generation is spent and it is recorded
     // as consumed - but its envelope names someone MLS did not verify, so nothing of it is shown.
     // `assertVerifiedSender` already said so at ERROR and reported it; nothing here is a heal.
@@ -1378,6 +1401,9 @@ async function handleKnownGroup({
           refusedBacklog: 'judged-by-caller',
         });
         if (replay.healed) return true;
+        // The replay met a commit bringing a new user into a closed group and froze it: rung 2 is
+        // the forget-and-rejoin that would rebuild this device from the state that holds them.
+        if (isFrozenByAdmissionRefusal(groupId)) return true;
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;
       } catch (e) {
         log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);

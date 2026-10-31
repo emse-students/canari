@@ -1,5 +1,6 @@
 pub mod security;
 
+pub mod admission;
 pub mod authorship;
 pub(crate) mod byte_compat;
 pub mod crypto;
@@ -23,6 +24,7 @@ pub mod welcome;
 mod external_join_pending_tests;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
+pub use admission::AdmissionPolicy;
 pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use messaging::IncomingApplication;
@@ -76,6 +78,12 @@ pub enum MlsError {
     /// backstop for a device that never received the commit at all.
     #[error("EVICTED: {0}")]
     Evicted(String),
+    /// A commit was refused, unmerged, because it brought a user in on their own into a CLOSED group
+    /// ([`crate::admission`]): no member added them. A PROOF about the commit, never a desync - the
+    /// group is left exactly as it was, and no recovery can help: replaying the commit is refused
+    /// again, and an external join would rebuild this device from the very state it refused.
+    #[error("ADMISSION_REFUSED: {0}")]
+    AdmissionRefused(String),
     /// No leaf in the tree carries any of the named identities, so a Remove has NOTHING TO DO.
     ///
     /// THE MIRROR OF {@link MlsError::AlreadyMember}, AND IT IS NOT A FAILURE. A caller removing a
@@ -227,6 +235,12 @@ pub enum DecryptErrorKind {
     /// it must NOT trigger recovery: asking to be re-added is asking the server to undo a
     /// moderation action, and the request that follows can only be refused.
     Evicted,
+    /// A commit refused, unmerged, because it brought a user in on their own into a CLOSED group
+    /// ([`crate::admission`]). A proof about the commit, never a desync - and unlike every other kind
+    /// here, NO recovery undoes it: a commit replay is refused again, and an external join would
+    /// rebuild this device from the state it just refused. ACKed, never queued, and the group is
+    /// frozen for a human to look at rather than repaired.
+    AdmissionRefused,
     /// A frame refused at EXACTLY the epoch it names: the residue of the decrypt path, once the
     /// ratchet kinds above have taken what they recognise. Permanent in the strongest sense
     /// available to this layer, and provably so rather than by observation - the epoch pair is
@@ -270,6 +284,7 @@ impl MlsError {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
             MlsError::Evicted(_) => DecryptErrorKind::Evicted,
             MlsError::ForeignExternalRemove(_) => DecryptErrorKind::SameEpochRefusal,
+            MlsError::AdmissionRefused(_) => DecryptErrorKind::AdmissionRefused,
             MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
             // Before the generic `Process error:` arm: a too-far-ahead generation IS a process
             // error, and reading it as a retryable ratchet gap is what queued a frame that could

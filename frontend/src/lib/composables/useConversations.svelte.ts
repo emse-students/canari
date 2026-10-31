@@ -6,6 +6,7 @@
  * - Group-level operations (create, rename, delete, invite, kick)
  * - Storage helpers (save, load history, reload)
  */
+import { closeConversationAdmission } from '$lib/utils/chat/admissionClassify';
 import type { JoinAnswerResult, JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
 import {
   admitJoinRequest,
@@ -476,6 +477,18 @@ export function useConversations() {
     if (!ctx.storage) return;
     const convo = conversations.get(id);
     if (!convo) return;
+    // Every way a conversation comes to exist saves its row, so this is where it is classified for
+    // the admission rule: closed, because a conversation row is the positive knowledge that it is one
+    // (`closeConversationAdmission`). A salon row is not an MLS group.
+    if ((convo.conversationType ?? 'group') !== 'channel') {
+      try {
+        void closeConversationAdmission(ctx.ensureMls(), convo.id, ctx.log);
+      } catch (e) {
+        ctx.log(
+          `[ADMISSION] ${convo.id.slice(0, 8)}... not classified, no MLS service yet: ${String(e)}`
+        );
+      }
+    }
     await ctx.storage.saveConversation(toConversationMeta(id, convo, ctx.userId));
   }
 
@@ -1360,6 +1373,16 @@ export function useConversations() {
       // the client it would wake belongs to the account that left.
       if (!gen.retired) {
         conversationsRestored = true;
+        // EVERY RESTORED CONVERSATION IS CLASSIFIED FOR THE ADMISSION RULE, not only the ones a later
+        // save reaches: a conversation that stays quiet is never saved, and would keep merging
+        // external commits for as long as it did (`closeConversationAdmission`). Idempotent and
+        // cheap - a group already closed in this session is answered from memory.
+        if (mlsService) {
+          for (const convo of conversations.values()) {
+            if ((convo.conversationType ?? 'group') === 'channel') continue;
+            void closeConversationAdmission(mlsService, convo.id, ctx.log);
+          }
+        }
         // A frame that reached the handler while this map was still empty was left in the server
         // queue rather than dropped. The restore finishing is what makes it readable, so it is the
         // trigger to ask again - there is no timer waiting to notice.
