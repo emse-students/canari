@@ -8,14 +8,14 @@
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { isWebKitAgent } from './webkit-console.mjs';
 import { contentTypeOf, fileInjectionExpression } from './webkit-files.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS, VENUE } from './names.mjs';
+import { PORTS, STATE_DIR, VENUE } from './names.mjs';
 import { SITE } from './site.mjs';
 
 /**
@@ -1611,9 +1611,31 @@ export async function awaitMessage(cx, marker, timeoutMs = 20000) {
     // whether the message was missing, late, or simply BELOW the render window - `ChatArea` keeps a
     // sliding window and a pane scrolled up genuinely does not render what arrives under it
     // (`hiddenBelowCount`). Those are three different defects, one of which is not a defect at all.
+    const shot = await missShot(cx, marker);
     throw new Error(
-      `${marker} never appeared in ${timeoutMs}ms - ${JSON.stringify(await paneState(cx, marker))}`
+      `${marker} never appeared in ${timeoutMs}ms - ${JSON.stringify({ ...(await paneState(cx, marker)), shot })}`
     );
+  }
+}
+
+/**
+ * A screenshot of the page at the moment a miss is declared, under `STATE_DIR/logs/shots/`: the one
+ * record that shows what a person would have seen, which no DOM summary can stand in for. Best
+ * effort - a page that cannot be captured says why in the path's place.
+ *
+ * @returns {Promise<string>} the PNG's path, or the reason there is none
+ */
+async function missShot(cx, marker) {
+  try {
+    const { data } = await cx.send('Page.captureScreenshot', { format: 'png' });
+    const dir = join(STATE_DIR, 'logs', 'shots');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `miss-${marker}-${Date.now()}.png`);
+    writeFileSync(file, Buffer.from(data, 'base64'));
+    return file;
+  } catch (e) {
+    console.log(`[chat] the miss of ${marker} could not be captured: ${String(e?.message ?? e)}`);
+    return `no screenshot: ${String(e?.message ?? e).slice(0, 80)}`;
   }
 }
 
@@ -1645,6 +1667,15 @@ export async function paneState(cx, marker) {
         inPane: pane.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
         inBody: document.body.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
         lastRendered: ps.slice(-3).map(function (e) { return (e.textContent || '').slice(0, 40); }),
+        // WHAT THE PANE SHOWS INSTEAD, when it shows no paragraph: the route, its own heading, the
+        // first of its text, and its element outline two levels down - so a miss says whether the
+        // pane is another conversation, a placeholder, or an empty list (TOK-3 / OFF-2, 2026-10-27).
+        path: location.pathname,
+        heading: (function () { var h = pane.querySelector('h1, h2, header'); return h ? (h.innerText || '').slice(0, 80) : null; })(),
+        paneText: (pane.innerText || '').slice(0, 400),
+        outline: [].slice.call(pane.children).map(function (c) {
+          return c.tagName + '.' + String(c.className || '').slice(0, 40) + '[' + [].slice.call(c.children).map(function (g) { return g.tagName + '(' + g.children.length + ')'; }).join(' ') + ']';
+        }),
         scroll: sc
           ? {
               fromBottomPx: Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop),
