@@ -1,4 +1,4 @@
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, ConversationLifecycle } from '$lib/types';
 import {
@@ -68,6 +68,8 @@ export interface OwnDeviceNotice {
   at: number;
   /** The name the account gave the device, when the device list knows it. */
   label?: string;
+  /** The owner opened the notifications list: no badge, no dot - the row stays until acted on. */
+  read?: boolean;
 }
 
 /**
@@ -157,8 +159,6 @@ interface Stored {
   undecided: DeviceEvent[];
   /** Contact devices decided NEW whose lines could not all be written yet (`writeContactLines`). */
   owedLines: OwedLine[];
-  /** Refused own devices whose notice was dismissed (`dismissRefusedDeviceNotice`). */
-  refusedSeen: string[];
   /**
    * Entries no member made ({@link entersUninvited}) into a conversation whose row was not loaded
    * when the event came: the line is written at the next delivery that finds the row.
@@ -184,7 +184,6 @@ const EMPTY: Stored = {
   lined: [],
   undecided: [],
   owedLines: [],
-  refusedSeen: [],
   owedUninvited: [],
   historyWithheld: [],
   historySealed: [],
@@ -217,8 +216,8 @@ let announced: string[] = [];
 let lined: string[] = [];
 let undecided: DeviceEvent[] = [];
 let owedLines: OwedLine[] = [];
-const refusedNotices = new SvelteMap<string, RefusedDeviceNotice>();
-let refusedSeen: string[] = [];
+/** Refused own devices already logged this session: one accusing line per device, not per drain. */
+const refusedLogged = new SvelteSet<string>();
 let owedUninvited: DeviceEvent[] = [];
 let boundAccount: string | null = null;
 function isNotice(v: unknown): v is OwnDeviceNotice {
@@ -228,7 +227,8 @@ function isNotice(v: unknown): v is OwnDeviceNotice {
     typeof n.key === 'string' &&
     typeof n.deviceId === 'string' &&
     typeof n.at === 'number' &&
-    (n.label === undefined || typeof n.label === 'string')
+    (n.label === undefined || typeof n.label === 'string') &&
+    (n.read === undefined || typeof n.read === 'boolean')
   );
 }
 
@@ -249,7 +249,6 @@ function readStored(userId: string): Stored {
       lined: strings(parsed.lined),
       undecided: Array.isArray(parsed.undecided) ? parsed.undecided.filter(isEvent) : [],
       owedLines: Array.isArray(parsed.owedLines) ? parsed.owedLines.filter(isOwedLine) : [],
-      refusedSeen: strings(parsed.refusedSeen),
       owedUninvited: Array.isArray(parsed.owedUninvited)
         ? parsed.owedUninvited.filter(isEvent)
         : [],
@@ -280,7 +279,6 @@ function writeStored(userId: string): void {
     lined,
     undecided,
     owedLines,
-    refusedSeen,
     owedUninvited,
     historyWithheld: historyWithheldEntries(),
     historySealed: historySealedGroups(),
@@ -318,14 +316,13 @@ function readStoredHistory(userId: string): { sealed: string[]; withheld: Withhe
 export function loadDeviceNotices(userId: string): void {
   if (!userId || boundAccount === userId) return;
   pending.clear();
-  refusedNotices.clear();
+  refusedLogged.clear();
   boundAccount = userId;
   const stored = readStored(userId);
   announced = stored.announced;
   lined = stored.lined;
   undecided = stored.undecided;
   owedLines = stored.owedLines;
-  refusedSeen = stored.refusedSeen;
   owedUninvited = stored.owedUninvited;
   bindHistoryWithheld(
     stored.historyWithheld,
@@ -343,12 +340,11 @@ export function loadDeviceNotices(userId: string): void {
 /** Unbinds the account (sign-out, switch); its persisted notices stay for its next session. */
 export function forgetDeviceNotices(): void {
   pending.clear();
-  refusedNotices.clear();
+  refusedLogged.clear();
   announced = [];
   lined = [];
   undecided = [];
   owedLines = [];
-  refusedSeen = [];
   owedUninvited = [];
   bindHistoryWithheld([], null);
   boundAccount = null;
@@ -357,6 +353,28 @@ export function forgetDeviceNotices(): void {
 /** The alerts not yet seen, oldest first. Reactive. */
 export function pendingDeviceNotices(): OwnDeviceNotice[] {
   return [...pending.values()];
+}
+
+/** How many alerts are still unread - what the bell's badge adds. Reactive. */
+export function unreadDeviceNoticeCount(): number {
+  return [...pending.values()].filter((n) => !n.read).length;
+}
+
+/**
+ * Opening the notifications list reads every alert, as it does the server's: they leave the badge
+ * and lose their dot, and stay in the list until dismissed. Persisted next to the notice.
+ */
+export function markDeviceNoticesRead(): void {
+  if (!boundAccount) return;
+  let changed = false;
+  for (const n of pending.values()) {
+    if (n.read) continue;
+    pending.set(n.key, { ...n, read: true });
+    changed = true;
+  }
+  if (!changed) return;
+  console.log('[DEVICE_NOTICE] new-device alert(s) read');
+  writeStored(boundAccount);
 }
 
 /** The user has seen the alert: it goes, and its device stays announced. */
@@ -949,55 +967,25 @@ async function retryOwedLines(
   }
 }
 
-/** One own device this device refused for a changed key: it cannot be re-added until it is reset. */
-export interface RefusedDeviceNotice {
-  /** `userId:deviceId` in its canonical form (`canonicalIdentity`, `leafIdentity.ts`). */
-  identity: string;
-  deviceId: string;
-  /** The name the account gave the device, when the device list knows it. */
-  label?: string;
-}
-
-/** The refused-device notices not yet dismissed, oldest first. Reactive. */
-export function pendingRefusedDeviceNotices(): RefusedDeviceNotice[] {
-  return [...refusedNotices.values()];
-}
-
 /**
- * Tells the owner, in the app, of every device of THEIR account among `identities` (refused by this
- * device for a changed key - `refusedDevices.ts`): such a device is never re-added to anything until
- * its owner resets it, and nothing else would tell them. A contact's refused device is skipped - it
- * is not this account's to reset. A notice dismissed once never comes back.
+ * Records, in the log and nowhere on screen (owner decision 2026-10-30: no banner), every device of
+ * THIS account among `identities` that this device refused for a changed key (`refusedDevices.ts`):
+ * such a device is never re-added to anything until its owner resets it. It is an anomaly - a key
+ * that changed under a device the account owns - so the line is an error, once per device per
+ * session. A contact's refused device is skipped: it is not this account's to reset.
  */
-export async function noteRefusedOwnDevices(
+export function noteRefusedOwnDevices(
   identities: string[],
-  ctx: Pick<DeviceNoticeContext, 'ownUserId' | 'deviceLabel'>
-): Promise<void> {
-  if (!boundAccount) {
-    console.error('[DEVICE_NOTICE] no account bound - refused-device notice not recorded');
-    return;
-  }
+  ctx: Pick<DeviceNoticeContext, 'ownUserId'>
+): void {
   const own = canonicalUserId(ctx.ownUserId);
   for (const raw of identities) {
     const identity = canonicalIdentity(raw);
     if (identity === null) continue;
-    if (userIdOfLeaf(identity) !== own || refusedSeen.includes(identity)) continue;
-    if (refusedNotices.has(identity)) continue;
-    const deviceId = deviceIdOfLeaf(raw);
-    try {
-      const label = await ctx.deviceLabel(deviceId);
-      refusedNotices.set(identity, { identity, deviceId, label });
-      console.warn("[DEVICE_NOTICE] one of this account's devices is refused until it is reset");
-    } catch (e) {
-      console.error('[DEVICE_NOTICE] refused-device notice not recorded:', e);
-    }
+    if (userIdOfLeaf(identity) !== own || refusedLogged.has(identity)) continue;
+    refusedLogged.add(identity);
+    console.error(
+      `[DEVICE_NOTICE] one of this account's devices is refused until it is reset (device ${deviceIdOfLeaf(raw)}): its key changed`
+    );
   }
-}
-
-/** The owner has read the refused-device notice: it goes, and is never shown again. */
-export function dismissRefusedDeviceNotice(identity: string): void {
-  if (!boundAccount || !refusedNotices.delete(identity)) return;
-  refusedSeen = [...refusedSeen, identity].slice(-MAX_ANNOUNCED_DEVICE_KEYS);
-  console.log('[DEVICE_NOTICE] refused-device notice seen');
-  writeStored(boundAccount);
 }

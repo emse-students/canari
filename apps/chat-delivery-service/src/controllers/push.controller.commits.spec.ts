@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
@@ -13,6 +13,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { externalCommitFrame } from '../testing/mlsFrameFixture';
 
 describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   let controller: PushController;
@@ -94,20 +95,23 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   });
 });
 
-describe('PushController - sendMessagePush answers the receive time', () => {
-  it('hands back the receivedAt every recipient copy is dated by, as the foreground route does', async () => {
+describe('PushController - sendMessagePush', () => {
+  const sendMessage = jest.fn();
+
+  /** The controller with a push secret that verifies and a delivery answering `sendMessage`. */
+  const pushController = async () => {
+    sendMessage.mockReset().mockResolvedValue({
+      status: 'processed',
+      queued: 2,
+      sent: 1,
+      receivedAt: 1_700_000_000_123,
+    });
     const pushTokenRepo = {
       findOne: jest.fn().mockResolvedValue({
         pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
       }),
       update: jest.fn(),
     };
-    const sendMessage = jest.fn().mockResolvedValue({
-      status: 'processed',
-      queued: 2,
-      sent: 1,
-      receivedAt: 1_700_000_000_123,
-    });
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PushController],
       providers: [
@@ -128,7 +132,11 @@ describe('PushController - sendMessagePush answers the receive time', () => {
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
-    const controller = module.get(PushController);
+    return module.get(PushController);
+  };
+
+  it('hands back the receivedAt every recipient copy is dated by, as the foreground route does', async () => {
+    const controller = await pushController();
 
     const res = await controller.sendMessagePush('PushSecret sekret', {
       userId: 'u1',
@@ -138,6 +146,31 @@ describe('PushController - sendMessagePush answers the receive time', () => {
     });
 
     expect(res).toEqual({ status: 'sent', queued: 2, sent: 1, receivedAt: 1_700_000_000_123 });
+  });
+
+  it('relays only private (application) frames: a public handshake frame is refused, typed and logged', async () => {
+    const controller = await pushController();
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    try {
+      const refusal = await controller
+        .sendMessagePush('PushSecret sekret', {
+          userId: 'u1',
+          deviceId: 'd1',
+          groupId: 'g1',
+          proto: externalCommitFrame('g1', 5n, 'u1:d1'),
+        })
+        .catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect((refusal as BadRequestException).getResponse()).toEqual({
+        error: 'public_frame_refused',
+        message: 'this send is not accepted',
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('REJECT public_frame_refused'));
+      expect(sendMessage).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

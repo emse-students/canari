@@ -785,8 +785,10 @@ all eight routes that answer a row, so a column added later is private until som
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
-**The Lydia Business private token is write-only (2026-10-16, migration 100).** `PUT :id/lydia-business-key`
-(`canManagePayoutAccount`) stores it encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
+**The Lydia Business private token is write-only (2026-10-16, migration 100).** Since enrolment lot 1 it is
+written ONLY by the internal `POST :id/lydia-account` at `business/create` (`setLydiaAccountId`); the old
+`PUT :id/lydia-business-key` is a shim answering `410 LYDIA_KEY_PASTE_RETIRED` and writing nothing
+([legacy-compatibility](../legacy-compatibility.md)). It is stored encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
 bound to the association and its vendor token) in `"lydiaBusinessKeyCiphertext"`, a column the entity
 maps `select`/`insert`/`update: false` and only raw SQL touches; `GET` on the same path answers `{ set }`.
 The one route that answers it decrypted is the internal `POST /api/internal/associations/lydia-callback-key`
