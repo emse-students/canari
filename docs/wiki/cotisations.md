@@ -1121,8 +1121,10 @@ Each service is the source of truth for its own half, and neither caches the oth
 (no migration). Ticked, a buyer holding no active tier of the association is refused at checkout with
 `PRODUCT_COTISANTS_ONLY` before any payment request is issued, and the shop card greys its button from
 `viewerIsCotisant` as for any members-only product. Proven in `products.service.spec.ts` ("the Cercle
-top-up reserved to cotisants"). Like every product, the top-up is also offered only to the buyers its
-association is visible to ([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)).
+top-up reserved to cotisants"). Like every product, the top-up is LISTED on /shop only to the buyers
+its association is visible to, and stays payable by anyone holding the association page's link
+([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) -
+so the cotisant box, not the campus, is what reserves it.
 
 When a `balance_topup` product (created at `/admin/cercle`, global admin only) is purchased via
 Stripe, `ProductsService.dispatchCercleWebhook` (`products.service.ts`) POSTs the recharge to the

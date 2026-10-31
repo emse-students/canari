@@ -32,15 +32,6 @@ import {
   TIER_TAG_NAME_TAKEN,
 } from '../associations/cotisation-namespace';
 import { ProductsService } from '../associations/products.service';
-
-/**
- * Whether the buyer may SEE the association (`preparePurchase`) is the campus predicate, proven
- * against PostgreSQL in `shop-partnership-visibility.integration.spec.ts`; it is not what this file
- * is about, so every buyer sees the association.
- */
-jest.mock('../spaces/viewer-visibility', () => ({
-  associationVisibleTo: () => Promise.resolve(true),
-}));
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from './entities/purchase-record.entity';

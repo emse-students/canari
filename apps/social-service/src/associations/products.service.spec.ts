@@ -22,16 +22,6 @@ import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
-import { associationVisibleTo } from '../spaces/viewer-visibility';
-
-/**
- * Whether the buyer may see the product's association is one SQL predicate, proven against a real
- * PostgreSQL in `shop-partnership-visibility.integration.spec.ts`. Here every association is
- * visible unless a test says otherwise, and what is under test is that a purchase ASKS it.
- */
-jest.mock('../spaces/viewer-visibility', () => ({
-  associationVisibleTo: jest.fn(() => Promise.resolve(true)),
-}));
 
 /**
  * An in-memory `product_checkouts` keeping the two properties the service relies on: a conditional
@@ -3906,15 +3896,6 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
         expect(opened.amountCents).toBe(500);
       });
-    });
-
-    it('refuses a product whose association the buyer cannot see as NOT FOUND, and issues nothing', async () => {
-      const t = setup();
-      (associationVisibleTo as jest.Mock).mockResolvedValueOnce(false);
-      await expect(t.checkout()).rejects.toThrow(NotFoundException);
-      expect(associationVisibleTo).toHaveBeenCalledWith(expect.anything(), 'asso1', 'user1');
-      expect(orderRefs(t.calls)).toHaveLength(0);
-      expect(t.checkouts.rows).toHaveLength(0);
     });
 
     it('gives every attempt its own order_ref, so a retry after a DECLINED one is issued', async () => {

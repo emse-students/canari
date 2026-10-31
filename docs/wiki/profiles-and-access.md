@@ -761,8 +761,8 @@ box no longer defines anything.
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
 | Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31) | built |
-| Shop, partnerships | the products and cards of an association VISIBLE to the reader (D37's predicate); by id, a 404 outside it; the association's own page keeps listing its products | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
-| Booking spaces | an association's space: as its association; a personal space: those sharing a space with its owner; by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 
 ### Filters and rights
 
@@ -841,15 +841,16 @@ adding one, the map filter, creation with and without a space).
 ### The shop, the partnerships and the bookings follow the campus (owner, 2026-10-31)
 
 An audit found that a product, a partnership card and a booking space were listed to, and could be
-bought, claimed or booked by, every signed-in account, whatever its campus. They now ask the
-directory's predicate (D37) of the row's OWNING association - no new column, no migration:
+bought, claimed or booked by, every signed-in account, whatever its campus. The listings and the
+claim now ask the directory's predicate (D37) of the row's OWNING association, and a personal
+booking space its owner's campus - no new column, no migration:
 
 | Surface | Rule | Where |
 | --- | --- | --- |
 | Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of their spaces) | `products.service.ts` |
-| A purchase by id | `preparePurchase` (so `createCheckoutSession`) answers 404 `Product not found` outside it | `products.service.ts`, `spaces/viewer-visibility.ts` |
+| A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
 | Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible; `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it | `partnerships.service.ts` |
-| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those who share a space with its owner (`sharesSpaceWithViewerSql`, a personal post's rule) - outside it, 404 `space-not-found` on read and on booking | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
+| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
 
 **Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
 products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashSale`, the space
@@ -859,10 +860,12 @@ cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a 
 real space and the predicate is membership alone for it. A refusal by id is a 404, asked AFTER the
 cohort's typed 403, so the cohort keeps its own answer.
 
-**What follows from it.** A personal booking space whose owner has NO space (staff: a campus and an
-empty cursus) is open to nobody but its owner, exactly as a personal post by staff is read by its
-author alone. An association's page shows a reader outside its audience its products, and a purchase
-from there answers 404: the link opens the page, not the till.
+**Two decisions the owner took on review (2026-10-31).** A personal booking space follows its owner's
+CAMPUS, not a space, so staff (a campus, an empty cursus) can offer one to their campus - the school
+psychologist case; an owner with no campus opens theirs to nobody else. And a product of another
+campus is not on /shop, yet whoever holds the association page's link may BUY it: the campus decides
+what the shop offers, not who may pay. A partnership card stays hidden and unclaimable outside the
+audience.
 
 **Client cache.** Every per-reader cache (the directory, the profile, the memberships) is forgotten
 when the reader's own campus or cursus changes - `noteReaderSpaces` (`stores/user.ts`) compares the
@@ -872,8 +875,11 @@ directory (`setAssociationAudiences`, `setSpaceBde`).
 
 **Proof.** `shop-partnership-visibility.integration.spec.ts` and the `the campus` block of
 `bookings.service.integration.spec.ts`, against a real PostgreSQL: another campus is not listed and
-gets a 404 by id, the same campus is served, and a member of the association from the other campus
-is served (D21). Disabling the booking check made the three booking cases fail.
+gets a 404 on a claim or a booking by id, the same campus is served, a member of the association
+from the other campus is served (D21), a purchase by link from another campus goes through, a staff
+owner's space is booked by a student of its campus and refused to the other one, and the same
+campus is no bridge across the review cohort. A control that opened personal spaces to everyone made
+the three personal-space cases fail.
 
 ### D38 republication as built (2026-10-04)
 

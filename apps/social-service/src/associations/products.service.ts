@@ -50,7 +50,6 @@ import {
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
-import { associationVisibleTo } from '../spaces/viewer-visibility';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
@@ -940,7 +939,9 @@ export class ProductsService {
    * on /shop), each annotated for `userId` (`annotateForViewer`). Visible is the directory's
    * predicate, `associationVisibleToViewerSql` (a member of the association, D21, or its rules
    * reach one of the reader's spaces): a product of another campus is no more listed than its
-   * association is, and `preparePurchase` refuses it the same way.
+   * association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
+   * (`listByAssoc`, D37) lists it to anyone holding the link, and `preparePurchase` asks no
+   * campus - as a form's link is enough to answer it.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
     const all = await this.productRepo
@@ -2937,17 +2938,6 @@ export class ProductsService {
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
-    // The shop lists only the associations the buyer can see (`listAllActive`), and a purchase by
-    // id is held to the same predicate: a product of an association the buyer cannot see answers
-    // exactly like one that does not exist. A member of it (D21) is inside the predicate.
-    if (!(await associationVisibleTo(this.productRepo.manager, associationId, userId))) {
-      this.logger.log(
-        `[SHOP] purchase refused: product=${product.id.slice(0, 8)} - association ` +
-          `${associationId.slice(0, 8)} is not visible to ${userId.slice(0, 8)}`
-      );
-      throw new NotFoundException('Product not found');
-    }
-
     // Route to the association's own account, or an approved parent's when delegating.
     const provider = await this.activePaymentProvider();
     const paymentTarget = await this.routeWith(asso, provider);

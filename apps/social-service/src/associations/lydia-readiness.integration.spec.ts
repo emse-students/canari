@@ -39,15 +39,6 @@ import { LYDIA_CASHIER_CLAIM_LOST } from './lydia-cashier-claim';
 import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
 
-/**
- * Whether the buyer may SEE the association (`preparePurchase`) is the campus predicate, proven
- * against PostgreSQL in `shop-partnership-visibility.integration.spec.ts`; it is not what this file
- * is about, so every buyer sees the association.
- */
-jest.mock('../spaces/viewer-visibility', () => ({
-  associationVisibleTo: () => Promise.resolve(true),
-}));
-
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 

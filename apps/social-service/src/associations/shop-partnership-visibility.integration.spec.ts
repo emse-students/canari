@@ -1,15 +1,16 @@
 /**
  * THE SHOP AND THE PARTNERSHIPS FOLLOW THE CAMPUS, against a real PostgreSQL (owner, 2026-10-31).
  *
- * A product or a partnership card belongs to an association, and is listed, bought or claimed only
- * by someone that association is VISIBLE to - `associationVisibleToViewerSql`, the directory's and
- * the agenda's predicate: a member of it (D21), or its rules reach one of their spaces. By its id,
- * outside that, it answers 404, exactly like a row that does not exist. The association's own page
- * (`listByAssoc`, reached by its link, D37) keeps listing its products.
+ * A product or a partnership card belongs to an association, and is LISTED - on /shop, and for a
+ * card anywhere - only to someone that association is VISIBLE to: `associationVisibleToViewerSql`,
+ * the directory's and the agenda's predicate (a member of it, D21, or its rules reach one of their
+ * spaces). A card claimed by its id outside that answers 404, like a card that does not exist. A
+ * PRODUCT stays payable by anyone holding the association page's link (`listByAssoc`, D37), as a
+ * form's link is enough: the campus decides what /shop offers, not who may pay.
  *
- * The unit specs stub the predicate; this file is where it is run. Which rows survive is what is
- * under test, so the annotation of the listing (cotisant status, tier prices) and the payment
- * routing are stubbed, as `product-tier-lock.integration.spec.ts` stubs them.
+ * The unit specs stub the listing; this file is where the predicate is run. Which rows survive is
+ * what is under test, so the annotation of the listing (cotisant status, tier prices) and the
+ * payment routing are stubbed, as `product-tier-lock.integration.spec.ts` stubs them.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; locally, against a throwaway
  * PostgreSQL:
@@ -18,7 +19,7 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
-import { HttpException, Logger, NotFoundException } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Association } from './entities/association.entity';
@@ -207,7 +208,7 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
       expect(ids(await products.listAllActive(GA_MEMBER))).toEqual([SE_PRODUCT, GA_PRODUCT]);
     });
 
-    it('refuses a purchase BY ID of a product of another campus as NOT FOUND', async () => {
+    it('lets anyone holding the association page link BUY, whatever their campus (owner, 2026-10-31)', async () => {
       const prepare = (assoId: string, productId: string, userId: string) =>
         (
           products as unknown as {
@@ -215,15 +216,15 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
           }
         ).preparePurchase(assoId, productId, userId);
 
-      const refused = await refusal(prepare(SE_ASSO, SE_PRODUCT, ISMIN_GA));
-      expect(refused.status).toBe(404);
-      await expect(prepare(GA_ASSO, GA_PRODUCT, ICM_SE)).rejects.toThrow(NotFoundException);
-
-      // CONTROL: the same campus, and a member from the other one (D21), go on to the payment.
-      await expect(prepare(SE_ASSO, SE_PRODUCT, ICM_SE)).resolves.toMatchObject({
+      // Not listed on their /shop (above), and still payable from the page the link opens - as a
+      // form's link is enough to answer it.
+      await expect(prepare(SE_ASSO, SE_PRODUCT, ISMIN_GA)).resolves.toMatchObject({
         productId: SE_PRODUCT,
       });
-      await expect(prepare(SE_ASSO, SE_PRODUCT, GA_MEMBER)).resolves.toMatchObject({
+      await expect(prepare(GA_ASSO, GA_PRODUCT, ICM_SE)).resolves.toMatchObject({
+        productId: GA_PRODUCT,
+      });
+      await expect(prepare(SE_ASSO, SE_PRODUCT, ICM_SE)).resolves.toMatchObject({
         productId: SE_PRODUCT,
       });
     });

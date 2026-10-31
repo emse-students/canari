@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { associationVisibleToViewerSql, sharesSpaceWithViewerSql } from './reader-spaces';
+import { associationVisibleToViewerSql, sameCampusAsViewerSql } from './reader-spaces';
 
 const logger = new Logger('ViewerVisibility');
 
@@ -30,7 +30,7 @@ async function askOne(
  * Whether association `associationId` is visible to `userId` (`associationVisibleToViewerSql`: a
  * member of it, D21, or its rules reach one of the user's spaces) - the directory's and the
  * agenda's predicate, asked for ONE association by a path that acts on one row by its id (a
- * purchase, a partnership claim, a booking). A review account has no real space, so for it this is
+ * partnership claim, a booking). A review account has no real space, so for it this is
  * membership alone, which is what the review cohort's own narrowing says too.
  */
 export async function associationVisibleTo(
@@ -49,18 +49,16 @@ export async function associationVisibleTo(
 }
 
 /**
- * Whether `userId` shares at least one space with `ownerId` (`sharesSpaceWithViewerSql`) - what
- * opens a PERSONAL item to someone who is not its owner. The owner is NOT answered true here by
- * being the owner: the caller decides that on its own rights.
+ * Whether `userId` is on the campus of `ownerId` (`sameCampusAsViewerSql`, the review cohort kept
+ * apart) - what opens a PERSONAL booking space to someone who is not its owner. The owner is NOT
+ * answered true here by being the owner: the caller decides that on its own rights.
  */
-export async function sharesSpaceWith(
+export async function sameCampusAs(
   manager: Pick<EntityManager, 'query'>,
   ownerId: string,
   userId: string
 ): Promise<boolean> {
-  const shared = await askOne(manager, sharesSpaceWithViewerSql('$1', '$2'), [ownerId, userId]);
-  logger.debug(
-    `[SPACES] ${userId.slice(0, 8)} shares a space with ${ownerId.slice(0, 8)}: ${shared}`
-  );
-  return shared;
+  const same = await askOne(manager, sameCampusAsViewerSql('$1', '$2'), [ownerId, userId]);
+  logger.debug(`[SPACES] ${userId.slice(0, 8)} on the campus of ${ownerId.slice(0, 8)}: ${same}`);
+  return same;
 }

@@ -16,7 +16,7 @@ import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
-import { associationVisibleTo, sharesSpaceWith } from '../spaces/viewer-visibility';
+import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -210,15 +210,15 @@ export class BookingsService {
    * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
    * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
    * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
-   * `listedSpaces` filters on); a PERSONAL space when they share no space with its owner
-   * (`sharesSpaceWithViewerSql`, a personal post's rule). Its manager - the owner of a personal
-   * space - never reaches here (`assertMayUse`).
+   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
+   * manager - the owner of a personal space - never reaches here (`assertMayUse`).
    */
   private async assertSpaceVisible(space: BookingSpace, userId: string) {
     const visible =
       space.associationId !== null
         ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
-        : await sharesSpaceWith(this.spaces.manager, space.ownerId, userId);
+        : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
     if (visible) return;
     this.logger.log(
       `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +

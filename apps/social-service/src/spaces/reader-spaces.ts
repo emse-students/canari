@@ -229,7 +229,7 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
  * review account has no real space (`isReaderSpaceSql`), so the first disjunct never pairs one with
  * a member, in either direction.
  */
-export function sharesSpaceWithAuthorSql(author: string, user: string): string {
+function sharesSpaceWithAuthorSql(author: string, user: string): string {
   return `(EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
       WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})
@@ -394,14 +394,27 @@ export function associationVisibleToViewerSql(association: string, viewer: strin
 }
 
 /**
- * The viewer whose id is the placeholder `viewer` shares at least one space with the person whose
- * id is the expression `owner` ({@link sharesSpaceWithAuthorSql}) - what opens a PERSONAL booking
- * space to someone who is not its owner. Never true for the owner by itself: an owner with no
- * space (staff) shares none with anybody, themselves included, so a caller lets the owner through
- * on its own rights.
+ * User row `user` is on the same CAMPUS as the person whose id is the expression `owner` - what
+ * opens a PERSONAL booking space to someone who is not its owner (owner, 2026-10-31: "we restricted
+ * to the campus, not to the formation, and people without a formation still have a campus"). The
+ * campus alone, NOT a space: staff (a campus and an empty cursus) have no space, and their personal
+ * booking space is still offered to their campus. No campus on either side matches nothing.
+ *
+ * The review cohort stays a world of its own, as in {@link sharesSpaceWithAuthorSql}: a review
+ * account matches review accounts only, and nobody else matches one, whatever the profiles say.
  */
-export function sharesSpaceWithViewerSql(owner: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${sharesSpaceWithAuthorSql(owner, 'vis_viewer')})`;
+export function sameCampusAsOwnerSql(owner: string, user: string): string {
+  const ownerInCohort = inReviewCohortSql(owner);
+  const userInCohort = inReviewCohortSql(`${user}.id`);
+  return `((NOT ${ownerInCohort} AND NOT ${userInCohort} AND EXISTS (
+      SELECT 1 FROM users vis_owner WHERE vis_owner.id = ${owner}
+        AND vis_owner.campus IS NOT NULL AND vis_owner.campus = ${user}.campus))
+    OR (${ownerInCohort} AND ${userInCohort}))`;
+}
+
+/** The viewer whose id is the placeholder `viewer` is on the campus of `owner` ({@link sameCampusAsOwnerSql}). */
+export function sameCampusAsViewerSql(owner: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${sameCampusAsOwnerSql(owner, 'vis_viewer')})`;
 }
 
 /**

@@ -27,6 +27,7 @@ import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
 import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import { sameCampusAsViewerSql } from '../spaces/reader-spaces';
 import {
   BOOKINGS_ERASURE_STATEMENTS,
   runErasureStatements,
@@ -1194,7 +1195,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   /**
    * THE CAMPUS (owner, 2026-10-31): an ASSOCIATION space is open to those its association is
    * visible to - a member of it (D21), or its rules reach one of their spaces - and a PERSONAL space
-   * to those who share a space with its owner. Outside it, the space is not listed and answers 404
+   * to those on its owner's campus (the campus, never a formation: staff keep theirs). Outside it, the space is not listed and answers 404
    * `space-not-found` by its id, exactly like a space that does not exist. Its manager is never
    * refused.
    */
@@ -1264,7 +1265,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
     });
 
-    it('a personal space: open to who shares a space with its owner, 404 to anybody else, the owner always', async () => {
+    it("a personal space: open to its owner's CAMPUS, 404 to another campus, the owner always", async () => {
       const { space, resourceIds } = await setup({
         name: 'campus personal',
         associationId: null,
@@ -1272,36 +1273,76 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         discoverability: 'link',
       });
 
-      // ALICE and BOB are both ICM Saint-Etienne students.
-      await expect(service.getSpace(space.id, as(ALICE))).resolves.toBeDefined();
-      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
-
-      for (const outsider of [GARDANNE, STAFF]) {
-        expect(await refusal(service.getSpace(space.id, as(outsider)))).toEqual({
-          code: 'space-not-found',
-        });
-        expect(await refusal(book(space.id, resourceIds[0], '12:00', '12:30', outsider))).toEqual({
-          code: 'space-not-found',
-        });
+      // ALICE (an ICM student) and STAFF (no cursus) are on BOB's campus: the campus decides, never
+      // a formation (owner, 2026-10-31).
+      for (const [reader, slot] of [
+        [ALICE, '10:00'],
+        [STAFF, '11:00'],
+      ] as const) {
+        await expect(service.getSpace(space.id, as(reader))).resolves.toBeDefined();
+        await expect(
+          book(space.id, resourceIds[0], slot, slot.replace(':00', ':30'), reader)
+        ).resolves.toBeDefined();
       }
+
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '12:00', '12:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
 
       // The owner manages it, so the border never stands in their way.
       await expect(service.getSpace(space.id, as(BOB))).resolves.toBeDefined();
     });
 
-    it('CONTROL: a personal space whose owner has no space is open to nobody but its owner', async () => {
+    it('a personal space of STAFF (a campus, an empty cursus): a student of that campus books it, another campus is refused', async () => {
       const { space, resourceIds } = await setup({
         name: 'campus staff personal',
         associationId: null,
         ownerId: STAFF,
         discoverability: 'link',
       });
-      for (const reader of [ALICE, GARDANNE]) {
-        expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', reader))).toEqual({
-          code: 'space-not-found',
-        });
-      }
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
+      expect(await refusal(book(space.id, resourceIds[0], '11:00', '11:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
       await expect(service.getSpace(space.id, as(STAFF))).resolves.toBeDefined();
+    });
+
+    it('CONTROL: an owner with no campus opens their personal space to nobody else', async () => {
+      const NOWHERE = 'n'.repeat(64);
+      await q(
+        `INSERT INTO users (id, "firstName", "lastName", campus, cursus) VALUES ($1, 'No', 'X', NULL, '[]')`,
+        [NOWHERE]
+      );
+      const { space, resourceIds } = await setup({
+        name: 'campus nowhere personal',
+        associationId: null,
+        ownerId: NOWHERE,
+        discoverability: 'link',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE))).toEqual({
+        code: 'space-not-found',
+      });
+    });
+
+    it('keeps the review cohort apart: the same campus is no bridge across it, either way', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      try {
+        // DAN (a review account) and ALICE carry the same campus in this fixture.
+        const sameCampus = async (owner: string, viewer: string) =>
+          (await q(`SELECT ${sameCampusAsViewerSql('$1', '$2')} AS v`, [owner, viewer]))[0].v;
+        expect(await sameCampus(DAN, ALICE)).toBe(false);
+        expect(await sameCampus(ALICE, DAN)).toBe(false);
+        expect(await sameCampus(DAN, DAN)).toBe(true);
+        // CONTROL: outside the cohort, the same campus matches.
+        expect(await sameCampus(BOB, ALICE)).toBe(true);
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
     });
   });
 

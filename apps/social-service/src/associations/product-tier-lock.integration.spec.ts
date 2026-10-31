@@ -36,15 +36,6 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { buyerTierLockKey } from '../users/buyer-tier-lock';
 import { ProductsService } from './products.service';
-
-/**
- * Whether the buyer may SEE the association (`preparePurchase`) is the campus predicate, proven
- * against PostgreSQL in `shop-partnership-visibility.integration.spec.ts`. Here, as for the routing
- * stubbed below, what is under test is the rank: every buyer sees the association.
- */
-jest.mock('../spaces/viewer-visibility', () => ({
-  associationVisibleTo: () => Promise.resolve(true),
-}));
 import {
   ERASURE_ROW_STATEMENTS,
   ERASURE_TIER_ORDER,
