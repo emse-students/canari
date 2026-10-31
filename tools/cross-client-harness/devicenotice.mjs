@@ -1,27 +1,31 @@
 /**
  * THE "NOUVEL APPAREIL" NOTICES A MINTING ROW LEAVES ON THE OWNER'S SEATS, DISMISSED THE WAY THE
- * OWNER DISMISSES THEM - THROUGH "COMPRIS" - AND ONLY THE ONES THE ROW MINTED.
+ * OWNER DISMISSES THEM - THROUGH THE ROW'S "COMPRIS" IN `/notifications` - AND ONLY THE ONES THE ROW
+ * MINTED.
  *
  * A row that mints a device of the owner's account (`newdevice.mjs`) is, to every other owner device
  * that merges the signed commit adding it, a new device on the account: `deviceNotices.svelte.ts`
  * queues a notice per device and key, persisted per account (`canari_device_notices:v1:<userId>`,
- * `accountLocalKeys.ts`), and `NewDeviceBanner.svelte` shows the OLDEST pending one until "Compris"
- * (or the device list) is tapped. That is the product working - and a notice the row never
- * dismisses stays across reloads, so every later row on that seat starts with a banner over its
- * screen that no row of its own put there (seen on the campaign seats, 2026-10-27).
+ * `accountLocalKeys.ts`), and `DeviceNoticeRow.svelte` lists each in `/notifications` (the app-wide banner was deleted
+ * 2026-10-30), oldest first, until "Compris" (or the device list) is tapped. That is the product
+ * working - and a notice the row never dismisses stays across reloads and in the bell's badge until
+ * the list is opened, so every later row on that seat starts with a notice no row of its own put
+ * there (seen on the campaign seats, 2026-10-27).
  *
  * **AN ALLOWLIST, NOT A SWEEP** (durable-rules: a destructive control needs an allowlist of what it
  * may touch). The row passes the device ids IT minted, and a notice is dismissed only while the one
- * on screen - the oldest pending - names one of them. The first notice of any other device STOPS the
+ * in the list - the oldest pending - names one of them. The first notice of any other device STOPS the
  * dismissal: it is either a real device on the account or debris of another row, and in both cases
- * it is a finding to read, not a banner to clear. `cleanup.mjs` stays out of this on purpose
+ * it is a finding to read, not a notice to clear. `cleanup.mjs` stays out of this on purpose
  * (coordinator, 2026-10-27): it cannot know which device a notice is about the way the minting row
  * does.
  *
  * **THE GESTURE, NOT THE STORE.** The queue is READ from localStorage, to know which notice is on
- * screen and to check after each tap that exactly that one left; it is never written. The banner's
+ * screen and to check after each tap that exactly that one left; it is never written. The row's
  * own button is tapped with `realClick` - the same dispatch on a browser seat and on the phone's
- * WebView (A1's tap path, `archive/liveweb.mjs`). A tap that removed anything but the expected
+ * WebView (A1's tap path, `archive/liveweb.mjs`), after the seat opened `/notifications` through its own link (an in-app
+ * navigation, no reload). Opening the list READS the notices - the badge clears, the rows stay - and
+ * the stored queue is the same either way. A tap that removed anything but the expected
  * notice throws.
  *
  * Called AFTER the row's verdict is recorded (`finishObserved`'s teardown, or after `record`): the
@@ -32,15 +36,17 @@ import { evaluate, realClick, until } from './cdp.mjs';
 /** The store `deviceNotices.svelte.ts` persists per account (`ACCOUNT_KEY.deviceNotices`). */
 export const NOTICE_STORE_PREFIX = 'canari_device_notices:v1:';
 
-/** `device_notice_title` and `device_notice_dismiss`, in both locales (`messages/{fr,en}.json`). */
-export const NOTICE_TITLES = ['Nouvel appareil sur votre compte', 'New device on your account'];
-export const NOTICE_DISMISS = ['Compris', 'Got it'];
+/** The hooks `DeviceNoticeRow.svelte` carries: the row (with its notice key) and its "Compris" button. */
+export const ROW_KEY_ATTR = 'data-device-notice-key';
+export const ROW_DISMISS_ATTR = 'data-device-notice-dismiss';
+/** The notifications route the rows live on (`routes/notifications/+page.svelte`). */
+export const NOTICES_ROUTE = '/notifications';
 
 /** How long one tap may take to leave the store. */
 const TAP_SETTLE_MS = 10_000;
 
 /**
- * WHICH NOTICES TO TAP AWAY, from the stored queue (oldest first, the banner's order) and the ids the
+ * WHICH NOTICES TO TAP AWAY, from the stored queue (oldest first, the list's order) and the ids the
  * row minted. Pure, for the self-test.
  *
  * @param {{key: string, deviceId: string}[]} pending
@@ -83,18 +89,32 @@ const READ_STORES = `(() => Object.keys(localStorage)
     };
   }))()`;
 
-/** Tags the new-device banner's dismiss button; false when that banner is not on screen. */
-const TAG_DISMISS = `(() => {
+/** Tags the visible link to the notifications route, to open it as the user does; false when none. */
+const TAG_LINK = `(() => {
+  document.querySelectorAll('[data-rig-notice-link]').forEach((e) => e.removeAttribute('data-rig-notice-link'));
+  const link = [...document.querySelectorAll('a[href]')].find((a) => a.getClientRects().length && new URL(a.href, location.href).pathname === ${JSON.stringify(NOTICES_ROUTE)});
+  if (!link) return false;
+  link.setAttribute('data-rig-notice-link', '');
+  return true;
+})()`;
+
+/** Tags the "Compris" button of the row of notice `key`; false when that row is not on screen. */
+const tagDismiss = (key) => `(() => {
   document.querySelectorAll('[data-rig-notice]').forEach((e) => e.removeAttribute('data-rig-notice'));
-  const titles = ${JSON.stringify(NOTICE_TITLES)};
-  const words = ${JSON.stringify(NOTICE_DISMISS)};
-  const banner = [...document.querySelectorAll('[role="alert"]')].find((b) => b.getClientRects().length && [...b.querySelectorAll('strong')].some((s) => titles.includes(s.textContent.trim())));
-  if (!banner) return false;
-  const button = [...banner.querySelectorAll('button')].find((b) => words.includes(b.textContent.trim()));
+  const row = [...document.querySelectorAll('[${ROW_KEY_ATTR}]')].find((r) => r.getAttribute(${JSON.stringify(ROW_KEY_ATTR)}) === ${JSON.stringify(key)} && r.getClientRects().length);
+  const button = row && row.querySelector('[${ROW_DISMISS_ATTR}]');
   if (!button) return false;
   button.setAttribute('data-rig-notice', '');
   return true;
 })()`;
+
+/** Opens the notifications list through the seat's own link; a no-op when it is already open. */
+async function openNoticeList(cx, seat) {
+  if (await evaluate(cx, `location.pathname === ${JSON.stringify(NOTICES_ROUTE)}`)) return;
+  if (!(await evaluate(cx, TAG_LINK))) throw new Error(`${seat}: no visible link to ${NOTICES_ROUTE} to open the device notices`);
+  await realClick(cx, '[data-rig-notice-link]');
+  await until(cx, `location.pathname === ${JSON.stringify(NOTICES_ROUTE)}`, TAP_SETTLE_MS);
+}
 
 /**
  * Dismisses, on one owner seat, the notices of the devices the row minted - through "Compris", one
@@ -111,8 +131,9 @@ export async function dismissMintedNotices(cx, seat, minted, { log = console.log
   const pending = queueOf(await evaluate(cx, READ_STORES));
   const plan = dismissPlan(pending, minted);
   let dismissed = 0;
+  if (plan.tap.length > 0) await openNoticeList(cx, seat);
   for (const key of plan.tap) {
-    if (!(await evaluate(cx, TAG_DISMISS))) throw new Error(`${seat}: a minted device's notice is stored but no new-device banner is on screen`);
+    if (!(await evaluate(cx, tagDismiss(key)))) throw new Error(`${seat}: a minted device's notice is stored but its row is not in ${NOTICES_ROUTE}`);
     await realClick(cx, '[data-rig-notice]');
     const gone = `!${READ_STORES}.some((s) => s.pending.some((n) => n.key === ${JSON.stringify(key)}))`;
     await until(cx, gone, TAP_SETTLE_MS);

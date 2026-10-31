@@ -9,12 +9,10 @@ import {
 import {
   deliverDeviceEvents,
   dismissDeviceNotice,
-  dismissRefusedDeviceNotice,
   forgetDeviceNotices,
   loadDeviceNotices,
   noteRefusedOwnDevices,
   pendingDeviceNotices,
-  pendingRefusedDeviceNotices,
   type DeviceNoticeContext,
   type KeyAge,
 } from './deviceNotices.svelte';
@@ -405,31 +403,17 @@ describe('deliverDeviceEvents - a contact line is written once, durably', () => 
 
 /**
  * A device of MY account that this device refused for a changed key (`refusedDevices.ts`) cannot be
- * re-added to anything until it is reset - its owner is told so in the app, with the remedy. A
- * contact's refused device is not mine to be told about.
+ * re-added until it is reset. It is shown nowhere (owner decision 2026-10-30) - the log line is what
+ * is left, an error because it is an anomaly, once per device. A contact's is not mine to report.
  */
 describe('noteRefusedOwnDevices - the refused device of my own', () => {
-  const labels = { deviceLabel: async (d: string) => (d === 'old' ? 'Pixel' : undefined) };
-
-  it('tells the owner of an own refused device only, with its name', async () => {
-    await noteRefusedOwnDevices(['ALICE:old', 'bob:x'], { ownUserId: 'alice', ...labels });
-    expect(pendingRefusedDeviceNotices()).toEqual([
-      { identity: 'alice:old', deviceId: 'old', label: 'Pixel' },
-    ]);
-  });
-
-  it('stays until dismissed, and a dismissed one never comes back', async () => {
-    await noteRefusedOwnDevices(['alice:old'], { ownUserId: 'alice', ...labels });
-    forgetDeviceNotices();
-    loadDeviceNotices('alice');
-    await noteRefusedOwnDevices(['alice:old'], { ownUserId: 'alice', ...labels });
-    expect(pendingRefusedDeviceNotices()).toHaveLength(1);
-
-    dismissRefusedDeviceNotice('alice:old');
-    forgetDeviceNotices();
-    loadDeviceNotices('alice');
-    await noteRefusedOwnDevices(['alice:old'], { ownUserId: 'alice', ...labels });
-    expect(pendingRefusedDeviceNotices()).toEqual([]);
+  it('logs an own refused device once as an error, and a contact one not at all', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    noteRefusedOwnDevices(['ALICE:old', 'bob:x'], { ownUserId: 'alice' });
+    noteRefusedOwnDevices(['alice:old'], { ownUserId: 'alice' });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('old');
+    error.mockRestore();
   });
 });
 

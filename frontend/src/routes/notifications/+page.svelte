@@ -6,6 +6,11 @@
   import { BellOff, Repeat2, UserPlus } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
+  import DeviceNoticeRow from '$lib/components/notifications/DeviceNoticeRow.svelte';
+  import {
+    markDeviceNoticesRead,
+    pendingDeviceNotices,
+  } from '$lib/utils/chat/deviceNotices.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import {
@@ -56,6 +61,22 @@
   /** How many follow requests wait on this reader (WP-F4), drawn the same way. */
   let pendingFollowRequests = $state(0);
 
+  /**
+   * The device alerts unread when this view opened - the same snapshot idea as `unreadAtOpen`: opening
+   * reads them (badge cleared, persisted) but the dot is drawn from what was unread at open. The rows
+   * stay until "Got it", "Not me" or the devices link.
+   */
+  let deviceUnreadAtOpen = $state<ReadonlySet<string>>(new Set());
+
+  onMount(() => {
+    deviceUnreadAtOpen = new Set(
+      pendingDeviceNotices()
+        .filter((n) => !n.read)
+        .map((n) => n.key)
+    );
+    markDeviceNoticesRead();
+  });
+
   onMount(() => {
     countMyRepublicationRequests()
       .then((count) => (pendingRequests = count))
@@ -88,6 +109,9 @@
       ? postNotifStore.notifications.filter((n) => unreadAtOpen.has(n.id))
       : postNotifStore.notifications
   );
+
+  /** The new-device alerts of this account, raised on this device (never fetched). */
+  const deviceNotices = $derived(pendingDeviceNotices());
 
   const groups = $derived(
     groupNotifications(groupNotificationsByPost(visible), unreadAtOpen, openedAt)
@@ -169,6 +193,20 @@
     </a>
   {/if}
 
+  <!--
+    THE DEVICE ALERTS, LOCAL AND FIRST. "A new device was added to your account" is built on THIS
+    device from a signed commit, so it is not in the server's list and is never sent to it. It is
+    unread by definition until the owner has seen it, so it sits above the date bands (and stays
+    under the "unread" pill) and counts in the bell's badge (`postNotifStore.unread`).
+  -->
+  {#if deviceNotices.length > 0}
+    <ul class="mb-2 flex flex-col" data-device-notices>
+      {#each deviceNotices as notice (notice.key)}
+        <li><DeviceNoticeRow {notice} unread={deviceUnreadAtOpen.has(notice.key)} /></li>
+      {/each}
+    </ul>
+  {/if}
+
   {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
     <div class="flex flex-col gap-3">
       {#each { length: 6 } as _, i (i)}
@@ -181,7 +219,7 @@
         </div>
       {/each}
     </div>
-  {:else if groups.length === 0}
+  {:else if groups.length === 0 && deviceNotices.length === 0}
     <div class="text-text-muted flex flex-col items-center gap-3 py-16">
       <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
       <p class="text-sm">
