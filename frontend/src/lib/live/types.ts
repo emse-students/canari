@@ -8,8 +8,12 @@
  * Contract: docs/wiki/services/lives.md, "The API contract".
  */
 
-/** Why a live ended - the row's `endReason` (`LiveEndReason` on the server). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+/**
+ * Why a live ended - the row's `endReason` (`LiveEndReason` on the server). `max_duration` is no
+ * longer written (the 60-minute cap is gone) but stays READABLE: rows ended before it was removed
+ * still carry it until the retention purge deletes them.
+ */
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'erased' | 'cut' | 'max_duration';
 
 /**
  * A live as `POST /api/lives` (201) and `GET /api/lives/:id` answer it: the KEY included (L2, Q4).
@@ -180,9 +184,7 @@ export interface LiveRemovedViewer {
 export interface LiveLimits {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
-  maxDurationMs: number;
   manifestWindow: number;
-  byteBudget: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
@@ -239,7 +241,6 @@ export type LiveRefusalCode =
   | 'LIVE_SEGMENT_RESERVATION_LOST'
   | 'LIVE_SEGMENT_TOO_FAST'
   | 'LIVE_SEGMENT_EMPTY'
-  | 'LIVE_BUDGET_EXHAUSTED'
   | 'LIVE_STORE_UNAVAILABLE'
   | 'LIVE_INGEST_BUSY'
   | 'LIVE_INDEX_INVALID'

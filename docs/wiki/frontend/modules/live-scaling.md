@@ -143,8 +143,7 @@ choosing by its own throughput.
 - **Needs**: two concurrent `MediaRecorder`s on one camera track _(unverified on the Mi 9T's hardware
   encoder and on WKWebView)_; a manifest with tiers; the player's tier switch at a segment boundary
   (every segment already carries its init, [live](live.md#every-segment-is-self-contained)).
-- **Risks**: the broadcaster's upload and battery grow by the second tier; storage and the byte budget
-  (`LIVE_BYTE_BUDGET`) double; **the Android encoder floored at ~2.6 Mb/s even at 480p** (WP-L1), so
+- **Risks**: the broadcaster's upload and battery grow by the second tier; storage doubles (there is no byte budget since 2026-10-31); **the Android encoder floored at ~2.6 Mb/s even at 480p** (WP-L1), so
   the low tier may not be low on Android at all - 360p and lower are unmeasured.
 - **Capacity**: on the host link, at best 72 / 0.8 = 90 viewers if every viewer took a 0.8 Mb/s tier
   _(a hypothetical tier)_ - a factor of ~3, not "no ceiling". **With (a2) it is a viewer-network

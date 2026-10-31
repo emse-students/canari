@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { HttpStatus, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { LiveEnabledGuard } from './live-enabled.guard';
+import { guardContext } from './live-guard-context.test-helper';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -66,7 +67,7 @@ maybe('LiveEnabledGuard against platform_config (migration 015)', () => {
 
   const status = async (guard: LiveEnabledGuard) => {
     try {
-      await guard.canActivate();
+      await guard.canActivate(guardContext());
       return HttpStatus.OK;
     } catch (e) {
       return (e as { getStatus: () => number }).getStatus();
