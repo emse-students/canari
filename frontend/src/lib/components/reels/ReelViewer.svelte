@@ -129,6 +129,24 @@
 
   const mounted = $derived(mountedReelIndices(index, reels.length));
 
+  /**
+   * THE REEL ON SCREEN THAT HAS SETTLED (`ReelSlide`'s `onReady`: whole and playing). The next
+   * reel preloads only behind it, never beside it: on a weak link two downloads at once would
+   * starve the one being watched. Every step CLEARS it (where `index` moves), so a return to a reel that
+   * settled on an earlier visit withholds the preload until it settles again; and only the slide
+   * on screen may set it (`onReady` checks its index), never one torn down mid-swipe.
+   */
+  let settledId = $state<string | null>(null);
+  const currentSettled = $derived(settledId !== null && settledId === reels[index]?.id);
+
+  function markSettled(i: number) {
+    if (i !== index) {
+      console.debug(`[reel-viewer] slide ${i} settled off screen - ignored`);
+      return;
+    }
+    settledId = reels[i].id;
+  }
+
   // The next page, asked for as the reader nears the end of what is loaded.
   $effect(() => {
     if (!shouldLoadMoreReels(index, reels.length, hasMore) || loadingMore || reels.length === 0) {
@@ -381,6 +399,8 @@
     settle(0, verdict === 'next' ? -height : height, () => {
       // The track has landed one screen away; moving the index there is the same picture at rest.
       settling = false;
+      // The reel landed on has not settled IN THIS VISIT, whatever it did before.
+      settledId = null;
       index = target;
       offsetY = 0;
     });
@@ -582,7 +602,8 @@
               post={reels[i]}
               {authToken}
               active={i === index}
-              preload={i === index + 1}
+              preload={i === index + 1 && currentSettled}
+              onReady={() => markSettled(i)}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
               rail={railFor(reels[i])}
             />

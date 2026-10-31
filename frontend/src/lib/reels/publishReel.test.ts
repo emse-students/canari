@@ -54,6 +54,7 @@ function deps(calls: string[] = []): PublishReelDeps {
       };
     }),
     upload: vi.fn(async () => (calls.push('upload'), ref)),
+    placeholder: vi.fn(async () => null),
     createPost: vi.fn(async () => {
       calls.push('create');
       return { id: 'p-1' } as never;
@@ -125,6 +126,17 @@ describe('publishReel', () => {
       markdown: 'hello',
       media: [ref],
     });
+  });
+
+  it('carries the first frame ThumbHash of the uploaded file in the reel media', async () => {
+    const d = deps();
+    d.placeholder = vi.fn(async () => 'TH==');
+    await publishReel(input(), d);
+    const prepared = (await (d.prepare as ReturnType<typeof vi.fn>).mock.results[0].value).file;
+    expect(d.placeholder).toHaveBeenCalledWith(prepared);
+    expect(d.createPost).toHaveBeenCalledWith(
+      expect.objectContaining({ media: [{ ...ref, placeholder: 'TH==' }] })
+    );
   });
 
   it('publishes as an association or anonymously, as a post would', async () => {

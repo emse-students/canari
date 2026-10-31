@@ -13,6 +13,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   Validate,
@@ -46,6 +47,9 @@ export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
     return 'markdown should not be empty unless the post carries media';
   }
 }
+
+/** A ThumbHash is at most a few dozen bytes; its base64 never approaches this. */
+export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 
 export class PostMediaDto {
   @IsString()
@@ -102,6 +106,20 @@ export class PostMediaDto {
   @IsOptional()
   @IsIn(['segmented-v1'])
   encoding?: string;
+
+  /**
+   * A ThumbHash of the medium's picture - a video's FIRST FRAME - as base64, made by the PUBLISHER
+   * (`frontend/src/lib/utils/mediaPlaceholder.ts`): the server transcodes nothing and draws no
+   * thumbnail (CanaReels C3), so this ~25-byte blur is the only picture a reel has before its
+   * bytes arrive. The reel viewer paints it from the first frame of the page instead of a play
+   * glyph. Declared so `whitelist: true` keeps it; bounded, since a ThumbHash is a few dozen bytes
+   * and anything longer is not one.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
+  @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
+  placeholder?: string;
 }
 
 export class PollOptionInputDto {
