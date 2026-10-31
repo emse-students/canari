@@ -44,6 +44,7 @@ import {
 import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
+import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -114,6 +115,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     await this.ensureDeviceMetadataColumns();
     await this.ensureRevokedDevicesTable();
+    // THE TWO CLOCKS EVERY ARRIVAL IS READ FROM MUST AGREE (review of #2800): accused at ERROR,
+    // never fatal - see `checkDatabaseClockAgreement`.
+    await checkDatabaseClockAgreement(this.groupRepo.manager, this.logger);
 
     // Initialize Firebase Admin SDK once if a service account is provided
     if (!getApps().length) {
