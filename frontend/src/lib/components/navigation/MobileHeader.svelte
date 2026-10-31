@@ -7,7 +7,6 @@
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import PostNotificationBell from './PostNotificationBell.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import { slowLink } from '$lib/stores/slowLink.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -108,13 +107,12 @@
           title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
           data-slow-link={slowLink.active || undefined}
-          class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 hover:ring-amber-400 {slowLink.active
-            ? 'ring-banner-notice'
-            : 'ring-transparent'}"
+          class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 {slowLink.active
+            ? 'ring-amber-warn'
+            : 'ring-transparent hover:ring-amber-400'}"
         >
           <Avatar userId={globalSession.userId} size="md" />
         </button>
-        <SlowLinkAnnouncer />
       {/if}
     {/if}
   </div>

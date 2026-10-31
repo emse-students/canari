@@ -53,18 +53,20 @@ describe('OfflineBanner', () => {
     expect(target.querySelector('[data-testid="slow-link-indicator"]')).toBeNull();
   });
 
-  it('the announcer carries the slow sentence to assistive tech only while slow', async () => {
+  it('the announcer region is always mounted and only its text switches on slow', async () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const app = mount(SlowLinkAnnouncer, { target });
     mounted.push(() => void unmount(app));
     flushSync();
-    expect(target.querySelector('[data-testid="slow-link-indicator"]')).toBeNull();
+    const before = target.querySelector('[data-testid="slow-link-indicator"]');
+    expect(before?.getAttribute('role')).toBe('status');
+    expect(before?.textContent?.trim()).toBe('');
     connectivity.trackRequest();
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
     flushSync();
     const live = target.querySelector('[data-testid="slow-link-indicator"]');
-    expect(live?.getAttribute('role')).toBe('status');
+    expect(live).toBe(before);
     expect(live?.textContent?.trim()).toBe(m.slow_indicator_label());
   });
 
