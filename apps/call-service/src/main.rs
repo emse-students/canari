@@ -11,31 +11,23 @@ use axum::{
 use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use rtc::ice::mdns::MulticastDnsMode;
+use rtc::interceptor::Slot;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::setting_engine::SettingEngine;
-use webrtc::api::APIBuilder;
-use webrtc::ice::mdns::MulticastDnsMode;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
-use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
-use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
-use webrtc::track::track_remote::TrackRemote;
+use webrtc::media_stream::track_remote::TrackRemote;
+use webrtc::peer_connection::{
+    MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
+    RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceConnectionState, RTCIceGatheringState,
+    RTCIceServer, RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCPeerConnectionState,
+    RTCSessionDescription, Registry, SettingEngineBuilder,
+};
+
+mod forward;
 
 mod p2p;
 
@@ -253,7 +245,7 @@ struct AppState {
 }
 
 struct Room {
-    tracks: Mutex<Vec<PublishedTrack>>,
+    tracks: Mutex<Vec<Arc<forward::PublishedTrack>>>,
     peers: DashMap<PeerId, PeerContext>,
     /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
     renegotiate_gen: DashMap<PeerId, u64>,
@@ -262,7 +254,10 @@ struct Room {
 }
 
 struct PeerContext {
-    pc: Arc<RTCPeerConnection>,
+    pc: Arc<dyn PeerConnection>,
+    /// Whether this peer's connection may carry media: bumped on every applied offer/answer,
+    /// set `connected` by the connection's own events. Every leg subscribed to this peer watches it.
+    gate: Arc<watch::Sender<forward::LegGate>>,
     notify_tx: mpsc::Sender<SignalMessage>,
     /// Trickle ICE from the browser may arrive before the Offer is applied.
     pending_ice_candidates: Mutex<Vec<RTCIceCandidateInit>>,
@@ -571,147 +566,6 @@ impl CallLedger {
             warn!("{}", self.summary());
         }
     }
-}
-
-/// A track being forwarded by the SFU, kept with a handle to its publisher so we can
-/// request keyframes on demand (the SFU forwards opaque E2E-encrypted RTP and cannot
-/// detect when a keyframe is needed).
-struct PublishedTrack {
-    local: Arc<TrackLocalStaticRTP>,
-    /// Publisher's PeerConnection (Weak to avoid a reference cycle with its callbacks).
-    publisher_pc: std::sync::Weak<RTCPeerConnection>,
-    /// SSRC of the publisher's remote track, used as the PLI media ssrc.
-    media_ssrc: u32,
-    is_video: bool,
-    /// Last time a keyframe (PLI) was requested for this track. Shared by the on-demand
-    /// forwarders and the periodic recovery net so they coalesce instead of both nudging.
-    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
-}
-
-/// Records that a keyframe was just requested, so the periodic recovery net can stay
-/// quiet while on-demand PLIs are already flowing.
-fn mark_pli_sent(last_pli: &Arc<std::sync::Mutex<std::time::Instant>>) {
-    if let Ok(mut ts) = last_pli.lock() {
-        *ts = std::time::Instant::now();
-    }
-}
-
-/// Asks a publisher for a video keyframe a few times over ~1.5 s. Needed when a new
-/// subscriber attaches to an already-running video track (it joined after the last
-/// keyframe and would otherwise only get undecodable delta frames). No-op once the
-/// publisher's PeerConnection is gone.
-fn request_keyframe_burst(
-    publisher_pc: std::sync::Weak<RTCPeerConnection>,
-    media_ssrc: u32,
-    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
-) {
-    tokio::spawn(async move {
-        for delay_ms in [0u64, 300, 800, 1500] {
-            if delay_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-            }
-            match publisher_pc.upgrade() {
-                Some(pc) => {
-                    let _ = pc
-                        .write_rtcp(&[Box::new(PictureLossIndication {
-                            sender_ssrc: 0,
-                            media_ssrc,
-                        })])
-                        .await;
-                    mark_pli_sent(&last_pli);
-                }
-                None => break,
-            }
-        }
-    });
-}
-
-/// Forwards a subscriber's keyframe requests (PLI/FIR) to the track's publisher.
-/// On-demand keyframe generation: when a subscriber's decoder needs an IDR (packet
-/// loss, late join), its browser sends RTCP feedback on the SFU's sender; we relay a
-/// PLI to the publisher so it emits a keyframe only when actually needed - far cheaper
-/// than blindly forcing keyframes on a timer (which wastes relay bandwidth and degrades
-/// quality). The SFU can't read the encrypted media, but RTCP feedback is unencrypted.
-fn forward_pli_from_subscriber(
-    sender: Arc<RTCRtpSender>,
-    publisher_pc: std::sync::Weak<RTCPeerConnection>,
-    media_ssrc: u32,
-    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
-) {
-    tokio::spawn(async move {
-        while let Ok((packets, _)) = sender.read_rtcp().await {
-            let wants_keyframe = packets.iter().any(|p| {
-                let any = p.as_any();
-                any.downcast_ref::<PictureLossIndication>().is_some()
-                    || any.downcast_ref::<FullIntraRequest>().is_some()
-            });
-            if !wants_keyframe {
-                continue;
-            }
-            match publisher_pc.upgrade() {
-                Some(pc) => {
-                    info!(
-                        "[keyframe] relaying subscriber PLI to publisher ssrc={}",
-                        media_ssrc
-                    );
-                    let _ = pc
-                        .write_rtcp(&[Box::new(PictureLossIndication {
-                            sender_ssrc: 0,
-                            media_ssrc,
-                        })])
-                        .await;
-                    mark_pli_sent(&last_pli);
-                }
-                None => break,
-            }
-        }
-        info!("[keyframe] PLI forward loop ended for ssrc={}", media_ssrc);
-    });
-}
-
-/// Slow recovery net: nudges one video keyframe from the publisher every few seconds.
-/// On-demand PLI forwarding (forward_pli_from_subscriber) is the primary mechanism, but a
-/// relayed PLI can itself be dropped on the lossy TURN path - leaving a subscriber frozen
-/// on its last decodable frame indefinitely (the classic "video freezes after ~2 s" on a
-/// constrained mobile uplink). A low-frequency timer bounds any freeze to a few seconds
-/// without the bandwidth cost or starvation of a fast periodic PLI. Spawned once per
-/// published video track; stops when the publisher's PeerConnection is gone.
-fn periodic_keyframe_recovery(
-    publisher_pc: std::sync::Weak<RTCPeerConnection>,
-    media_ssrc: u32,
-    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
-) {
-    tokio::spawn(async move {
-        let period = std::time::Duration::from_secs(3);
-        let mut interval = tokio::time::interval(period);
-        // First tick fires immediately; skip it (the initial keyframe burst already covers t=0).
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            // Skip when an on-demand PLI (subscriber request / new-subscriber burst) was
-            // relayed within the last period: it already refreshed the keyframe, so nudging
-            // again would just waste relay bandwidth. Only fire when the channel went quiet.
-            let recent = last_pli
-                .lock()
-                .map(|ts| ts.elapsed() < period)
-                .unwrap_or(false);
-            if recent {
-                continue;
-            }
-            match publisher_pc.upgrade() {
-                Some(pc) => {
-                    let _ = pc
-                        .write_rtcp(&[Box::new(PictureLossIndication {
-                            sender_ssrc: 0,
-                            media_ssrc,
-                        })])
-                        .await;
-                    mark_pli_sent(&last_pli);
-                }
-                None => break,
-            }
-        }
-    });
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1347,7 +1201,15 @@ async fn handle_signal(
             // One SFU participant per user - a new device replaces siblings in the same room.
             evict_sibling_peers(&room, user_id).await;
 
-            let pc = match create_peer_connection().await {
+            let gate = Arc::new(watch::channel(forward::LegGate::default()).0);
+            let handler = Arc::new(SfuPeerHandler {
+                gate: gate.clone(),
+                room: room.clone(),
+                peer_id: peer_id.clone(),
+                notify_tx: notify_tx.clone(),
+                ledger: ledger.clone(),
+            });
+            let pc = match create_peer_connection(handler).await {
                 Ok(pc) => pc,
                 Err(e) => {
                     error!("Failed to create peer connection: {}", e);
@@ -1355,12 +1217,12 @@ async fn handle_signal(
                 }
             };
 
-            let pc = Arc::new(pc);
-            // Register peer before slow callback wiring so Offer is never dropped.
+            // Registered before the subscriptions below so an Offer is never dropped.
             room.peers.insert(
                 peer_id.clone(),
                 PeerContext {
                     pc: pc.clone(),
+                    gate: gate.clone(),
                     notify_tx: notify_tx.clone(),
                     pending_ice_candidates: Mutex::new(Vec::new()),
                     ledger: ledger.clone(),
@@ -1369,247 +1231,24 @@ async fn handle_signal(
 
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
-                match pc
-                    .add_track(Arc::clone(&track.local) as Arc<dyn TrackLocal + Send + Sync>)
-                    .await
-                {
+                match track.subscribe(&pc, peer_id, gate.subscribe()).await {
                     Err(e) => error!(
                         "[call] room={} peer={} failed to subscribe to an existing track: {}",
                         room_id, peer_id, e
                     ),
-                    Ok(sender) if track.is_video => {
+                    Ok(()) => {
                         bump(&ledger.tracks_subscribed);
-                        // This peer subscribes to a video track published before it joined,
-                        // so it missed the last keyframe: ask the publisher for a fresh IDR now
-                        // (otherwise it only gets undecodable delta frames = black video)…
-                        request_keyframe_burst(
-                            track.publisher_pc.clone(),
-                            track.media_ssrc,
-                            track.last_pli.clone(),
-                        );
-                        // …and relay its future keyframe requests to the publisher on demand.
-                        forward_pli_from_subscriber(
-                            sender,
-                            track.publisher_pc.clone(),
-                            track.media_ssrc,
-                            track.last_pli.clone(),
-                        );
+                        if track.is_video {
+                            // This peer subscribes to a video track published before it joined,
+                            // so it missed the last keyframe: ask the publisher for a fresh IDR
+                            // now (otherwise it only gets undecodable delta frames = black
+                            // video). Its own later keyframe requests are relayed by the leg.
+                            track.request_keyframe_burst();
+                        }
                     }
-                    Ok(_) => bump(&ledger.tracks_subscribed),
                 }
             }
             drop(tracks);
-
-            let notify_tx_clone = notify_tx.clone();
-            let ledger_ice = ledger.clone();
-            pc.on_ice_candidate(Box::new(move |c| {
-                let notify_tx_clone = notify_tx_clone.clone();
-                let ledger = ledger_ice.clone();
-                Box::pin(async move {
-                    // No line per candidate: a call gathers dozens, and the figure that answers
-                    // a question is the count at the end of negotiation, not the trickle.
-                    let json = match c {
-                        Some(c) => match c.to_json() {
-                            Ok(j) => j,
-                            Err(e) => {
-                                bump(&ledger.ice_out_failed);
-                                warn!("[ICE] to_json failed for {}: {}", ledger.peer_id, e);
-                                return;
-                            }
-                        },
-                        None => RTCIceCandidateInit {
-                            candidate: String::new(),
-                            sdp_mid: None,
-                            sdp_mline_index: None,
-                            username_fragment: None,
-                        },
-                    };
-                    let candidate = match serde_json::to_string(&json) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            bump(&ledger.ice_out_failed);
-                            warn!(
-                                "[ICE] could not serialise candidate for {}: {}",
-                                ledger.peer_id, e
-                            );
-                            return;
-                        }
-                    };
-                    match notify_tx_clone
-                        .send(SignalMessage::IceCandidate { candidate })
-                        .await
-                    {
-                        Ok(()) => bump(&ledger.ice_out),
-                        Err(e) => {
-                            bump(&ledger.ice_out_failed);
-                            warn!(
-                                "[ICE] failed to send candidate for {}: {}",
-                                ledger.peer_id, e
-                            );
-                        }
-                    }
-                })
-            }));
-
-            let ledger_ice_state = ledger.clone();
-            pc.on_ice_connection_state_change(Box::new(move |state| {
-                let ledger = ledger_ice_state.clone();
-                Box::pin(async move {
-                    let name = format!("{:?}", state);
-                    ledger.set_ice_state(&name);
-                    match state {
-                        RTCIceConnectionState::Connected | RTCIceConnectionState::Completed => {
-                            match ledger.mark_connected() {
-                                Some(took) => info!(
-                                    "[call] ice connected room={} peer={} after_ms={} {}",
-                                    ledger.room_id,
-                                    ledger.peer_id,
-                                    took.as_millis(),
-                                    ledger.ice_counters()
-                                ),
-                                None => info!(
-                                    "[call] ice {} room={} peer={}",
-                                    name, ledger.room_id, ledger.peer_id
-                                ),
-                            }
-                        }
-                        RTCIceConnectionState::Failed | RTCIceConnectionState::Disconnected => {
-                            // The counts are the whole point of this line: candidates gathered
-                            // on both sides with no pair formed is a TURN fault, ice_in=0 is a
-                            // client that never trickled, and the two look identical without it.
-                            warn!(
-                                "[call] ice {} room={} peer={} connected_ms={} {}",
-                                name,
-                                ledger.room_id,
-                                ledger.peer_id,
-                                ledger
-                                    .connected_ms()
-                                    .map(|ms| ms.to_string())
-                                    .unwrap_or_else(|| "-".to_string()),
-                                ledger.ice_counters()
-                            );
-                        }
-                        _ => info!(
-                            "[call] ice {} room={} peer={}",
-                            name, ledger.room_id, ledger.peer_id
-                        ),
-                    }
-                })
-            }));
-
-            let room_clone = room.clone();
-            let peer_id_clone = peer_id.clone();
-            let ledger_track = ledger.clone();
-            // Weak ref (not a clone) so the PLI task below doesn't keep the publisher's
-            // PeerConnection alive in a reference cycle (pc owns the on_track callback).
-            let pc_weak = Arc::downgrade(&pc);
-            pc.on_track(Box::new(
-                move |track: Arc<TrackRemote>, _receiver, _transceiver| {
-                    let room_clone = room_clone.clone();
-                    let peer_id_clone = peer_id_clone.clone();
-                    let pc_weak = pc_weak.clone();
-                    let ledger = ledger_track.clone();
-
-                    Box::pin(async move {
-                        let remote_track = track;
-                        bump(&ledger.tracks_published);
-                        info!(
-                            "[call] track published room={} peer={} kind={}",
-                            ledger.room_id,
-                            peer_id_clone,
-                            remote_track.kind()
-                        );
-
-                        let local_track = Arc::new(TrackLocalStaticRTP::new(
-                            remote_track.codec().capability.clone(),
-                            format!("track-{}-{}", peer_id_clone, Uuid::new_v4()),
-                            "canari-sfu".to_owned(),
-                        ));
-
-                        let is_video = remote_track.kind() == RTPCodecType::Video;
-                        let media_ssrc = remote_track.ssrc();
-                        let last_pli = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
-
-                        {
-                            let mut room_tracks = room_clone.tracks.lock().await;
-                            room_tracks.push(PublishedTrack {
-                                local: local_track.clone(),
-                                publisher_pc: pc_weak.clone(),
-                                media_ssrc,
-                                is_video,
-                                last_pli: last_pli.clone(),
-                            });
-                        }
-
-                        let local_track_clone = local_track.clone();
-
-                        // RTP forwarding loop - never interrupted, so no packet is dropped.
-                        tokio::spawn(async move {
-                            let mut buf = vec![0u8; 1500];
-                            while let Ok((parsed, _)) = remote_track.read(&mut buf).await {
-                                if local_track_clone.write_rtp(&parsed).await.is_err() {
-                                    break;
-                                }
-                            }
-                        });
-
-                        // Keyframes are mostly requested on demand (forward_pli_from_subscriber,
-                        // when a subscriber attaches below). A slow recovery timer additionally
-                        // guards against a relayed PLI being lost on the TURN path, which would
-                        // otherwise freeze the picture indefinitely on a lossy mobile uplink.
-                        if is_video {
-                            periodic_keyframe_recovery(
-                                pc_weak.clone(),
-                                media_ssrc,
-                                last_pli.clone(),
-                            );
-                        }
-
-                        for peer_entry in room_clone.peers.iter() {
-                            let other_pid = peer_entry.key();
-                            if other_pid == &peer_id_clone {
-                                continue;
-                            }
-
-                            let other_ctx = peer_entry.value();
-                            match other_ctx
-                                .pc
-                                .add_track(
-                                    Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>
-                                )
-                                .await
-                            {
-                                Err(e) => {
-                                    error!(
-                                        "[call] room={} peer={} could not be subscribed to the new track: {}",
-                                        ledger.room_id, other_pid, e
-                                    );
-                                    continue;
-                                }
-                                Ok(sender) if is_video => {
-                                    bump(&other_ctx.ledger.tracks_subscribed);
-                                    // Existing subscriber gets this freshly-published video track:
-                                    // nudge a keyframe now and relay its later requests on demand.
-                                    request_keyframe_burst(
-                                        pc_weak.clone(),
-                                        media_ssrc,
-                                        last_pli.clone(),
-                                    );
-                                    forward_pli_from_subscriber(
-                                        sender,
-                                        pc_weak.clone(),
-                                        media_ssrc,
-                                        last_pli.clone(),
-                                    );
-                                }
-                                Ok(_) => bump(&other_ctx.ledger.tracks_subscribed),
-                            }
-
-                            schedule_renegotiate(room_clone.clone(), other_pid.clone());
-                        }
-                    })
-                },
-            ));
 
             if let Err(e) = notify_tx
                 .send(SignalMessage::Joined {
@@ -1720,6 +1359,8 @@ async fn handle_signal(
                 );
                 return;
             }
+            // The leg parameters of this peer are settled now; its legs read them again.
+            ctx.gate.send_modify(|g| g.generation += 1);
             let sdp = match serde_json::to_string(&answer) {
                 Ok(sdp) => sdp,
                 Err(e) => {
@@ -1772,6 +1413,7 @@ async fn handle_signal(
                 );
                 return;
             }
+            ctx.gate.send_modify(|g| g.generation += 1);
             flush_pending_ice_candidates(ctx.value()).await;
             info!(
                 "[call] renegotiation answer applied room={} peer={}",
@@ -2492,10 +2134,8 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
             Ok(()) => {
                 bump(&ctx.ledger.offers_out);
                 info!(
-                    "[call] renegotiation offer sent room={} peer={} (signaling={:?})",
-                    ctx.ledger.room_id,
-                    target_peer_id,
-                    ctx.pc.signaling_state()
+                    "[call] renegotiation offer sent room={} peer={}",
+                    ctx.ledger.room_id, target_peer_id
                 );
             }
             // The subscriber never learns the room gained a track: its video simply never
@@ -2838,20 +2478,235 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
     }
 }
 
-async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
-    let mut m = MediaEngine::default();
-    m.register_default_codecs()?;
+/// The events of ONE SFU peer connection, and everything they need to reach the room.
+///
+/// webrtc-rs 0.21 takes its callbacks as one trait object given at build time (0.17 took one
+/// closure per event after the connection existed), so the context a closure used to capture is
+/// held here. The handler runs on the connection's driver task: anything slow or touching another
+/// connection is spawned rather than awaited, so one peer's work never stalls its own media.
+struct SfuPeerHandler {
+    gate: Arc<watch::Sender<forward::LegGate>>,
+    room: Arc<Room>,
+    peer_id: PeerId,
+    notify_tx: mpsc::Sender<SignalMessage>,
+    ledger: Arc<CallLedger>,
+}
 
-    let mut setting_engine = SettingEngine::default();
+impl SfuPeerHandler {
+    /// Sends one local ICE candidate (or the end-of-candidates marker, an empty candidate) to the
+    /// peer, counting it either way.
+    async fn send_candidate(&self, init: RTCIceCandidateInit) {
+        let candidate = match serde_json::to_string(&init) {
+            Ok(c) => c,
+            Err(e) => {
+                bump(&self.ledger.ice_out_failed);
+                warn!(
+                    "[ICE] could not serialise candidate for {}: {}",
+                    self.ledger.peer_id, e
+                );
+                return;
+            }
+        };
+        // try_send: this runs on the connection's driver task, which must never wait on a slow
+        // socket writer.
+        match self
+            .notify_tx
+            .try_send(SignalMessage::IceCandidate { candidate })
+        {
+            Ok(()) => bump(&self.ledger.ice_out),
+            Err(e) => {
+                bump(&self.ledger.ice_out_failed);
+                warn!(
+                    "[ICE] failed to send candidate for {}: {}",
+                    self.ledger.peer_id, e
+                );
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PeerConnectionEventHandler for SfuPeerHandler {
+    async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
+        // No line per candidate: a call gathers dozens, and the figure that answers a question
+        // is the count at the end of negotiation, not the trickle.
+        match event.candidate.to_json() {
+            Ok(init) => self.send_candidate(init).await,
+            Err(e) => {
+                bump(&self.ledger.ice_out_failed);
+                warn!("[ICE] to_json failed for {}: {}", self.ledger.peer_id, e);
+            }
+        }
+    }
+
+    async fn on_ice_gathering_state_change(&self, state: RTCIceGatheringState) {
+        // 0.17 signalled the end of gathering with a `None` candidate; 0.21 reports it as a state.
+        // The client still gets the same empty-candidate marker.
+        if state == RTCIceGatheringState::Complete {
+            self.send_candidate(RTCIceCandidateInit::default()).await;
+        }
+    }
+
+    async fn on_ice_connection_state_change(&self, state: RTCIceConnectionState) {
+        let ledger = &self.ledger;
+        let name = format!("{:?}", state);
+        ledger.set_ice_state(&name);
+        match state {
+            RTCIceConnectionState::Connected | RTCIceConnectionState::Completed => {
+                match ledger.mark_connected() {
+                    Some(took) => info!(
+                        "[call] ice connected room={} peer={} after_ms={} {}",
+                        ledger.room_id,
+                        ledger.peer_id,
+                        took.as_millis(),
+                        ledger.ice_counters()
+                    ),
+                    None => info!(
+                        "[call] ice {} room={} peer={}",
+                        name, ledger.room_id, ledger.peer_id
+                    ),
+                }
+            }
+            RTCIceConnectionState::Failed | RTCIceConnectionState::Disconnected => {
+                // The counts are the whole point of this line: candidates gathered on both sides
+                // with no pair formed is a TURN fault, ice_in=0 is a client that never trickled,
+                // and the two look identical without it.
+                warn!(
+                    "[call] ice {} room={} peer={} connected_ms={} {}",
+                    name,
+                    ledger.room_id,
+                    ledger.peer_id,
+                    ledger
+                        .connected_ms()
+                        .map(|ms| ms.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    ledger.ice_counters()
+                );
+            }
+            _ => info!(
+                "[call] ice {} room={} peer={}",
+                name, ledger.room_id, ledger.peer_id
+            ),
+        }
+    }
+
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        // `Connected` means DTLS is done, so SRTP can protect: legs wait for it.
+        let connected = state == RTCPeerConnectionState::Connected;
+        self.gate.send_if_modified(|g| {
+            let changed = g.connected != connected;
+            g.connected = connected;
+            changed
+        });
+    }
+
+    async fn on_track(&self, track: Arc<dyn TrackRemote>) {
+        let room = self.room.clone();
+        let peer_id = self.peer_id.clone();
+        let ledger = self.ledger.clone();
+        // Spawned: publishing subscribes every other peer, which takes their connections' locks.
+        tokio::spawn(publish_track(room, peer_id, ledger, track));
+    }
+}
+
+/// What publishing needs of each other peer: its id, connection, ledger and leg gate.
+type Subscriber = (
+    PeerId,
+    Arc<dyn PeerConnection>,
+    Arc<CallLedger>,
+    watch::Receiver<forward::LegGate>,
+);
+
+/// A peer published a track: describe it, start pumping it, and subscribe everyone else.
+async fn publish_track(
+    room: Arc<Room>,
+    peer_id: PeerId,
+    ledger: Arc<CallLedger>,
+    remote: Arc<dyn TrackRemote>,
+) {
+    bump(&ledger.tracks_published);
+    let kind = remote.kind().await;
+    info!(
+        "[call] track published room={} peer={} kind={}",
+        ledger.room_id, peer_id, kind
+    );
+
+    let track_id = format!("track-{}-{}", peer_id, Uuid::new_v4());
+    let Some(published) = forward::PublishedTrack::from_remote(remote, track_id).await else {
+        error!(
+            "[call] room={} peer={} published a {} track with no SSRC or codec - nothing to forward",
+            ledger.room_id, peer_id, kind
+        );
+        return;
+    };
+    let published = Arc::new(published);
+    room.tracks.lock().await.push(Arc::clone(&published));
+    published.spawn_publisher_pump(format!("room={} peer={}", ledger.room_id, peer_id));
+
+    // Keyframes are mostly requested on demand (a subscriber's PLI, relayed by its leg). A slow
+    // recovery timer additionally guards against a relayed PLI being lost on the TURN path, which
+    // would otherwise freeze the picture indefinitely on a lossy mobile uplink.
+    if published.is_video {
+        published.spawn_periodic_keyframe_recovery();
+    }
+
+    // Snapshotted so no map guard is held across an await.
+    let others: Vec<Subscriber> = room
+        .peers
+        .iter()
+        .filter(|entry| entry.key() != &peer_id)
+        .map(|entry| {
+            (
+                entry.key().clone(),
+                entry.value().pc.clone(),
+                entry.value().ledger.clone(),
+                entry.value().gate.subscribe(),
+            )
+        })
+        .collect();
+    for (other_pid, other_pc, other_ledger, other_gate) in others {
+        match published.subscribe(&other_pc, &other_pid, other_gate).await {
+            Err(e) => {
+                error!(
+                    "[call] room={} peer={} could not be subscribed to the new track: {}",
+                    ledger.room_id, other_pid, e
+                );
+                continue;
+            }
+            Ok(()) => {
+                bump(&other_ledger.tracks_subscribed);
+                if published.is_video {
+                    // An existing subscriber gets a freshly published video track: nudge a
+                    // keyframe now; its later requests are relayed by its leg.
+                    published.request_keyframe_burst();
+                }
+            }
+        }
+        schedule_renegotiate(room.clone(), other_pid);
+    }
+}
+
+/// Builds one SFU peer connection around `handler`.
+///
+/// UDP is bound on every interface at an ephemeral port: the SFU's own media leg is TURN/UDP
+/// (relay policy) and webrtc-rs 0.21 binds nothing unless asked.
+async fn create_peer_connection(
+    handler: Arc<SfuPeerHandler>,
+) -> anyhow::Result<Arc<dyn PeerConnection>> {
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs()?;
+
     // Relay-only SFU: mDNS/host candidates are useless and delay ICE pairing.
-    setting_engine.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
-
-    let registry = Registry::new();
-    let api = APIBuilder::new()
-        .with_media_engine(m)
-        .with_interceptor_registry(registry)
-        .with_setting_engine(setting_engine)
+    let setting_engine = SettingEngineBuilder::new()
+        .with_multicast_dns_mode(MulticastDnsMode::Disabled)
         .build();
+
+    // Inbound RTCP is for the interceptors unless one marks a packet for the application: the
+    // forwarder marks keyframe requests, the one kind the SFU relays. Last in the chain.
+    let registry = Registry::new().with(
+        Slot::from(14_000),
+        forward::RtcpForwarderInterceptor::default(),
+    );
 
     let ice_servers = resolve_ice_servers().await;
     // Match browser clients (iceTransportPolicy: 'relay') so connectivity checks use TURN.
@@ -2865,13 +2720,21 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
         RTCIceTransportPolicy::All
     };
 
-    let config = RTCConfiguration {
-        ice_servers,
-        ice_transport_policy,
-        ..Default::default()
-    };
+    let config = RTCConfigurationBuilder::new()
+        .with_ice_servers(ice_servers)
+        .with_ice_transport_policy(ice_transport_policy)
+        .build();
 
-    Ok(api.new_peer_connection(config).await?)
+    let pc = PeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_media_engine(media_engine)
+        .with_setting_engine(setting_engine)
+        .with_interceptor_registry(registry)
+        .with_handler(handler as Arc<dyn PeerConnectionEventHandler>)
+        .with_udp_addrs(vec!["0.0.0.0:0"])
+        .build()
+        .await?;
+    Ok(Arc::new(pc))
 }
 
 #[cfg(test)]

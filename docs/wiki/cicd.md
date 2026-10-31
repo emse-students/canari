@@ -1751,11 +1751,11 @@ interceptors, mDNS off, `RTCIceTransportPolicy::Relay`), and asserts that every 
 ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an opus RTP packet arrives
 (SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
 which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
-SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
+SFU's forwarding logic until the 0.21 port (2026-10-27: `src/forward.rs` is now linked into a second test there), a browser peer,
 renegotiation, and any TURN provider but the library's own - so the by-hand call in
 [calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
-stays owed before calling is revived. The `webrtc` 0.20 major is not refused by name any more: it does
-not compile against this SFU, which the suite sees on its own, and the port meets this test.
+stays owed before calling is revived. The `webrtc` 0.20 major was not refused by name: it did
+not compile against this SFU, which the suite saw on its own; the 0.21 port (2026-10-27) met this test and widened it.
 
 **`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be
 closed by a fixture at all.** For an at-rest envelope the reader is the writer, so bytes frozen once
@@ -2398,11 +2398,11 @@ directory holding no `audit.toml`, against the database the audit step just fetc
 `RUSTSEC-2026-0387` (crypto-bigint 0.5.5, constant-time operations that may branch on secrets; fix
 only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
 change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
-newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
+newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0; webrtc 0.17.2's dtls until the 0.21 port). It is
 unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
 **reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
-placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
+placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-021-port-built-2026-10-27)) REMOVED that edge on 2026-10-27; jsonwebtoken keeps the id.
 
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 

@@ -3750,8 +3750,8 @@ and FAILS the day an ignored id is no longer reported, naming the ignore, its pr
 [cicd](cicd.md#five-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 `RUSTSEC-2026-0387` (crypto-bigint 0.5.5) is ignored in all four Rust trees since 2026-10-24, each
-with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
-webrtc 0.21 port and p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
+with its statement in `.cargo/audit.toml`; the call-service DTLS edge went with the webrtc 0.21 port (2026-10-27). Lifted by
+p256 0.14 reaching jsonwebtoken and openmls_rust_crypto; the cargo retirement
 step fails when it is gone ([cicd](cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
 
 ### P3 - the $lib alias migration waits for a quiet frontend (2026-10-27)
@@ -3798,6 +3798,14 @@ NestJS services to `bun test` waits for the campaign ladder to reach the bottom
 Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What settles it is one
 relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
+
+### P3 - the SFU after the webrtc 0.21 port: review leftovers (2026-10-27)
+
+Nothing live reaches the SFU media plane (no client sends mode `sfu`); each is for the day it is used ([calls](frontend/modules/calls.md#the-webrtc-021-port-built-2026-10-27)).
+
+- **A dead track is never removed from `Room.tracks`**, so a later joiner is subscribed to a publisher that left (its leg waits forever for packets).
+- **A Join racing `publish_track` can subscribe the same peer twice** to one track: the peer is inserted in `room.peers` before it takes the `tracks` lock, so both paths see it.
+- **Gathering is IPv4 only** (`0.0.0.0:0`); an IPv6-only path is untested.
 
 ### P1 (blocks `CALLS_COMPILED`, not dev) - four things owed before production calls (review of #1997, 2026-10-17)
 

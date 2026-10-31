@@ -31,10 +31,10 @@ call-service:3004 (Rust/Axum)
 DashMap<RoomId, Arc<Room>>
       |
       +-- Room.peers: DashMap<PeerId, PeerContext>
-      |       each PeerContext wraps an RTCPeerConnection (webrtc-rs)
+      |       each PeerContext wraps an `Arc<dyn PeerConnection>` (webrtc-rs 0.21)
       |
-      +-- Room.tracks: Vec<PublishedTrack>
-              |-- per-track RTP forwarding loop (tokio::spawn)
+      +-- Room.tracks: Vec<Arc<PublishedTrack>>   (src/forward.rs)
+              |-- publisher pump -> broadcast -> one local track + leg task per subscriber
               |-- PLI/FIR relay for keyframe recovery
               `-- periodic recovery timer (3 s, coalesced)
 ```

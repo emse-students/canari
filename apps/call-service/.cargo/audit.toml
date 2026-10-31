@@ -14,15 +14,11 @@ ignore = [
   # crypto-bigint 0.5.5 (RUSTSEC-2026-0387, 2026-10-23), wants >=0.7.6: operations meant to be
   # constant-time (subtraction, division, Montgomery multiplication) may branch on secret data. No
   # 0.5.x fix exists; 0.7 needs elliptic-curve 0.14, and every p256/p384 0.13 user here is already at
-  # its newest release (jsonwebtoken 11.1.0, webrtc 0.17.2's dtls 0.17.2). Two edges, two answers:
+  # its newest release (jsonwebtoken 11.1.0). One edge since the webrtc 0.21 port (2026-10-27
+  # removed the other, its DTLS stack, which ran p256/p384 ECDHE on a per-handshake secret):
   # - jsonwebtoken: NOT REACHABLE, the RSA argument above - HS256 over `from_secret` only, so no EC
   #   key is ever built.
-  # - webrtc's dtls: REACHABLE IN CODE. Its ECDHE runs p256/p384 arithmetic on an ephemeral secret
-  #   (`EphemeralSecret::random` per handshake, one scalar multiplication each) whenever the peer
-  #   puts P-256/P-384 first; signing goes through ring. What bounds it: a per-handshake secret gives
-  #   a timing channel ONE operation to observe, and the SFU has placed no real call in production
-  #   (calls are switched off in clients, docs/wiki/frontend/modules/live.md).
-  # Lifted by webrtc 0.21 (a port onto ring, docs/wiki/frontend/modules/calls.md) AND a jsonwebtoken
-  # on elliptic-curve 0.14; the retirement step of code-analysis.yml fails when it is not reported.
+  # Lifted by a jsonwebtoken on elliptic-curve 0.14; the retirement step of code-analysis.yml fails
+  # when it is not reported.
   "RUSTSEC-2026-0387",
 ]

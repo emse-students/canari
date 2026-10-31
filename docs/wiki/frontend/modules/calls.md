@@ -62,7 +62,7 @@
 > [calls-revival-plan](calls-revival-plan.md) (draft, 2026-10-15).
 
 > **AN EIGHTH, AND IT IS THE NETWORK (measured 2026-10-15): FROM PRODUCTION AS BUILT, NO CALL CAN
-> CONNECT.** The host cannot send UDP to the internet, and the SFU's TURN client (webrtc-rs 0.17)
+> CONNECT.** The host cannot send UDP to the internet, and the SFU's TURN client (webrtc-rs, 0.17 and 0.21 alike)
 > speaks only UDP 3478 to Cloudflare TURN; the two transports that DO leave the host (TCP 80, TLS
 > 443) are the two it cannot use. No inbound port is needed. The minimal ask to the DSI is ONE
 > outbound rule, and it belongs in the revival commit's preconditions
@@ -2804,3 +2804,59 @@ nine majors unplaced. But whoever writes rung 15 CALL to retire the refusal shou
 retiring it against a crate this service has to be rewritten onto first, and should consider whether
 the port and the call belong in the same piece of work. (The refusal itself left the ceiling on 2026-10-09, retired by `relay_path.rs`; the by-hand call stays owed.) The refusal text in
 `.github/scripts/lib/ceiling.sh` now says both.
+
+## The webrtc 0.21 port, built 2026-10-27
+
+`apps/call-service` runs on `webrtc` 0.21 (builds on Dependabot #2156; the 0.20 table above stays the
+map of what moved). The port was a rewrite of the media plane, not a rename, and **it has placed no
+call**: what runs is the in-process relay test, below.
+
+- **The callbacks are one trait.** `SfuPeerHandler` in `src/main.rs` implements
+  `PeerConnectionEventHandler` for one peer (ICE candidate, ICE state, track). The handler runs on the
+  connection's driver task, so publishing a track is spawned (`publish_track`) rather than awaited.
+  The `None` candidate that ended gathering in 0.17 is now the `Complete` gathering state; the client
+  still gets the same empty-candidate marker.
+- **A local track is bound to ONE connection.** In 0.17 one `TrackLocalStaticRTP` was added to every
+  subscriber; in 0.21 a second `add_track` replaces the first binding, and the sender REFUSES a packet
+  whose SSRC, payload type or header-extension ids are not the leg's. `src/forward.rs` therefore fans
+  a published track out through a `tokio::sync::broadcast` to one local track per subscriber (its own
+  SSRC), and rewrites each packet to the payload type and the extensions that leg negotiated (read from
+  the sender's parameters).
+  **A leg is gated**: `write_rtp` only queues the packet for the connection's driver, which refuses it
+  later where no caller sees the error, so the refusal cannot be a signal. The leg forwards nothing
+  until its peer has applied an offer/answer AND reached `Connected` (DTLS done), and re-reads the
+  leg parameters after EVERY applied offer/answer (`LegGate`: a generation bumped by the Offer/Answer
+  handlers, a `connected` flag set by the connection's own events). Without the gate a viewer that
+  offers VP8 as payload type 120 (Firefox) after the publisher is already flowing got 289 `unsupported
+  codec type` errors in 10 s, and every leg logged one SRTP warning per packet until DTLS finished.
+  Both are covered by `tests/relay_path.rs` (the viewer offers VP8 at 120 after the subscription).
+  A keyframe request is coalesced per track (400 ms), a lagging leg reports and asks for a keyframe
+  once per outage, and H264 is matched on its `fmtp` line only (no same-mime fallback).
+- **Subscriber keyframe requests need an interceptor.** Inbound RTCP stops at the end of the
+  interceptor chain unless something marks it for the application, so `RtcpForwarderInterceptor`
+  (last in the chain) marks PLI/FIR and drops the rest; the leg's `poll()` then relays them to the
+  publisher's remote track. The publisher is held as an `Arc<dyn TrackRemote>` and its RTCP write
+  failing ends the keyframe loops, where 0.17 used a `Weak` connection.
+- **No socket is bound unless asked**: `with_udp_addrs(["0.0.0.0:0"])`. TURN is still UDP only (0.21
+  skips `turns:` and TCP URLs with a warning), so [the eighth blocker](#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
+  (no outbound UDP from the host) is UNCHANGED.
+- **The `time` pin is gone**: rcgen is 0.14.10 now. **`RUSTSEC-2026-0387` lost its reachable edge**
+  (the DTLS stack no longer uses p256/p384 from crypto-bigint 0.5); jsonwebtoken still carries it.
+
+**Tested**: `tests/relay_path.rs` now has two tests over a loopback TURN server and relay-only peers.
+The first is the old one (relay candidates only, ICE, data channel, SRTP). The second links `forward.rs`
+and runs publisher -> SFU ingest -> SFU egress -> viewer: the viewer receives the forwarded VP8 on its
+own SSRC with the leg's payload type and an untouched payload, and its PLI reaches the publisher.
+`cargo test` and `cargo clippy --all-targets` are clean. The TURN SERVER is the old async `turn` 0.17
+crate as a dev-dependency (0.21 ships only a sans-I/O client).
+
+**What this does NOT prove, and what MUST be read.** No client sends room mode `sfu` today (the only
+client sends `p2p`, `CallService.ts`), so nothing live reaches this media plane and **a Tier A call on
+the phones cannot verify it**. Before a stable: a p2p 1:1 call on the Mi 9T and the iPhone on dev with
+the new binary (the call-service log free of new noise). Before the SFU is ever used: a
+browser-driven group call with a LATE JOINER (Firefox, and the iPhone, as a subscriber joining after a
+publisher), Cloudflare TURN as production configures it, renegotiation with several tracks. Header
+extensions are kept by id (the engine registers none of its own, so this keeps only what a browser's
+offer named); map by URI the day one is registered. Gathering is IPv4 only. Calls stay held off in
+production (`CALLS_COMPILED = false`). Open items of the review are in
+[backlog](../../backlog.md#p3---the-sfu-after-the-webrtc-021-port-review-leftovers-2026-10-27).
