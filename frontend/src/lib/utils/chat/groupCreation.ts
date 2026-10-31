@@ -10,7 +10,7 @@ import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
-import { announceGroupReadyToSession } from './groupReadyAnnouncer';
+import { captureGroupReadyAnnouncer } from './groupReadyAnnouncer';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
@@ -1128,7 +1128,7 @@ export async function startNewConversation(
             if (id) maybeSelect(id);
           },
           saveConversation,
-          onGroupReady: announceGroupReadyToSession,
+          onGroupReady: captureGroupReadyAnnouncer(),
           log,
         });
       } catch {
