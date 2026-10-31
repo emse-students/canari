@@ -3308,3 +3308,7 @@ Every avatar without a photo or logo (a person, a group or community, an associa
 - **The pick** is `avatarHueIndex(id)` (FNV-1a mod 8), seeded by the ID: user id, conversation / group / workspace id, association id. NEVER the display name, which changes. `GroupAvatar` and `AssociationAvatar` therefore take a required `id`. Known gap: a channel-invitation card carries no workspace id on the wire, so it seeds on the channel id.
 - **Shapes** are unchanged: the caller passes `circle` or `squircle`. A real photo or logo is untouched.
 - Not converted: the Carte poster canvas (`trombinoscope.ts`) still draws its own `generateAvatarColor` tiles.
+
+## User-visible text shows outcomes, never internals (owner, 2026-10-31)
+
+No key fingerprint or technical id on a normal screen: the waiting device's own notice (`chat_waiting_own_device`) no longer prints its key. The rule and the screens still listed are in [durable-rules](../durable-rules.md) (UI and i18n).

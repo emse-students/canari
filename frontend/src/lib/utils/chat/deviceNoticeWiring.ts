@@ -20,25 +20,6 @@ let registeredMls: IMlsService | null = null;
 let registeredSession: Pick<DeviceNoticeSession, 'getUserId' | 'getMyDeviceId'> | null = null;
 
 /**
- * THIS DEVICE'S OWN KEY FINGERPRINT (`keyFingerprintOf` over its credential signature key), in the
- * form a member's device ask shows it - what the owner compares while this device waits to be added.
- *
- * @returns `null` before an account is registered or the engine is ready (logged).
- */
-export async function ownKeyFingerprint(): Promise<string | null> {
-  const mls = registeredMls;
-  if (!mls) return null;
-  try {
-    return await keyFingerprintOf(await mls.ownSignatureKey());
-  } catch (e) {
-    console.warn(
-      `[DEVICE_NOTICE] this device's own key could not be read: ${String(e).slice(0, 120)}`
-    );
-    return null;
-  }
-}
-
-/**
  * "NOT ME": the owner says a device the alert names is not theirs, and it is REVOKED - the same
  * revocation as the device list's (`deleteDevice`): its id is banned, its logins end, its seats go
  * server-side, and every member's stray collector (`removeStrayLeaves`) takes its leaf out of each

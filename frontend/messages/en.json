@@ -1366,7 +1366,7 @@
   "chat_dm_settings_label": "Chat settings",
   "chat_settings_title": "Settings",
   "chat_e2e_established_preview": "E2E channel established.",
-  "chat_waiting_own_device_key": "Waiting to be added. This device's key: {fingerprint}. Open this conversation on another device of yours already in it, or ask another member to open it: check the key shown there is the same, then tap Add.",
+  "chat_waiting_own_device": "Waiting to be added. Open this conversation on another device of yours already in it, or ask another member to open it, then tap Add.",
   "chat_awaiting_admission_preview": "Waiting for a member to add you.",
   "chat_unread_messages_label": [
     {
