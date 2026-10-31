@@ -3,7 +3,6 @@ import {
   fromStoredLines,
   MAX_AVAILABILITY_LINES,
   toStoredLines,
-  wholeDaysInARow,
   type EditorLine,
 } from './availability';
 import {
@@ -84,7 +83,6 @@ describe('the week as runs (WP-R4, D49)', () => {
   it('keeps a whole day whole, never folding it into a night', () => {
     const rows = [weekly(1, '00:00', '24:00'), weekly(2, '00:00', '24:00')];
     expect(stored(rowsOfWeek(weekRunsOf(rows), []))).toEqual(stored(rows));
-    expect(wholeDaysInARow(rowsOfWeek(weekRunsOf(rows), []))).toHaveLength(1);
   });
 });
 
@@ -211,9 +209,11 @@ describe('the templates', () => {
     expect(applyTemplate(rows, 'empty')).toEqual([rows[1]]);
   });
 
-  it('"always" is a 24/7 week, which the existing warning names; the others are not', () => {
-    expect(wholeDaysInARow(applyTemplate([], 'always')).length).toBe(7);
-    expect(wholeDaysInARow(applyTemplate([], 'weekdays'))).toEqual([]);
+  it('"always" is a 24/7 week: seven whole days; the others are not', () => {
+    const whole = (rows: EditorLine[]) =>
+      rows.filter((r) => r.kind === 'weekly' && r.start === '00:00' && r.end === '24:00');
+    expect(whole(applyTemplate([], 'always'))).toHaveLength(7);
+    expect(whole(applyTemplate([], 'weekdays'))).toEqual([]);
   });
 
   it('"event" empties the week and offers one dated line to fill, once', () => {

@@ -4,58 +4,31 @@
  * days of the week shown - so the numbers and the grid can never disagree.
  */
 import type { ResourceSlots } from './api';
-import { formatDay, intlLocale, unitDay } from './grid';
+import { formatDay, unitDay } from './grid';
 import { m } from '$lib/paraglide/messages';
 
-/** What the counters line says about one week of a space, every column together. */
-export interface WeekCounters {
-  /** Distinct live bookings with a unit in the week. */
-  bookings: number;
-  /** Minutes of the week's units a booking took. */
-  bookedMinutes: number;
-  /**
-   * Minutes of every unit offered in the week, taken or not (free, booked, blocked). Fixed slots
-   * that overlap each count whole: this is what was offered, not wall-clock time.
-   */
-  offeredMinutes: number;
-  /** Distinct blocks with a unit in the week. */
-  blocks: number;
-}
-
 /**
- * The counters of the week `week` (its local dates, in the space's zone `timeZone`) over `slots`.
- * A unit belongs to the day it STARTS on (`unitDay`), as the grid places it, so the day-before
- * part of the read is never counted.
+ * The bookings of the week `week` (its local dates, in the space's zone `timeZone`) over `slots`:
+ * each distinct live booking with a unit in the week, once whatever its number of units. A unit
+ * belongs to the day it STARTS on (`unitDay`), as the grid places it, so the day-before part of the
+ * read is never counted. The dashboard's one counter (owner, 2026-10-31: the hours and blocks
+ * chips were removed).
  */
-export function weekCounters(
+export function weekBookingCount(
   slots: readonly ResourceSlots[],
   week: readonly string[],
   timeZone: string
-): WeekCounters {
+): number {
   const days = new Set(week);
   const bookings = new Set<string>();
-  const blocks = new Set<string>();
-  let bookedMinutes = 0;
-  let offeredMinutes = 0;
   for (const resource of slots) {
     for (const unit of resource.units) {
-      if (!days.has(unitDay(unit, timeZone))) continue;
-      const minutes = (unit.endMs - unit.startMs) / 60_000;
-      offeredMinutes += minutes;
-      if (unit.state === 'booked') {
+      if (unit.state === 'booked' && days.has(unitDay(unit, timeZone))) {
         bookings.add(unit.booking.id);
-        bookedMinutes += minutes;
-      } else if (unit.state === 'blocked' && unit.blockId) {
-        blocks.add(unit.blockId);
       }
     }
   }
-  return { bookings: bookings.size, bookedMinutes, offeredMinutes, blocks: blocks.size };
-}
-
-/** Minutes as hours for the counters line, in the reader's language: "21", "1,5" / "1.5". */
-export function hoursOf(minutes: number): string {
-  return new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 1 }).format(minutes / 60);
+  return bookings.size;
 }
 
 /** The local date after `date` (YYYY-MM-DD), calendar arithmetic only. */

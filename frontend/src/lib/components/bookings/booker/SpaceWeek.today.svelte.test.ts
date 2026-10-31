@@ -80,22 +80,22 @@ afterEach(() => {
 it('phone: dimmed while today is the chosen day, live as soon as another day is', async () => {
   viewport(true);
   await open();
-  expect(today().disabled).toBe(true);
+  expect(today().getAttribute('aria-disabled')).toBe('true');
   const thursday = [...document.querySelectorAll('button[aria-pressed]')].find((b) =>
     b.getAttribute('aria-label')?.includes('5 novembre')
   )!;
   await click(thursday);
-  expect(today().disabled).toBe(false);
+  expect(today().getAttribute('aria-disabled')).toBe('false');
   await click(today());
-  expect(today().disabled).toBe(true);
+  expect(today().getAttribute('aria-disabled')).toBe('true');
 });
 
 it('desktop: dimmed while the week holds today, live on another week', async () => {
   viewport(false);
   await open();
-  expect(today().disabled).toBe(true);
+  expect(today().getAttribute('aria-disabled')).toBe('true');
   await click(document.querySelector(`button[aria-label="${m.bookings_week_next()}"]`)!);
-  expect(today().disabled).toBe(false);
+  expect(today().getAttribute('aria-disabled')).toBe('false');
   await click(today());
-  expect(today().disabled).toBe(true);
+  expect(today().getAttribute('aria-disabled')).toBe('true');
 });

@@ -22,7 +22,12 @@ vi.mock('$lib/stores/toast.svelte', () => ({ showToast: (...a: unknown[]) => sho
 
 import { setLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
-import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
+import {
+  BookingsApiError,
+  type BookerResource,
+  type BookerSpace,
+  type SlotUnit,
+} from '$lib/bookings/api';
 import BookingSheet from './BookingSheet.svelte';
 
 const START = Date.parse('2026-11-02T09:00:00Z');
@@ -57,6 +62,7 @@ function render(
     run?: SlotUnit[];
     initialCount?: number;
     onBlockInstead?: () => void;
+    onStartRefused?: (startMs: number) => void;
   } = {}
 ) {
   const onClose = vi.fn();
@@ -69,8 +75,8 @@ function render(
         run: over.run ?? run,
         initialCount: over.initialCount,
         onBlockInstead: over.onBlockInstead,
-        windowNote: false,
         onReread: vi.fn(() => Promise.resolve()),
+        onStartRefused: over.onStartRefused,
         onClose,
       },
     })
@@ -161,6 +167,19 @@ describe('BookingSheet - the length stepper', () => {
     const request = book.mock.calls[0][1];
     expect(request.startsAt).toBe(new Date(run[0].startMs).toISOString());
     expect(request.endsAt).toBe(new Date(run[1].endMs).toISOString());
+  });
+});
+
+describe('BookingSheet - a start the server refuses as too near', () => {
+  it('says it plainly, reports the start so it is never offered again, and closes', async () => {
+    book.mockRejectedValue(new BookingsApiError('dev text', 'notice', 409, []));
+    const onStartRefused = vi.fn();
+    const { onClose } = render({ onStartRefused });
+    submitButton().click();
+    for (let i = 0; i < 3; i++) await tick();
+    expect(onStartRefused).toHaveBeenCalledExactlyOnceWith(run[0].startMs);
+    expect(showToast).toHaveBeenCalledWith(m.bookings_refusal_notice(), 'error');
+    expect(onClose).toHaveBeenCalledWith(true);
   });
 });
 

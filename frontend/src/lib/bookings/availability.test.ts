@@ -7,7 +7,6 @@ import {
   nextDate,
   timeChoices,
   toStoredLines,
-  wholeDaysInARow,
   type EditorLine,
 } from './availability';
 
@@ -74,23 +73,6 @@ describe('fromStoredLines', () => {
       weekly(1, '23:00', '01:00'),
       weekly(2, '23:00', '24:00'),
     ]);
-  });
-});
-
-describe('the 24/7 warning (WP-B2: a window crosses at most one midnight)', () => {
-  it('names each whole day followed by another whole day', () => {
-    const week = [1, 2, 3, 4, 5, 6, 7].map((d) => weekly(d, '00:00', '24:00'));
-    expect(wholeDaysInARow(week)).toEqual(['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7']);
-    expect(wholeDaysInARow([weekly(1, '00:00', '24:00'), weekly(3, '00:00', '24:00')])).toEqual([]);
-  });
-
-  it('says nothing for a night written as evening plus morning, which does join', () => {
-    expect(wholeDaysInARow([weekly(5, '20:00', '02:00')])).toEqual([]);
-  });
-
-  it('sees consecutive dates too', () => {
-    const d = (date: string): EditorLine => ({ kind: 'dated', date, start: '00:00', end: '24:00' });
-    expect(wholeDaysInARow([d('2026-12-31'), d('2027-01-01')])).toEqual(['d2026-12-31']);
   });
 });
 
