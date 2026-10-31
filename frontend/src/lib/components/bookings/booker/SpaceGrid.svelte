@@ -12,7 +12,17 @@
     type DayColumn,
     type WeekLayout,
   } from '$lib/bookings/grid';
-  import { localTime } from '$lib/bookings/zonedTime';
+  import {
+    blockDensity,
+    buildRuns,
+    cutRange,
+    spanOf,
+    type GridRun,
+    type RunKind,
+  } from '$lib/bookings/gridRuns';
+  import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
+  import { getInitials } from '$lib/utils/avatar';
+  import { User } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { gridDragHint } from '$lib/bookings/gridHint';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -26,6 +36,16 @@
    * too soon, too far, not open yet) is drawn greyed and DISABLED on the booker's grid: it is not
    * offered, so no sheet opens on it. Should the server still refuse at the send, its typed refusal
    * is said in plain words.
+   *
+   * THE EYE SEES BLOCKS, THE HAND SEES UNITS. A booking, a stretch of free time, a not-bookable
+   * stretch, a block and the range being drawn are each ONE rounded block spanning their units
+   * (`gridRuns.ts`); the hour lines stay faint behind them. A booking or a block is one button. Free
+   * time is drawn by a quiet block that takes no pointer, over which every free unit keeps its own
+   * invisible button, so a press, a tap or a drag still lands on the step under the pointer and the
+   * keyboard still walks the units. A block that is too short for its text says less (name and
+   * range, then avatar and range, then the avatar alone) and the whole reading stays in its tooltip
+   * and its accessible name. The avatar is the initials placeholder: the server sends a booker's
+   * name and never their id, so no photo can be asked for ([bookings-chantier]).
    *
    * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
    * range follows the pointer, held by `dragRange` to free touching units and to what one booking
@@ -250,17 +270,44 @@
     return { text: m.bookings_cell_closed(), closed: true, past: isPastUnit(unit, nowMs) };
   }
 
-  /**
-   * Two units that read as ONE thing on the grid: touching free units the device's clock treats the
-   * same way, touching blocked units, or the units of one booking. A run is drawn as a single block
-   * (rounded only at its ends, its label said once) while every unit stays its own button, so a
-   * press or a drag still lands on the step under the pointer.
-   */
-  function sameRun(a: SlotUnit | null | undefined, b: SlotUnit | null | undefined): boolean {
-    if (!a || !b || a.endMs !== b.startMs || a.state !== b.state) return false;
-    if (a.state === 'booked' && b.state === 'booked') return a.booking.id === b.booking.id;
-    const [ra, rb] = [reading(a), reading(b)];
-    return ra.text === rb.text && ra.past === rb.past;
+  /** What a unit is, for the eye: the booking window and the device's clock decide free from closed. */
+  function kindOf(unit: SlotUnit): RunKind {
+    if (unit.state === 'booked') return 'booked';
+    if (unit.state === 'blocked') return 'blocked';
+    const { closed, past } = reading(unit);
+    return past ? 'past' : closed ? 'closed' : 'free';
+  }
+
+  /** Each day's runs; a space of fixed slots keeps its free slots apart (a slot is booked whole). */
+  const dayRuns = $derived(
+    layout.days.map((d) => buildRuns(d.placed, kindOf, space.slotMode === 'slots'))
+  );
+
+  /** The runs of one day with the range being drawn cut out of them. */
+  function runsOfDay(dayIndex: number): GridRun[] {
+    const runs = dayRuns[dayIndex] ?? [];
+    return selected && selected.day === dayIndex
+      ? cutRange(runs, layout.days[dayIndex].placed, selected.first, selected.last)
+      : runs;
+  }
+
+  /** A run's reading: what it says, its hours in the space's zone, and the full accessible name. */
+  function runReading(run: GridRun) {
+    const unit = run.units[0];
+    const text = reading(unit).text;
+    const time = formatTimeRange(run.startMs, run.endMs, space.timeZone);
+    const label = m.bookings_cell_label({
+      resource: resource.name,
+      time: formatBookingRange(run.startMs, run.endMs, space.timeZone),
+      state: text,
+    });
+    const holder = unit.state === 'booked' ? unit.booking.holderName : undefined;
+    return { text, time, label, holder, mine: unit.state === 'booked' && unit.booking.mine };
+  }
+
+  /** Place a block on its day column, in its lane. */
+  function boxStyle(top: number, height: number, lane: number, lanes: number): string {
+    return `top:${remOf(top - layout.startMin)}rem;height:${remOf(height)}rem;left:${(lane / lanes) * 100}%;width:${100 / lanes}%`;
   }
 
   /** The shared axis: its whole hours, as the labels down the left. */
@@ -277,32 +324,6 @@
   const columns = $derived(
     `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(4.25rem, 1fr)')).join(' ')}`
   );
-
-  /** A slot is booked whole, so its start is what names it; a step's start is the row's. */
-  function unitText(unit: SlotUnit, text: string): string {
-    return space.slotMode === 'slots'
-      ? `${localTime(unit.startMs, space.timeZone)} - ${text}`
-      : text;
-  }
-
-  function cellClass(unit: SlotUnit, closed: boolean, past: boolean): string {
-    if (unit.state === 'booked') {
-      return unit.booking.mine
-        ? 'bg-cn-yellow/25 text-text-main border-cn-yellow/60'
-        : 'bg-cn-border/40 text-text-main border-cn-border';
-    }
-    if (unit.state === 'blocked') return 'bg-red-err/10 text-red-err border-red-err/30';
-    // The organiser's dashboard draws what is NOT taken as quiet ground (the mockup's grey closed
-    // cells, empty free ones), so the bookings and blocks are what the eye finds.
-    if (blockMode) {
-      return closed
-        ? 'bg-control-fill/50 border-transparent'
-        : 'border-transparent hover:bg-red-err/10 hover:border-red-err/30';
-    }
-    if (past) return 'bg-cn-bg/50 text-text-muted/40 border-cn-border/30';
-    if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60';
-    return 'bg-green-ok/10 text-green-ok border-green-ok/30 hover:bg-green-ok/20';
-  }
 </script>
 
 <!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
@@ -367,7 +388,7 @@
           style:height="{bodyRem}rem"
           style:background-image={folded(day)
             ? 'none'
-            : 'linear-gradient(to bottom, var(--cn-border) 1px, transparent 1px)'}
+            : 'linear-gradient(to bottom, color-mix(in srgb, var(--cn-border) 55%, transparent) 1px, transparent 1px)'}
           style:background-size="100% {remOf(60)}rem"
           role="group"
           aria-label={formatDay(day.date)}
@@ -375,50 +396,114 @@
           {#if folded(day)}
             <div class="bg-cn-border/20 absolute inset-0 rounded-lg" aria-hidden="true"></div>
           {/if}
+          {#each runsOfDay(dayIndex) as run (`${run.startMs}-${run.endMs}`)}
+            {@const r = runReading(run)}
+            {@const density = blockDensity(remOf(run.heightMin))}
+            {#if run.kind === 'booked' || run.kind === 'blocked'}
+              <button
+                type="button"
+                onclick={() => onPick(resource, run.units[0])}
+                aria-label={r.label}
+                title={r.label}
+                style={boxStyle(run.topMin, run.heightMin, run.lane, run.lanes)}
+                class="group absolute z-10 block p-px text-left outline-none"
+              >
+                <span
+                  class="group-focus-visible:ring-cn-yellow @container block h-full overflow-hidden rounded-lg border px-1.5 py-0.5 text-xs leading-tight group-focus-visible:ring-2 motion-safe:transition-colors {run.kind ===
+                  'blocked'
+                    ? 'bg-red-err/10 text-red-err border-red-err/30'
+                    : r.mine
+                      ? 'bg-cn-yellow/25 text-text-main border-cn-yellow/60 group-hover:bg-cn-yellow/35'
+                      : 'bg-control-fill text-text-main border-cn-border group-hover:bg-control-fill/70'}"
+                >
+                  {#if run.kind === 'blocked'}
+                    <span class="block truncate font-semibold">{r.text}</span>
+                    {#if density === 'full'}
+                      <span class="text-2xs block truncate opacity-80">{r.time}</span>
+                    {/if}
+                  {:else}
+                    {@render bookingFace(r, density, run.units[0])}
+                  {/if}
+                </span>
+              </button>
+            {:else}
+              <div
+                role="img"
+                aria-label={run.kind === 'free' ? undefined : r.label}
+                aria-hidden={run.kind === 'free' ? 'true' : undefined}
+                style={boxStyle(run.topMin, run.heightMin, run.lane, run.lanes)}
+                class="pointer-events-none absolute block p-px"
+              >
+                <span
+                  class="block h-full overflow-hidden rounded-lg px-1.5 py-1 text-xs leading-tight {run.kind ===
+                  'free'
+                    ? blockMode
+                      ? ''
+                      : 'bg-green-ok/10 text-green-ok'
+                    : run.kind === 'closed'
+                      ? blockMode
+                        ? 'bg-control-fill/50'
+                        : 'bg-cn-bg/60 text-text-muted'
+                      : blockMode
+                        ? 'bg-control-fill/50'
+                        : 'bg-cn-bg/40'}"
+                  style:background-image={run.kind === 'closed' && !blockMode
+                    ? 'repeating-linear-gradient(135deg, color-mix(in srgb, var(--cn-border) 70%, transparent) 0 1px, transparent 1px 0.5rem)'
+                    : undefined}
+                >
+                  {#if !blockMode && (run.kind === 'free' || run.kind === 'closed') && density !== 'icon'}
+                    <span class="block truncate font-semibold">{r.text}</span>
+                    {#if density === 'full' && run.kind === 'free'}
+                      <span class="text-text-muted text-2xs block truncate">{r.time}</span>
+                    {/if}
+                  {/if}
+                </span>
+              </div>
+            {/if}
+          {/each}
+          {#if selected && selected.day === dayIndex}
+            {@const box = spanOf(day.placed, selected.first, selected.last)}
+            <div
+              aria-hidden="true"
+              style={boxStyle(box.topMin, box.heightMin, box.lane, box.lanes)}
+              class="pointer-events-none absolute z-20 block p-px"
+            >
+              <span
+                class="block h-full overflow-hidden rounded-lg border px-1.5 py-1 text-xs leading-tight font-bold shadow-sm motion-safe:transition-colors {blockMode
+                  ? 'bg-red-err/20 text-red-err border-red-err'
+                  : 'bg-cn-yellow text-cn-ink border-cn-yellow'}"
+              >
+                <span class="block truncate tabular-nums">{selectedReading}</span>
+              </span>
+            </div>
+          {/if}
           {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}`)}
             {@const unit = placed.unit}
-            {@const cell = reading(unit)}
-            {@const joinedAbove = sameRun(day.cells[idx - 1], unit)}
-            {@const joinedBelow = sameRun(unit, day.cells[idx + 1])}
-            {@const inRange =
-              selected !== null &&
-              selected.day === dayIndex &&
-              idx >= selected.first &&
-              idx <= selected.last}
-            <button
-              type="button"
-              data-cell
-              data-day={dayIndex}
-              data-idx={idx}
-              disabled={!offered(unit)}
-              onclick={() => {
-                if (swallowClick) {
-                  swallowClick = false;
-                  return;
-                }
-                onPick(resource, unit);
-              }}
-              aria-label={m.bookings_cell_label({
-                resource: resource.name,
-                time: formatBookingRange(unit.startMs, unit.endMs, space.timeZone),
-                state: cell.text,
-              })}
-              style:top="{remOf(placed.topMin - layout.startMin)}rem"
-              style:height="{remOf(placed.heightMin)}rem"
-              style:left="{(placed.lane / placed.lanes) * 100}%"
-              style:width="{100 / placed.lanes}%"
-              class="absolute block overflow-hidden border px-1.5 py-0.5 text-left text-xs leading-tight font-semibold transition-colors {joinedAbove
-                ? 'rounded-t-none border-t-black/5'
-                : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
-                ? blockMode
-                  ? 'bg-red-err/20 text-red-err border-red-err'
-                  : 'bg-cn-yellow/40 text-text-main border-cn-yellow'
-                : cellClass(unit, cell.closed, cell.past)}"
-            >
-              {joinedAbove || cell.past || (blockMode && unit.state === 'free')
-                ? ''
-                : unitText(unit, cell.text)}
-            </button>
+            {#if unit.state === 'free' && offered(unit)}
+              <button
+                type="button"
+                data-cell
+                data-day={dayIndex}
+                data-idx={idx}
+                onclick={() => {
+                  if (swallowClick) {
+                    swallowClick = false;
+                    return;
+                  }
+                  onPick(resource, unit);
+                }}
+                aria-label={m.bookings_cell_label({
+                  resource: resource.name,
+                  time: formatBookingRange(unit.startMs, unit.endMs, space.timeZone),
+                  state: reading(unit).text,
+                })}
+                title={formatTimeRange(unit.startMs, unit.endMs, space.timeZone)}
+                style={boxStyle(placed.topMin, placed.heightMin, placed.lane, placed.lanes)}
+                class="focus-visible:ring-cn-yellow absolute z-10 block cursor-pointer rounded-lg outline-none focus-visible:ring-2 motion-safe:transition-colors {blockMode
+                  ? 'hover:bg-red-err/10'
+                  : 'hover:bg-green-ok/20'}"
+              ></button>
+            {/if}
           {/each}
         </div>
       {/each}
@@ -432,3 +517,36 @@
     {gridDragHint(blockMode, coarse)}
   </p>
 {/if}
+
+{#snippet bookingFace(
+  r: { text: string; time: string; holder: string | undefined },
+  density: 'full' | 'line' | 'icon',
+  unit: SlotUnit
+)}
+  <span class="flex items-start gap-1.5">
+    {#if r.holder}
+      <AvatarPlaceholder
+        seed={unit.state === 'booked' ? unit.booking.id : ''}
+        initials={getInitials(r.holder)}
+        class="text-2xs h-6 w-6 shrink-0 rounded-full"
+      />
+    {:else}
+      <AvatarPlaceholder
+        seed={unit.state === 'booked' ? unit.booking.id : ''}
+        class="h-6 w-6 shrink-0 rounded-full"
+      >
+        <User class="h-3 w-3" aria-hidden="true" />
+      </AvatarPlaceholder>
+    {/if}
+    {#if density !== 'icon'}
+      <span class="min-w-0 flex-1 @max-[6rem]:hidden">
+        {#if density === 'full'}
+          <span class="block truncate font-semibold">{r.text}</span>
+          <span class="text-text-muted text-2xs block truncate">{r.time}</span>
+        {:else}
+          <span class="text-text-muted block truncate font-semibold tabular-nums">{r.time}</span>
+        {/if}
+      </span>
+    {/if}
+  </span>
+{/snippet}
