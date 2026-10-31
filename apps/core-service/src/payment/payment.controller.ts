@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
   Get,
   Headers,
   Post,
@@ -14,7 +13,6 @@ import {
   NotFoundException,
   Req,
   ServiceUnavailableException,
-  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -28,6 +26,8 @@ import axios from 'axios';
 import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
+import { assertCanManageAssociation } from './manage-permission';
+import { LydiaCashierOps } from './lydia-cashier-ops';
 import {
   LYDIA_CASHIER_PHONE_INVALID,
   LYDIA_CASHIER_PHONE_RE,
@@ -80,6 +80,9 @@ function payoutAccountUnreadable(): ServiceUnavailableException {
  */
 export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
 
+/** social-service's `code` (409) of a cashier operation while another one is in flight (lot 3). */
+export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
+
 /** The `code` (409) of a Responsable asked for an association with no Business linked. */
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
 /** The `code` (400) of a Responsable who is not a member of the association. */
@@ -89,8 +92,8 @@ export const LYDIA_RESPONSABLE_NOT_A_CASHIER = 'LYDIA_RESPONSABLE_NOT_A_CASHIER'
 /** The `code` (409) of a second person asked as Responsable: changing them is lot 3. */
 export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
 /**
- * The `code` (409) of ANOTHER number for the live Responsable: Lydia would keep the old number as a
- * cashier Canari no longer tracks, so changing it comes with lot 3. Also social-service's.
+ * The `code` (409) of ANOTHER number for the live Responsable while an earlier number change still
+ * has an old number Lydia has not confirmed removed (lot 3), or in record mode. Also social-service's.
  */
 export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
 /**
@@ -119,38 +122,7 @@ export class PaymentController {
     /** A bound on social-service's answer; the onboarding passes its step budget, others none. */
     timeoutMs?: number
   ): Promise<void> {
-    const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
-    if (!userId) {
-      throw new UnauthorizedException('Authentication required');
-    }
-    const fwd: Record<string, string> = {
-      'X-User-Id': userId,
-      'X-Global-Admin': req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
-    };
-    const nginxAuth = req.headers['x-nginx-auth'];
-    if (typeof nginxAuth === 'string') fwd['X-Nginx-Auth'] = nginxAuth;
-    const authz = req.headers['authorization'];
-    if (typeof authz === 'string') fwd['Authorization'] = authz;
-    // Forward the Nginx-generated HMAC token so social-service's NginxAuthGuard
-    // can validate the inter-service call when INTERNAL_SHARED_SECRET is configured.
-    const internalToken = req.headers['x-internal-token'];
-    if (typeof internalToken === 'string') fwd['X-Internal-Token'] = internalToken;
-
-    try {
-      const res = await axios.get<{ ok: boolean }>(
-        socialUrl(`associations/${encodeURIComponent(associationId)}/manage-permission`),
-        { headers: fwd, validateStatus: () => true, timeout: timeoutMs }
-      );
-      if (res.status >= 400 || !res.data?.ok) {
-        throw new ForbiddenException('You cannot manage payments for this association');
-      }
-    } catch (e) {
-      if (e instanceof ForbiddenException || e instanceof UnauthorizedException) throw e;
-      this.logger.warn(
-        `manage-permission check failed: ${e instanceof Error ? e.message : String(e)}`
-      );
-      throw new BadRequestException('Could not verify association permissions');
-    }
+    await assertCanManageAssociation(req, associationId, this.logger, timeoutMs);
   }
 
   /**
@@ -482,12 +454,13 @@ export class PaymentController {
         member: boolean;
         currentUserId: string | null;
         phoneMatches: boolean;
+        numberChange?: boolean;
         claimed: boolean;
       }>(
         socialUrl(
           `internal/associations/${encodeURIComponent(associationId)}/lydia-responsable-claim`
         ),
-        { userId, phone },
+        { userId, phone, mode, allowNumberChange: true },
         { ...internalSocialRequestConfig(), timeout: 10_000 }
       )
     );
@@ -511,16 +484,19 @@ export class PaymentController {
         message: 'This association already has a Responsable',
       });
     }
-    if (!pre.phoneMatches) {
-      // The same person with ANOTHER number: Lydia would keep the old one as a cashier Canari no
-      // longer tracks. Refused BEFORE any call to Lydia; changing it is lot 3.
+    if (!pre.phoneMatches && pre.numberChange !== true) {
+      // The same person with ANOTHER number, while an earlier number change still has an old
+      // number Lydia has not confirmed removed (or in record mode): refused BEFORE any call.
       this.logger.warn(
-        `Lydia Responsable of ${associationId} refused: another number for the live Responsable`
+        `Lydia Responsable of ${associationId} refused: another number while it is locked`
       );
       throw new ConflictException({
         code: LYDIA_RESPONSABLE_PHONE_LOCKED,
-        message: "The Responsable's number cannot be changed yet",
+        message: 'An earlier number change of the Responsable is not finished',
       });
+    }
+    if (pre.numberChange === true) {
+      this.logger.log(`Lydia Responsable of ${associationId}: number change claimed`);
     }
     if (!pre.claimed) {
       // Every check passed, so social-service claimed or refused: an answer with neither is not one.
@@ -579,7 +555,7 @@ export class PaymentController {
     // Lydia has the cashier now; a failure to STORE is said at ERROR and keeps the claim, so a
     // global admin clears it once checked (the add replaces the rights, so a later add is safe).
     const data = await this.responsableSocialStep(associationId, 'store', () =>
-      axios.post<{ responsable: unknown }>(
+      axios.post<{ responsable: unknown; cashierId?: string | null; previousPending?: boolean }>(
         socialUrl(`internal/associations/${encodeURIComponent(associationId)}/lydia-responsable`),
         { vendorToken: pre.vendorToken, userId, phone, addedByUserId: actorId, confirmed: true },
         { ...internalSocialRequestConfig(), timeout: 10_000 }
@@ -588,7 +564,44 @@ export class PaymentController {
     this.logger.log(
       `Lydia Responsable of ${associationId} ${mode === 'add' ? 'added' : 'recorded'}`
     );
+    if (data?.previousPending === true && data.cashierId) {
+      // Lot 3: the Responsable's OLD number goes, now that the new one is confirmed. A removal
+      // Lydia does not confirm answers the typed 502; the row keeps the old number, flagged.
+      await this.removePreviousResponsableNumber(associationId, data.cashierId, actorId);
+    }
     return { ok: true, responsable: data?.responsable ?? null };
+  }
+
+  /**
+   * Removes the Responsable's OLD number after a number change (`LydiaCashierOps.revoke`,
+   * `previous`). Another cashier operation holding the claim is not a failure of THIS request:
+   * the old number stays listed for removal (WARN). Every other outcome is passed on.
+   */
+  private async removePreviousResponsableNumber(
+    associationId: string,
+    cashierId: string,
+    actorId: string
+  ): Promise<void> {
+    try {
+      await new LydiaCashierOps(this.paymentService).revoke(
+        associationId,
+        cashierId,
+        'previous',
+        actorId
+      );
+    } catch (err: unknown) {
+      const answer = err instanceof HttpException ? err.getResponse() : undefined;
+      const code =
+        answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
+      if (code === LYDIA_CASHIER_IN_FLIGHT) {
+        this.logger.warn(
+          `Lydia Responsable of ${associationId}: the old number's removal waits - another ` +
+            `cashier operation is in flight`
+        );
+        return;
+      }
+      throw err;
+    }
   }
 
   /**

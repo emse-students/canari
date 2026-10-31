@@ -28,6 +28,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
   import LydiaResponsableForm from './LydiaResponsableForm.svelte';
+  import LydiaCashiersSection from './LydiaCashiersSection.svelte';
 
   interface Props {
     asso: Association;
@@ -378,6 +379,7 @@
         />
       </div>
     {/if}
+    <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
     {@render adminClear()}
     {@render adminAndDisconnect(false)}
   {:else}
@@ -515,6 +517,7 @@
         </li>
       {/each}
     </ol>
+    <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
     {@render adminClear()}
     {#if account.lydiaAccountId}
       {@render adminAndDisconnect(view.adminCanValidate)}

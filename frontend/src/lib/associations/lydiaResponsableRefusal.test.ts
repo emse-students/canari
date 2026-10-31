@@ -20,3 +20,13 @@ describe('lydiaResponsableErrorText', () => {
     expect(lydiaResponsableErrorText(new SocialApiError('x', 'WHATEVER', 400))).toBe(generic);
   });
 });
+
+describe('lydiaResponsableErrorText after a number change (lot 3)', () => {
+  it('says the new number was added and the old one still needs removing, not a generic failure', () => {
+    const text = lydiaResponsableErrorText(
+      new SocialApiError('x', 'LYDIA_CASHIER_REVOKE_UNCONFIRMED', 502)
+    );
+    expect(text).not.toBe(lydiaResponsableErrorText(new Error('x')));
+    expect(text).not.toContain('LYDIA');
+  });
+});

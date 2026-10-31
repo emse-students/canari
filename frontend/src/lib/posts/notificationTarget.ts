@@ -15,6 +15,12 @@ export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
 export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests';
 
 /**
+ * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
+ * allows, and what to do with Lydia's SMS. Also linked from the association's "Caissiers" section.
+ */
+export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro';
+
+/**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
  *
  * The bell dropdown and `/notifications` render the same rows and, until this existed, each decided
@@ -57,6 +63,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
       return '/profile';
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
+    // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
+    case 'lydia_cashier_added':
+      return LYDIA_PRO_HELP_ROUTE;
     case 'repost_proposed':
     case 'coorganise_proposed':
     case 'lydia_payments_active':
@@ -144,6 +153,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'booking_reminder',
   'lydia_payments_active',
   'lydia_payments_paused',
+  'lydia_cashier_added',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

@@ -2461,6 +2461,39 @@ export interface AssociationPayoutAccount {
   enrolmentInFlightSince?: string | null;
   /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
   responsableInFlightSince?: string | null;
+  /**
+   * The live cashiers of the CURRENT Business (enrolment lot 3), the Responsable first. Absent on a
+   * server older than lot 3: read as none.
+   */
+  cashiers?: LydiaCashier[];
+}
+
+/** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
+export type LydiaCashierRole = 'responsable' | 'tresorier' | 'vendeur';
+
+/** The two roles a payout manager may add or switch between (lot 3). */
+export type LydiaAddableCashierRole = Exclude<LydiaCashierRole, 'responsable'>;
+
+/**
+ * Where a cashier stands at Lydia: `confirmed` (Lydia showed exactly the role's rights),
+ * `unconfirmed` (Lydia answered the add but did not show them), `revoke-unconfirmed` (a removal
+ * was asked and Lydia did not show it done: the person may still hold rights).
+ */
+export type LydiaCashierState = 'confirmed' | 'unconfirmed' | 'revoke-unconfirmed';
+
+/** One live Lydia cashier of an association, as its payout managers see it: 2 phone digits only. */
+export interface LydiaCashier {
+  id: string;
+  userId: string;
+  name: string;
+  role: LydiaCashierRole;
+  phoneEnd: string;
+  state: LydiaCashierState;
+  /** An older number of this person (a Responsable number change) whose removal is not confirmed. */
+  previousPhoneEnd: string | null;
+  /** ISO instant the cashier was added. */
+  addedAt: string;
+  addedByName: string;
 }
 
 /** The cause of the last readiness change of a Lydia Business. */
@@ -2550,6 +2583,63 @@ export async function setLydiaResponsable(
     responsable: LydiaResponsable;
   };
   return body.responsable;
+}
+
+/**
+ * Adds a member as a Lydia cashier with a role (lot 3, MANAGE_PAYOUT_ACCOUNT; Lydia sends its SMS).
+ * `phone` is E.164. A refusal is a {@link SocialApiError} typed at the throw
+ * (`lydiaCashierRefusal.ts`); the server refuses every add while its gate is off.
+ */
+export async function addLydiaCashier(
+  associationId: string,
+  input: { userId: string; phone: string; role: LydiaAddableCashierRole }
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/** Switches a cashier between Tresorier and Vendeur (lot 3, gated like the add). */
+export async function changeLydiaCashierRole(
+  associationId: string,
+  cashierId: string,
+  role: LydiaAddableCashierRole
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/role`,
+    { method: 'POST', body: JSON.stringify({ role }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers/:id/role')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/**
+ * Removes a cashier's number at Lydia (lot 3): `current`, or `previous` for the older number a
+ * Responsable number change left behind. Resolves only when Lydia showed the number holds no right;
+ * otherwise a typed {@link SocialApiError} (`LYDIA_CASHIER_REVOKE_UNCONFIRMED`: the row stays).
+ */
+export async function revokeLydiaCashier(
+  associationId: string,
+  cashierId: string,
+  number: 'current' | 'previous'
+): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/revoke`,
+    { method: 'POST', body: JSON.stringify({ number }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
 }
 
 /**

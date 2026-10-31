@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { LydiaPaymentProvider } from './lydia-payment-provider';
+import {
+  LydiaPaymentProvider,
+  type LydiaCashierRemoval,
+  type LydiaCashierRole,
+} from './lydia-payment-provider';
 import { verifyLydiaCallback, type LydiaCallbackVerdict } from './lydia-callback-verification';
 import { internalLydiaCallbackKeyUrl, internalSocialRequestConfig } from './social-internal-client';
 import { DisabledPaymentProvider } from './disabled-payment-provider';
@@ -72,6 +76,33 @@ export class PaymentService {
   /** Reads one cashier's rights at Lydia, read-only (`LydiaPaymentProvider.readCashierRights`). */
   async readLydiaCashierRights(associationId: string, vendorToken: string, phone: string) {
     return this.lydiaProvider.readCashierRights(associationId, vendorToken, phone);
+  }
+
+  /**
+   * Adds a cashier with exactly the rights of `role` and reads them back
+   * (`LydiaPaymentProvider.addCashier`, lot 3). Like the Responsable's add, independent of which
+   * provider is ACTIVE.
+   */
+  async addLydiaCashier(
+    associationId: string,
+    vendorToken: string,
+    phone: string,
+    role: LydiaCashierRole
+  ): Promise<void> {
+    return this.lydiaProvider.addCashier(associationId, vendorToken, phone, role);
+  }
+
+  /**
+   * Removes a cashier at Lydia, then re-reads its rights
+   * (`LydiaPaymentProvider.removeCashier`): `verified` only at 0 rights.
+   */
+  async removeLydiaCashier(
+    associationId: string,
+    vendorToken: string,
+    actorPhone: string,
+    cashierPhone: string
+  ): Promise<LydiaCashierRemoval> {
+    return this.lydiaProvider.removeCashier(associationId, vendorToken, actorPhone, cashierPhone);
   }
 
   /** Reads the admin-configured provider choice and returns the matching instance. */

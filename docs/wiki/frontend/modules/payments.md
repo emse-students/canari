@@ -770,11 +770,9 @@ member and their phone in E.164:
 
 1. **Checks and claim through social-service** (`lydia-responsable-claim`): the Business linked now
    (`LYDIA_NO_BUSINESS` otherwise), whether the person is a MEMBER (`LYDIA_RESPONSABLE_NOT_A_MEMBER`),
-   whether another person is already the live Responsable (`LYDIA_RESPONSABLE_ALREADY_SET`; changing
-   them is lot 3), and - the same person asked again - whether the phone is the number already sealed:
-   ANOTHER number is the typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, refused BEFORE any call to Lydia,
-   since Lydia would keep the old number as a cashier Canari no longer tracks (changing it is lot 3);
-   the same number is a resend. Only when every check passes is the step CLAIMED, in ONE statement on
+   whether another person is already the live Responsable (`LYDIA_RESPONSABLE_ALREADY_SET`), and - the
+   same person asked again - whether the phone is the number already sealed: the same number is a
+   resend, ANOTHER number a number change since lot 3 ([below](#the-cashiers-enrolment-lot-3)). Only when every check passes is the step CLAIMED, in ONE statement on
    the association row (`lydiaResponsableStartedAt`, migration 118): a second manager meanwhile reads
    the typed 409 `LYDIA_RESPONSABLE_IN_FLIGHT` (or `LYDIA_BUSINESS_CHANGED`), so Lydia is asked ONCE
    (an integration spec races two steps). A typed outcome releases the claim
@@ -790,7 +788,7 @@ member and their phone in E.164:
    unconfirmed"** (`LydiaCashierAddedUnconfirmedException`, the original status kept): Lydia holds a
    cashier, so core stores the row UNCONFIRMED (`confirmedAt` NULL) at ERROR (association and
    `phoneEnd` only) and the record releases the claim; if that store fails, the claim stays. An
-   unconfirmed live row guards `PHONE_LOCKED` and `ALREADY_SET` like a confirmed one, the same-number
+   unconfirmed live row guards `ALREADY_SET` like a confirmed one, the same-number
    resend confirms it, and the screen shows it as added at Lydia and not confirmed (the admin reads
    that a revocation may be owed). Typed: 444 `LYDIA_SIGNATURE_REFUSED`, 3 `LYDIA_CASHIER_PERMISSIONS_INVALID`,
    102/103 `LYDIA_BUSINESS_TOKEN_REJECTED` (502); no answer or an HTML page `LYDIA_UNREACHABLE` (503;
@@ -802,8 +800,8 @@ member and their phone in E.164:
    its last two digits (`phoneEnd`) ever read back or logged. In ONE transaction, the association row
    locked: the Business must still be the one claimed (`LYDIA_BUSINESS_CHANGED`), one live Responsable
    per association (a partial unique index, whose violation answers the typed
-   `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number
-   `LYDIA_RESPONSABLE_PHONE_LOCKED`; the same person and number confirms an unconfirmed row; a row of an
+   `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number a number
+   change (lot 3, the old number kept sealed until its removal is confirmed); the same person and number confirms an unconfirmed row; a row of an
    EARLIER Business is closed, its phone and `phoneEnd` cleared; the unlink closes every row the same
    way. Nothing ties the phone to the member: the member is not asked, and the manager types it.
    **A live row deleted** - by the account's erasure, or by the association's delete (`ON DELETE
@@ -830,6 +828,92 @@ and a FORM payment is still confirmed when the payer comes back (`confirm-paymen
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
 characters, fails its render naming the secret rather than starting a service that cannot store a key.
 
+### The cashiers (enrolment lot 3)
+
+The owner's decisions of 2026-10-30 ([backlog](../../backlog.md#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)):
+Canari keeps its own list of the people Lydia lists as cashiers of an association's Business
+(`lydia_cashiers`, migrations 118 and 119), managed by `MANAGE_PAYOUT_ACCOUNT` holders; a cashier is a
+MEMBER of the association, and the manager types their number (E.164). Lydia's SMS stays on.
+
+**The roles and their rights - ONE mapping, `LYDIA_CASHIER_ROLE_PERMISSIONS`
+(`apps/core-service/src/payment/lydia-payment-provider.ts`).** Lydia's documentation lists the 13 right
+names and describes none of them, so each set is read from the names and kept NARROW:
+
+| Role | What the owner asked | Rights sent to `business/addcashier` |
+| --- | --- | --- |
+| Responsable | everything | all 13 (`LYDIA_CASHIER_PERMISSIONS`), `access_cashier` included - the right that manages cashiers, which every removal acts through |
+| Tresorier | statements, refunds, cancels | `access_statement`, `access_canceltransaction` (the right Lydia's refund call names), `access_cancelrequest` |
+| Vendeur | collect | `access_collect` |
+
+Left out, their meaning unknown: `access_allreceipt` and `access_fee` (not given to a Tresorier) and
+`access_checkout` (not given to a Vendeur). A role whose real use needs one of them is a one-line change
+of the constant, with this table.
+
+**Adding** (`POST /api/payments/lydia-cashiers/:associationId`, body `{ userId, phone, role }`, core's
+`LydiaCashiersController`): social-service checks and CLAIMS (`lydia-cashier-add-claim`) - a Business is
+linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`) and not already a live
+cashier (`LYDIA_CASHIER_ALREADY_SET`), a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_HOLDER`: nobody
+could remove the cashier otherwise), and the number is not one a live row holds, its own or an old
+Responsable number (`LYDIA_CASHIER_PHONE_IN_USE`: a second add of a number REPLACES its rights, so adding
+the Responsable's number as a Vendeur would strip the Responsable). Then `addCashier` sends the role's set
+signed, `notify=yes`, and READS IT BACK: success only when the read shows EXACTLY the role's set - every
+right of the role at 1, every other at 0. Once the add answered, any failure is
+`LydiaCashierAddedUnconfirmedException` and the row is recorded UNCONFIRMED, as for the Responsable. A
+confirmed NEW cashier gets a bell row (`lydia_cashier_added`, behind `LYDIA_CASHIER_NOTIFICATIONS_ENABLED`,
+OFF until the floor version - [legacy-compatibility](../../legacy-compatibility.md)) that opens the Lydia
+Pro help page (`/help/lydia-pro`); no push.
+
+**Changing a role** (`.../:cashierId/role`, body `{ role }`): the same number re-added with the new set
+(a repeat add replaces the rights), read back exactly, recorded on the same row. Never the Responsable's
+role (`LYDIA_CASHIER_ROLE_FIXED`).
+
+**The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
+the frontend constant of the same name, and `switches.cashierAddEnabled` in
+`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec; refused with the
+typed 409 `LYDIA_CASHIER_ADD_DISABLED`, nothing sent to Lydia). **They flip, together, only after ONE
+removal has been observed in production.** Removing is live: it only takes rights away.
+
+**Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
+and claims (`lydia-cashier-revoke-claim`) (a removal needs a CONFIRMED Responsable) and hands core
+what the call needs, opened server-side only. Lydia's cashier-removal call
+(its shape is in the private operations notes, measured on homologation 2026-10-30) is followed by a
+`business/getpermission` RE-READ, and only **0 of 13** is a removal: the row is closed (`removedAt`, every
+number and number ending cleared, as the unlink does) or the old number cleared. Anything else - rights
+still read, the re-read unanswered - is recorded as NOT confirmed (`revokeUnconfirmedAt`, the row stays
+live, the screen says "retrait non confirmé"), logged at ERROR and answered 502
+`LYDIA_CASHIER_REVOKE_UNCONFIRMED`; repeating a removal is safe. **The Responsable's current number is
+never removed** (`LYDIA_CASHIER_LAST_HOLDER`: one Responsable per association, so it is the only number
+managing cashiers).
+
+**Changing the Responsable's number** (the lot 2 route, the same person with another number - formerly
+`LYDIA_RESPONSABLE_PHONE_LOCKED`): the claim answers `numberChange` (only when core asks for it,
+`allowNumberChange`, so an older core keeps lot 2's refusal), Lydia adds the NEW number with the 13 rights
+and reads it back, the row takes the new number while the OLD one is kept sealed (`previousPhoneSealed` /
+`previousPhoneEnd`, migration 119), then the old number is removed and verified at 0
+of 13. Halfway - the new number unconfirmed, or the old one's removal not confirmed - BOTH numbers stay
+tracked on the row: the screen shows the old ending with "Retirer l'ancien numéro", and a same-number
+resend that confirms the new one removes the old one next. `LYDIA_RESPONSABLE_PHONE_LOCKED` now refuses a
+THIRD number while an old one awaits its removal (and a record-mode request with another number).
+Changing the Responsable to another PERSON is not offered.
+
+**One claim for every cashier operation of an association**: `associations."lydiaResponsableStartedAt"`
+(migration 118), taken by the Responsable's step and by every add, role change and removal, so two never
+reach Lydia together (`LYDIA_CASHIER_IN_FLIGHT`; integration specs race two adds of one member, and an
+add with a removal, on PostgreSQL). A typed outcome releases it, a record releases it in its own
+transaction, an add with no usable answer keeps it for a global admin (`lydia-enrolment-clear`). One live
+row per member (`lydia_cashiers_one_live_member`, migration 119) refuses two records of the same member,
+typed (`LYDIA_CASHIER_ALREADY_SET`).
+
+**The account's erasure** first asks Lydia to remove the account's cashier numbers, best effort
+([account-erasure](../../account-erasure.md)).
+
+**The screen**: a "Caissiers" section of the payments area, drawn once the Business is linked and the
+Responsable confirmed (`LydiaCashiersSection.svelte`, its view model `lydiaCashiersView` in
+`lydiaCashiers.ts`): each live cashier with role, number ending, state (confirmed / not yet confirmed by
+Lydia / removal not confirmed), date added and by whom; Ajouter and Changer le rôle behind the gate,
+Retirer with a confirm dialog, never on the Responsable's current number. Every string is Paraglide, in
+plain words. The help page `/help/lydia-pro` explains Lydia Pro and what each role allows.
+
 ## Enrolment goes through Canari, and only through it (2026-10-23)
 
 **The user's decision, 2026-10-23:** every association's Lydia Business is CREATED by Canari's
@@ -853,7 +937,8 @@ same day, two Businesses were created through the onboarding in production; neit
   `business/addcashier`: Canari calls it since lot 2 (the Responsable, above).
 - "Pending" could not tell "waiting for Lydia" from "validated, not yet marked": since lot 2 the
   `BUSINESS_VALIDATED` webhook marks the Business ready, and error 5 / 2701 on a real `request/do`
-  reverts it (above). The treasurer and seller roles, and changing a cashier, are lot 3.
+  reverts it (above). The Tresorier and Vendeur roles, changing and removing a cashier: lot 3
+  ([above](#the-cashiers-enrolment-lot-3)).
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 

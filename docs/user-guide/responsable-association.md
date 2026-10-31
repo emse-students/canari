@@ -201,6 +201,34 @@ faudra refaire toute la configuration pour accepter a nouveau des paiements en l
 > n'est configure, les paiements en ligne sont coupes sur toute la plateforme : ce n'est pas un
 > reglage de votre association.
 
+### Les caissiers Lydia Pro
+
+Une fois le compte Lydia relie et son **Responsable** confirme, la section **"Caissiers"** de l'onglet
+paiements liste les membres qui utilisent l'application **Lydia Pro** pour l'association : nom, role,
+deux derniers chiffres du numero, date d'ajout et qui les a ajoutes. Seuls les membres qui gerent le
+compte de versement de l'association la voient.
+
+- **Responsable** : tous les droits, dont l'ajout et le retrait des caissiers. Il n'est pas retire
+  depuis cette liste : l'association n'aurait plus personne pour gerer son compte Lydia.
+- **Tresorier** : consulter les releves, rembourser et annuler des paiements.
+- **Vendeur** : encaisser.
+
+Chaque personne ajoutee recoit un SMS de Lydia et une notification Canari qui mene a la page
+**"Qu'est-ce que Lydia Pro ?"** (installer l'application et s'y connecter avec ce numero).
+
+**Retirer** un caissier lui enleve tous ses droits chez Lydia, apres confirmation. Canari verifie
+aupres de Lydia que le retrait a bien eu lieu : sinon la ligne reste affichee avec **"Retrait non
+confirme chez Lydia, reessayez"**, et il suffit de recommencer.
+
+**Changer le numero du Responsable** : dans l'etape Responsable, **"Renvoyer le SMS ou changer de
+numero"**, puis saisissez le nouveau numero. Le nouveau numero est ajoute chez Lydia, puis l'ancien
+est retire. Si ce retrait n'est pas confirme, l'ancien numero reste affiche dans la liste des caissiers
+avec le bouton **"Retirer l'ancien numero"** ; un nouveau changement de numero n'est possible qu'une
+fois l'ancien retire.
+
+> L'ajout d'un tresorier ou d'un vendeur, et le changement de role, ne sont pas encore ouverts : ils le
+> seront une fois qu'un premier retrait aura ete verifie en production.
+
 ### Creer un produit
 
 Depuis la carte **Boutique** de l'onglet **Paiements** (droit *Gerer la boutique et les cotisations*) :

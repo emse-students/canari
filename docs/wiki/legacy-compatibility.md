@@ -311,6 +311,17 @@ tables (Android, the iOS app and its notification extension), the client row, `K
 host): no deep-link host exists for an association's edit section. The type names are shared through
 `libs/contracts/lydia-refusal-codes.json`.
 
+**Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
+they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
+while it is off nothing is written and Lydia's own SMS reaches the person. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 3, on BOTH estates, once
+Play and the App Store serve it - then a one-line pull request sets the constant to `true` and changes the
+spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
+row only, no push (so no push key, category or native string is owed); the client row, the type in
+`KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.

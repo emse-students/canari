@@ -245,6 +245,82 @@ export type LydiaCashierRights = Readonly<
   Record<(typeof LYDIA_CASHIER_PERMISSIONS)[number], boolean>
 >;
 
+// ── Lydia enrolment lot 3: cashier roles and removal ─────────────────────────
+
+/** The three cashier roles Canari manages (`lydia_cashiers.role`, migration 118). */
+export type LydiaCashierRole = 'responsable' | 'tresorier' | 'vendeur';
+
+/**
+ * THE ONE MAPPING FROM A CASHIER ROLE TO ITS LYDIA RIGHTS (lot 3, the owner's three roles of
+ * 2026-10-30), documented in docs/wiki/frontend/modules/payments.md. Lydia's documentation lists the
+ * names and describes none of them, so each set is read from the names and kept NARROW:
+ * - `responsable`: all 13 - the person who runs the Business, `access_cashier` included (the right
+ *   that manages cashiers, which every removal acts through).
+ * - `tresorier` ("statements, refunds and cancels"): `access_statement`, `access_canceltransaction`
+ *   (the right Lydia's refund call names) and `access_cancelrequest`. NOT `access_allreceipt` nor
+ *   `access_fee`, whose meaning the documentation does not give.
+ * - `vendeur` ("collect"): `access_collect` alone. NOT `access_checkout`, whose meaning is not given.
+ * A repeat `business/addcashier` replaces the rights, so changing a role is a re-add with the new set.
+ */
+export const LYDIA_CASHIER_ROLE_PERMISSIONS: Readonly<
+  Record<LydiaCashierRole, readonly (typeof LYDIA_CASHIER_PERMISSIONS)[number][]>
+> = {
+  responsable: LYDIA_CASHIER_PERMISSIONS,
+  tresorier: ['access_statement', 'access_canceltransaction', 'access_cancelrequest'],
+  vendeur: ['access_collect'],
+};
+
+/**
+ * The rights on which a read-back differs from `role`'s set: a right of the role reading 0, or a
+ * right outside it reading 1. Empty means exactly the role's set.
+ */
+export function cashierRightsDifference(
+  rights: LydiaCashierRights,
+  role: LydiaCashierRole
+): string[] {
+  const wanted = new Set<string>(LYDIA_CASHIER_ROLE_PERMISSIONS[role]);
+  return LYDIA_CASHIER_PERMISSIONS.filter((name) => rights[name] !== wanted.has(name));
+}
+
+/** What a removal's re-read showed: `verified` only at 0 rights; `held` null when unread. */
+export interface LydiaCashierRemoval {
+  verified: boolean;
+  held: number | null;
+}
+
+/** The typed `code` of an HttpException, or its class name - for a log line, never a branch. */
+function typedCode(err: unknown): string {
+  if (err instanceof HttpException) {
+    const answer = err.getResponse();
+    const code = answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : null;
+    return typeof code === 'string' ? code : `HTTP ${err.getStatus()}`;
+  }
+  return err instanceof Error ? err.name : 'unknown';
+}
+
+/**
+ * The `code` (409) of adding a cashier or changing their role while {@link LYDIA_CASHIER_ADD_ENABLED}
+ * is off: nothing is sent to Lydia.
+ */
+export const LYDIA_CASHIER_ADD_DISABLED = 'LYDIA_CASHIER_ADD_DISABLED';
+
+/**
+ * The `code` (502) of a removal Lydia did not confirm: the re-read of the number still showed a
+ * right, or could not be read. The cashier row stays live and flagged.
+ */
+export const LYDIA_CASHIER_REVOKE_UNCONFIRMED = 'LYDIA_CASHIER_REVOKE_UNCONFIRMED';
+
+/**
+ * THE OWNER'S GATE (2026-10-30): adding a Tresorier or a Vendeur, and changing a cashier's role,
+ * ship OFF. It flips to `true` ONLY AFTER ONE REMOVAL (`removeCashier`, verified at 0 rights) HAS
+ * BEEN OBSERVED IN PRODUCTION - nobody is added who Canari has not proven it can take away. The
+ * flip is ONE pull request changing this constant, the frontend's constant of the same name
+ * (`frontend/src/lib/associations/lydiaCashiers.ts`) and `switches.cashierAddEnabled` in
+ * `libs/contracts/lydia-refusal-codes.json` together; each side's contract spec asserts them equal.
+ * The removal path is live meanwhile: it only takes rights away.
+ */
+export const LYDIA_CASHIER_ADD_ENABLED = false;
+
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
 
@@ -581,33 +657,50 @@ export class LydiaPaymentProvider implements PaymentProvider {
   }
 
   /**
-   * Adds `phone` as a cashier of the Business `vendorToken` with EVERY right
-   * (`LYDIA_CASHIER_PERMISSIONS`), Lydia's SMS on (`notify=yes`), through `business/addcashier`
-   * signed over the URL-encoded `cashier_phone` and `permissions` with the Provider private token
-   * (`signLydiaRequest`, homologation 2026-10-30). `permissions` is a JSON ARRAY of names. A repeat
-   * add replaces the rights, so a retry is safe. Then reads the rights back (`readCashierRights`)
-   * and counts success ONLY when all of them read 1.
-   *
-   * Typed, before anything is sent: no Provider key -> 503 `LYDIA_CASHIER_NOT_CONFIGURED`; a phone
-   * that is not E.164 -> 400 `LYDIA_CASHIER_PHONE_INVALID`. After: 444 -> 502
-   * `LYDIA_SIGNATURE_REFUSED`, 3 -> 502 `LYDIA_CASHIER_PERMISSIONS_INVALID`, 102/103 -> 502
-   * `LYDIA_BUSINESS_TOKEN_REJECTED` (ERROR, naming the association), no usable answer -> 503
-   * `LYDIA_UNREACHABLE`, a read-back short of every right -> 502 `LYDIA_CASHIER_RIGHTS_INCOMPLETE`.
-   * The phone is never logged, only its last two digits.
+   * Adds `phone` as the Responsable of the Business `vendorToken`: {@link addCashier} with the
+   * `responsable` role, every right (`LYDIA_CASHIER_PERMISSIONS`).
    */
   async addBusinessHolder(
     associationId: string,
     vendorToken: string,
     phone: string
   ): Promise<void> {
+    await this.addCashier(associationId, vendorToken, phone, 'responsable');
+  }
+
+  /**
+   * Adds `phone` as a cashier of the Business `vendorToken` with EXACTLY the rights of `role`
+   * (`LYDIA_CASHIER_ROLE_PERMISSIONS`), Lydia's SMS on (`notify=yes`), through
+   * `business/addcashier` signed over the URL-encoded `cashier_phone` and `permissions` with the
+   * Provider private token (`signLydiaRequest`, homologation 2026-10-30). `permissions` is a JSON
+   * ARRAY of names. A repeat add REPLACES the rights, so a retry is safe and a role change is a
+   * re-add. Then reads the rights back (`readCashierRights`) and counts success ONLY when the set
+   * read is exactly the role's: every right of the role reads 1 and every other reads 0.
+   *
+   * Typed, before anything is sent: no Provider key -> 503 `LYDIA_CASHIER_NOT_CONFIGURED`; a phone
+   * that is not E.164 -> 400 `LYDIA_CASHIER_PHONE_INVALID`. After: 444 -> 502
+   * `LYDIA_SIGNATURE_REFUSED`, 3 -> 502 `LYDIA_CASHIER_PERMISSIONS_INVALID`, 102/103 -> 502
+   * `LYDIA_BUSINESS_TOKEN_REJECTED` (ERROR, naming the association), no usable answer -> 503
+   * `LYDIA_UNREACHABLE`. Once the add has answered, any failure - a read-back that differs from
+   * the role's set (502 `LYDIA_CASHIER_RIGHTS_INCOMPLETE`) or none - is
+   * `LydiaCashierAddedUnconfirmedException`. The phone is never logged, only its last two digits.
+   */
+  async addCashier(
+    associationId: string,
+    vendorToken: string,
+    phone: string,
+    role: LydiaCashierRole
+  ): Promise<void> {
     const key = this.cashierKeyOrThrow(associationId, phone);
+    const wanted = LYDIA_CASHIER_ROLE_PERMISSIONS[role];
     const signed: Record<string, string> = {
       cashier_phone: phone,
-      permissions: JSON.stringify(LYDIA_CASHIER_PERMISSIONS),
+      permissions: JSON.stringify(wanted),
     };
     const signature = signLydiaRequest(signed, key);
     this.logger.log(
-      `[LYDIA-CASHIER] association ${associationId}: adding the Responsable (phone ending ${phone.slice(-2)})`
+      `[LYDIA-CASHIER] association ${associationId}: adding a ${role} (phone ending ` +
+        `${phone.slice(-2)}, ${wanted.length} right(s))`
     );
     await this.cashierCall(associationId, 'business/addcashier', {
       provider_token: this.providerToken ?? '',
@@ -620,24 +713,75 @@ export class LydiaPaymentProvider implements PaymentProvider {
     // refusal, so the caller records the person rather than forgetting a cashier Lydia lists.
     try {
       const rights = await this.readCashierRights(associationId, vendorToken, phone);
-      const missing = LYDIA_CASHIER_PERMISSIONS.filter((name) => !rights[name]);
-      if (missing.length > 0) {
+      const differing = cashierRightsDifference(rights, role);
+      if (differing.length > 0) {
         this.logger.error(
           `[LYDIA-CASHIER] association ${associationId}: business/addcashier answered 0 but the ` +
-            `read-back lacks ${missing.length} right(s): ${missing.join(',')} - added, UNCONFIRMED`
+            `read-back differs from the ${role} set on ${differing.length} right(s): ` +
+            `${differing.join(',')} - added, UNCONFIRMED`
         );
         throw new BadGatewayException({
           code: LYDIA_CASHIER_RIGHTS_INCOMPLETE,
-          message: 'Lydia did not confirm every right of the Responsable',
+          message: 'Lydia did not confirm the rights of the cashier',
         });
       }
     } catch (err) {
       throw new LydiaCashierAddedUnconfirmedException(err);
     }
     this.logger.log(
-      `[LYDIA-CASHIER] association ${associationId}: Responsable confirmed with all ` +
-        `${LYDIA_CASHIER_PERMISSIONS.length} rights`
+      `[LYDIA-CASHIER] association ${associationId}: ${role} confirmed with exactly ` +
+        `${wanted.length} right(s)`
     );
+  }
+
+  /**
+   * Removes `cashierPhone` from the Business `vendorToken` (`actorPhone`: the association's
+   * confirmed Responsable), then RE-READS `cashierPhone`'s rights: the removal counts
+   * only when every right reads 0. Never throws on Lydia's answer to the removal - whatever it
+   * says, the re-read decides; a refused removal of a number that holds nothing is a confirmed one.
+   * Throws only before any call (`cashierKeyOrThrow`). Answers `{ verified, held }`, `held` null
+   * when the re-read itself failed. Phones are never logged, only their last two digits.
+   */
+  async removeCashier(
+    associationId: string,
+    vendorToken: string,
+    actorPhone: string,
+    cashierPhone: string
+  ): Promise<LydiaCashierRemoval> {
+    this.cashierKeyOrThrow(associationId, actorPhone);
+    this.cashierKeyOrThrow(associationId, cashierPhone);
+    const tag =
+      `[LYDIA-CASHIER] association ${associationId}: removal of phone ending ` +
+      `${cashierPhone.slice(-2)}`;
+    this.logger.log(`${tag} asked`);
+    try {
+      await this.cashierCall(associationId, 'business/removecashier', {
+        vendor_token: vendorToken,
+        phone: actorPhone,
+        cashier_phone: cashierPhone,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        `${tag}: Lydia did not accept the call (${typedCode(err)}) - the re-read decides`
+      );
+    }
+    let rights: LydiaCashierRights;
+    try {
+      rights = await this.readCashierRights(associationId, vendorToken, cashierPhone);
+    } catch (err: unknown) {
+      this.logger.error(`${tag}: the re-read failed (${typedCode(err)}) - NOT confirmed`);
+      return { verified: false, held: null };
+    }
+    const held = Object.values(rights).filter(Boolean).length;
+    if (held > 0) {
+      this.logger.error(
+        `${tag}: the re-read still shows ${held}/${LYDIA_CASHIER_PERMISSIONS.length} right(s) - ` +
+          `NOT confirmed`
+      );
+      return { verified: false, held };
+    }
+    this.logger.log(`${tag}: confirmed, 0/${LYDIA_CASHIER_PERMISSIONS.length} rights`);
+    return { verified: true, held: 0 };
   }
 
   /**
@@ -693,7 +837,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /** One cashier call through `postForm`, its failures typed (see `addBusinessHolder`). */
   private async cashierCall(
     associationId: string,
-    path: 'business/addcashier' | 'business/getpermission',
+    path: 'business/addcashier' | 'business/getpermission' | 'business/removecashier',
     fields: Record<string, string>
   ): Promise<Record<string, unknown>> {
     try {

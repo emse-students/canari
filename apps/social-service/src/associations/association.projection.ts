@@ -1,4 +1,5 @@
 import { Association } from './entities/association.entity';
+import type { LydiaCashierView } from './lydia-cashiers-list';
 import type { LydiaReadinessCause } from './lydia-readiness';
 
 /**
@@ -77,6 +78,8 @@ export type AssociationPayoutAccount = Pick<
   'lydiaAccountId' | 'lydiaDashboardUrl' | 'lydiaOnboardingComplete'
 > & {
   responsable: { userId: string; name: string; phoneEnd: string; confirmed: boolean } | null;
+  /** Every live cashier of the CURRENT Business, the Responsable included (lot 3). */
+  cashiers: LydiaCashierView[];
   readiness: { cause: LydiaReadinessCause; at: string } | null;
   enrolmentInFlightSince: string | null;
   /** The Responsable step's claim (`lydiaResponsableStartedAt`), for the global admin's clear. */

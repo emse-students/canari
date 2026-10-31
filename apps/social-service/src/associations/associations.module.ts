@@ -35,7 +35,8 @@ import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
-import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import { LydiaCashierNotifier, LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import { LydiaCashiersService } from './lydia-cashiers.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationCategoriesController } from './association-categories.controller';
 import { PosterController } from './poster.controller';
@@ -101,6 +102,8 @@ import { PricingModule } from '../pricing/pricing.module';
     // translatable.
     PostNotificationsService,
     LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
   ],
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
@@ -119,6 +122,8 @@ import { PricingModule } from '../pricing/pricing.module';
     UserProfileService,
     PosterService,
     LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
   ],
 })
 export class AssociationsModule {}

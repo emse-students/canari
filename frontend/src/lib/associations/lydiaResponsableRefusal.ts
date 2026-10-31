@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from './api';
+import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
 
 /**
  * The typed refusals of `POST /api/payments/lydia-responsable/:id`, shared as data with the servers
@@ -72,6 +73,12 @@ export function lydiaResponsableErrorText(err: unknown): string {
         return m.asso_lydia_resp_err_in_flight();
       case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.BUSINESS_CHANGED:
         return m.asso_lydia_resp_err_business_changed();
+      // A number change added the new number and could not confirm the old one's removal (lot 3).
+      case LYDIA_CASHIER_REFUSAL.REVOKE_UNCONFIRMED:
+        return m.asso_lydia_resp_err_old_number_not_removed();
+      // Another cashier operation of the association is under way (lot 3 shares the step's lock).
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT:
+        return m.asso_lydia_resp_err_in_flight();
     }
     if (err.status === 403) return m.asso_lydia_resp_err_forbidden();
   }

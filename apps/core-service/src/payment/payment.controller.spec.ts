@@ -24,6 +24,7 @@ import {
   LYDIA_RESPONSABLE_NOT_A_CASHIER,
   LYDIA_RESPONSABLE_NOT_A_MEMBER,
   LYDIA_RESPONSABLE_PHONE_LOCKED,
+  LYDIA_CASHIER_IN_FLIGHT,
   PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
@@ -778,7 +779,12 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       { userId: 'u1', phone: PHONE, mode: 'add' },
       req
     );
-    expect(postsTo('/lydia-responsable-claim')[0][1]).toEqual({ userId: 'u1', phone: PHONE });
+    expect(postsTo('/lydia-responsable-claim')[0][1]).toEqual({
+      userId: 'u1',
+      phone: PHONE,
+      mode: 'add',
+      allowNumberChange: true,
+    });
     expect(paymentService.addLydiaBusinessHolder).toHaveBeenCalledWith(id, 'vendor-1', PHONE);
     expect(stores()[0][1]).toEqual({
       vendorToken: 'vendor-1',
@@ -1099,11 +1105,121 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       responsableNotAMember: LYDIA_RESPONSABLE_NOT_A_MEMBER,
       responsableNotACashier: LYDIA_RESPONSABLE_NOT_A_CASHIER,
       noBusiness: LYDIA_NO_BUSINESS,
+      cashierAddDisabled: provider.LYDIA_CASHIER_ADD_DISABLED,
+      cashierRevokeUnconfirmed: provider.LYDIA_CASHIER_REVOKE_UNCONFIRMED,
     }).toEqual(contract.core);
+    expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
+    expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(
+      (contract as unknown as { switches: { cashierAddEnabled: boolean } }).switches
+        .cashierAddEnabled
+    );
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
     expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
     expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);
+  });
+});
+
+describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', () => {
+  const id = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+  const CASHIER_ROW = '5b0b7d0e-4f8e-4d3a-9c55-0d6b7c0f1a11';
+  const req = { headers: { 'x-user-id': 'treasurer' } } as unknown as Parameters<
+    PaymentController['setLydiaResponsable']
+  >[2];
+  const NEW = '+33612345670';
+  const OLD = '+33612345678';
+
+  function setup(removal: { verified: boolean; held: number | null }) {
+    mockedAxios.get.mockResolvedValue({ status: 200, data: { ok: true } });
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-claim')) {
+        return {
+          status: 200,
+          data: {
+            vendorToken: 'vendor-1',
+            member: true,
+            currentUserId: 'u1',
+            phoneMatches: false,
+            numberChange: true,
+            claimed: true,
+          },
+        };
+      }
+      if (url.endsWith('/lydia-responsable')) {
+        return {
+          status: 200,
+          data: {
+            responsable: { userId: 'u1', name: 'Ada', phoneEnd: '70' },
+            cashierId: CASHIER_ROW,
+            previousPending: true,
+          },
+        };
+      }
+      if (url.endsWith('/lydia-cashier-revoke-claim')) {
+        return {
+          status: 200,
+          data: { vendorToken: 'vendor-1', cashierPhone: OLD, actorPhone: NEW },
+        };
+      }
+      return { status: 200, data: { ok: true } };
+    });
+    const paymentService = {
+      addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+      removeLydiaCashier: jest.fn().mockResolvedValue(removal),
+    };
+    return {
+      controller: new PaymentController(paymentService as unknown as PaymentService),
+      paymentService,
+    };
+  }
+  const postsTo = (suffix: string) =>
+    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith(suffix));
+
+  beforeEach(() => {
+    for (const level of ['log', 'warn', 'error'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+    }
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockedAxios.post.mockReset();
+    mockedAxios.get.mockReset();
+  });
+
+  it('adds the NEW number, records it, then removes the OLD one, and verifies', async () => {
+    const { controller, paymentService } = setup({ verified: true, held: 0 });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: NEW, mode: 'add' }, req)
+    ).resolves.toMatchObject({ ok: true });
+    expect(paymentService.addLydiaBusinessHolder).toHaveBeenCalledWith(id, 'vendor-1', NEW);
+    expect(postsTo('/lydia-cashier-revoke-claim')[0][1]).toEqual({
+      cashierId: CASHIER_ROW,
+      number: 'previous',
+    });
+    expect(paymentService.removeLydiaCashier).toHaveBeenCalledWith(id, 'vendor-1', NEW, OLD);
+    expect(postsTo('/lydia-cashier-revoke')[0][1]).toEqual({
+      cashierId: CASHIER_ROW,
+      number: 'previous',
+      verified: true,
+      actorId: 'treasurer',
+    });
+    // The add came first, the removal second: never a moment with no number managing cashiers.
+    expect(paymentService.addLydiaBusinessHolder.mock.invocationCallOrder[0]).toBeLessThan(
+      paymentService.removeLydiaCashier.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('halfway: the new number is recorded, the old one whose removal Lydia did not confirm stays flagged - 502 REVOKE_UNCONFIRMED', async () => {
+    const { controller } = setup({ verified: false, held: 13 });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: NEW, mode: 'add' }, req)
+    ).rejects.toMatchObject({
+      status: 502,
+      response: { code: provider.LYDIA_CASHIER_REVOKE_UNCONFIRMED },
+    });
+    // Both tracked: the store wrote the new number, and the removal recorded "not confirmed".
+    expect(postsTo('/lydia-responsable')).toHaveLength(1);
+    expect(postsTo('/lydia-cashier-revoke')[0][1]).toMatchObject({ verified: false });
   });
 });

@@ -128,19 +128,24 @@ export class InternalLydiaEnrolmentController {
   async responsableClaim(
     @Headers('x-internal-secret') headerSecret: string,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { userId?: unknown; phone?: unknown }
+    @Body()
+    body: { userId?: unknown; phone?: unknown; mode?: unknown; allowNumberChange?: unknown }
   ): Promise<{
     vendorToken: string | null;
     member: boolean;
     currentUserId: string | null;
     phoneMatches: boolean;
+    numberChange: boolean;
     claimed: boolean;
   }> {
     assertInternalSecret(headerSecret);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
     const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
     if (!userId || !phone) throw new BadRequestException('userId and phone are required');
-    return this.associationsService.claimLydiaResponsable(id, userId, phone);
+    return this.associationsService.claimLydiaResponsable(id, userId, phone, {
+      mode: body?.mode === 'add' || body?.mode === 'record' ? body.mode : undefined,
+      allowNumberChange: body?.allowNumberChange === true,
+    });
   }
 
   /** Releases the Responsable step's claim after a typed outcome core-service knows. */
@@ -179,7 +184,11 @@ export class InternalLydiaEnrolmentController {
     };
   }
 
-  /** Records the Responsable Lydia confirmed (sealed phone; only its last two digits answered). */
+  /**
+   * Records the Responsable Lydia confirmed (sealed phone; only its last two digits answered). Also
+   * answers the row's id and whether an OLD number awaits its removal (a number change, lot 3), so
+   * core-service asks Lydia to remove it next.
+   */
   @Post(':id/lydia-responsable')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
@@ -193,7 +202,11 @@ export class InternalLydiaEnrolmentController {
       addedByUserId?: unknown;
       confirmed?: unknown;
     }
-  ): Promise<{ responsable: LydiaResponsableView }> {
+  ): Promise<{
+    responsable: LydiaResponsableView;
+    cashierId: string | null;
+    previousPending: boolean;
+  }> {
     assertInternalSecret(headerSecret);
     const responsable = await this.associationsService.recordLydiaResponsable(id, {
       vendorToken: body?.vendorToken,
@@ -202,6 +215,14 @@ export class InternalLydiaEnrolmentController {
       addedByUserId: body?.addedByUserId,
       confirmed: body?.confirmed,
     });
-    return { responsable };
+    const row =
+      typeof body?.vendorToken === 'string'
+        ? await this.associationsService.lydiaResponsableRowOf(id, body.vendorToken.trim())
+        : null;
+    return {
+      responsable,
+      cashierId: row?.cashierId ?? null,
+      previousPending: row?.previousPending ?? false,
+    };
   }
 }

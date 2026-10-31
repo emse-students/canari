@@ -427,6 +427,8 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     phoneEnd: string | null;
     removedAt: Date | null;
     confirmed?: boolean;
+    previousPhoneSealed?: string | null;
+    previousPhoneEnd?: string | null;
   };
   let saved: string | undefined;
   beforeAll(() => {
@@ -453,6 +455,15 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
         r.removedAt = new Date();
         r.phoneSealed = null;
         r.phoneEnd = null;
+        return [];
+      }
+      if (sql.includes('"previousPhoneSealed" = "phoneSealed"')) {
+        const r = rows.find((c) => c.id === params[0])!;
+        r.previousPhoneSealed = r.phoneSealed;
+        r.previousPhoneEnd = r.phoneEnd;
+        r.phoneSealed = params[1] as string;
+        r.phoneEnd = params[2] as string;
+        r.confirmed = params[3] === true;
         return [];
       }
       if (sql.includes('"confirmedAt" = CASE WHEN $3')) {
@@ -530,7 +541,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     expect(all).toContain('phone ending 78');
   });
 
-  it('another person is ALREADY_SET; the same person with ANOTHER number is PHONE_LOCKED, nothing replaced', async () => {
+  it('another person is ALREADY_SET; ANOTHER number is a number change, the old one kept sealed; a second change meanwhile is PHONE_LOCKED', async () => {
     const logs = captureLogs();
     const rows: Cashier[] = [];
     const service = makeRecord(VENDOR, rows);
@@ -540,20 +551,31 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       status: 409,
       response: { code: LYDIA_RESPONSABLE_ALREADY_SET },
     });
+    // Lot 3: another number for the same person CHANGES it - the old one kept sealed for its removal.
+    await service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000099'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      phoneEnd: '99',
+      previousPhoneEnd: '78',
+      previousPhoneSealed: sealedBefore,
+    });
+    expect(openSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, rows[0].phoneSealed!)).toBe(
+      '+33600000099'
+    );
+    // A THIRD number while the old one awaits its removal is refused, nothing replaced.
+    await expect(
+      service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000011'))
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
+    expect(rows[0]).toMatchObject({ phoneEnd: '99', previousPhoneSealed: sealedBefore });
+    // The same person and the CURRENT number again (a re-sent SMS) is accepted and replaces nothing.
     await expect(
       service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000099'))
-    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ phoneEnd: '78', phoneSealed: sealedBefore });
-    // The same person and number again (a re-sent SMS) is accepted and replaces nothing.
-    await expect(service.recordLydiaResponsable(HOLDER, body('user-1'))).resolves.toMatchObject({
-      phoneEnd: '78',
-    });
+    ).resolves.toMatchObject({ phoneEnd: '99' });
     expect(rows).toHaveLength(1);
     expect(Object.values(logs).flat().join('|')).not.toContain('600000099');
   });
 
-  it('an UNCONFIRMED row (added, read-back failed) locks the number, and the same-number resend confirms it', async () => {
+  it('an UNCONFIRMED row (added, read-back failed) guards the one-Responsable rule, and the same-number resend confirms it', async () => {
     const logs = captureLogs();
     const rows: Cashier[] = [];
     const state = { marker: true, insertFails: false };
@@ -564,9 +586,6 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     expect(state.marker).toBe(false);
     expect(logs.error.join('|')).toContain('UNCONFIRMED');
     expect(Object.values(logs).flat().join('|')).not.toContain('612345678');
-    await expect(
-      service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000099'))
-    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
     await expect(service.recordLydiaResponsable(HOLDER, body('user-2'))).rejects.toMatchObject({
       status: 409,
       response: { code: LYDIA_RESPONSABLE_ALREADY_SET },

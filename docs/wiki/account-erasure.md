@@ -153,13 +153,18 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   proposal before a post it had reacted to deadlocked against it. A pending request to an author it
   asked (D38b) is voided (`[voided]`; its bell row, whose actor is the asker, goes with the account's notifications), the rest anonymised -
   [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
-- **The Responsable of a Lydia Business** (`lydia_cashiers`, migration 118): the row naming the
-  account is DELETED, its sealed phone with it; a row the account ADDED keeps its person and gets
-  `addedByUserId = '[deleted]'`. The cashier rights at Lydia are Lydia's data, not reached by this
-  erasure (enrolment lot 3), so a LIVE row (`removedAt` NULL) it deletes is read first
-  (`liveCashiersErased`) and reported per row at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted a
-  LIVE cashier row`, naming the association and the Business, never the phone - the same line the
-  association's delete writes before its `ON DELETE CASCADE` - [payments](frontend/modules/payments.md).
+- **A cashier of a Lydia Business** (`lydia_cashiers`, migrations 118 and 119): BEFORE the
+  transaction, `LydiaCashiersService.revokeBeforeErasure` asks Lydia (through core-service's internal
+  `lydia-cashier-revoke-internal`) to remove every number of the account's LIVE rows (each needs the
+  association's confirmed Responsable), and counts a removal only when Lydia's re-read shows no right
+  left. Best effort: no claim is taken, every failure is logged, and the erasure goes on whatever
+  Lydia answers. A Responsable's own CURRENT number is never removed (nobody else manages the
+  Business). Then the row naming the account is DELETED, its sealed numbers with it; a row the
+  account ADDED keeps its person and gets `addedByUserId = '[deleted]'`. A LIVE row (`removedAt`
+  NULL) it deletes is read first (`liveCashiersErased`): one whose numbers Lydia confirmed removed is
+  an `[AUDIT]` LOG line; any other is reported at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted
+  a LIVE cashier row`, naming the association and the Business, never the phone - the same line the
+  association's delete writes before its `ON DELETE CASCADE` - [payments](frontend/modules/payments.md#the-cashiers-enrolment-lot-3).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 
