@@ -53,6 +53,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
@@ -272,6 +273,17 @@
   }
 
   let showCreateModal = $state(false);
+  /** The broadcaster's screen is open, with who it broadcasts as; it replaced the composer. */
+  let liveTarget = $state<{ associationId: string | null; associationName: string | null } | null>(
+    null
+  );
+
+  /** "En direct" from the composer: it closes (by state, no history change) and the live takes over. */
+  function onGoLive(target: { associationId: string | null; associationName: string | null }) {
+    Log.d('POSTS', 'going live from the composer: the composer closes, the live replaces it');
+    showCreateModal = false;
+    liveTarget = target;
+  }
 
   /**
    * `?compose=1` AND `?search=1` ARE COMMANDS, NOT STATE MIRRORS.
@@ -980,8 +992,21 @@
     phoneFullScreen
     onClose={() => (showCreateModal = false)}
   >
-    <CreatePostForm {onPostCreated} />
+    <CreatePostForm {onPostCreated} {onGoLive} />
   </Modal>
+
+  <!-- THE LIVE REPLACES THE COMPOSER (owner, 2026-10-31): hosted HERE, not inside the composer, so
+       the composer can close without ending it, and ending or closing the live leaves the feed. -->
+  {#if liveTarget}
+    <LiveOverlay
+      associationId={liveTarget.associationId}
+      associationName={liveTarget.associationName}
+      onclose={() => {
+        Log.d('POSTS', 'the live screen closed: back on the feed');
+        liveTarget = null;
+      }}
+    />
+  {/if}
 
   <section>
     {#if searchQuery}
