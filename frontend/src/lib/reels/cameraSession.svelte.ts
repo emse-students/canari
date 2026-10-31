@@ -89,7 +89,7 @@ export class CameraSession {
    * awaited, and a stream it brings back is given back at once, since nothing is on screen to use it.
    */
   #suspended = false;
-  readonly #open: CameraOpener;
+  #open: CameraOpener;
   /** Opens a LENS ALONE, no microphone: a flip during a take keeps the take's microphone. */
   readonly #openLens: CameraOpener;
 
@@ -111,6 +111,8 @@ export class CameraSession {
   #deviceWatch: AbortController | null = null;
   /** Bumped by {@link stop}: a count read that started before it lands on a session that left. */
   #watchEpoch = 0;
+  /** The last count written to the log this session: `[CAMERA_COUNT]` speaks only when it changes. */
+  #loggedCount: number | null = null;
   readonly #countCameras: () => Promise<number>;
 
   constructor(
@@ -132,9 +134,12 @@ export class CameraSession {
       if (epoch !== this.#watchEpoch) return;
       // A 0 with a camera open is a list that told nothing, not a device with no camera.
       const measured = count > 0 ? count : null;
-      console.info(
-        `[CAMERA_COUNT] videoinput=${count} coarsePointer=${isCoarsePointerDevice()} facingMode=${facingModeSupported()} -> switch ${measured === 1 ? 'hidden' : 'offered'}`
-      );
+      if (count !== this.#loggedCount) {
+        this.#loggedCount = count;
+        console.info(
+          `[CAMERA_COUNT] videoinput=${count} coarsePointer=${isCoarsePointerDevice()} facingMode=${facingModeSupported()} -> switch ${measured === 1 ? 'hidden' : 'offered'}`
+        );
+      }
       this.cameraCount = measured;
     } catch (err) {
       if (epoch !== this.#watchEpoch) return;
@@ -155,6 +160,16 @@ export class CameraSession {
     navigator.mediaDevices.addEventListener('devicechange', () => void this.#refreshCameraCount(), {
       signal: watch.signal,
     });
+  }
+
+  /**
+   * Replaces what the next {@link start} opens - a live that broadcasts its screen instead of the
+   * camera - and returns the opener it replaces. It opens nothing itself.
+   */
+  swapOpener(open: CameraOpener): CameraOpener {
+    const previous = this.#open;
+    this.#open = open;
+    return previous;
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */
@@ -467,6 +482,7 @@ export class CameraSession {
     this.#deviceWatch?.abort();
     this.#deviceWatch = null;
     this.cameraCount = null;
+    this.#loggedCount = null;
     this.#releaseCurrent();
     this.phase = 'stopped';
   }
