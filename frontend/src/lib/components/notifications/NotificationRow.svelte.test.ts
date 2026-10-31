@@ -386,6 +386,13 @@ describe('NotificationRow for the Lydia payments notices', () => {
     expect(target.querySelector('button')!.disabled).toBe(false);
   });
 
+  it('tells a payer, in one sentence naming the association, that they were refunded', () => {
+    const target = renderRow(row('lydia_refund_issued'));
+    expect(target.textContent).toContain(m.notif_lydia_refund_issued_text({ name: 'BDE' }));
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.textContent).not.toContain('Canari');
+  });
+
   it('says the payments are paused', () => {
     const target = renderRow(row('lydia_payments_paused'));
     expect(target.textContent).toContain(m.notif_lydia_payments_paused_text({ name: 'BDE' }));

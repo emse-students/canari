@@ -2,10 +2,15 @@ import { Logger } from '@nestjs/common';
 import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 
 describe('PaidNotGrantedScheduler - the tiers paid for and not granted, every hour', () => {
-  const make = (count: number, orphans = 0) => {
+  const make = (count: number, orphans = 0, contradicted = 0) => {
     const purchases = { countUnclosedPaidNotGranted: jest.fn().mockResolvedValue(count) };
     const tags = { countOrphanTierTags: jest.fn().mockResolvedValue(orphans) };
-    const scheduler = new PaidNotGrantedScheduler(purchases as never, tags as never);
+    const refunds = { countContradicted: jest.fn().mockResolvedValue(contradicted) };
+    const scheduler = new PaidNotGrantedScheduler(
+      purchases as never,
+      tags as never,
+      refunds as never
+    );
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -14,6 +19,20 @@ describe('PaidNotGrantedScheduler - the tiers paid for and not granted, every ho
   };
 
   afterEach(() => jest.restoreAllMocks());
+
+  it('reports the Lydia refunds whose late answer contradicts their settlement: count=0 at log, any at ERROR', async () => {
+    const quiet = make(0, 0, 0);
+    expect(await quiet.scheduler.reportContradictedRefundsOnce()).toBe(0);
+    expect(quiet.log).toHaveBeenCalledWith(
+      expect.stringContaining('[LYDIA_REFUND_CONTRADICTED] count=0')
+    );
+    jest.restoreAllMocks();
+    const loud = make(0, 0, 3);
+    await loud.scheduler.report();
+    expect(loud.error).toHaveBeenCalledWith(
+      expect.stringContaining('[LYDIA_REFUND_CONTRADICTED] count=3')
+    );
+  });
 
   it('prints count=0 at log level, its own liveness proof', async () => {
     const { scheduler, log, error } = make(0);

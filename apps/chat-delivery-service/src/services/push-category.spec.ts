@@ -32,6 +32,7 @@ describe('categoryOfDataPush', () => {
     ['form_paid_over_capacity', 'forms'],
     ['lydia_payments_active', 'forms'],
     ['lydia_payments_paused', 'forms'],
+    ['lydia_refund_issued', 'forms'],
     ['event_proposed', 'events'],
     ['event_validated', 'events'],
     ['event_rejected', 'events'],
