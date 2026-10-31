@@ -325,3 +325,40 @@ describe('fetchGroupInfo - a refused base is a membership answer', () => {
     expect(await api.getGroupMembers('g1')).toEqual([]);
   });
 });
+
+/**
+ * A conversation's base comes with the asking device's seat (D1 of
+ * docs/wiki/protocols/mls-availability-no-holder.md): the further-device self-join reads the base and
+ * whether an Add already carries this device from ONE answer.
+ */
+describe('fetchGroupInfo - the seat served with the base', () => {
+  it('names the device and returns the seat it was served', async () => {
+    const urls: string[] = [];
+    const api = makeApi(async (url) => {
+      urls.push(String(url));
+      return response(
+        JSON.stringify({
+          groupInfo: 'AAA',
+          baseEpoch: 4,
+          activeEpoch: 4,
+          seat: { status: 'pending', welcomeQueued: false, addInFlight: true },
+        }),
+        { status: 200 }
+      );
+    });
+
+    const gi = await api.fetchGroupInfo('g1', 'dev-1');
+
+    expect(urls[0]).toContain('/api/mls/group-info/g1?deviceId=dev-1');
+    expect(gi?.seat).toEqual({ status: 'pending', welcomeQueued: false, addInFlight: true });
+  });
+
+  it('serves no seat when none, or a malformed one, came back', async () => {
+    const api = makeApi(async () =>
+      response(JSON.stringify({ groupInfo: 'AAA', baseEpoch: 4, seat: { status: 'x' } }), {
+        status: 200,
+      })
+    );
+    expect(await api.fetchGroupInfo('g1')).not.toHaveProperty('seat');
+  });
+});

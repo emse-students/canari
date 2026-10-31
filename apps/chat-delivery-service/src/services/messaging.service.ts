@@ -81,6 +81,7 @@ import {
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { readDeviceSeat, type DeviceSeat, type NoHolderFacts } from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
@@ -3323,10 +3324,72 @@ export class MessagingService {
    */
   async getGroupInfo(
     groupId: string,
-    requesterUserId: string
-  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
+    requesterUserId: string,
+    requesterDeviceId?: string
+  ): Promise<{
+    groupInfo: string;
+    baseEpoch: number;
+    activeEpoch: number;
+    seat?: DeviceSeat;
+  } | null> {
     await this.assertMayReadExternalBase(groupId, requesterUserId);
-    return this.readGroupInfo(groupId);
+    const base = await this.readGroupInfo(groupId);
+    // THE ASKING DEVICE'S SEAT, READ AFTER THE BASE (`readDeviceSeat`): a further device of a member
+    // that lets itself in when no member device can answer (`requestReAdd`, D1 of
+    // docs/wiki/protocols/mls-availability-no-holder.md) reads from this one answer whether an Add
+    // already carries it, and waits for that Welcome instead of joining over it.
+    if (!base || !requesterDeviceId) return base;
+    const seat = await this.seatOf(groupId, requesterUserId, requesterDeviceId);
+    return { ...base, seat };
+  }
+
+  /** {@link readDeviceSeat} with this service's repositories. */
+  private seatOf(groupId: string, userId: string, deviceId: string): Promise<DeviceSeat> {
+    return readDeviceSeat(
+      {
+        deviceGroupRepo: this.deviceGroupRepo,
+        queuedMessageRepo: this.queuedMessageRepo,
+        redis: this.redis,
+        logger: this.logger,
+      },
+      groupId,
+      userId.trim().toLowerCase(),
+      deviceId
+    );
+  }
+
+  /**
+   * WHAT A REQUESTER NEEDS TO KNOW THAT NOBODY CAN LET IT IN, read in the same answer as the verdict
+   * that no member device is online (`no_peer_online`): the stored base's two epochs (`null` when no
+   * base was ever published) and the requester's own seat, read after the base. The client shows its
+   * no-holder banner only on this whole set (D5 of docs/wiki/protocols/mls-availability-no-holder.md)
+   * - never on elapsed time, a missing message or a pending state. A read that fails answers
+   * nothing (`undefined`), and the client then keeps its ordinary waiting text.
+   */
+  private async noHolderFacts(
+    groupId: string,
+    userId: string,
+    deviceId: string,
+    traceId: string
+  ): Promise<NoHolderFacts | undefined> {
+    try {
+      // THE SAME DOOR AS THE BASE ITSELF: only a seated user not awaiting a member's admission is
+      // told anything about the group (`assertMayReadExternalBase`). A link ask waits for a member
+      // (D4), and is never a no-holder case.
+      const roster = await this.rosterSeat(groupId, userId);
+      if (!roster || roster.awaitingAdmission === true) return undefined;
+      const base = await this.readGroupInfo(groupId);
+      const seat = await this.seatOf(groupId, userId, deviceId);
+      return {
+        base: base ? { baseEpoch: base.baseEpoch, activeEpoch: base.activeEpoch } : null,
+        seat,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `[NO_HOLDER][${traceId}] facts unread group=${groupId} - the requester keeps waiting: ${String(e)}`
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -5680,7 +5743,7 @@ export class MessagingService {
   async notifyBaseRefreshRequest(
     authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string }> {
+  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts }> {
     const traceId = this.makeTraceId('base-refresh');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
@@ -5733,7 +5796,8 @@ export class MessagingService {
       `[BASE_REFRESH][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} members=${members.length}` +
         ` - the published base stays stale and no device can external-join until a member returns`
     );
-    return { status: 'no_peer_online' };
+    const facts = await this.noHolderFacts(groupId, requesterUserId, requesterDeviceId, traceId);
+    return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
   }
 
   /**
@@ -5744,7 +5808,7 @@ export class MessagingService {
   async notifyWelcomeRequest(
     authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string }> {
+  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
@@ -5909,7 +5973,8 @@ export class MessagingService {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis` +
         (awaitingAsk ? ', no FCM wake (an ask awaits a member)' : ', FCM sent to peers')
     );
-    return { status: 'no_peer_online' };
+    const facts = await this.noHolderFacts(groupId, requesterUserId, requesterDeviceId, traceId);
+    return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
   }
 
   /**

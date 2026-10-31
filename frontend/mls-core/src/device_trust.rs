@@ -101,27 +101,14 @@ pub struct DeviceEvent {
     pub trust: LeafTrust,
     /// The verified identity of the committer, `None` for a key change found in a joined tree.
     pub added_by: Option<String>,
-    /// Whether this DEVICE was never in this group as far as this device saw: no leaf of its in the
-    /// tree the commit was built on, and no departure of it recorded for this group. Decided PER
-    /// GROUP, never from the pin (one store, which any group's tree writes): what makes an entry by
-    /// the device's own commit an entry no member made ([`DeviceEvent::enters_as_unvouched_device`]).
-    /// `false` for an event recorded before the field existed.
-    #[serde(default)]
-    pub first_in_group: bool,
     /// Whether the admitted device's USER already had a leaf in the tree before the commit - so the
     /// commit gave a member another device, rather than bringing a new member in with theirs.
     /// `false` for an event recorded before the field existed: such an event is never announced.
     #[serde(default)]
     pub member_already_present: bool,
-    /// Whether the commit that added this device was made by a device that is itself an unvouched
-    /// entry in this group, as the app records it (`historyWithheld.ts`): what an unvouched device
-    /// adds is unvouched too. Set by the app, never by this observer, which keeps no such record;
-    /// `false` when absent, and not written when false, so the wire is unchanged.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub added_by_unvouched: bool,
     /// A MARKER, not a device: events of `group_id` were dropped past
     /// [`MAX_PENDING_DEVICE_EVENTS`], so what this queue says about that group is incomplete. It
-    /// names no identity and announces nothing; the app withholds history in that group on it.
+    /// names no identity and announces nothing; the app says the loss once per group.
     /// Not written when false, so the wire is unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub events_dropped: bool,
@@ -138,9 +125,7 @@ impl DeviceEvent {
             key_fingerprint: String::new(),
             trust: LeafTrust::FirstSight,
             added_by: None,
-            first_in_group: false,
             member_already_present: false,
-            added_by_unvouched: false,
             events_dropped: true,
         }
     }
@@ -155,33 +140,17 @@ impl DeviceEvent {
     ///   device lines), or a key other than the one pinned for that identity, which nothing proves
     ///   and which is announced wherever it happens.
     ///
-    /// A `pinned` re-add (the replace path, a rotation) is the same device and is never announced -
-    /// unless the device entered by its own commit, never in this group
-    /// ([`DeviceEvent::enters_as_unvouched_device`]): a pin written by another group vouches for
-    /// nothing here, and the owner is told.
+    /// A `pinned` re-add (the replace path, a rotation) is the same device and is never announced,
+    /// whoever's commit admitted it. WHO signed the commit does not matter either (owner, 2026-10-31):
+    /// a member's further device entering by its own external commit is announced exactly like one a
+    /// member added - the contact line and the owner's alert, nothing more.
     pub fn announces_new_device(&self) -> bool {
         self.added_by.is_some()
             && match self.trust {
                 LeafTrust::KeyChanged => true,
                 LeafTrust::FirstSight => self.member_already_present,
-                LeafTrust::Pinned => self.enters_as_unvouched_device(),
+                LeafTrust::Pinned => false,
             }
-    }
-
-    /// Whether a device of a MEMBER brought ITSELF into this group: the commit admitting it was
-    /// signed by that very device (an external commit), its user already held a leaf, and the
-    /// device was never in this group ([`DeviceEvent::first_in_group`]) - whatever its pin says.
-    /// The twin of `entersAsUnvouchedDevice` in `deviceTrust.ts`, held to the same table.
-    pub fn enters_as_unvouched_device(&self) -> bool {
-        if self.added_by_unvouched && self.added_by.is_some() {
-            return true;
-        }
-        self.first_in_group
-            && self.member_already_present
-            && self
-                .added_by
-                .as_deref()
-                .is_some_and(|c| same_identity(c, &self.identity))
     }
 
     /// Whether this event is the account owner's alert, "a new device was added to your account",
@@ -272,9 +241,8 @@ pub(crate) type LeafKey = (u32, String, Vec<u8>);
 /// user's last leaf. Never shown to anybody - it is evidence for a verifier, not a notice.
 ///
 /// WITH `device_id`, ONE DEVICE leaving it (2026-10-27): any leaf a merged commit removed, whether
-/// or not its user stays - and `user_left` says it was the user's last. What tells a device COMING
-/// BACK by its own commit from a device that was never in the group
-/// ([`DeviceEvent::first_in_group`]). ONE record per removed device, so the bound counts what it
+/// or not its user stays - and `user_left` says it was the user's last, which is the departure
+/// [`DeviceTrust::removal_epochs`] reads. ONE record per removed device, so the bound counts what it
 /// always counted for a user with one device; a record without `device_id` is a user's departure
 /// written before the field existed (or of a leaf whose identity names no device).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -526,19 +494,6 @@ impl DeviceTrust {
         epochs
     }
 
-    /// Whether this device saw `identity`'s leaf leave `group_id`'s tree in a merged commit.
-    pub fn device_left_group(&self, group_id: &str, identity: &str) -> bool {
-        let Some((user, device)) = canonical_identity(identity).and_then(|c| {
-            c.split_once(':')
-                .map(|(u, d)| (u.to_string(), d.to_string()))
-        }) else {
-            return false;
-        };
-        self.departures.iter().any(|d| {
-            d.group_id == group_id && d.user_id == user && d.device_id.as_deref() == Some(&device)
-        })
-    }
-
     /// Drops the departures of groups not in `held_groups`, only when past
     /// [`MAX_RECORDED_DEPARTURES`] - the same rule as the pins.
     pub(crate) fn prune_departures(
@@ -606,8 +561,7 @@ impl DeviceTrust {
                 "[TRUST] {group_id} epoch {epoch}: {user_id} left the tree (last leaf removed)"
             );
         }
-        // EVERY DEVICE whose leaf went, its user staying or not: the record that tells a device
-        // coming back by its own commit from one that was never here ([`DeviceEvent::first_in_group`]).
+        // EVERY DEVICE whose leaf went, its user staying or not - `user_left` marking the user's last.
         let mut devices_gone: Vec<(String, String)> = before
             .iter()
             .filter(|(_, id, _)| !after.iter().any(|(_, a, _)| same_identity(a, id)))
@@ -904,10 +858,8 @@ impl DeviceTrust {
                     key_fingerprint: key_fingerprint(key),
                     trust,
                     added_by: None,
-                    // A joined tree has no "before": nothing here was added by a commit we merged.
-                    first_in_group: false,
-                    added_by_unvouched: false,
                     events_dropped: false,
+                    // A joined tree has no "before": nothing here was added by a commit we merged.
                     member_already_present: false,
                 });
                 wrote = true;
@@ -962,10 +914,6 @@ impl DeviceTrust {
             if existed {
                 continue;
             }
-            // PER GROUP, NEVER FROM THE PIN: no leaf of this device in the tree the commit was built
-            // on, and no departure of it recorded here. A pin is one store any group's tree writes.
-            let first_in_group = !before.iter().any(|(_, id, _)| same_identity(id, identity))
-                && !self.device_left_group(group_id, identity);
             // This device's own leaf entering its own group (an external join it made) is not a
             // device being added to anybody's conversation.
             if same_identity(identity, own.0) && key.as_slice() == own.1 {
@@ -982,24 +930,16 @@ impl DeviceTrust {
                      NOT re-pinned, and every Add this device builds keeps refusing that key",
                     added_by.unwrap_or("an unreadable sender")
                 ),
-                LeafTrust::Pinned
-                    if !(first_in_group
-                        && added_by.is_some_and(|c| same_identity(c, identity))
-                        && before.iter().any(|(_, id, _)| same_user(id, identity))) =>
-                {
+                LeafTrust::Pinned => {
                     // A package under the pinned key reached somebody: the device still holds it.
                     wrote |= self.reaffirm(identity, key);
                     log::debug!(
-                        "[TRUST] {group_id} epoch {epoch}: {identity} re-entered under its pinned key \
+                        "[TRUST] {group_id} epoch {epoch}: {identity} entered under its pinned key \
                          (added by {}) - the same device, nothing recorded",
                         added_by.unwrap_or("an unreadable sender")
                     );
                     continue;
                 }
-                LeafTrust::Pinned => log::error!(
-                    "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key \
-                     pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
-                ),
                 LeafTrust::FirstSight => log::info!(
                     "[TRUST] {group_id} epoch {epoch}: {identity} added by {} (key {fingerprint}, first sight)",
                     added_by.unwrap_or("an unreadable sender"),
@@ -1013,8 +953,6 @@ impl DeviceTrust {
                 key_fingerprint: fingerprint,
                 trust,
                 added_by: added_by.map(str::to_string),
-                first_in_group,
-                added_by_unvouched: false,
                 events_dropped: false,
                 member_already_present,
             });
@@ -1039,9 +977,9 @@ mod tests {
     }
 
     #[test]
-    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_unvouched_here() {
-        // The pin store is ONE store: a tree of group A writes the pin, and it must vouch for
-        // nothing in group B, where the device was never a leaf (review of #2594, 2026-10-27).
+    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_the_same_device() {
+        // A pinned key is the same device wherever it enters, by a member's Add or its own commit
+        // (owner, 2026-10-31): nothing is recorded, and the pin is reaffirmed.
         let mut t = DeviceTrust::default();
         let own = ("alice:phone-a", &[1u8; 32][..]);
         // Group A: bob's second device enters (first sight, pinned now).
@@ -1055,21 +993,12 @@ mod tests {
         let mut b_after = b_before.clone();
         b_after.push(lk(2, "bob:web-2", 3));
         t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own);
-        let events = t.take_events();
-        assert_eq!(
-            events.len(),
-            1,
-            "the pinned key does not silence a first entry here"
-        );
-        let e = &events[0];
-        assert_eq!(e.trust, LeafTrust::Pinned);
-        assert!(e.first_in_group);
-        assert!(e.enters_as_unvouched_device());
-        assert!(e.announces_new_device());
+        assert!(t.take_events().is_empty());
+        assert!(t.pin_naming("bob:web-2").unwrap().reaffirmations >= 1);
     }
 
     #[test]
-    fn a_device_that_left_this_group_and_comes_back_by_itself_is_not_unvouched() {
+    fn a_device_that_left_this_group_and_comes_back_by_itself_is_not_new() {
         let mut t = DeviceTrust::default();
         let own = ("alice:phone-a", &[1u8; 32][..]);
         let full = vec![
@@ -1081,8 +1010,6 @@ mod tests {
         t.seed_from_tree(&full);
         // A member's commit removes bob's web device; bob stays.
         t.observe_merged_commit("g", 5, &full, &without, Some("alice:phone-a"), own);
-        assert!(t.device_left_group("g", "BOB:web-2"));
-        assert!(!t.device_left_group("g", "bob:phone-1"));
         assert!(
             t.removal_epochs("g", "bob").is_empty(),
             "bob never left as a user"
@@ -1094,17 +1021,28 @@ mod tests {
     }
 
     #[test]
-    fn a_member_added_device_is_never_an_unvouched_entry() {
-        let mut t = DeviceTrust::default();
+    fn a_further_device_entering_by_itself_is_announced_like_one_a_member_added() {
+        // Owner decision D2 (2026-10-31): who signed the commit does not change the notice.
         let own = ("alice:phone-a", &[1u8; 32][..]);
         let before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
         let mut after = before.clone();
         after.push(lk(2, "bob:web-2", 3));
-        t.observe_merged_commit("g", 3, &before, &after, Some("alice:phone-a"), own);
-        let events = t.take_events();
-        assert_eq!(events.len(), 1);
-        assert!(events[0].first_in_group);
-        assert!(!events[0].enters_as_unvouched_device());
+        let mut notices = Vec::new();
+        for committer in ["alice:phone-a", "bob:web-2"] {
+            let mut t = DeviceTrust::default();
+            t.observe_merged_commit("g", 3, &before, &after, Some(committer), own);
+            let events = t.take_events();
+            assert_eq!(events.len(), 1, "{committer}");
+            let e = &events[0];
+            notices.push((
+                e.trust,
+                e.announces_new_device(),
+                e.is_owner_alert("bob", "phone-1"),
+                e.is_owner_alert("alice", "phone-a"),
+            ));
+        }
+        assert_eq!(notices[0], notices[1]);
+        assert_eq!(notices[0], (LeafTrust::FirstSight, true, true, false));
     }
 
     #[test]
@@ -1159,8 +1097,6 @@ mod tests {
             key_fingerprint: String::new(),
             trust: LeafTrust::FirstSight,
             added_by: None,
-            first_in_group: false,
-            added_by_unvouched: false,
             events_dropped: false,
             member_already_present: false,
         };
@@ -1294,15 +1230,19 @@ mod tests {
             key_fingerprint: "00ff".into(),
             trust: LeafTrust::KeyChanged,
             added_by: Some("v:e".into()),
-            first_in_group: true,
-            added_by_unvouched: false,
             events_dropped: false,
             member_already_present: true,
         };
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
-            r#"{"groupId":"g","epoch":4,"identity":"u:d","keyFingerprint":"00ff","trust":"key-changed","addedBy":"v:e","firstInGroup":true,"memberAlreadyPresent":true}"#
+            r#"{"groupId":"g","epoch":4,"identity":"u:d","keyFingerprint":"00ff","trust":"key-changed","addedBy":"v:e","memberAlreadyPresent":true}"#
         );
+        // An event persisted by an older build still loads: the fields it carried are ignored.
+        let old: DeviceEvent = serde_json::from_str(
+            r#"{"groupId":"g","epoch":4,"identity":"u:d","keyFingerprint":"00ff","trust":"pinned","addedBy":"u:d","firstInGroup":true,"addedByUnvouched":true,"memberAlreadyPresent":true}"#,
+        )
+        .expect("an older event parses");
+        assert!(!old.announces_new_device());
     }
 
     /// The owner-alert half of the notice rule and the dedup key, held to the SAME table the
@@ -1319,9 +1259,6 @@ mod tests {
             own_device_id: String,
             audience: String,
             key: Option<String>,
-            /// Whether the entry is the unvouched class, asserted where a row names it.
-            #[serde(default)]
-            unvouched: Option<bool>,
         }
         let cases: Vec<Case> =
             serde_json::from_str(include_str!("../tests/fixtures/device_notices.json"))
@@ -1335,14 +1272,6 @@ mod tests {
                 c.name
             );
             assert_eq!(c.event.notice_key(), c.key, "{}", c.name);
-            if let Some(unvouched) = c.unvouched {
-                assert_eq!(
-                    c.event.enters_as_unvouched_device(),
-                    unvouched,
-                    "{}",
-                    c.name
-                );
-            }
         }
     }
 

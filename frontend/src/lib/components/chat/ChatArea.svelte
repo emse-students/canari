@@ -66,6 +66,7 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
+  import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
     isNarrowChatLayout,
@@ -147,6 +148,10 @@
     onGroupDelete?: () => void;
     /** Callback to remove the conversation locally when it was deleted by another participant. */
     onGroupDeleteLocally?: () => void;
+    /** A conversation this device can no longer open (D5): a new group with the same people. */
+    onStartAgainWithSamePeople?: () => void;
+    /** A conversation this device can no longer open (D5): off this account's list, nothing deleted. */
+    onHideUnopenable?: () => void;
     /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
     /** Callback to remove a specific member from the group. */
@@ -282,6 +287,8 @@
     onGroupSetImage,
     onGroupDelete,
     onGroupDeleteLocally,
+    onStartAgainWithSamePeople,
+    onHideUnopenable,
     onGroupLeave,
     onGroupRemoveMember,
     messageReactions,
@@ -326,6 +333,13 @@
   // person's invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person.
   const waitingToBeAdded = $derived(
     conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
+  // ...UNLESS THE SERVER'S FACTS SAY NOTHING WILL EVER ADD IT (D5,
+  // docs/wiki/protocols/mls-availability-no-holder.md): no base it can use, nothing on its way, no
+  // member device online. Decided ONLY by `noHolder.svelte.ts` on one answer - never by a clock - so
+  // a slow Welcome or an Add in flight keeps the waiting text, and any later answer takes it back.
+  const unopenableHere = $derived(
+    waitingToBeAdded && !!conversation && isUnopenableHere(conversation.id)
   );
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
@@ -1655,6 +1669,32 @@
         >
           {m.chat_delete_locally_button()}
         </button>
+      </div>
+    {:else if unopenableHere}
+      <div
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-(--color-surface) px-4 py-3 dark:border-white/10"
+        role="status"
+        data-unopenable-here
+      >
+        <p class="text-center text-sm text-(--color-text-muted)">
+          {m.chat_unopenable_here()}
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          {#if (conversation?.conversationType ?? 'group') === 'group'}
+            <button
+              onclick={() => onStartAgainWithSamePeople?.()}
+              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+            >
+              {m.chat_unopenable_start_again()}
+            </button>
+          {/if}
+          <button
+            onclick={() => onHideUnopenable?.()}
+            class="rounded-lg bg-black/5 px-4 py-1.5 text-sm font-medium text-(--color-text-muted) transition-all hover:bg-black/10 active:scale-95 dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            {m.chat_unopenable_hide()}
+          </button>
+        </div>
       </div>
     {:else if !canWrite}
       <!-- THE PRODUCT SAYS WHY INSTEAD OF OFFERING A CONTROL IT WILL REFUSE. `canWriteToChannel`

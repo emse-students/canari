@@ -2,7 +2,8 @@ import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliver
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
-import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
+import type { DeviceMembershipRow, DistributionSeat, GroupMeta, UserGroupRow } from './IMlsService';
+import { parseSeat } from '$lib/utils/chat/noHolder.svelte';
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
@@ -1825,10 +1826,17 @@ export class MlsDeliveryApi {
    * Every other non-2xx stays unclassified, because none of them says anything about membership.
    */
   async fetchGroupInfo(
-    groupId: string
-  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
+    groupId: string,
+    deviceId?: string
+  ): Promise<{
+    groupInfo: string;
+    baseEpoch: number;
+    activeEpoch: number;
+    seat?: DistributionSeat;
+  } | null> {
+    const query = deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : '';
     const res = await this.f(
-      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
+      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}${query}`,
       { headers: await this.auth() }
     );
     // ORIGIN FIRST: only the delivery service's JSON 403 says "not a member" (a caller retires the
@@ -1847,14 +1855,23 @@ export class MlsDeliveryApi {
     const data = (await readApiJson(
       res,
       `GET /api/mls/group-info (group ${groupId.slice(0, 8)})`
-    )) as { groupInfo?: unknown; baseEpoch: number; activeEpoch?: unknown } | null;
+    )) as {
+      groupInfo?: unknown;
+      baseEpoch: number;
+      activeEpoch?: unknown;
+      seat?: unknown;
+    } | null;
     if (!data || typeof data.groupInfo !== 'string') return null;
+    // The asking device's seat, read by the server after the base; absent from an older server or
+    // a request that named no device, which the caller reads as unknown.
+    const seat = parseSeat(data.seat);
     // `activeEpoch` defaults to the base, never to 0: an older server that does not send it must
     // read as "nothing known to be stale", where 0 would call every published base stale.
     return {
       groupInfo: data.groupInfo,
       baseEpoch: data.baseEpoch,
       activeEpoch: typeof data.activeEpoch === 'number' ? data.activeEpoch : data.baseEpoch,
+      ...(seat ? { seat } : {}),
     };
   }
 

@@ -28,11 +28,12 @@ impl MlsManager {
     /// FURTHER DEVICE OF A MEMBER: its tree holds a leaf of this device's user, and none of this
     /// device's own (2026-10-27).
     ///
-    /// THE SAME FACT A MEMBER'S `observe_merged_commit` READS, from the same tree: such a self-entry
-    /// is said there (`DeviceEvent::enters_as_unvouched_device`), so an honest device never makes
-    /// one - its recovery asks a member instead. A device whose own leaf is in the tree replaces it
-    /// (the observer sees the identity in `before`), and a user with no leaf there enters as a
-    /// person, which is the link's ask. Read off the unverified tree: the commit built on it is
+    /// THE SAME FACT A MEMBER'S `observe_merged_commit` READS, from the same tree (its
+    /// `member_already_present`): such a self-entry is announced there exactly like a device a
+    /// member added (`DeviceEvent::announces_new_device`, owner 2026-10-31). The further-device door
+    /// asks a member first, and joins by its own commit only when the server says no member device
+    /// is online. A device whose own leaf is in the tree replaces it (the observer sees the identity
+    /// in `before`), and a user with no leaf there enters as a person, which is the link's ask. Read off the unverified tree: the commit built on it is
     /// verified by OpenMLS, and a tree that lies would only make this device ask instead of join.
     ///
     /// Decided again on every attempt, since every retry fetches a fresh GroupInfo.
