@@ -60,9 +60,9 @@
       <!-- Aligned with the label, same pill as the desktop bar's: dimmed while this week holds today. -->
       <button
         type="button"
-        class="border-cn-border text-text-main hover:bg-cn-border/30 shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
-        disabled={!away}
-        onclick={onToday}
+        class="border-cn-border text-text-main hover:bg-cn-border/30 shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition-colors aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+        aria-disabled={!away}
+        onclick={() => away && onToday?.()}
       >
         {m.bookings_week_today()}
       </button>

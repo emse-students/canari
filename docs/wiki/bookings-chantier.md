@@ -1172,6 +1172,14 @@ id to the organiser and the linked account, not to a booker.
   device, a clock or a server. Like the server, only the START of a range is judged.
   `SpaceGrid.past.svelte.test.ts` pins it. The same pass removed "encrypted on this device" from
   the two poster hints: the screens say what the reader needs, not how it is done.
+- **MOVING THE WEEK KEEPS THE PAGE WHERE IT IS** (owner, 2026-10-31). The week shown is
+  `SpaceWeek` state, never the URL, so no `goto` is involved; what sent the page to the top was the
+  grid being replaced by the one-line "nothing this week" while the moved-to week loaded, which
+  collapsed the page and clamped its scroll. The last grid read stays drawn, dimmed, `inert` and
+  `aria-busy`, until the new week lands. "Aujourd'hui" is dimmed with `aria-disabled`, never
+  `disabled`, which dropped the focus its own press put there. `SpaceWeek.weekMove.svelte.test.ts`
+  pins it (and fails on the old code). The phone strip, the column switch and the dashboard use the
+  same component; no bookings page navigates by URL for a view change.
 - **A NIGHT WINDOW STILL RUNNING AFTER MIDNIGHT STAYS IN VIEW** (review of #2035). The server
   keeps a unit in `spaceSlots(from, to)` when its WINDOW's date is in the range, so every read
   starts THE DAY BEFORE the date shown (`slotsReadRange`), and the grid opens - and "today" leads -

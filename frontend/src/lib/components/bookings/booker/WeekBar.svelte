@@ -55,12 +55,13 @@
 
 <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
   <!-- A calendar app's order: the way back to today first, an outlined pill that is always drawn
-       (dimmed while the week shown holds today), then the arrows, then the week. -->
+       (dimmed while the week shown holds today), then the arrows, then the week. Dimmed with
+       aria-disabled, never disabled: a disabled button drops the focus its own press put there. -->
   <button
     type="button"
-    class="border-cn-border text-text-main hover:bg-cn-border/30 rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
-    disabled={!away}
-    onclick={onToday}
+    class="border-cn-border text-text-main hover:bg-cn-border/30 rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-transparent"
+    aria-disabled={!away}
+    onclick={() => away && onToday?.()}
   >
     {m.bookings_week_today()}
   </button>

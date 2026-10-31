@@ -1,0 +1,98 @@
+// @vitest-environment happy-dom
+/**
+ * MOVING THE WEEK KEEPS THE PAGE WHERE IT IS (owner, 2026-10-31: an arrow sent the page back to
+ * the top). The week is component state, no navigation; what moved the page was the grid being
+ * swapped for the one-line "nothing this week" while the next week loaded, which collapsed the page
+ * and clamped its scroll. Pinned: while the read is in flight the last grid stays drawn (inert,
+ * busy), the arrow keeps the focus, and the new week replaces it once read.
+ */
+import { it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { flushSync, mount, tick } from 'svelte';
+import type { BookerSpace, ResourceSlots } from '$lib/bookings/api';
+import { m } from '$lib/paraglide/messages';
+
+const api = vi.hoisted(() => ({
+  getSlots: vi.fn(),
+  myBookings: vi.fn(async () => []),
+}));
+vi.mock('$lib/bookings/api', () => api);
+
+import SpaceWeek from './SpaceWeek.svelte';
+
+const NOW = Date.parse('2026-11-04T07:00:00Z');
+const SPACE = {
+  id: 's1',
+  name: 'Espace',
+  timeZone: 'Europe/Paris',
+  slotMode: 'step',
+  stepMinutes: 60,
+  maxSteps: 1,
+  opensAt: null,
+  minNoticeMinutes: null,
+  horizonDays: null,
+  canManage: false,
+  poster: null,
+  items: [],
+  hiddenItemIds: [],
+  resources: [{ id: 'r1', name: 'Salle' }],
+} as unknown as BookerSpace;
+
+/** One free 10:00 hour (Paris) on `date`. */
+const weekOf = (date: string): ResourceSlots[] => {
+  const startMs = Date.parse(`${date}T09:00:00Z`);
+  return [
+    { resourceId: 'r1', units: [{ date, startMs, endMs: startMs + 3_600_000, state: 'free' }] },
+  ];
+};
+
+const settle = async () => {
+  for (let i = 0; i < 5; i++) await tick();
+  flushSync();
+};
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
+  window.matchMedia = (() => ({
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+});
+afterEach(() => {
+  document.body.innerHTML = '';
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+it('keeps the grid drawn and the arrow focused while the next week loads', async () => {
+  let land: (slots: ResourceSlots[]) => void = () => {};
+  api.getSlots
+    .mockResolvedValueOnce(weekOf('2026-11-05'))
+    .mockReturnValueOnce(new Promise<ResourceSlots[]>((resolve) => (land = resolve)));
+  mount(SpaceWeek, { target: document.body, props: { space: SPACE, nowMs: NOW } });
+  await settle();
+  expect(document.querySelectorAll('[data-cell]')).toHaveLength(1);
+
+  const next = document.querySelector<HTMLButtonElement>(
+    `button[aria-label="${m.bookings_week_next()}"]`
+  )!;
+  next.focus();
+  next.click();
+  await settle();
+
+  const grid = document.querySelector<HTMLElement>('[data-week-grid]')!;
+  expect(document.querySelectorAll('[data-cell]')).toHaveLength(1);
+  expect(document.body.textContent).not.toContain(m.bookings_week_empty());
+  expect(grid.hasAttribute('inert')).toBe(true);
+  expect(grid.getAttribute('aria-busy')).toBe('true');
+  expect(document.activeElement).toBe(next);
+
+  land(weekOf('2026-11-12'));
+  await settle();
+  expect(grid.hasAttribute('inert')).toBe(false);
+  const cell = document.querySelector('[data-cell]')!;
+  expect(cell.getAttribute('aria-label')).toContain('12');
+  expect(document.activeElement).toBe(next);
+});

@@ -98,6 +98,21 @@
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
   /** What the grid draws: the week, or on a phone the chosen day alone on its own axis. */
   const layout = $derived(narrow ? weekLayout(columnUnits, [date], space, nowMs) : week);
+  /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
+  const weekHeld = $derived.by(() => {
+    const want = weekReadRange(date);
+    return loaded !== null && loaded.from <= want.from && want.to <= loaded.to;
+  });
+  /**
+   * The grid of the last week whose read landed, kept on screen, inert and dimmed, while the week
+   * moved to loads. Dropping it for the empty line collapsed the page, and the browser clamped the
+   * scroll to the top on every arrow (owner, 2026-10-31): the page must stay where the reader is.
+   */
+  let lastDrawn: typeof layout | null = null;
+  const drawn = $derived.by(() => {
+    if (weekHeld || !lastDrawn) lastDrawn = layout;
+    return lastDrawn;
+  });
   const freeCounts = $derived(
     new Map(
       space.resources.map((r) => [
@@ -266,21 +281,28 @@
           onToday={() => chooseDate(today)}
         />
       {/if}
-      {#if layout.endMin === layout.startMin}
-        <p class="text-text-muted py-8 text-center text-sm">
-          {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
-        </p>
-      {:else}
-        <SpaceGrid
-          {space}
-          {resource}
-          {layout}
-          mode={narrow ? 'day' : 'week'}
-          blockMode={mode === 'block'}
-          {nowMs}
-          onPick={pick}
-        />
-      {/if}
+      <div
+        class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
+        inert={!weekHeld}
+        aria-busy={!weekHeld}
+        data-week-grid
+      >
+        {#if drawn.endMin === drawn.startMin}
+          <p class="text-text-muted py-8 text-center text-sm">
+            {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+          </p>
+        {:else}
+          <SpaceGrid
+            {space}
+            {resource}
+            layout={drawn}
+            mode={narrow ? 'day' : 'week'}
+            blockMode={mode === 'block'}
+            {nowMs}
+            onPick={pick}
+          />
+        {/if}
+      </div>
     {/if}
   </div>
   {#if mode === 'book'}
