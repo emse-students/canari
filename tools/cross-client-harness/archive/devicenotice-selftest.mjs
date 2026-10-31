@@ -2,8 +2,8 @@
  * THE "NOUVEL APPAREIL" DISMISSAL'S ALLOWLIST, PINNED (`devicenotice.mjs`).
  *
  * The plan taps only the leading notices of minted devices and stops at the first notice of any
- * other device; a seat with two accounts' pending queues is refused; the store name, the banner's
- * title and its button are pinned against the product's source, so a renamed key or a reworded
+ * other device; a seat with two accounts' pending queues is refused; the store name, the row's
+ * hooks and the page that lists it are pinned against the product's source, so a renamed key or a reworded
  * string fails here rather than leaving the dismissal finding nothing to tap. Pure: no rig, no
  * browser, no `names.mjs`. Every id is synthetic.
  *
@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { NOTICE_DISMISS, NOTICE_STORE_PREFIX, NOTICE_TITLES, dismissPlan, queueOf } from '../devicenotice.mjs';
+import { NOTICES_ROUTE, NOTICE_STORE_PREFIX, ROW_DISMISS_ATTR, ROW_KEY_ATTR, dismissPlan, queueOf } from '../devicenotice.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -70,13 +70,12 @@ console.log('the spellings, against the source');
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const keys = readFileSync(join(ROOT, 'frontend/src/lib/utils/accountLocalKeys.ts'), 'utf8');
 ok(`the store is ${NOTICE_STORE_PREFIX}<userId>`, keys.includes(`deviceNotices: (userId: string) => \`${NOTICE_STORE_PREFIX}\${userId}\``));
-const fr = JSON.parse(readFileSync(join(ROOT, 'frontend/messages/fr.json'), 'utf8'));
-const en = JSON.parse(readFileSync(join(ROOT, 'frontend/messages/en.json'), 'utf8'));
-ok('the banner title, in both locales', NOTICE_TITLES.includes(fr.device_notice_title) && NOTICE_TITLES.includes(en.device_notice_title));
-ok('the dismiss button, in both locales', NOTICE_DISMISS.includes(fr.device_notice_dismiss) && NOTICE_DISMISS.includes(en.device_notice_dismiss));
-const banner = readFileSync(join(ROOT, 'frontend/src/lib/components/shared/NewDeviceBanner.svelte'), 'utf8');
-ok('the banner dismisses the notice it shows through that button', /onclick=\{\(\) => dismissDeviceNotice\(notice\.key\)\}\s*>\{m\.device_notice_dismiss\(\)\}/.test(banner));
-ok('the banner shows the oldest pending notice', banner.includes('const notice = $derived(notices[0]);'));
+const row = readFileSync(join(ROOT, 'frontend/src/lib/components/notifications/DeviceNoticeRow.svelte'), 'utf8');
+const page = readFileSync(join(ROOT, 'frontend/src/routes/notifications/+page.svelte'), 'utf8');
+ok('the row carries its notice key as the hook', row.includes(`${ROW_KEY_ATTR}={notice.key}`));
+ok('the row has a "Compris" button with the hook, dismissing through dismissDeviceNotice', new RegExp(`${ROW_DISMISS_ATTR}\\s+onclick=\\{\\(\\) => dismissDeviceNotice\\(notice\\.key\\)\\}[^>]*>\\{m\\.device_notice_dismiss\\(\\)\\}`).test(row));
+ok('the page lists the pending notices in order, one row each', page.includes('const deviceNotices = $derived(pendingDeviceNotices());') && page.includes('<DeviceNoticeRow {notice}'));
+ok(`the route the rig opens is ${NOTICES_ROUTE}, the directory the page was read from`, NOTICES_ROUTE === '/notifications');
 
 console.log(failures ? `\n${failures} FAILED` : '\nall good');
 process.exit(failures ? 1 : 0);
