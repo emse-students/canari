@@ -639,6 +639,36 @@ img[src^='/emoji/'] {
   }
 }
 
+@keyframes motionExpandIn {
+  from {
+    opacity: 0;
+    transform: scale(0.08);
+  }
+}
+
+/* A full-screen surface growing out of the control that opened it: the CSS fallback of the reel
+   viewer's opening where the View Transitions API is missing (`reels/expandFrom.ts`). The caller
+   sets `transform-origin` to the control's centre. */
+.motion-expand-in {
+  animation: motionExpandIn var(--motion-slow) var(--motion-ease-out);
+}
+
+/* The reel viewer and its entry button are ONE shared element in a view transition: the browser
+   morphs the button into the viewer. `::view-transition` never takes a touch, so the page stays
+   usable while it plays; reduced motion never starts one (`expandFrom`). */
+[data-reel-viewer] {
+  view-transition-name: reel-open;
+}
+
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-group(reel-open) {
+  animation-duration: var(--motion-slow);
+  animation-timing-function: var(--motion-ease-out);
+}
+
 /* A bottom sheet rising from its edge. No `to`: it ends where the element's own transform puts it,
    so a sheet that is dragged keeps owning `transform` once the entrance is over. */
 .motion-sheet-in {

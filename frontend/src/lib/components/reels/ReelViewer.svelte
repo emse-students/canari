@@ -72,9 +72,21 @@
      * a conversation's reel is not a post, and has no reactions to give.
      */
     likerId?: string;
+    /**
+     * Where the viewer grows from (the opening button's centre) when the View Transitions API is
+     * absent: a transform-only entrance (`expandFrom`). Null: no entrance drawn here.
+     */
+    expandOrigin?: { x: number; y: number } | null;
   }
 
-  let { startPost, authToken, onClose, loadPage = listAllReels, likerId }: Props = $props();
+  let {
+    startPost,
+    authToken,
+    onClose,
+    loadPage = listAllReels,
+    likerId,
+    expandOrigin = null,
+  }: Props = $props();
 
   /**
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
@@ -532,7 +544,10 @@
   <div
     bind:this={viewerEl}
     use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
+    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
+      ? 'motion-expand-in'
+      : ''}"
+    style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
     role="dialog"
     aria-modal="true"
     aria-label={m.reels_viewer_label()}

@@ -97,3 +97,19 @@ it('reveals the tab again when the row is resized', () => {
   resized.forEach((callback) => callback());
   expect(row.scrollLeft).toBe(120);
 });
+
+it('draws no pill until the active tab has been measured, then places it on that tab', () => {
+  const left = vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get');
+  const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get');
+  left.mockReturnValue(0);
+  width.mockReturnValue(0);
+  const row = render();
+  expect(row.querySelector('[data-feed-tab-pill]')).toBeNull();
+  left.mockReturnValue(300);
+  width.mockReturnValue(120);
+  resized.forEach((callback) => callback());
+  flushSync();
+  const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
+  expect(pill.style.width).toBe('120px');
+  expect(pill.style.transform).toContain('300px');
+});
