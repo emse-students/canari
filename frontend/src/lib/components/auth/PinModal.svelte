@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import PinAccountField from './PinAccountField.svelte';
   import {
     LoaderCircle,
     FingerprintPattern,
@@ -71,8 +70,6 @@
      * local MLS state exists). When set, a "PIN changed elsewhere → recover" link is shown.
      */
     onRecoverPin?: () => void;
-    /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
-    account?: string;
     /**
      * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
      * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
@@ -99,7 +96,6 @@
     onForgotPinReset,
     resetWithheldNotice = '',
     onRecoverPin,
-    account = '',
     pin = $bindable(''),
   }: Props = $props();
 
@@ -277,7 +273,6 @@
       onsubmit={handleSubmit}
       class="m-auto flex w-full max-w-xs shrink-0 flex-col items-center gap-4 pt-2 pb-4"
     >
-      <PinAccountField {account} />
       <header class="flex flex-col items-center gap-2 text-center">
         <div
           class="bg-cn-ink flex size-16 items-center justify-center rounded-2xl border border-white/10 shadow-lg [@media(max-height:700px)]:hidden"
@@ -383,7 +378,7 @@
           <input
             id="encryption-pin"
             type="password"
-            autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
+            autocomplete="one-time-code"
             inputmode={isFirstSetup ? 'numeric' : undefined}
             bind:value={pin}
             oninput={() => {

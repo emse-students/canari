@@ -103,7 +103,12 @@
   >
     <div class="flex h-full flex-col gap-2 p-4">
       <div class="flex items-start gap-3">
-        <AssociationAvatar name={association.name} logoUrl={association.logoUrl} size="lg" />
+        <AssociationAvatar
+          id={association.id}
+          name={association.name}
+          logoUrl={association.logoUrl}
+          size="lg"
+        />
         <div class="min-w-0 flex-1">
           {#if association.parentName}
             <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
@@ -138,6 +143,7 @@
       {#if hasSecondTheme}
         <div class="-mt-1 flex items-center gap-2">
           <AssociationAvatar
+            id={association.id}
             name={secondName || association.name}
             logoUrl={secondLogoUrl}
             size="sm"
