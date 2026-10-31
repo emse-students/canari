@@ -2876,7 +2876,10 @@ in, on the Mi 9T, should go straight through.
 **Work to the swept numbers, never the audit's** (eight came back LARGER than claimed). The duplicate
 half is gone ([triage](protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates),
 [durable-rules](durable-rules.md#an-open-item-whose-substance-has-never-been-in-the-repository-is-not-an-open-item));
-what follows is the whole of what is left.
+what follows is the whole of what is left. `D8` and `R-D8` are REFUTED and not to be re-opened
+([triage](protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request)). **A few
+conversations rest on ONE holder** (the counts are in the private operations notes): the hourly report
+says so and repairs nothing.
 
 **Availability dead ends - every one needs an exit that EXISTS** (user, 2026-09-12: *"on ne peut pas
 demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit exister pour
@@ -2987,6 +2990,15 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 [posts](frontend/modules/posts.md#who-sees-which-control-three-served-booleans-never-authorid).
 **No identity from the users' captures enters this file.**
 
+**Rendering, where it stands (moved from `CLAUDE.md` 2026-10-22):** three of the ELEVEN 2026-09-18
+reports are open (below); 41 channels hold at 390 and 1280 px, but every rendering reading so far was
+Chrome with a device-metrics override, so REAL HARDWARE is owed. The phone agenda was rendered at last:
+its rolling window is right, the two things around it were not
+([calendar](frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)). #1223
+(2026-09-29: the tab swipe SHOWS the page it goes to, a drifting tap no longer turns it, a reply swipe
+no longer closes the thread) is blind to every gate here and owed ONE look on the reporting phone
+([design-reference](frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
 - **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
   tap lands.
 - **P3 - SHIPPED in `v1.3.0` (#2037): the push scanner's sentences are worded in Rust from the app
@@ -2999,7 +3011,9 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 
 ### P2 (hardware-owed) - a FIRST message from someone you have no conversation with, measured end to end (user, 2026-09-08)
 
-Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. Owed:
+Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. (Not part of
+this item: a reaction to your OWN message has notified since 2026-05-17, on `canari_reactions` since
+2026-09-17 - NOTIF-15 on the [board](cross-client-testing.md).) Owed:
 
 1. **Enrol a third account** (`canari-test-gamma` exists on Authentik, credentials out of tree): a
    first sign-in through the app, a Chrome profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries,
