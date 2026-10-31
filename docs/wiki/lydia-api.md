@@ -190,11 +190,9 @@ authorised overdraft of 100 EUR which allows a few refunds if the tariff permits
   enrolment calls take. Signed over the encoded values, with the Provider key, or with a wrong key:
   error 444. No signature: error 1. An unknown transaction: error 2, which proves the signature
   passed. `amount` is sent as `12.50` (two decimals, a dot); `0.5` passed the signature check too.
-- **No read of a refund exists for Canari.** `transaction/refunds` answers error 1 with the vendor
-  token alone or with an `order_ref`; 2223 ("unknown user") for a phone or user token Lydia does not
-  know; 105 ("operation not allowed") for a cashier Canari added. `transaction/list` answers 2223 for
-  a phone. `request/state` with an unknown `order_ref` answers error 2 and says nothing of refunds.
-  So an unanswered refund cannot be read back, and Canari never retries one blind
+- **Lydia offers Canari no read of a refund.** `request/state` with an unknown `order_ref` answers
+  error 2 and says nothing of refunds. So an unanswered refund cannot be read back, and Canari never
+  retries one blind
   ([payments](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
 - **The success path is UNMEASURED.** A fresh sandbox Business answers error 5 on `request/do`, so no
   sandbox payment could be completed and no refund of a real transaction was made. Owed: one refund

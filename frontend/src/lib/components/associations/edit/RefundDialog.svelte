@@ -10,7 +10,9 @@
   import {
     eurosToCents,
     refundAttemptOf,
+    refundAttemptOfView,
     refundEffectMessage,
+    type RefundAttempt,
   } from '$lib/associations/refundWording';
   import { Log } from '$lib/utils/Log';
 
@@ -57,31 +59,51 @@
     if (!totalOffered) kind = 'partial';
   });
 
-  /** Sends the refund and words what came of it; the list is re-read whatever the outcome. */
+  /** The words of what an attempt came to. */
+  function outcomeOf(attempt: RefundAttempt): { tone: 'ok' | 'wait' | 'error'; text: string } {
+    switch (attempt.kind) {
+      case 'refunded':
+        return { tone: 'ok', text: m.asso_refund_done() };
+      case 'in-progress':
+        return { tone: 'wait', text: m.asso_refund_in_progress() };
+      case 'unconfirmed':
+        return { tone: 'wait', text: m.asso_refund_unconfirmed() };
+      case 'unrecorded':
+        return { tone: 'wait', text: m.asso_refund_unrecorded() };
+      case 'refused':
+        return { tone: 'error', text: attempt.message };
+      default:
+        return { tone: 'error', text: m.asso_refund_failed() };
+    }
+  }
+
+  /**
+   * Sends the refund and words what came of it; the list is re-read whatever the outcome. An answer
+   * is read by its `state`, never its status: a resent click answers the first refund as it stands.
+   */
   async function send() {
     step = 'sending';
     Log.i('ASSO', `refund of payment ${purchase.id.slice(0, 8)}: ${kind}, ${amountCents} cents`);
+    let attempt: RefundAttempt;
     try {
-      await refundAssociationPurchase(associationId, purchase.id, {
+      const refund = await refundAssociationPurchase(associationId, purchase.id, {
         kind,
         ...(kind === 'partial' ? { amountCents } : {}),
         reason: reason.trim(),
         idempotencyKey,
       });
-      outcome = { tone: 'ok', text: m.asso_refund_done() };
-      Log.i('ASSO', `refund of payment ${purchase.id.slice(0, 8)} confirmed`);
+      attempt = refundAttemptOfView(refund);
+      if (attempt.kind === 'unrecorded') {
+        console.error(`[ASSO] refund of payment ${purchase.id.slice(0, 8)}: confirmed, not saved`);
+      }
     } catch (e) {
-      const attempt = refundAttemptOf(e);
-      Log.i('ASSO', `refund of payment ${purchase.id.slice(0, 8)}: ${attempt.kind}`);
-      if (attempt.kind === 'unconfirmed') {
-        outcome = { tone: 'wait', text: m.asso_refund_unconfirmed() };
-      } else if (attempt.kind === 'refused') {
-        outcome = { tone: 'error', text: attempt.message };
-      } else {
+      attempt = refundAttemptOf(e);
+      if (attempt.kind === 'unknown') {
         console.error(`[ASSO] refund of payment ${purchase.id.slice(0, 8)} failed:`, e);
-        outcome = { tone: 'error', text: m.asso_refund_failed() };
       }
     }
+    Log.i('ASSO', `refund of payment ${purchase.id.slice(0, 8)}: ${attempt.kind}`);
+    outcome = outcomeOf(attempt);
     step = 'done';
     onSettled();
   }

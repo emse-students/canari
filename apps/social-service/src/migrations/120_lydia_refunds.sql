@@ -6,7 +6,9 @@
 --     audit too: who asked (`requestedByUserId`), when (`requestedAt`, the database clock), how much
 --     (`amountCents`, total or partial `kind`), for which payment (`purchaseRecordId`), why (`reason`,
 --     the manager's text) and what Lydia answered (`outcome`: `refunded`, the refusal's typed
---     code, `no-answer`, `not-sent`, or a manager's declaration after checking Lydia). `status`:
+--     code, `no-answer`, `not-sent`, `refunded-unrecorded` (Lydia confirmed, Canari failed to record
+--     it), or a manager's declaration after checking Lydia; NULL while the call runs). `lateOutcome`:
+--     Lydia's answer when it arrived after the refund was already settled, kept beside it. `status`:
 --     pending -> confirmed | refused. `sideEffect` says what a confirmed TOTAL refund withdrew.
 --     `resolvedByUserId` / `resolvedAt`: the manager who settled a refund Lydia never confirmed.
 --     `vendorToken` / `orderRef`: the Business and the transaction the refund was sent to, snapshotted.
@@ -26,7 +28,11 @@
 --
 -- ADDITIVE AND REVERSIBLE: one new table, three NULL-able columns, indexes; nothing rewritten or
 -- deleted. To reverse: DROP TABLE lydia_refunds; ALTER TABLE ... DROP COLUMN for the three columns.
--- ROLLBACK: an image older than this migration reads none of these.
+-- ROLLBACK: an image older than this migration reads none of these. What a refund already did
+-- SURVIVES a schema rollback and an image rollback: a purchase record set `refunded` stays so (an
+-- older image does not know that status, so its purchases list stops showing the record), a freed
+-- seat stays `refunded`, a revoked tier stays revoked. Dropping the table loses the refund history
+-- and the order_refs, never the money: Lydia's own statement still holds every refund.
 -- 120: 118 is the highest on main at the time of writing; 119 is left to lot 3 (the cashiers),
 -- built in parallel.
 -- Idempotent for CD: IF NOT EXISTS everywhere.
@@ -46,6 +52,7 @@ CREATE TABLE IF NOT EXISTS lydia_refunds (
   status varchar(16) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'confirmed', 'refused')),
   "outcome" varchar(64) NULL,
+  "lateOutcome" varchar(64) NULL,
   "sideEffect" varchar(64) NULL,
   "requestedByUserId" varchar(255) NOT NULL,
   "requestedAt" timestamptz NOT NULL DEFAULT now(),

@@ -7,6 +7,8 @@ import {
   REFUND_CORE_CODES,
   REFUND_SOCIAL_CODES,
   refundAttemptOf,
+  refundAttemptOfView,
+  refundAwaitingManager,
   refundEffectMessage,
   refundStateLabel,
   statementCsv,
@@ -20,7 +22,7 @@ const standing = (over: Partial<RefundStanding> = {}): RefundStanding => ({
   withdrawal: 'shop',
   paidCents: 1000,
   refundedCents: 0,
-  unconfirmedRefundId: null,
+  openRefund: null,
   ...over,
 });
 
@@ -60,6 +62,27 @@ describe('a refund attempt, classified by status and code', () => {
   });
 });
 
+describe('an answered refund, read by its state and never by the HTTP status', () => {
+  it.each([
+    ['refunded', { kind: 'refunded' }],
+    ['in-progress', { kind: 'in-progress' }],
+    ['unconfirmed', { kind: 'unconfirmed' }],
+    ['unrecorded', { kind: 'unrecorded' }],
+  ] as const)('a 200 whose state is %s', (state, attempt) => {
+    expect(refundAttemptOfView({ state, refusal: null })).toEqual(attempt);
+  });
+
+  it('a 200 replaying a refused refund is a refusal, worded by its code', () => {
+    expect(
+      refundAttemptOfView({ state: 'refused', refusal: REFUND_SOCIAL_CODES.exceedsPaid })
+    ).toEqual({ kind: 'refused', message: m.asso_refund_refused_exceeds() });
+  });
+
+  it('a 200 with no state it knows is unknown, never a refund', () => {
+    expect(refundAttemptOfView({} as never)).toEqual({ kind: 'unknown' });
+  });
+});
+
 describe('what the confirmation says a refund withdraws', () => {
   it.each([
     ['membership', m.asso_refund_effect_membership({ buyer: 'Alice' })],
@@ -90,10 +113,26 @@ describe("a payment's refund state", () => {
     );
     expect(refundStateLabel(standing({ refundedCents: 250 }))).toContain('2');
   });
-  it('names a refund Lydia has not confirmed before anything else', () => {
-    expect(refundStateLabel(standing({ unconfirmedRefundId: 'r1', refundedCents: 250 }))).toBe(
-      m.asso_refund_state_unconfirmed()
-    );
+  it('names a refund not settled yet before anything else, by where it stands', () => {
+    const open = (state: 'in-progress' | 'unconfirmed' | 'unrecorded') =>
+      standing({ openRefund: { id: 'r1', state }, refundedCents: 250 });
+    expect(refundStateLabel(open('unconfirmed'))).toBe(m.asso_refund_state_unconfirmed());
+    expect(refundStateLabel(open('in-progress'))).toBe(m.asso_refund_state_in_progress());
+    expect(refundStateLabel(open('unrecorded'))).toBe(m.asso_refund_state_unrecorded());
+  });
+
+  it('asks the manager to check an unconfirmed refund, to save an unrecorded one, nothing while in progress', () => {
+    const refund = { id: 'r1' } as never;
+    expect(
+      refundAwaitingManager(standing({ openRefund: { id: 'r1', state: 'unconfirmed' } }), [refund])
+    ).toEqual({ refund, action: 'check' });
+    expect(
+      refundAwaitingManager(standing({ openRefund: { id: 'r1', state: 'unrecorded' } }), [refund])
+    ).toEqual({ refund, action: 'record' });
+    expect(
+      refundAwaitingManager(standing({ openRefund: { id: 'r1', state: 'in-progress' } }), [refund])
+    ).toBeNull();
+    expect(refundAwaitingManager(standing(), [refund])).toBeNull();
   });
   it('explains only the refusals worth a sentence', () => {
     expect(notRefundableHint(standing({ refundable: false, reason: 'untraceable' }))).toBe(

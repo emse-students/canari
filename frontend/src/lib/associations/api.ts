@@ -2143,6 +2143,13 @@ export type RefundWithdrawal =
 /** Why a payment cannot be refunded from Canari (`NotRefundableReason` server side). */
 export type RefundRefusalReason = 'not-online' | 'not-received' | 'untraceable' | 'other-business';
 
+/**
+ * Where a refund stands: `refunded`; `refused` (nothing refunded); `in-progress` (Lydia is being
+ * asked right now); `unconfirmed` (Lydia never answered - a manager checks it); `unrecorded` (Lydia
+ * confirmed, Canari failed to save it - a manager saves it).
+ */
+export type RefundState = 'refunded' | 'refused' | 'in-progress' | 'unconfirmed' | 'unrecorded';
+
 /** A refund as the purchases screen reads it. */
 export interface AssociationRefund {
   id: string;
@@ -2150,8 +2157,8 @@ export interface AssociationRefund {
   kind: 'total' | 'partial';
   amountCents: number;
   reason: string;
-  /** `refunded`, `refused` (nothing refunded), or `unconfirmed` (Lydia never answered). */
-  state: 'refunded' | 'refused' | 'unconfirmed';
+  /** Where it stands (`RefundState`). */
+  state: RefundState;
   /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
   refusal: string | null;
   sideEffect: string | null;
@@ -2168,8 +2175,8 @@ export interface RefundStanding {
   withdrawal: RefundWithdrawal | null;
   paidCents: number;
   refundedCents: number;
-  /** The refund Lydia has not confirmed yet, which a manager checks before any new one. */
-  unconfirmedRefundId: string | null;
+  /** The refund not settled yet, which blocks any new one, and where it stands; null when none. */
+  openRefund: { id: string; state: 'in-progress' | 'unconfirmed' | 'unrecorded' } | null;
 }
 
 /** What a refund asks: the dialog draws `idempotencyKey` once, so a resent click refunds nothing twice. */
@@ -2188,8 +2195,10 @@ export async function listAssociationRefunds(
 }
 
 /**
- * Refunds a payment through Lydia. Answers the refund once Lydia confirmed it; throws a
- * {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when Lydia did not answer.
+ * Refunds a payment through Lydia. Answers the refund - read its `state`: a resent request answers
+ * the first one whatever came of it, and a refund Lydia confirmed but Canari failed to save is
+ * `unrecorded`. Throws a {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when
+ * Lydia did not answer.
  */
 export async function refundAssociationPurchase(
   associationId: string,

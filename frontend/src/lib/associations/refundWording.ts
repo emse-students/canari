@@ -37,13 +37,17 @@ const NOT_SENT = 'PAYMENT_SERVICE_NOT_READY';
 /**
  * What a refund attempt came to, as the dialog shows it:
  * - `refunded`: Lydia confirmed;
+ * - `in-progress`: the same refund is still being asked of Lydia (a resent request);
  * - `unconfirmed`: Lydia did not answer - the refund waits for a manager's check;
+ * - `unrecorded`: Lydia confirmed, Canari failed to save it - a manager saves it from the list;
  * - `refused`: nothing was refunded, `message` says why;
  * - `unknown`: no answer reached this screen at all - the list is re-read before anything else.
  */
 export type RefundAttempt =
   | { kind: 'refunded' }
+  | { kind: 'in-progress' }
   | { kind: 'unconfirmed' }
+  | { kind: 'unrecorded' }
   | { kind: 'refused'; message: string }
   | { kind: 'unknown' };
 
@@ -59,6 +63,32 @@ export function refundAttemptOf(err: unknown): RefundAttempt {
   if (status === null) return { kind: 'unknown' };
   const message = refundRefusalMessage(code);
   return message ? { kind: 'refused', message } : { kind: 'unknown' };
+}
+
+/**
+ * What an ANSWERED refund came to, read from its `state` - never from the HTTP status: a resent
+ * request answers 200 with the first refund, refused or unconfirmed as it may be.
+ */
+export function refundAttemptOfView(
+  refund: Pick<AssociationRefund, 'state' | 'refusal'>
+): RefundAttempt {
+  switch (refund.state) {
+    case 'refunded':
+      return { kind: 'refunded' };
+    case 'in-progress':
+      return { kind: 'in-progress' };
+    case 'unconfirmed':
+      return { kind: 'unconfirmed' };
+    case 'unrecorded':
+      return { kind: 'unrecorded' };
+    case 'refused':
+      return {
+        kind: 'refused',
+        message: refundRefusalMessage(refund.refusal) ?? m.asso_refund_refused_by_lydia(),
+      };
+    default:
+      return { kind: 'unknown' };
+  }
 }
 
 /** The sentence for a typed refund refusal; null for a code this screen does not know. */
@@ -117,13 +147,22 @@ export function refundEffectMessage(
   }
 }
 
+/** The short words of a refund not settled yet, by where it stands. */
+const OPEN_REFUND_LABEL: Record<NonNullable<RefundStanding['openRefund']>['state'], () => string> =
+  {
+    'in-progress': () => m.asso_refund_state_in_progress(),
+    unconfirmed: () => m.asso_refund_state_unconfirmed(),
+    unrecorded: () => m.asso_refund_state_unrecorded(),
+  };
+
 /**
- * The short state a payment's row shows: refunded (in full or in part), or a refund Lydia has not
- * confirmed. Null when nothing was refunded and nothing waits.
+ * The short state a payment's row shows: a refund not settled yet (in progress, not confirmed by
+ * Lydia, or confirmed and not saved), else refunded in full or in part. Null when nothing was
+ * refunded and nothing waits.
  */
 export function refundStateLabel(standing: RefundStanding | undefined): string | null {
   if (!standing) return null;
-  if (standing.unconfirmedRefundId) return m.asso_refund_state_unconfirmed();
+  if (standing.openRefund) return OPEN_REFUND_LABEL[standing.openRefund.state]();
   if (standing.refundedCents <= 0) return null;
   return standing.refundedCents >= standing.paidCents
     ? m.asso_refund_state_refunded()
@@ -141,13 +180,20 @@ export function notRefundableHint(standing: RefundStanding | undefined): string 
   return null;
 }
 
-/** The refund still waiting for a manager's check on this payment, if any. */
-export function unconfirmedRefund(
+/**
+ * The refund on this payment waiting for a manager - to CHECK against Lydia (`unconfirmed`) or to
+ * SAVE (`unrecorded`) - with what is asked of them; null when none. A refund still in progress asks
+ * nothing: its result is coming.
+ */
+export function refundAwaitingManager(
   standing: RefundStanding | undefined,
   refunds: AssociationRefund[]
-): AssociationRefund | null {
-  const id = standing?.unconfirmedRefundId;
-  return id ? (refunds.find((r) => r.id === id) ?? null) : null;
+): { refund: AssociationRefund; action: 'check' | 'record' } | null {
+  const open = standing?.openRefund;
+  if (!open || open.state === 'in-progress') return null;
+  const refund = refunds.find((r) => r.id === open.id);
+  if (!refund) return null;
+  return { refund, action: open.state === 'unrecorded' ? 'record' : 'check' };
 }
 
 /**

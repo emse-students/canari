@@ -143,6 +143,21 @@ describe('RefundsService', () => {
       });
     });
 
+    // A 2xx is a refund only when core says ok: true - any other body is unreadable, never a refund.
+    it.each([
+      ['an empty object', {}],
+      ['an empty string', ''],
+      ['null', null],
+      ['ok false', { ok: false }],
+      ['ok as a string', { ok: 'true' }],
+    ])('a 2xx carrying %s is kept pending, never a refund', async (_name, data) => {
+      jest.spyOn(axios, 'post').mockResolvedValue({ data });
+      await expect(ask(make().service)).resolves.toEqual({
+        status: 'pending',
+        outcome: 'no-answer',
+      });
+    });
+
     it.each([[504], [502], [500], [503], [undefined]])(
       'a %s may have refunded: kept pending, never a refusal',
       async (status) => {
@@ -153,6 +168,117 @@ describe('RefundsService', () => {
         });
       }
     );
+  });
+});
+
+describe('RefundsService - the manager check and the recording of an answer', () => {
+  beforeEach(() => {
+    for (const level of ['log', 'warn', 'error', 'debug'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+    }
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  /** A service whose repository answers `row` and whose sweep finds nothing. */
+  function withRow(row: Record<string, unknown> | null) {
+    const refundRepo = {
+      manager: { query: jest.fn().mockResolvedValue([]) },
+      findOne: jest.fn().mockResolvedValue(row),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    const service = new RefundsService(refundRepo as any, {} as any, { tell: jest.fn() } as any);
+    const settle = jest
+      .spyOn(service as unknown as { settle: () => Promise<unknown> }, 'settle')
+      .mockImplementation(async () => ({ ...row, status: 'confirmed', outcome: 'refunded' }));
+    return { service, refundRepo, settle };
+  }
+  const pending = (outcome: string | null) => ({
+    id: 'r1',
+    associationId: 'a1',
+    purchaseRecordId: 'p1',
+    kind: 'total',
+    amountCents: 500,
+    reason: 'r',
+    status: 'pending',
+    outcome,
+    requestedAt: new Date(),
+  });
+
+  it.each([[undefined], ['true'], [1], [null]])(
+    'a declaration that is not a boolean (%j) is LYDIA_REFUND_INVALID, never "not refunded"',
+    async (refunded) => {
+      const { service, settle } = withRow(pending('no-answer'));
+      await expect(service.resolve('a1', 'r1', 'u1', refunded)).rejects.toMatchObject({
+        status: 400,
+        response: { code: LYDIA_REFUND_INVALID },
+      });
+      expect(settle).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a refund still being asked (no outcome) cannot be declared at all', async () => {
+    const { service, settle } = withRow(pending(null));
+    for (const refunded of [true, false]) {
+      await expect(service.resolve('a1', 'r1', 'u1', refunded)).rejects.toMatchObject({
+        status: 409,
+        response: { code: LYDIA_REFUND_IN_FLIGHT },
+      });
+    }
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it('a refund Lydia never answered (no-answer) is declared either way', async () => {
+    const { service, settle } = withRow(pending('no-answer'));
+    await service.resolve('a1', 'r1', 'u1', false);
+    expect(settle).toHaveBeenCalledWith(
+      'r1',
+      { status: 'refused', outcome: 'declared-not-refunded' },
+      'u1'
+    );
+  });
+
+  it('a refund Lydia confirmed but Canari did not record may only be recorded', async () => {
+    const { service, settle } = withRow(pending('refunded-unrecorded'));
+    await expect(service.resolve('a1', 'r1', 'u1', false)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_REFUND_NOT_PENDING },
+    });
+    await service.resolve('a1', 'r1', 'u1', true);
+    expect(settle).toHaveBeenCalledWith('r1', { status: 'confirmed', outcome: 'refunded' }, 'u1');
+  });
+
+  it('a refund of another association is not found, and says so in the log', async () => {
+    const { service } = withRow(null);
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    await expect(service.resolve('a1', 'r1', 'u1', true)).rejects.toMatchObject({ status: 404 });
+    expect(warn.mock.calls.map(String).join(' | ')).toContain('not found');
+  });
+
+  it('Lydia confirmed and the write failed: marked refunded-unrecorded on its own, logged ERROR', async () => {
+    const { service, refundRepo, settle } = withRow(pending(null));
+    settle.mockRejectedValueOnce(new Error('deadlock'));
+    const error = jest.spyOn(Logger.prototype, 'error');
+    const recorded = await (
+      service as unknown as { record(r: unknown, o: unknown): Promise<{ outcome: string }> }
+    ).record(pending(null), { status: 'confirmed', outcome: 'refunded' });
+    expect(recorded.outcome).toBe('refunded-unrecorded');
+    expect(refundRepo.update).toHaveBeenCalledWith(
+      { id: 'r1', status: 'pending' },
+      expect.objectContaining({ outcome: 'refunded-unrecorded' })
+    );
+    expect(error.mock.calls.map(String).join(' | ')).toContain('Lydia refunded, recording failed');
+  });
+
+  it('a refusal whose write failed is rethrown: the row stays without outcome, for the sweep', async () => {
+    const { service, refundRepo, settle } = withRow(pending(null));
+    settle.mockRejectedValueOnce(new Error('deadlock'));
+    await expect(
+      (service as unknown as { record(r: unknown, o: unknown): Promise<unknown> }).record(
+        pending(null),
+        { status: 'refused', outcome: 'LYDIA_REFUND_REJECTED' }
+      )
+    ).rejects.toThrow('deadlock');
+    expect(refundRepo.update).not.toHaveBeenCalled();
   });
 });
 

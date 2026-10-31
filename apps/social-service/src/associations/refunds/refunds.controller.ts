@@ -57,7 +57,7 @@ export class RefundsController {
 
   /**
    * Settles a refund Lydia never confirmed, after the manager read Lydia's own statement:
-   * `{ refunded: boolean }`.
+   * `{ refunded: boolean }` - anything but a boolean is `LYDIA_REFUND_INVALID`, never read as "no".
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/refunds/:refundId/resolve')
@@ -70,7 +70,7 @@ export class RefundsController {
     @Body() body: { refunded?: unknown }
   ) {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
-    return this.refunds.resolve(id, refundId, userId, body?.refunded === true);
+    return this.refunds.resolve(id, refundId, userId, body?.refunded);
   }
 
   /**

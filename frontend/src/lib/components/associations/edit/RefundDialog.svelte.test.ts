@@ -45,7 +45,7 @@ const standing = (over: Partial<RefundStanding> = {}): RefundStanding => ({
   withdrawal: 'membership',
   paidCents: 3000,
   refundedCents: 0,
-  unconfirmedRefundId: null,
+  openRefund: null,
   ...over,
 });
 
@@ -110,7 +110,7 @@ describe('RefundDialog', () => {
   });
 
   it('a total refund names what it withdraws before it is sent, then refunds the whole amount', async () => {
-    state.refund.mockResolvedValue({});
+    state.refund.mockResolvedValue({ state: 'refunded', refusal: null });
     const { onSettled } = render();
     type(q<HTMLInputElement>('#refund-reason')!, 'Event cancelled');
     q<HTMLButtonElement>('[data-testid="refund-continue"]')!.click();
@@ -131,7 +131,7 @@ describe('RefundDialog', () => {
   });
 
   it('a partial refund is checked against what is left, sends cents, and withdraws nothing', async () => {
-    state.refund.mockResolvedValue({});
+    state.refund.mockResolvedValue({ state: 'refunded', refusal: null });
     render(standing({ refundedCents: 1000 }));
     // Something was refunded already: only a partial refund is offered.
     expect(q('input[value="total"]')).toBeNull();
@@ -159,6 +159,31 @@ describe('RefundDialog', () => {
     expect(outcome.textContent).toContain(m.asso_refund_unconfirmed());
     expect(outcome.dataset.tone).toBe('wait');
   });
+
+  it.each([
+    ['refused', { state: 'refused', refusal: 'LYDIA_REFUND_REJECTED' }, 'error'],
+    ['unconfirmed', { state: 'unconfirmed', refusal: null }, 'wait'],
+    ['in-progress', { state: 'in-progress', refusal: null }, 'wait'],
+    ['unrecorded', { state: 'unrecorded', refusal: null }, 'wait'],
+  ] as const)(
+    'a 200 whose refund is %s is worded by its state, never as a refund made',
+    async (_name, view, tone) => {
+      state.refund.mockResolvedValue(view);
+      render();
+      type(q<HTMLInputElement>('#refund-reason')!, 'Event cancelled');
+      await confirmAndSend();
+      const outcome = q<HTMLElement>('[data-testid="refund-outcome"]')!;
+      expect(outcome.dataset.tone).toBe(tone);
+      expect(outcome.textContent).not.toContain(m.asso_refund_done());
+      const words = {
+        refused: m.asso_refund_refused_by_lydia(),
+        unconfirmed: m.asso_refund_unconfirmed(),
+        'in-progress': m.asso_refund_in_progress(),
+        unrecorded: m.asso_refund_unrecorded(),
+      }[view.state];
+      expect(outcome.textContent).toContain(words);
+    }
+  );
 
   it('a refusal is worded, and the code itself never shows', async () => {
     state.refund.mockRejectedValue(new SocialApiError('x', 'LYDIA_REFUND_EXCEEDS_PAID', 409));

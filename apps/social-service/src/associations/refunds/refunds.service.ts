@@ -6,11 +6,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  type OnApplicationBootstrap,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, type QueryRunner, Repository } from 'typeorm';
 import { coreUrl } from '../../internal/service-urls';
 import { internalCoreRequestConfig } from '../../internal/core-request';
 import { lockBuyerTiers } from '../../users/buyer-tier-lock';
@@ -21,6 +22,8 @@ import {
   RECEIVED_PURCHASE_STATUSES,
 } from '../../users/entities/purchase-record.entity';
 import { AssociationsService } from '../associations.service';
+import { approvedDelegateIds } from '../payment-delegation.util';
+import { productOrderRef } from '../product-checkout';
 import { LydiaRefund, type RefundKind } from './lydia-refund.entity';
 import { LydiaRefundNotifier } from './lydia-refund-notifier.service';
 import {
@@ -37,6 +40,17 @@ import {
 
 /** How long social waits on core's refund route: over core's own 60 s bound on Lydia. */
 export const CORE_REFUND_TIMEOUT_MS = 90_000;
+
+/**
+ * The session-level advisory lock a refund call holds from BEFORE its `pending` row commits until its
+ * outcome is written (`refund`). A crashed process loses its connection and with it the lock, so a
+ * `pending` row with no outcome whose lock is FREE is proven abandoned - no call is in flight for it
+ * on any replica - and `sweepAbandoned` marks it `no-answer`. No clock decides it.
+ */
+export const REFUND_CALL_LOCK_KEY = `hashtextextended('lydia-refund-call:' || $1::text, 0)`;
+
+/** What a refund Lydia confirmed but Canari failed to record is marked (`markUnrecorded`). */
+export const REFUNDED_UNRECORDED = 'refunded-unrecorded';
 
 /** The longest reason a manager may type; the column's width. */
 export const REFUND_REASON_MAX_LENGTH = 500;
@@ -58,8 +72,8 @@ export interface RefundView {
   kind: RefundKind;
   amountCents: number;
   reason: string;
-  /** `refunded` (confirmed), `refused` (nothing refunded), `unconfirmed` (Lydia never answered). */
-  state: 'refunded' | 'refused' | 'unconfirmed';
+  /** Where the refund stands (`RefundViewState`). */
+  state: RefundViewState;
   /** The typed code of a refusal, so the screen words it; null otherwise. */
   refusal: string | null;
   sideEffect: string | null;
@@ -67,6 +81,16 @@ export interface RefundView {
   answeredAt: string | null;
   resolvedAt: string | null;
 }
+
+/**
+ * Where a refund stands, as a manager's screen words it:
+ * - `refunded`: Lydia confirmed (or a manager declared so after checking Lydia);
+ * - `refused`: nothing was refunded;
+ * - `in-progress`: Lydia is being asked right now - nothing to check yet;
+ * - `unconfirmed`: Lydia never answered - a manager checks Lydia before any new refund;
+ * - `unrecorded`: Lydia confirmed, but Canari failed to record it - a manager records it.
+ */
+export type RefundViewState = 'refunded' | 'refused' | 'in-progress' | 'unconfirmed' | 'unrecorded';
 
 /** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
 export interface StatementLine {
@@ -96,8 +120,8 @@ export interface RefundStanding {
   withdrawal: RefundWithdrawal | null;
   paidCents: number;
   refundedCents: number;
-  /** The id of the refund still unconfirmed, which blocks the next one; null when none. */
-  unconfirmedRefundId: string | null;
+  /** The refund not settled yet, which blocks the next one, and where it stands; null when none. */
+  openRefund: { id: string; state: 'in-progress' | 'unconfirmed' | 'unrecorded' } | null;
 }
 
 /** The Lydia transaction a payment was, and what a total refund of it would withdraw. */
@@ -129,16 +153,16 @@ type CallOutcome =
  * The sum of `pending` and `confirmed` refunds never exceeds the amount paid, decided under that lock.
  *
  * AN UNKNOWN OUTCOME IS NEVER RETRIED BLIND. Lydia's `transaction/refund` carries no idempotency key,
- * and Lydia offers Canari NO read of a refund: `transaction/refunds` needs a registered Lydia user
- * (measured on homologation 2026-10-31: error 2223 "unknown user" for a phone, 105 for a cashier added
- * by Canari) and `request/state` says nothing of refunds. So a refund Lydia did not answer stays
- * `pending` (`LYDIA_REFUND_UNCONFIRMED`), and the RE-CHECK is a manager reading Lydia's own statement
- * (the Lydia Pro app) and declaring what they see (`resolve`): only then can a new refund be asked.
+ * and Lydia offers Canari no read of a refund. So a refund Lydia did not answer stays `pending`
+ * (`LYDIA_REFUND_UNCONFIRMED`), and the RE-CHECK is a manager reading Lydia's own statement (the
+ * Lydia Pro app) and declaring what they see (`resolve`): only then can a new refund be asked. While
+ * the call is still running (no outcome yet, its call lock held) nothing may be declared at all.
  *
- * A TOTAL refund withdraws what the payment bought (`withdraw`); a PARTIAL one withdraws nothing.
+ * A TOTAL refund withdraws what the payment bought (`withdraw`); a PARTIAL one withdraws nothing -
+ * and partial refunds that add up to the whole payment withdraw nothing either.
  */
 @Injectable()
-export class RefundsService {
+export class RefundsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(RefundsService.name);
 
   constructor(
@@ -166,6 +190,9 @@ export class RefundsService {
     associationId: string
   ): Promise<{ standings: RefundStanding[]; refunds: RefundView[] }> {
     const manager = this.refundRepo.manager;
+    // A process that died mid-call left its row with no outcome: proven abandoned, it reads as
+    // unconfirmed now rather than "in progress" until the next boot.
+    await this.sweepAbandoned();
     const business = await this.businessOf(manager, associationId);
     const records = await manager.find(PurchaseRecord, {
       where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
@@ -193,7 +220,7 @@ export class RefundsService {
         refundedCents: mine
           .filter((r) => r.status === 'confirmed')
           .reduce((sum, r) => sum + r.amountCents, 0),
-        unconfirmedRefundId: mine.find((r) => r.status === 'pending')?.id ?? null,
+        openRefund: openRefundOf(mine),
       });
     }
     this.logger.debug(
@@ -204,11 +231,11 @@ export class RefundsService {
   }
 
   /**
-   * Refunds a payment, total or partial. In order: the input is checked; ONE transaction locks the
-   * payment's record, finds this key's own row (a replay answers it and calls nothing), refuses while
-   * another refund is unconfirmed, decides refundability and the sum cap, and writes the `pending`
-   * row; core asks Lydia; the outcome is written (`settle`). Throws the typed refusals of
-   * `refund-codes.ts`; an unknown outcome is the 504 `LYDIA_REFUND_UNCONFIRMED`, the row kept pending.
+   * Refunds a payment, total or partial. In order: the input is checked; ONE transaction makes the
+   * claim (`claim`: a replay answers its own row and calls nothing) and takes the call lock; core
+   * asks Lydia; the outcome is written (`record`). Throws the typed refusals of `refund-codes.ts`;
+   * an unknown outcome is the 504 `LYDIA_REFUND_UNCONFIRMED`, the row kept pending. A refund Lydia
+   * confirmed that Canari failed to record answers its view, `unrecorded`.
    */
   async refund(
     associationId: string,
@@ -234,126 +261,186 @@ export class RefundsService {
         message: 'A refund needs a kind, a reason and, when partial, a positive amount in cents',
       });
     }
-    const claim = await this.refundRepo.manager.transaction(async (manager) => {
-      const record = await manager.findOne(PurchaseRecord, {
-        where: { id: purchaseRecordId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!record) throw new NotFoundException('Payment not found');
-      const own = await manager.findOne(LydiaRefund, {
-        where: { purchaseRecordId, idempotencyKey: input.idempotencyKey },
-      });
-      if (own) return { replay: own };
-      const pending = await manager.findOne(LydiaRefund, {
-        where: { purchaseRecordId, status: 'pending' },
-      });
-      if (pending) {
-        this.logger.warn(
-          `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: refund ${pending.id} is unconfirmed`
-        );
-        throw new ConflictException({
-          code: LYDIA_REFUND_IN_FLIGHT,
-          message: 'Another refund of this payment is still unconfirmed',
-        });
-      }
-      const target = await this.targetOf(manager, record);
-      const business = await this.businessOf(manager, associationId);
-      const refusal = refusalOf(target, business);
-      if (refusal || !target.ok) {
-        this.logger.warn(
-          `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: not refundable (${refusal})`
-        );
-        throw new ConflictException({
-          code: LYDIA_REFUND_NOT_REFUNDABLE,
-          reason: refusal,
-          message: 'This payment cannot be refunded from Canari',
-        });
-      }
-      const { sum } = (await manager
-        .createQueryBuilder(LydiaRefund, 'r')
-        .select('COALESCE(SUM(r."amountCents"), 0)::int', 'sum')
-        .where('r."purchaseRecordId" = :id', { id: purchaseRecordId })
-        .andWhere(`r.status IN ('pending', 'confirmed')`)
-        .getRawOne<{ sum: number }>()) ?? { sum: 0 };
-      // A TOTAL refund is the whole payment, with nothing refunded before: it is what withdraws.
-      const amountCents = input.kind === 'total' ? record.amountCents : (input.amountCents ?? 0);
-      if ((input.kind === 'total' && sum > 0) || sum + amountCents > record.amountCents) {
-        this.logger.warn(
-          `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: ${amountCents} cents over ` +
-            `${sum} already refunded exceeds the ${record.amountCents} paid`
-        );
-        throw new ConflictException({
-          code: LYDIA_REFUND_EXCEEDS_PAID,
-          message: 'The refunds would exceed the amount paid',
-          remainingCents: Math.max(0, record.amountCents - sum),
-        });
-      }
-      const row = await manager.save(
-        manager.create(LydiaRefund, {
-          purchaseRecordId,
+    // ONE connection carries the whole refund: the claim's transaction runs on it, and the call lock
+    // taken INSIDE that transaction - session level, so it outlives the commit - is held on it until
+    // the outcome is written. A committed `pending` row with no outcome therefore always has its lock
+    // held by a live call, or is abandoned (`sweepAbandoned`): there is no window between the two.
+    const runner = this.refundRepo.manager.connection.createQueryRunner();
+    await runner.connect();
+    let locked: string | null = null;
+    try {
+      let claim: { replay: LydiaRefund } | { row: LydiaRefund };
+      await runner.startTransaction();
+      try {
+        claim = await this.claim(
+          runner.manager,
           associationId,
-          vendorToken: target.vendorToken,
-          orderRef: target.orderRef,
-          kind: input.kind,
-          amountCents,
-          reason,
-          idempotencyKey: input.idempotencyKey,
-          status: 'pending',
-          requestedByUserId: actorId,
-        })
-      );
-      this.logger.log(
-        `[LYDIA-REFUND] ${row.id}: ${input.kind} refund of ${amountCents} cents on payment ` +
-          `${purchaseRecordId} asked by ${actorId.slice(0, 8)} - written pending before Lydia is asked`
-      );
-      return { row };
-    });
-    if ('replay' in claim) {
-      this.logger.log(
-        `[LYDIA-REFUND] ${claim.replay.id}: the same request again (${claim.replay.status}) - nothing sent`
-      );
-      return toView(claim.replay);
+          purchaseRecordId,
+          actorId,
+          input,
+          reason
+        );
+        if ('row' in claim) {
+          await runner.query(`SELECT pg_advisory_lock(${REFUND_CALL_LOCK_KEY})`, [claim.row.id]);
+          locked = claim.row.id;
+        }
+        await runner.commitTransaction();
+      } catch (err: unknown) {
+        if (runner.isTransactionActive) await runner.rollbackTransaction();
+        throw err;
+      }
+      if ('replay' in claim) {
+        // The SAME request again: its row answers, whatever state it is in - the screen reads `state`.
+        this.logger.log(
+          `[LYDIA-REFUND] ${claim.replay.id}: the same request again (${viewStateOf(claim.replay)}) - nothing sent`
+        );
+        return toView(claim.replay);
+      }
+      const outcome = await this.askLydia(claim.row);
+      return answerOf(await this.record(claim.row, outcome));
+    } finally {
+      if (locked) await this.unlockCall(runner, locked);
+      await runner.release();
     }
+  }
 
-    const outcome = await this.askLydia(claim.row);
-    const settled = await this.settle(claim.row.id, outcome, null);
-    if (settled.status === 'pending') {
-      throw new GatewayTimeoutException({
-        code: CORE_REFUND_CODES.unconfirmed,
-        refund: toView(settled),
-        message: 'Lydia did not confirm the refund; it is checked before any new one',
-      });
+  /**
+   * The claim of `refund`, inside its transaction: locks the payment's record, checks it is the
+   * association's own payment or an approved delegate's (its Business is the one refunded), answers
+   * this key's own row as a replay, refuses while another refund is not settled, decides
+   * refundability and the sum cap, and writes the `pending` row.
+   */
+  private async claim(
+    manager: EntityManager,
+    associationId: string,
+    purchaseRecordId: string,
+    actorId: string,
+    input: RefundInput,
+    reason: string
+  ): Promise<{ replay: LydiaRefund } | { row: LydiaRefund }> {
+    const record = await manager.findOne(PurchaseRecord, {
+      where: { id: purchaseRecordId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!record) {
+      this.logger.warn(`[LYDIA-REFUND] refused: payment ${purchaseRecordId} not found`);
+      throw new NotFoundException('Payment not found');
     }
-    if (settled.status === 'refused' && settled.outcome === 'not-sent') {
-      throw new ServiceUnavailableException({
-        code: 'PAYMENT_SERVICE_NOT_READY',
-        refund: toView(settled),
-        message: 'The refund could not be sent; nothing was refunded',
-      });
+    // EXPLICIT OWNERSHIP, not only a matching Business: the payment is this association's, or one of
+    // an association whose payments this one's Business serves by an APPROVED delegation.
+    if (
+      record.associationId !== associationId &&
+      !(await approvedDelegateIds(manager, associationId)).includes(record.associationId)
+    ) {
+      this.logger.warn(
+        `[LYDIA-REFUND] refused: payment ${purchaseRecordId} is neither ${associationId}'s nor an ` +
+          'approved delegate of it'
+      );
+      throw new NotFoundException('Payment not found');
     }
-    if (settled.status === 'refused') {
+    const own = await manager.findOne(LydiaRefund, {
+      where: { purchaseRecordId, idempotencyKey: input.idempotencyKey },
+    });
+    if (own) return { replay: own };
+    const pending = await manager.findOne(LydiaRefund, {
+      where: { purchaseRecordId, status: 'pending' },
+    });
+    if (pending) {
+      this.logger.warn(
+        `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: refund ${pending.id} is not settled ` +
+          `(${viewStateOf(pending)})`
+      );
       throw new ConflictException({
-        code: settled.outcome,
-        refund: toView(settled),
-        message: 'Lydia refused the refund; nothing was refunded',
+        code: LYDIA_REFUND_IN_FLIGHT,
+        message: 'Another refund of this payment is not settled',
       });
     }
-    return toView(settled);
+    const target = await this.targetOf(manager, record);
+    const business = await this.businessOf(manager, associationId);
+    const refusal = refusalOf(target, business);
+    if (refusal || !target.ok) {
+      this.logger.warn(
+        `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: not refundable (${refusal})`
+      );
+      throw new ConflictException({
+        code: LYDIA_REFUND_NOT_REFUNDABLE,
+        reason: refusal,
+        message: 'This payment cannot be refunded from Canari',
+      });
+    }
+    const { sum } = (await manager
+      .createQueryBuilder(LydiaRefund, 'r')
+      .select('COALESCE(SUM(r."amountCents"), 0)::int', 'sum')
+      .where('r."purchaseRecordId" = :id', { id: purchaseRecordId })
+      .andWhere(`r.status IN ('pending', 'confirmed')`)
+      .getRawOne<{ sum: number }>()) ?? { sum: 0 };
+    // A TOTAL refund is the whole payment, with nothing refunded before: it is what withdraws.
+    const amountCents = input.kind === 'total' ? record.amountCents : (input.amountCents ?? 0);
+    if ((input.kind === 'total' && sum > 0) || sum + amountCents > record.amountCents) {
+      this.logger.warn(
+        `[LYDIA-REFUND] refused on payment ${purchaseRecordId}: ${amountCents} cents over ` +
+          `${sum} already refunded exceeds the ${record.amountCents} paid`
+      );
+      throw new ConflictException({
+        code: LYDIA_REFUND_EXCEEDS_PAID,
+        message: 'The refunds would exceed the amount paid',
+        remainingCents: Math.max(0, record.amountCents - sum),
+      });
+    }
+    const row = await manager.save(
+      manager.create(LydiaRefund, {
+        purchaseRecordId,
+        associationId,
+        vendorToken: target.vendorToken,
+        orderRef: target.orderRef,
+        kind: input.kind,
+        amountCents,
+        reason,
+        idempotencyKey: input.idempotencyKey,
+        status: 'pending',
+        requestedByUserId: actorId,
+      })
+    );
+    this.logger.log(
+      `[LYDIA-REFUND] ${row.id}: ${input.kind} refund of ${amountCents} cents on payment ` +
+        `${purchaseRecordId} asked by ${actorId.slice(0, 8)} - written pending before Lydia is asked`
+    );
+    return { row };
   }
 
   /**
    * THE RE-CHECK of a refund Lydia never confirmed: a manager who read Lydia's own statement declares
    * whether the money went back (`refunded: true` - confirmed, and a total one withdraws now) or not
    * (refused, and a new refund may be asked). Audited: who, when, and `declared-...` as the outcome.
+   * Asked ONLY of a refund whose call is over without an answer (`no-answer`): one still being asked
+   * is `LYDIA_REFUND_IN_FLIGHT`, since declaring it not refunded would let a second refund overtake
+   * a first that may still succeed. A refund Lydia confirmed but Canari failed to record
+   * (`refunded-unrecorded`) may only be recorded (`refunded: true`), keeping Lydia's own answer.
    */
   async resolve(
     associationId: string,
     refundId: string,
     actorId: string,
-    refunded: boolean
+    refunded: unknown
   ): Promise<RefundView> {
+    // A declaration is a boolean or nothing: a missing body or `"true"` read as "not refunded" would
+    // free the payment for a second refund on a typo.
+    if (typeof refunded !== 'boolean') {
+      this.logger.warn(`[LYDIA-REFUND] ${refundId}: check refused, refunded is not a boolean`);
+      throw new BadRequestException({
+        code: LYDIA_REFUND_INVALID,
+        message: 'A check needs refunded: true or false',
+      });
+    }
+    // A process that died mid-call left its row with no outcome: proven abandoned, it is checkable.
+    await this.sweepAbandoned();
     const row = await this.refundRepo.findOne({ where: { id: refundId, associationId } });
-    if (!row) throw new NotFoundException('Refund not found');
+    if (!row) {
+      this.logger.warn(
+        `[LYDIA-REFUND] check refused: refund ${refundId} not found for ${associationId}`
+      );
+      throw new NotFoundException('Refund not found');
+    }
     if (row.status !== 'pending') {
       this.logger.warn(`[LYDIA-REFUND] ${refundId}: settle refused, it is already ${row.status}`);
       throw new ConflictException({
@@ -361,6 +448,26 @@ export class RefundsService {
         message: 'This refund is no longer unconfirmed',
       });
     }
+    if (row.outcome === null) {
+      this.logger.warn(`[LYDIA-REFUND] ${refundId}: settle refused, Lydia is still being asked`);
+      throw new ConflictException({
+        code: LYDIA_REFUND_IN_FLIGHT,
+        message: 'Lydia is still being asked about this refund',
+      });
+    }
+    if (row.outcome === REFUNDED_UNRECORDED && !refunded) {
+      this.logger.warn(
+        `[LYDIA-REFUND] ${refundId}: settle refused, Lydia confirmed it - it can only be recorded`
+      );
+      throw new ConflictException({
+        code: LYDIA_REFUND_NOT_PENDING,
+        message: 'Lydia confirmed this refund',
+      });
+    }
+    this.logger.log(
+      `[LYDIA-REFUND] ${refundId}: ${actorId.slice(0, 8)} declares refunded=${refunded} ` +
+        `(was ${row.outcome})`
+    );
     const settled = await this.settle(
       refundId,
       refunded
@@ -383,13 +490,14 @@ export class RefundsService {
    * core sent nothing; anything else - a 504, a 5xx, no answer at all - may have refunded.
    */
   private async askLydia(row: LydiaRefund): Promise<CallOutcome> {
+    let answer: unknown;
     try {
-      await axios.post(
+      const res = await axios.post(
         coreUrl('payments/refund'),
         { vendorToken: row.vendorToken, orderRef: row.orderRef, amountCents: row.amountCents },
         { ...internalCoreRequestConfig(), timeout: CORE_REFUND_TIMEOUT_MS }
       );
-      return { status: 'confirmed', outcome: 'refunded' };
+      answer = res?.data;
     } catch (err: unknown) {
       const response = (err as { response?: { status?: unknown; data?: unknown } }).response;
       const status = typeof response?.status === 'number' ? response.status : null;
@@ -415,6 +523,130 @@ export class RefundsService {
           'refunded; kept pending until a manager checks Lydia'
       );
       return { status: 'pending', outcome: 'no-answer' };
+    }
+    // A 2xx is a refund ONLY when core says so: any other body is an answer nobody can read.
+    if (!answer || typeof answer !== 'object' || (answer as { ok?: unknown }).ok !== true) {
+      this.logger.error(
+        `[LYDIA-REFUND] ${row.id}: core answered 2xx without ok=true - Lydia MAY have refunded; ` +
+          'kept pending until a manager checks Lydia'
+      );
+      return { status: 'pending', outcome: 'no-answer' };
+    }
+    return { status: 'confirmed', outcome: 'refunded' };
+  }
+
+  /**
+   * Writes the outcome of the call `refund` made (`settle`). When Lydia CONFIRMED and the write
+   * fails, the money is gone and Canari does not say so: the row is marked `refunded-unrecorded` in a
+   * transaction of its own (`markUnrecorded`), which blocks every new refund of the payment and shows
+   * managers a refund to record. Any other failed write rethrows: the row keeps no outcome, and once
+   * the call lock is released `sweepAbandoned` makes it a refund to check.
+   */
+  private async record(row: LydiaRefund, outcome: CallOutcome): Promise<LydiaRefund> {
+    try {
+      return await this.settle(row.id, outcome, null);
+    } catch (err: unknown) {
+      if (outcome.status !== 'confirmed') {
+        this.logger.error(
+          `[LYDIA-REFUND] ${row.id}: recording the ${outcome.outcome} answer failed: ${errorText(err)}`
+        );
+        throw err;
+      }
+      this.logger.error(
+        `[LYDIA-REFUND] ${row.id}: Lydia refunded, recording failed: ${errorText(err)} - marked ` +
+          `${REFUNDED_UNRECORDED}, every new refund of payment ${row.purchaseRecordId} is blocked`
+      );
+      return this.markUnrecorded(row);
+    }
+  }
+
+  /** `record`'s mark of a refund Lydia confirmed that Canari failed to record. */
+  private async markUnrecorded(row: LydiaRefund): Promise<LydiaRefund> {
+    const answeredAt = new Date();
+    try {
+      await this.refundRepo.update(
+        { id: row.id, status: 'pending' },
+        { outcome: REFUNDED_UNRECORDED, answeredAt }
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `[LYDIA-REFUND] ${row.id}: Lydia refunded and marking it unrecorded failed too: ` +
+          `${errorText(err)} - it will read as a refund to check against Lydia`
+      );
+      throw err;
+    }
+    return { ...row, outcome: REFUNDED_UNRECORDED, answeredAt };
+  }
+
+  /** Releases `refund`'s call lock; a failure is logged, never thrown over the refund's answer. */
+  private async unlockCall(runner: QueryRunner, refundId: string): Promise<void> {
+    try {
+      const [row] = (await runner.query(
+        `SELECT pg_advisory_unlock(${REFUND_CALL_LOCK_KEY}) AS freed`,
+        [refundId]
+      )) as { freed: boolean }[];
+      if (!row?.freed) {
+        this.logger.error(`[LYDIA-REFUND] ${refundId}: the call lock was not held at release`);
+      }
+    } catch (err: unknown) {
+      this.logger.error(
+        `[LYDIA-REFUND] ${refundId}: releasing the call lock failed: ${errorText(err)}`
+      );
+    }
+  }
+
+  /**
+   * THE SWEEP OF ABANDONED CALLS. A `pending` row with no outcome is a call in flight - or one whose
+   * process died before writing anything. The call lock tells them apart (`REFUND_CALL_LOCK_KEY`):
+   * taken before the row committed and held until its outcome is written, it is free only when no
+   * call holds it, on this replica or any other (a deploy runs two side by side). Each such row is
+   * marked `no-answer` - Lydia MAY have refunded - so a manager can check it. Run at boot, and before
+   * the refunds are read or checked, so an abandoned row never waits for the next deploy.
+   */
+  async sweepAbandoned(): Promise<number> {
+    const manager = this.refundRepo.manager;
+    const open = (await manager.query(
+      `SELECT id FROM lydia_refunds WHERE status = 'pending' AND "outcome" IS NULL`
+    )) as { id: string }[];
+    let swept = 0;
+    for (const { id } of open) {
+      try {
+        const marked = await manager.transaction(async (tx) => {
+          const [lock] = (await tx.query(
+            `SELECT pg_try_advisory_xact_lock(${REFUND_CALL_LOCK_KEY}) AS free`,
+            [id]
+          )) as { free: boolean }[];
+          if (!lock?.free) return false;
+          const rows: unknown[] = await tx.query(
+            `UPDATE lydia_refunds SET "outcome" = 'no-answer'
+              WHERE id = $1 AND status = 'pending' AND "outcome" IS NULL RETURNING id`,
+            [id]
+          );
+          return (Array.isArray(rows[0]) ? (rows[0] as unknown[]) : rows).length > 0;
+        });
+        if (marked) {
+          swept++;
+          this.logger.error(
+            `[LYDIA-REFUND] ${id}: its call was abandoned (no process holds it) - marked no-answer, ` +
+              'Lydia MAY have refunded; a manager checks Lydia'
+          );
+        }
+      } catch (err: unknown) {
+        this.logger.error(`[LYDIA-REFUND] ${id}: sweeping it failed: ${errorText(err)}`);
+      }
+    }
+    if (open.length) {
+      this.logger.debug(`[LYDIA-REFUND] sweep: ${swept} of ${open.length} open call(s) abandoned`);
+    }
+    return swept;
+  }
+
+  /** The sweep at boot: a call this process was making when it died is abandoned now. */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.sweepAbandoned();
+    } catch (err: unknown) {
+      this.logger.error(`[LYDIA-REFUND] the boot sweep failed: ${errorText(err)}`);
     }
   }
 
@@ -442,7 +674,19 @@ export class RefundsService {
         where: { id: refundId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!row || row.status !== 'pending') return { row: row ?? head, changed: false };
+      if (!row || row.status !== 'pending') {
+        // A LATE ANSWER: Lydia's own word arriving after the row was settled (by a manager's
+        // declaration, typically). Never dropped: logged, and kept on the row beside the first.
+        if (row && !resolvedBy && outcome.status !== 'pending') {
+          this.logger.error(
+            `[LYDIA-REFUND] ${row.id}: Lydia answered ${outcome.outcome} AFTER the refund was ` +
+              `settled as ${row.status} (${row.outcome}) - kept as its late outcome`
+          );
+          await manager.update(LydiaRefund, { id: row.id }, { lateOutcome: outcome.outcome });
+          return { row: { ...row, lateOutcome: outcome.outcome }, changed: false };
+        }
+        return { row: row ?? head, changed: false };
+      }
       if (outcome.status === 'pending') {
         await manager.update(LydiaRefund, { id: row.id }, { outcome: outcome.outcome });
         return { row: { ...row, outcome: outcome.outcome }, changed: false };
@@ -450,10 +694,13 @@ export class RefundsService {
       const now = new Date();
       const patch: Partial<LydiaRefund> = {
         status: outcome.status,
+        // Recording a refund Lydia confirmed keeps Lydia's own answer, beside the manager's name.
         outcome: resolvedBy
-          ? outcome.status === 'confirmed'
-            ? 'declared-refunded'
-            : 'declared-not-refunded'
+          ? row.outcome === REFUNDED_UNRECORDED
+            ? 'refunded'
+            : outcome.status === 'confirmed'
+              ? 'declared-refunded'
+              : 'declared-not-refunded'
           : outcome.outcome,
         ...(resolvedBy ? { resolvedByUserId: resolvedBy, resolvedAt: now } : { answeredAt: now }),
       };
@@ -495,14 +742,15 @@ export class RefundsService {
     }
     const target = await this.targetOf(manager, record);
     const withdrawal: RefundWithdrawal = target.ok ? target.withdrawal : 'unidentified';
+    // The payment no longer counts as one, whatever it bought: it was refunded in full.
+    await manager.update(PurchaseRecord, { id: record.id }, { status: 'refunded' });
     if (withdrawal === 'unidentified') {
       this.logger.error(
         `[LYDIA-REFUND] ${refund.id}: product of payment ${record.id} is gone - what it bought ` +
-          'cannot be told (a Cercle top-up or not), so NOTHING is withdrawn; the money went back'
+          'cannot be told (a Cercle top-up or not), so no tier or seat is touched; the payment is refunded'
       );
       return 'not-applied-unidentified';
     }
-    await manager.update(PurchaseRecord, { id: record.id }, { status: 'refunded' });
     if (withdrawal === 'topup') {
       this.logger.warn(
         `[LYDIA-REFUND] ${refund.id}: a Cercle top-up refunded - the balance at the Cercle is NOT debited`
@@ -634,7 +882,7 @@ export class RefundsService {
                 : 'shop';
         out.set(record.id, {
           ok: true,
-          orderRef: `product:${checkout.productId}:${checkout.id}`,
+          orderRef: productOrderRef(checkout.productId, checkout.id),
           vendorToken: checkout.vendorToken,
           withdrawal,
           submissionId: null,
@@ -689,10 +937,15 @@ export class RefundsService {
       where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
       order: { paidAt: 'ASC' },
     });
-    const refunds = await manager.find(LydiaRefund, {
-      where: { associationId, status: 'confirmed' },
-      order: { requestedAt: 'ASC' },
-    });
+    // A refund sits on the statement of the association whose PAYMENT it gives back, beside that
+    // payment - never on the parent's that asked it for a delegate: the parent's statement lists none
+    // of its delegates' payments, so the line would name nothing and the balance would go negative.
+    const refunds = records.length
+      ? await manager.find(LydiaRefund, {
+          where: { purchaseRecordId: In(records.map((r) => r.id)), status: 'confirmed' },
+          order: { requestedAt: 'ASC' },
+        })
+      : [];
     const byId = new Map(records.map((r) => [r.id, r]));
     const lines: StatementLine[] = [];
     let receivedCents = 0;
@@ -713,7 +966,7 @@ export class RefundsService {
       lines.push({
         date: isoDate(f.answeredAt ?? f.resolvedAt ?? f.requestedAt),
         operation: f.kind === 'total' ? 'refund-total' : 'refund-partial',
-        item: byId.get(f.purchaseRecordId)?.productName ?? '',
+        item: (byId.get(f.purchaseRecordId) as PurchaseRecord).productName,
         method: 'online',
         amountCents: -f.amountCents,
         reason: f.reason,
@@ -736,6 +989,40 @@ function refusalOf(target: Target, business: string | null): NotRefundableReason
   return target.vendorToken === business ? null : 'other-business';
 }
 
+/**
+ * What `refund` answers for a settled call: the view when refunded (or confirmed by Lydia and not
+ * recorded - the screen reads `state`), else the typed refusal carrying the view.
+ */
+function answerOf(settled: LydiaRefund): RefundView {
+  if (settled.status === 'pending' && settled.outcome !== REFUNDED_UNRECORDED) {
+    throw new GatewayTimeoutException({
+      code: CORE_REFUND_CODES.unconfirmed,
+      refund: toView(settled),
+      message: 'Lydia did not confirm the refund; it is checked before any new one',
+    });
+  }
+  if (settled.status === 'refused' && settled.outcome === 'not-sent') {
+    throw new ServiceUnavailableException({
+      code: 'PAYMENT_SERVICE_NOT_READY',
+      refund: toView(settled),
+      message: 'The refund could not be sent; nothing was refunded',
+    });
+  }
+  if (settled.status === 'refused') {
+    throw new ConflictException({
+      code: settled.outcome,
+      refund: toView(settled),
+      message: 'Lydia refused the refund; nothing was refunded',
+    });
+  }
+  return toView(settled);
+}
+
+/** An error's message for a log line; never its stack, never a request body. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function toView(row: LydiaRefund): RefundView {
   return {
     id: row.id,
@@ -743,17 +1030,32 @@ function toView(row: LydiaRefund): RefundView {
     kind: row.kind,
     amountCents: row.amountCents,
     reason: row.reason,
-    state:
-      row.status === 'confirmed'
-        ? 'refunded'
-        : row.status === 'refused'
-          ? 'refused'
-          : 'unconfirmed',
+    state: viewStateOf(row),
     refusal: row.status === 'refused' ? row.outcome : null,
     sideEffect: row.sideEffect ?? null,
     requestedAt: new Date(row.requestedAt).toISOString(),
     answeredAt: row.answeredAt ? new Date(row.answeredAt).toISOString() : null,
     resolvedAt: row.resolvedAt ? new Date(row.resolvedAt).toISOString() : null,
+  };
+}
+
+/** Where a refund row stands, as a screen words it (`RefundViewState`). */
+export function viewStateOf(row: Pick<LydiaRefund, 'status' | 'outcome'>): RefundViewState {
+  if (row.status === 'confirmed') return 'refunded';
+  if (row.status === 'refused') return 'refused';
+  if (row.outcome === REFUNDED_UNRECORDED) return 'unrecorded';
+  // No outcome yet: the call is in flight (or its process died and `sweepAbandoned` has not run).
+  return row.outcome === null ? 'in-progress' : 'unconfirmed';
+}
+
+/** The payment's refund not settled yet (at most one, `lydia_refunds_one_pending`), or null. */
+function openRefundOf(refunds: readonly LydiaRefund[]): RefundStanding['openRefund'] {
+  const open = refunds.find((r) => r.status === 'pending');
+  if (!open) return null;
+  const state = viewStateOf(open);
+  return {
+    id: open.id,
+    state: state === 'refunded' || state === 'refused' ? 'unconfirmed' : state,
   };
 }
 

@@ -62,10 +62,20 @@ export class LydiaRefund {
   /**
    * What Lydia answered, for the audit: `refunded`, a typed refusal code, `no-answer` (Lydia may have
    * refunded), `not-sent`, or `declared-refunded` / `declared-not-refunded` when a manager settled an
-   * unconfirmed one.
+   * unconfirmed one, or `refunded-unrecorded` when Lydia confirmed and Canari failed to record it (the
+   * row stays `pending`, blocking every new refund, until a manager records it). NULL while the call
+   * is running.
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
   outcome: string | null;
+
+  /**
+   * Lydia's own answer when it arrived AFTER the refund was settled (by a manager's declaration,
+   * typically): `refunded` or a refusal code. Null otherwise. Kept beside `outcome`, never over it, so
+   * a declaration Lydia contradicts is visible.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  lateOutcome: string | null;
 
   /** What a confirmed TOTAL refund withdrew (`RefundSideEffect`); null otherwise. */
   @Column({ type: 'varchar', length: 64, nullable: true })

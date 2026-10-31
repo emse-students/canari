@@ -22,13 +22,15 @@ import { UserTag } from '../../users/entities/user-tag.entity';
 import { ProductCheckout } from '../entities/product-checkout.entity';
 import { AssociationProduct } from '../entities/association-product.entity';
 import { Submission } from '../../forms/entities/submission.entity';
+import { Association } from '../entities/association.entity';
 import { LydiaRefund } from './lydia-refund.entity';
-import { RefundsService } from './refunds.service';
+import { REFUND_CALL_LOCK_KEY, RefundsService } from './refunds.service';
 import { ERASURE_STATEMENTS, erasureParams } from '../../internal/account-erasure';
 import {
   CORE_REFUND_CODES,
   LYDIA_REFUND_EXCEEDS_PAID,
   LYDIA_REFUND_IN_FLIGHT,
+  LYDIA_REFUND_NOT_PENDING,
   LYDIA_REFUND_NOT_REFUNDABLE,
 } from './refund-codes';
 
@@ -68,7 +70,8 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await others.initialize();
     await others.destroy();
     await admin.query(
-      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL)`
+      `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL,
+         "paymentParentAssociationId" uuid NULL, "paymentDelegationStatus" varchar NULL)`
     );
     await admin.query(
       `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false)`
@@ -82,7 +85,10 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await admin.query(migration);
     await admin.query(migration);
     await admin.query('RESET lock_timeout');
-    await admin.query(`INSERT INTO associations VALUES ($1, 'BDE', $2)`, [ASSO, VENDOR]);
+    await admin.query(
+      `INSERT INTO associations (id, name, "lydiaAccountId") VALUES ($1, 'BDE', $2)`,
+      [ASSO, VENDOR]
+    );
     ds = new DataSource(
       options(false, [
         PurchaseRecord,
@@ -91,6 +97,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         AssociationProduct,
         Submission,
         LydiaRefund,
+        Association,
       ])
     );
     await ds.initialize();
@@ -120,7 +127,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
   });
 
   /** A boutique payment of `type`, settled: product, paid attempt, record (and the tier tag). */
-  async function boutiquePayment(type: 'membership' | 'balance_topup' | 'other', amount = 1000) {
+  async function boutiquePayment(
+    type: 'membership' | 'balance_topup' | 'other',
+    amount = 1000,
+    associationId = ASSO
+  ) {
     const buyer = randomUUID().replace(/-/g, '').repeat(2);
     const product = await ds.getRepository(AssociationProduct).save(
       ds.getRepository(AssociationProduct).create({
@@ -140,7 +151,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         paymentMethod: 'online',
         status: 'paid',
         stripePaymentIntentId: paymentIntentId,
-        associationId: ASSO,
+        associationId,
         productName: product.name,
       })
     );
@@ -148,7 +159,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
       ds.getRepository(ProductCheckout).create({
         productId: product.id,
         userId: buyer,
-        associationId: ASSO,
+        associationId,
         paymentAssociationId: ASSO,
         vendorToken: VENDOR,
         amountCents: amount,
@@ -427,12 +438,13 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect(await tagsOf(buyer)).toEqual(before);
   });
 
-  it('a TOTAL refund of a product deleted since withdraws NOTHING: what it was cannot be told', async () => {
-    const { record, product } = await boutiquePayment('balance_topup');
+  it('a TOTAL refund of a product deleted since touches no tier, and the payment is still refunded', async () => {
+    const { record, product, buyer } = await boutiquePayment('membership');
     await ds.getRepository(AssociationProduct).delete({ id: product.id });
     await service.refund(ASSO, record.id, MANAGER, total());
     expect((await refundOf(record.id))[0].sideEffect).toBe('not-applied-unidentified');
-    expect(await statusOf(record.id)).toBe('paid');
+    expect(await statusOf(record.id)).toBe('refunded');
+    expect(await tagsOf(buyer)).toHaveLength(1);
   });
 
   it('a refusal Lydia answered records the typed code and refunds nothing', async () => {
@@ -499,6 +511,189 @@ maybe('Lydia refunds against PostgreSQL', () => {
       userId: string;
     }[];
     for (const { userId } of buyers) expect(text).not.toContain(userId);
+  });
+
+  /** Whether the call lock of `refundId` is free, asked from another session (and given back). */
+  async function callLockFree(refundId: string): Promise<boolean> {
+    const [row] = (
+      await admin.query(`SELECT pg_try_advisory_lock(${REFUND_CALL_LOCK_KEY}) AS free`, [refundId])
+    ).rows as { free: boolean }[];
+    if (row.free)
+      await admin.query(`SELECT pg_advisory_unlock(${REFUND_CALL_LOCK_KEY})`, [refundId]);
+    return row.free;
+  }
+
+  it('WHILE Lydia is asked: the call lock is held, the sweep leaves the row, and nothing can be declared', async () => {
+    const { record } = await boutiquePayment('other');
+    let during: { swept: number; outcome: string | null; free: boolean; state?: string } | null =
+      null;
+    let check: Promise<unknown> | null = null;
+    post.mockImplementation(async () => {
+      const [row] = await refundOf(record.id);
+      const swept = await service.sweepAbandoned();
+      const { standings } = await service.describe(ASSO);
+      during = {
+        swept,
+        outcome: (await refundOf(record.id))[0].outcome,
+        free: await callLockFree(row.id),
+        state: standings.find((s) => s.purchaseRecordId === record.id)?.openRefund?.state,
+      };
+      check = service.resolve(ASSO, row.id, MANAGER, false).catch((e: unknown) => e);
+      await check;
+      return { data: { ok: true } };
+    });
+    await expect(service.refund(ASSO, record.id, MANAGER, total())).resolves.toMatchObject({
+      state: 'refunded',
+    });
+    expect(during).toEqual({ swept: 0, outcome: null, free: false, state: 'in-progress' });
+    await expect(check).resolves.toMatchObject({ response: { code: LYDIA_REFUND_IN_FLIGHT } });
+    // Released once the outcome is written.
+    expect(await callLockFree((await refundOf(record.id))[0].id)).toBe(true);
+  });
+
+  it('a call abandoned by a dead process (no outcome, lock free) is swept to no-answer, ERROR logged, and checkable', async () => {
+    const { record } = await boutiquePayment('other');
+    const [row] = (await ds.query(
+      `INSERT INTO lydia_refunds ("purchaseRecordId", "associationId", "vendorToken", "orderRef", kind,
+         "amountCents", reason, "idempotencyKey", "requestedByUserId")
+       VALUES ($1, $2, $3, 'product:x:y', 'partial', 100, 'r', $4, $5) RETURNING id`,
+      [record.id, ASSO, VENDOR, randomUUID(), MANAGER]
+    )) as { id: string }[];
+    const error = jest.spyOn(Logger.prototype, 'error');
+    error.mockClear();
+    await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+    expect((await refundOf(record.id))[0]).toMatchObject({
+      status: 'pending',
+      outcome: 'no-answer',
+    });
+    expect(error.mock.calls.map(String).join(' | ')).toContain(`${row.id}: its call was abandoned`);
+    const { standings } = await service.describe(ASSO);
+    expect(standings.find((s) => s.purchaseRecordId === record.id)?.openRefund).toEqual({
+      id: row.id,
+      state: 'unconfirmed',
+    });
+    await expect(service.resolve(ASSO, row.id, MANAGER, false)).resolves.toMatchObject({
+      state: 'refused',
+    });
+  });
+
+  it('a row whose call lock another process holds is NOT swept: a call on another replica is in flight', async () => {
+    const { record } = await boutiquePayment('other');
+    const [row] = (await ds.query(
+      `INSERT INTO lydia_refunds ("purchaseRecordId", "associationId", "vendorToken", "orderRef", kind,
+         "amountCents", reason, "idempotencyKey", "requestedByUserId")
+       VALUES ($1, $2, $3, 'product:x:y', 'partial', 100, 'r', $4, $5) RETURNING id`,
+      [record.id, ASSO, VENDOR, randomUUID(), MANAGER]
+    )) as { id: string }[];
+    await admin.query(`SELECT pg_advisory_lock(${REFUND_CALL_LOCK_KEY})`, [row.id]);
+    try {
+      await service.sweepAbandoned();
+      expect((await refundOf(record.id))[0].outcome).toBeNull();
+    } finally {
+      await admin.query(`SELECT pg_advisory_unlock(${REFUND_CALL_LOCK_KEY})`, [row.id]);
+    }
+    await service.sweepAbandoned();
+    expect((await refundOf(record.id))[0].outcome).toBe('no-answer');
+  });
+
+  it('a late Lydia answer on a refund already settled is kept beside it and logged ERROR', async () => {
+    const { record } = await boutiquePayment('other');
+    post.mockRejectedValueOnce(new Error('timeout'));
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(100))).rejects.toBeDefined();
+    const [row] = await refundOf(record.id);
+    await service.resolve(ASSO, row.id, MANAGER, false);
+    const error = jest.spyOn(Logger.prototype, 'error');
+    error.mockClear();
+    await (
+      service as unknown as { settle(id: string, o: unknown, by: null): Promise<unknown> }
+    ).settle(row.id, { status: 'confirmed', outcome: 'refunded' }, null);
+    expect((await refundOf(record.id))[0]).toMatchObject({
+      status: 'refused',
+      outcome: 'declared-not-refunded',
+      lateOutcome: 'refunded',
+    });
+    expect(error.mock.calls.map(String).join(' | ')).toContain('AFTER the refund was settled');
+  });
+
+  it('Lydia refunded and the recording failed: unrecorded, blocking, then recorded by a manager', async () => {
+    const { record } = await boutiquePayment('other');
+    const settle = jest
+      .spyOn(service as unknown as { settle: () => Promise<unknown> }, 'settle')
+      .mockRejectedValueOnce(new Error('deadlock detected'));
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(100))).resolves.toMatchObject({
+      state: 'unrecorded',
+    });
+    settle.mockRestore();
+    const [row] = await refundOf(record.id);
+    expect(row).toMatchObject({ status: 'pending', outcome: 'refunded-unrecorded' });
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(100))).rejects.toMatchObject({
+      response: { code: LYDIA_REFUND_IN_FLIGHT },
+    });
+    const { standings } = await service.describe(ASSO);
+    expect(standings.find((s) => s.purchaseRecordId === record.id)?.openRefund?.state).toBe(
+      'unrecorded'
+    );
+    await expect(service.resolve(ASSO, row.id, MANAGER, false)).rejects.toMatchObject({
+      response: { code: LYDIA_REFUND_NOT_PENDING },
+    });
+    await expect(service.resolve(ASSO, row.id, MANAGER, true)).resolves.toMatchObject({
+      state: 'refunded',
+    });
+    expect((await refundOf(record.id))[0]).toMatchObject({
+      status: 'confirmed',
+      outcome: 'refunded',
+      resolvedByUserId: MANAGER,
+    });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("refunds only its own payments or an approved delegate's, and the refund sits on the payer's association statement", async () => {
+    const child = randomUUID();
+    await ds.query(`INSERT INTO associations (id, name) VALUES ($1, 'Club')`, [child]);
+    const { record } = await boutiquePayment('other', 700, child);
+    await expect(service.refund(ASSO, record.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    await ds.query(
+      `UPDATE associations SET "paymentParentAssociationId" = $2, "paymentDelegationStatus" = 'pending' WHERE id = $1`,
+      [child, ASSO]
+    );
+    await expect(service.refund(ASSO, record.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(post).not.toHaveBeenCalled();
+    await ds.query(`UPDATE associations SET "paymentDelegationStatus" = 'approved' WHERE id = $1`, [
+      child,
+    ]);
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(200))).resolves.toMatchObject({
+      state: 'refunded',
+    });
+    const parent = await service.statement(ASSO);
+    expect(parent.lines.every((l) => l.item !== '')).toBe(true);
+    expect(parent.refundedCents).toBe(
+      -parent.lines.filter((l) => l.operation !== 'payment').reduce((s, l) => s + l.amountCents, 0)
+    );
+    const own = await service.statement(child);
+    expect(own).toMatchObject({ receivedCents: 700, refundedCents: 200 });
+    expect(own.lines.find((l) => l.operation === 'refund-partial')).toMatchObject({
+      item: 'Product other',
+      amountCents: -200,
+    });
+  });
+
+  it('a replay of a refused refund answers 200 with its state, never a refund', async () => {
+    const { record } = await boutiquePayment('other');
+    const key = randomUUID();
+    post.mockRejectedValueOnce(
+      Object.assign(new Error('409'), {
+        response: { status: 409, data: { code: 'LYDIA_REFUND_REJECTED' } },
+      })
+    );
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(100, key))).rejects.toBeDefined();
+    await expect(
+      service.refund(ASSO, record.id, MANAGER, partial(100, key))
+    ).resolves.toMatchObject({ state: 'refused', refusal: 'LYDIA_REFUND_REJECTED' });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("an erased manager's refunds stay, their name on them anonymised", async () => {

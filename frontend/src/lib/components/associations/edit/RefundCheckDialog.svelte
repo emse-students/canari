@@ -10,12 +10,17 @@
     associationId: string;
     refund: AssociationRefund;
     buyer: string;
+    /**
+     * `check`: Lydia never answered - the manager says what Lydia's history shows. `record`: Lydia
+     * confirmed and Canari failed to save it - the manager saves it, nothing else to declare.
+     */
+    action?: 'check' | 'record';
     onClose: () => void;
     /** Called once the check is recorded (or refused), so the list re-reads the payment. */
     onSettled: () => void;
   }
 
-  let { associationId, refund, buyer, onClose, onSettled }: Props = $props();
+  let { associationId, refund, buyer, action = 'check', onClose, onSettled }: Props = $props();
 
   /**
    * THE RE-CHECK OF A REFUND LYDIA NEVER CONFIRMED. Lydia offers Canari no way to read a refund back,
@@ -32,7 +37,12 @@
       await resolveAssociationRefund(associationId, refund.id, refunded);
       outcome = {
         tone: 'ok',
-        text: refunded ? m.asso_refund_check_done_yes() : m.asso_refund_check_done_no(),
+        text:
+          action === 'record'
+            ? m.asso_refund_record_done()
+            : refunded
+              ? m.asso_refund_check_done_yes()
+              : m.asso_refund_check_done_no(),
       };
     } catch (e) {
       const attempt = refundAttemptOf(e);
@@ -52,13 +62,15 @@
 
 <Modal
   open
-  title={m.asso_refund_check_title()}
+  title={action === 'record' ? m.asso_refund_record_title() : m.asso_refund_check_title()}
   dismissible={!busy}
   onClose={() => !busy && onClose()}
 >
   <div class="space-y-4" data-testid="refund-check-dialog">
     <p class="text-text-main text-sm">
-      {m.asso_refund_check_body({ amount: formatAmount(refund.amountCents), buyer })}
+      {action === 'record'
+        ? m.asso_refund_record_body({ amount: formatAmount(refund.amountCents), buyer })
+        : m.asso_refund_check_body({ amount: formatAmount(refund.amountCents), buyer })}
     </p>
     {#if outcome}
       <p
@@ -77,6 +89,18 @@
           class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
         >
           {m.asso_refund_close()}
+        </button>
+      </div>
+    {:else if action === 'record'}
+      <div class="flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onclick={() => declare(true)}
+          data-testid="refund-record"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        >
+          {m.asso_refund_record_confirm()}
         </button>
       </div>
     {:else}

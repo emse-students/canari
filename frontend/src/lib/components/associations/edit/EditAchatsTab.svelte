@@ -37,8 +37,8 @@
   import {
     notRefundableHint,
     refundStateLabel,
+    refundAwaitingManager,
     statementCsv,
-    unconfirmedRefund,
   } from '$lib/associations/refundWording';
 
   interface Props {
@@ -110,7 +110,11 @@
   );
   /** The payment the refund dialog is open on, and the unconfirmed refund the check is open on. */
   let refundTarget = $state<AssociationPurchase | null>(null);
-  let checkTarget = $state<{ refund: AssociationRefund; buyer: string } | null>(null);
+  let checkTarget = $state<{
+    refund: AssociationRefund;
+    buyer: string;
+    action: 'check' | 'record';
+  } | null>(null);
   let statementBusy = $state(false);
   let statementError = $state('');
   const standingsById = $derived(
@@ -533,7 +537,7 @@
                 {#if refundView}
                   {@const standing = standingsById.get(purchase.id)}
                   {@const stateLabel = refundStateLabel(standing)}
-                  {@const waiting = unconfirmedRefund(standing, refundView.refunds)}
+                  {@const waiting = refundAwaitingManager(standing, refundView.refunds)}
                   {@const hint = notRefundableHint(standing)}
                   {#if stateLabel}
                     <span
@@ -545,11 +549,16 @@
                     <button
                       type="button"
                       onclick={() =>
-                        (checkTarget = { refund: waiting, buyer: purchaseBuyerName(purchase) })}
+                        (checkTarget = { ...waiting, buyer: purchaseBuyerName(purchase) })}
+                      data-testid="refund-{waiting.action}-open"
                       class="border-cn-border text-text-main hover:bg-cn-bg mt-1 rounded-full border px-2 py-0.5 text-xs font-semibold"
                     >
-                      {m.asso_refund_check_button()}
+                      {waiting.action === 'record'
+                        ? m.asso_refund_record_button()
+                        : m.asso_refund_check_button()}
                     </button>
+                  {:else if standing?.openRefund}
+                    <!-- A refund in progress: its result is coming, nothing to do and no new refund. -->
                   {:else if standing?.refundable && standing.refundedCents < standing.paidCents}
                     <button
                       type="button"
@@ -613,6 +622,7 @@
     associationId={asso.id}
     refund={checkTarget.refund}
     buyer={checkTarget.buyer}
+    action={checkTarget.action}
     onClose={() => (checkTarget = null)}
     onSettled={reloadAfterRefund}
   />

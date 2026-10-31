@@ -396,7 +396,7 @@ describe('EditAchatsTab, Lydia refunds', () => {
     withdrawal: 'shop',
     paidCents: 3000,
     refundedCents: 0,
-    unconfirmedRefundId: null,
+    openRefund: null,
     ...over,
   });
 
@@ -427,7 +427,7 @@ describe('EditAchatsTab, Lydia refunds', () => {
 
   it('a refund Lydia has not confirmed offers the check, never a new refund', async () => {
     state.refunds.mockResolvedValue({
-      standings: [standing({ unconfirmedRefundId: 'ref-1' })],
+      standings: [standing({ openRefund: { id: 'ref-1', state: 'unconfirmed' } })],
       refunds: [
         {
           id: 'ref-1',
@@ -448,6 +448,48 @@ describe('EditAchatsTab, Lydia refunds', () => {
     expect(target.textContent).toContain(m.asso_refund_state_unconfirmed());
     expect(button(target, m.asso_refund_check_button())).toBeDefined();
     expect(button(target, m.asso_refund_button())).toBeUndefined();
+  });
+
+  it('a refund in progress shows its state and offers nothing: no check, no new refund', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ openRefund: { id: 'ref-2', state: 'in-progress' } })],
+      refunds: [],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_state_in_progress());
+    expect(button(target, m.asso_refund_check_button())).toBeUndefined();
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+  });
+
+  it('a refund Lydia confirmed and Canari did not save offers to save it, never a check', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ openRefund: { id: 'ref-3', state: 'unrecorded' } })],
+      refunds: [
+        {
+          id: 'ref-3',
+          purchaseRecordId: 'rec-9',
+          kind: 'total',
+          amountCents: 3000,
+          reason: 'r',
+          state: 'unrecorded',
+          refusal: null,
+          sideEffect: null,
+          requestedAt: '2026-10-30T10:00:00.000Z',
+          answeredAt: '2026-10-30T10:00:05.000Z',
+          resolvedAt: null,
+        },
+      ],
+    });
+    const target = await render([paid]);
+    expect(target.textContent).toContain(m.asso_refund_state_unrecorded());
+    expect(button(target, m.asso_refund_check_button())).toBeUndefined();
+    expect(button(target, m.asso_refund_button())).toBeUndefined();
+    // The dialog it opens only saves: "it did not go through" is not offered.
+    button(target, m.asso_refund_record_button())!.click();
+    flushSync();
+    const dialog = document.querySelector('[data-testid="refund-check-dialog"]')!;
+    expect(dialog.querySelector('[data-testid="refund-record"]')).not.toBeNull();
+    expect(dialog.querySelector('[data-testid="refund-check-no"]')).toBeNull();
   });
 
   it('says why a payment Canari cannot trace has no refund', async () => {

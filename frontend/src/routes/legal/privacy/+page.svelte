@@ -162,10 +162,13 @@
           association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
           paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
           responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
-          et la réponse de Lydia. Un remboursement total retire ce que le paiement avait apporté (la
-          cotisation, la place du formulaire), sauf une recharge du Cercle, dont le solde ne change
-          pas. Aucune donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans
-          un formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
+          une personne, et il figure tel quel dans le relevé que les responsables du compte de
+          paiement de l'association peuvent télécharger. Un remboursement total retire ce que le
+          paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
+          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
+          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
+          l'association qui l'a créé.
         </dd>
       </div>
       <div>

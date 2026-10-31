@@ -1008,7 +1008,9 @@ validated sandbox Business.
 ## Refunds from Canari (enrolment lot 4)
 
 **Who.** A `MANAGE_PAYOUT_ACCOUNT` holder of the association whose Lydia Business took the payment
-(`RefundsService.assertPayoutManager`), through Canari and never through the Lydia console. The
+(`RefundsService.assertPayoutManager`), through Canari and never through the Lydia console - and
+only of a payment that is the association's OWN or one of an association whose payments it serves by
+an APPROVED delegation (`approvedDelegateIds`); any other payment is `404`, whatever its Business. The
 purchases screen (`EditAchatsTab`, itself a `MANAGE_PRODUCTS` screen) asks `GET
 /associations/:id/refunds`; a 403 hides every refund control and the statement, never the list.
 
@@ -1025,7 +1027,10 @@ whose Lydia transaction Canari can name, on the Business the association holds N
 A boutique purchase is traced through its paid `product_checkouts` row (`order_ref`
 `product:<productId>:<checkoutId>`, the checkout's `vendorToken`); a form payment through
 `purchase_records.submissionId` to `submissions.lydiaOrderRef` / `lydiaVendorToken`, written by the
-issuing call from migration 120 on.
+issuing call from migration 120 on. An answer keeps ONE `order_ref`, the last request's, and that is
+the one the money came through: a retry first settles the request before it at Lydia (cancelled, or
+found paid and nothing new issued) and is refused while it cannot, so an answer never holds two
+payable requests.
 
 **Idempotence from durable state.** A refund is a `lydia_refunds` row written `pending` BEFORE core
 asks Lydia, in one transaction holding the payment record's row lock, unique per (payment, client
@@ -1041,11 +1046,45 @@ key, and Lydia offers Canari NO read of a refund ([lydia-api](../../lydia-api.md
 So core's answer is classified on its STATUS and typed code: a 409 is a refusal Lydia answered (the
 row `refused`, its code recorded); a 400, 403 or 503 `PAYMENT_SERVICE_NOT_READY` means nothing was
 sent (`refused`, `not-sent`); anything else - a 504, another 5xx, no response - may have refunded, and
-the row STAYS `pending`: the route answers 504 `LYDIA_REFUND_UNCONFIRMED`. **The re-check is the
-manager's**: the row offers "Vérifier", the manager reads the association's own history in the Lydia
-Pro app and declares what they see (`POST /associations/:id/refunds/:refundId/resolve`, `{ refunded
-}`), audited as `declared-refunded` / `declared-not-refunded` with who and when. Only then can a new
-refund of the payment be asked.
+the row STAYS `pending` with `outcome = 'no-answer'`: the route answers 504
+`LYDIA_REFUND_UNCONFIRMED`. A 2xx counts as a refund only when its body says so - core's `{ ok: true
+}`, itself given only for Lydia's `error: "0"` - and any other 2xx body is `no-answer` too, logged at
+ERROR. **The re-check is the manager's**: the row offers "Vérifier", the manager reads the
+association's own history in the Lydia Pro app and declares what they see (`POST
+/associations/:id/refunds/:refundId/resolve`, `{ refunded }` - a boolean or `400
+LYDIA_REFUND_INVALID`, never read as "no"), audited as `declared-refunded` / `declared-not-refunded`
+with who and when. Only then can a new refund of the payment be asked.
+
+**In progress is not unconfirmed.** While the call runs the row is `pending` with NO outcome: the
+screen says "Remboursement en cours", offers no check, and `resolve` answers `LYDIA_REFUND_IN_FLIGHT`
+- declaring a refund still being asked "not refunded" would free the payment for a second refund that
+could overtake the first. Only `no-answer` is checkable. **What tells a running call from a dead one
+is a lock, never a clock**: the refund takes a session-level advisory lock on its row
+(`REFUND_CALL_LOCK_KEY`) INSIDE the transaction that writes the row, so the lock exists before the
+row is visible, and holds it on the same connection until the outcome is written. A process that
+dies loses its connection and the lock with it. `sweepAbandoned` marks every `pending` row with no
+outcome whose lock is FREE as `no-answer` (an ERROR line each) - at boot, and before the refunds are
+read or checked. **Replicas:** social-service is `overlap` (a deploy runs the old and the new replica
+side by side, [cicd](../../cicd.md)), so a boot sweep that took "I just started" as proof would mark
+the old replica's live call; the lock is held by whichever replica makes the call, so the sweep is
+right on any of them. Residual, logged and not healed: a connection lost while its process lives
+frees the lock early, and the row can then be checked while the call still runs - Lydia's answer
+arriving after a declaration is kept as below.
+
+**A late answer is kept, never dropped.** When Lydia's own answer reaches a row already settled (a
+manager declared it first), it is logged at ERROR naming both outcomes and stored in `lateOutcome`
+beside the first, which it does not overwrite.
+
+**Lydia refunded and Canari failed to record it** (the transaction writing the outcome threw): the
+row is marked `outcome = 'refunded-unrecorded'` in a transaction of its own, still `pending` - it
+blocks every new refund of the payment and counts in the sum cap - and the route answers its view,
+`state: 'unrecorded'`. The screen says "Remboursé par Lydia, à enregistrer" and offers "Enregistrer",
+which may only record it (`resolve` with `refunded: true`; `false` is `LYDIA_REFUND_NOT_PENDING`),
+keeping Lydia's own `refunded` as the outcome beside the manager's name. If that mark fails too, the
+row keeps no outcome and the sweep makes it `no-answer`.
+
+**A replay answers 200 with the first refund as it stands** - refused, in progress, unconfirmed or
+unrecorded included - so the dialog reads the refund's `state`, never the HTTP status.
 
 **What a TOTAL refund withdraws**, in the same transaction that records Lydia's confirmation (the
 buyer's tier lock first, then the rows), recorded in `sideEffect`:
@@ -1056,10 +1095,13 @@ buyer's tier lock first, then the rows), recorded in `sideEffect`:
 | a form answer | its seat (`paymentStatus` `refunded`, under `lockFormSeats`; `refunded` is a settled status, so a late confirmation is a replay), and the tier it granted (`metadata.submissionId`) |
 | another boutique product | the purchase is marked `refunded` |
 | a Cercle top-up (`association_products.type = 'balance_topup'`, the test the top-up dispatch uses) | **the money only**: the balance at the Cercle and every tier are untouched (`topup-balance-unchanged`), and the confirmation tells the manager to correct the balance at the Cercle |
-| a product deleted since | nothing: what it was cannot be told (`not-applied-unidentified`) |
+| a product deleted since | no tier and no seat: what it was cannot be told (`not-applied-unidentified`); the record still becomes `refunded` |
 
-Every withdrawn payment's record becomes `refunded` (`LISTED_PURCHASE_STATUSES`: still listed, never
-counted as received). A PARTIAL refund withdraws nothing.
+Every payment refunded in TOTAL has its record become `refunded` (`LISTED_PURCHASE_STATUSES`: still
+listed, never counted as received). A PARTIAL refund withdraws nothing, and **partial refunds that
+add up to the whole payment withdraw nothing either**: the record stays `paid`, the tier and the
+seat stay - only a TOTAL refund, asked on a payment nothing was refunded from, withdraws. A manager
+who wants both refunds the whole at once.
 
 **The audit** is the row itself - who asked, when, the payment, total or partial, the amount, the
 reason, Lydia's answer and when, what it withdrew, and who checked an unconfirmed one - plus an
@@ -1072,7 +1114,11 @@ false` ([legacy-compatibility](../../legacy-compatibility.md)); Lydia's own e-ma
 (`notify_payer`, on by default) tells them meanwhile.
 
 **The statement** (`GET /associations/:id/statement`) is Canari's own records only: every payment
-listed and every confirmed refund (a negative amount), with the totals, as DATA. The client writes
+listed and every confirmed refund (a negative amount), with the totals, as DATA. A refund sits on the
+statement of the association whose PAYMENT it gives back, beside that payment - a parent refunding a
+delegate's payment does not see it on its own statement, which lists none of the delegate's payments
+(the line would name nothing and the balance would go negative). The refund's reason, typed by the
+manager, is exported as written and may name a person (register C24). The client writes
 the file (`statementCsv`, `refundWording.ts`): `;`-separated UTF-8 with a BOM, every word in its own
 language, a text cell a spreadsheet would run as a formula prefixed with `'`. It names no payer.
 **Why not a server-built file like the forms' and bookings' exports:** those take their words in the

@@ -1698,6 +1698,10 @@ export class FormsService {
           // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
           // The order_ref and the Business beside the ids: what a refund of this payment is sent
           // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
+          // OVERWRITTEN by each new request, and the LAST one is the only one that can be paid: a
+          // retry first settles the request before it at Lydia (D2, `settleOpenRequest`) - cancelled,
+          // or found paid and no new request issued - and refuses while it cannot. So no answer ever
+          // holds two payable requests, and the order_ref kept is the one the money came through.
           await this.submissionRepo.update(savedSubmission.id, {
             stripeSessionId: sessionId,
             paymentRequestId: requestId,
