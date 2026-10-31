@@ -175,12 +175,36 @@ attach a Business to a Lydia Pro identity (measured 2026-10-23).
 with that number, sees the Business. So the holder of a Business made by the Provider reaches it through
 `business/addcashier` (section 5b), not through `business_phone`.
 
-### Refunds and listings - documented, never called
+### Refunds - `transaction/refund`, measured on homologation (2026-10-31)
 
-`transaction/cancel`, `transaction/refund`, `transaction/list` exist (doc). Refunding a transaction needs the
-equivalent sum to have been sent to Lydia's company beforehand; each Business has an authorised overdraft
-of 100 EUR which allows a few refunds if the tariff permits (csm, 2026-10-20). Whether `transaction/list`
-aggregates is **unconfirmed**. No Canari code calls any of the three.
+Canari calls ONE of the three documented calls (`transaction/cancel`, `transaction/refund`,
+`transaction/list`): `POST /api/transaction/refund.json` with `vendor_token`, `order_ref` (or
+`transaction_identifier`), `amount` and `signature`; `notify_payer` and `notify_collecter` default to
+`yes` and are left so. Refunding needs the equivalent sum at Lydia beforehand; each Business has an
+authorised overdraft of 100 EUR which allows a few refunds if the tariff permits (csm, 2026-10-20).
+
+**Measured on homologation 2026-10-31, codes and amounts only:**
+
+- The signature is the md5 over the RAW values of `amount` and `order_ref`, sorted, with the
+  BUSINESS private key (`signLydiaParams`, `lydia-refund.ts`) - NOT the URL-encoded form the
+  enrolment calls take. Signed over the encoded values, with the Provider key, or with a wrong key:
+  error 444. No signature: error 1. An unknown transaction: error 2, which proves the signature
+  passed. `amount` is sent as `12.50` (two decimals, a dot); `0.5` passed the signature check too.
+- **No read of a refund exists for Canari.** `transaction/refunds` answers error 1 with the vendor
+  token alone or with an `order_ref`; 2223 ("unknown user") for a phone or user token Lydia does not
+  know; 105 ("operation not allowed") for a cashier Canari added. `transaction/list` answers 2223 for
+  a phone. `request/state` with an unknown `order_ref` answers error 2 and says nothing of refunds.
+  So an unanswered refund cannot be read back, and Canari never retries one blind
+  ([payments](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
+- **The success path is UNMEASURED.** A fresh sandbox Business answers error 5 on `request/do`, so no
+  sandbox payment could be completed and no refund of a real transaction was made. Owed: one refund
+  of a validated sandbox Business's payment, or the first production refund read in its logs.
+
+Core maps Lydia's error to a typed code (`lydiaRefundRefusalCode`): 2 is
+`LYDIA_REFUND_TRANSACTION_NOT_REFUNDABLE`, 10 and 105 `LYDIA_REFUND_NOT_ALLOWED`, 444 / 102 / 103 /
+2701 the shared signature and Business codes, anything else `LYDIA_REFUND_REJECTED`; no usable answer
+is `LYDIA_REFUND_UNCONFIRMED`. `transaction/list` stays uncalled: the statement is built from Canari's
+own records.
 
 ## 3. Callbacks (`confirm_url`, `cancel_url`, `expire_url`)
 
@@ -257,7 +281,7 @@ The API documentation is an apiDoc site served by the sandbox itself (`https://h
   `business/addcashier` on 2026-10-30; create_account was not re-tried). Whether `auth/register` makes a Business made by `business/create` appear in a
   person's console on production is not tried there, and which documents Lydia asks of an ASSOCIATION
   (the e-mail names a KBIS or SIRET extract).
-- What a refund does end to end.
+- What a SUCCESSFUL refund answers, and when the money reaches the payer (section 2: no sandbox payment could be made to refund).
 - Whether a callback is retried after a non-2xx, and from which addresses Lydia calls.
 - Whether `expire_time` has a ceiling.
 - Whether Lydia accepts the app's deep link as `end_mobile_url` and appends anything to it.

@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   GatewayTimeoutException,
   HttpException,
   Logger,
@@ -8,6 +9,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { signLydiaRequest } from './lydia-signature';
+import { LYDIA_REFUND_UNCONFIRMED, lydiaRefundRefusalCode, signLydiaRefund } from './lydia-refund';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
@@ -778,6 +780,60 @@ export class LydiaPaymentProvider implements PaymentProvider {
       String(data.error ?? '0') === LYDIA_CANCEL_ALREADY_SETTLED ? 'already-settled' : 'cancelled';
     this.logger.log(`Lydia request ${requestId} cancel: ${outcome}`);
     return outcome;
+  }
+
+  /**
+   * Refunds `amountCents` of the transaction Canari issued with `orderRef`, on the Business
+   * `vendorToken`, through `transaction/refund` signed with that Business's private token over the
+   * RAW `amount` and `order_ref` (`signLydiaRefund`, homologation 2026-10-31, lydia-refund.ts).
+   *
+   * Answers only when Lydia answered `error: 0`. A refusal Lydia ANSWERED (an error code, an HTTP
+   * 4xx that says refused) is a typed 409 - nothing was refunded. Anything else (no answer in time,
+   * a 5xx, a 4xx that does not say refused) is the typed 504 `LYDIA_REFUND_UNCONFIRMED`: Lydia may
+   * have refunded, and the caller must not retry blind. The key never reaches a log line.
+   */
+  async refundTransaction(
+    vendorToken: string,
+    orderRef: string,
+    amountCents: number,
+    businessKey: string
+  ): Promise<void> {
+    const amount = lydiaAmountString(amountCents);
+    this.logger.log(`[LYDIA-REFUND] ${orderRef}: asking Lydia to refund ${amount}`);
+    try {
+      await this.postForm<object>('/api/transaction/refund', {
+        vendor_token: vendorToken,
+        order_ref: orderRef,
+        amount,
+        signature: signLydiaRefund(orderRef, amount, businessKey),
+      });
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) {
+        const body = err.getResponse() as { code?: unknown; providerCode?: unknown };
+        const providerCode = typeof body?.providerCode === 'string' ? body.providerCode : '';
+        const code = lydiaRefundRefusalCode(providerCode, {
+          signatureRefused: LYDIA_SIGNATURE_REFUSED,
+          businessTokenRejected: LYDIA_BUSINESS_TOKEN_REJECTED,
+          businessBlocked: LYDIA_BUSINESS_BLOCKED,
+        });
+        this.logger.warn(
+          `[LYDIA-REFUND] ${orderRef}: Lydia refused the refund of ${amount} (error ${providerCode}) -> ${code}`
+        );
+        throw new ConflictException({
+          code,
+          providerCode,
+          message: 'Lydia refused the refund; nothing was refunded',
+        });
+      }
+      this.logger.error(
+        `[LYDIA-REFUND] ${orderRef}: no usable answer to the refund of ${amount} - Lydia MAY have refunded`
+      );
+      throw new GatewayTimeoutException({
+        code: LYDIA_REFUND_UNCONFIRMED,
+        message: 'Lydia did not confirm the refund',
+      });
+    }
+    this.logger.log(`[LYDIA-REFUND] ${orderRef}: Lydia refunded ${amount}`);
   }
 
   /**

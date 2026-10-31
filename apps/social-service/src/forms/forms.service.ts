@@ -994,6 +994,7 @@ export class FormsService {
           userId: submission.userId,
           source: 'form',
           formId: submission.formId,
+          submissionId: submission.id,
           amountCents: submission.totalPaid,
           paymentMethod: how.paymentMethod,
           status: receivedStatus(delivered),
@@ -1695,9 +1696,13 @@ export class FormsService {
           savedSubmission.stripeSessionId = sessionId;
           savedSubmission.paymentRequestId = requestId;
           // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+          // The order_ref and the Business beside the ids: what a refund of this payment is sent
+          // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
           await this.submissionRepo.update(savedSubmission.id, {
             stripeSessionId: sessionId,
             paymentRequestId: requestId,
+            lydiaOrderRef: idempotencyKey,
+            lydiaVendorToken: connectAccountId ?? null,
           });
         }
 

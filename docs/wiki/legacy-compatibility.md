@@ -311,6 +311,19 @@ tables (Android, the iOS app and its notification extension), the client row, `K
 host): no deep-link host exists for an association's edit section. The type names are shared through
 `libs/contracts/lydia-refusal-codes.json`.
 
+**Built and waiting on its floor (2026-10-31): `lydia_refund_issued`**, the notice telling a payer that an
+association refunded one of their payments (Lydia enrolment lot 4). It ships behind
+`LYDIA_REFUND_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/refunds/lydia-refund-notifier.service.ts`);
+while it is off nothing is written, Lydia's own e-mail to the payer (`notify_payer`) tells them and the
+refund's row is the record. **Flip condition:** `minClientVersion` at or above the first release carrying
+Lydia enrolment lot 4 (PR to be numbered), on BOTH estates, once Play and the App Store serve it - then a
+one-line pull request sets the constant to `true` and changes the spec that pins it. A client older than
+that release draws it as the neutral unknown-type row. Done in the same pull request: the push key and
+French legacy sentence, the `forms` push category, the native tables (Android, the iOS app and its
+notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the destination (the payer's
+`/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
+contract file (`refund.notificationTypes`).
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.

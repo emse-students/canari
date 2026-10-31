@@ -16,12 +16,26 @@ export type PurchasePaymentMethod = 'online' | 'stripe' | 'cash';
  * form that grants no tier is recorded `paid` even when it was paid with no seat. A refund or a
  * manual grant is owed. It is money received, so the association's purchases list it beside
  * `paid`; it never counts as having bought the product. Stored in the existing varchar column,
- * which carries no CHECK.
+ * which carries no CHECK. `refunded`: money received and then given back IN FULL through Canari (a
+ * confirmed TOTAL refund in `lydia_refunds`, migration 120) - what it bought was withdrawn, so it no
+ * longer counts as a purchase, and the association's purchases still list it.
  */
-export type PurchaseStatus = 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired';
+export type PurchaseStatus =
+  | 'paid'
+  | 'paid_not_granted'
+  | 'pending_cash'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded';
 
-/** The statuses of money actually received: what the association's purchases list. */
+/** The statuses of money actually received and kept. */
 export const RECEIVED_PURCHASE_STATUSES: PurchaseStatus[] = ['paid', 'paid_not_granted'];
+
+/** What the association's purchases list shows: money received, kept or refunded in full since. */
+export const LISTED_PURCHASE_STATUSES: PurchaseStatus[] = [
+  ...RECEIVED_PURCHASE_STATUSES,
+  'refunded',
+];
 
 /**
  * The status of money received, from whether what it paid for was delivered: `paid`, or
@@ -55,6 +69,13 @@ export class PurchaseRecord {
 
   @Column({ type: 'uuid', nullable: true })
   productId: string | null;
+
+  /**
+   * The form answer this record was written for (migration 120): how a form payment is traced to its
+   * Lydia request, for a refund. NULL on boutique rows and on every row written before 120.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  submissionId: string | null;
 
   @Column({ type: 'int' })
   amountCents: number;

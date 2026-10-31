@@ -47,6 +47,10 @@ import { PushService } from '../push/push.service';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { LydiaRefund } from './refunds/lydia-refund.entity';
+import { RefundsService } from './refunds/refunds.service';
+import { LydiaRefundNotifier } from './refunds/lydia-refund-notifier.service';
+import { RefundsController } from './refunds/refunds.controller';
 
 @Module({
   imports: [
@@ -72,6 +76,7 @@ import { PricingModule } from '../pricing/pricing.module';
       PostNotification,
       Space,
       AssociationAudience,
+      LydiaRefund,
     ]),
     FollowsModule,
     UserTagModule,
@@ -101,6 +106,8 @@ import { PricingModule } from '../pricing/pricing.module';
     // translatable.
     PostNotificationsService,
     LydiaPaymentsNotifier,
+    RefundsService,
+    LydiaRefundNotifier,
   ],
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
@@ -111,6 +118,7 @@ import { PricingModule } from '../pricing/pricing.module';
     AssociationAudiencesController,
     PosterController,
     AssociationsController,
+    RefundsController,
   ],
   exports: [
     AssociationsService,

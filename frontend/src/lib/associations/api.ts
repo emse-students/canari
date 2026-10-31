@@ -2125,6 +2125,129 @@ export async function listProductPurchases(
   );
 }
 
+// ── Lydia refunds (MANAGE_PAYOUT_ACCOUNT, enrolment chantier lot 4) ──────────
+
+/**
+ * What a TOTAL refund of a payment withdraws, so the confirmation names it (`refund-codes.ts`
+ * server side): a boutique membership's tier, a form answer's seat (and the tier it granted), a shop
+ * purchase, a Cercle top-up (the money only, never the balance), or nothing when the product is gone.
+ */
+export type RefundWithdrawal =
+  | 'membership'
+  | 'form'
+  | 'form-membership'
+  | 'shop'
+  | 'topup'
+  | 'unidentified';
+
+/** Why a payment cannot be refunded from Canari (`NotRefundableReason` server side). */
+export type RefundRefusalReason = 'not-online' | 'not-received' | 'untraceable' | 'other-business';
+
+/** A refund as the purchases screen reads it. */
+export interface AssociationRefund {
+  id: string;
+  purchaseRecordId: string;
+  kind: 'total' | 'partial';
+  amountCents: number;
+  reason: string;
+  /** `refunded`, `refused` (nothing refunded), or `unconfirmed` (Lydia never answered). */
+  state: 'refunded' | 'refused' | 'unconfirmed';
+  /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
+  refusal: string | null;
+  sideEffect: string | null;
+  requestedAt: string;
+  answeredAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Per payment of the purchases list: whether a refund is offered, and where it stands. */
+export interface RefundStanding {
+  purchaseRecordId: string;
+  refundable: boolean;
+  reason: RefundRefusalReason | null;
+  withdrawal: RefundWithdrawal | null;
+  paidCents: number;
+  refundedCents: number;
+  /** The refund Lydia has not confirmed yet, which a manager checks before any new one. */
+  unconfirmedRefundId: string | null;
+}
+
+/** What a refund asks: the dialog draws `idempotencyKey` once, so a resent click refunds nothing twice. */
+export interface RefundRequest {
+  kind: 'total' | 'partial';
+  amountCents?: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/** The refund standing of every listed payment, and the refunds made (MANAGE_PAYOUT_ACCOUNT). */
+export async function listAssociationRefunds(
+  associationId: string
+): Promise<{ standings: RefundStanding[]; refunds: AssociationRefund[] }> {
+  return request(`/api/associations/${encodeURIComponent(associationId)}/refunds`);
+}
+
+/**
+ * Refunds a payment through Lydia. Answers the refund once Lydia confirmed it; throws a
+ * {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when Lydia did not answer.
+ */
+export async function refundAssociationPurchase(
+  associationId: string,
+  purchaseId: string,
+  body: RefundRequest
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/refunds`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/**
+ * Settles a refund Lydia never confirmed, from what the manager read in Lydia's own history:
+ * `refunded` true when the refund shows there.
+ */
+export async function resolveAssociationRefund(
+  associationId: string,
+  refundId: string,
+  refunded: boolean
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/refunds/${encodeURIComponent(refundId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ refunded }) }
+  );
+}
+
+/** The words of the statement export, every one required by the server (`export-labels`). */
+export interface StatementLabels {
+  date: string;
+  operation: string;
+  item: string;
+  method: string;
+  amount: string;
+  reason: string;
+  payment: string;
+  refundTotal: string;
+  refundPartial: string;
+  cash: string;
+  online: string;
+  totalReceived: string;
+  totalRefunded: string;
+  balance: string;
+}
+
+/** The association's statement - payments and refunds with totals - as CSV, in `labels`' words. */
+export async function exportAssociationStatement(
+  associationId: string,
+  labels: StatementLabels
+): Promise<Blob> {
+  const query = encodeURIComponent(JSON.stringify(labels));
+  const res = await apiFetch(
+    `${socialUrl()}/api/associations/${encodeURIComponent(associationId)}/statement.csv?labels=${query}`
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  return res.blob();
+}
+
 // ── Payment delegation (MANAGE_PRODUCTS) ─────────────────────────────────────
 
 /**
