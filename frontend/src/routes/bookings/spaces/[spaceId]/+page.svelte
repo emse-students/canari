@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { page } from '$app/state';
+  import { resolve } from '$app/paths';
   import { Bell, CalendarDays } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -13,6 +14,7 @@
   import { zoneDiffersFromDevice } from '$lib/bookings/grid';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { BOOKINGS_HREF, spaceHref } from '$lib/bookings/routes';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
@@ -34,6 +36,8 @@
   let space = $state<BookerSpace | null>(null);
   let loading = $state(true);
   let loadError = $state('');
+  // The server answered that no such space is reachable: a plain page, not a red error.
+  let notFound = $state(false);
   let nowMs = $state(Date.now());
   let qrOpen = $state(false);
 
@@ -64,6 +68,7 @@
     Log.d('BOOKINGS', `space page load space=${id}`);
     loading = true;
     loadError = '';
+    notFound = false;
     space = null;
     try {
       const loadedSpace = await getSpace(id);
@@ -74,6 +79,7 @@
     } catch (e) {
       if (id !== spaceId) return;
       Log.i('BOOKINGS', `space read failed space=${id}: ${String(e)}`);
+      notFound = refusalStatus(e) === 404 || refusalCode(e) === 'space-not-found';
       loadError = describeBookingRefusal(e, m.common_load_error());
     } finally {
       if (id === spaceId) loading = false;
@@ -99,6 +105,16 @@
       <div
         class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
+    </div>
+  {:else if notFound}
+    <div class="flex flex-col items-center gap-4 py-16 text-center">
+      <p class="text-text-main text-base">{m.bookings_space_unavailable()}</p>
+      <a
+        href={resolve('/bookings')}
+        class="bg-cn-yellow text-cn-dark rounded-xl px-4 py-2 text-sm font-semibold"
+      >
+        {m.bookings_space_unavailable_back()}
+      </a>
     </div>
   {:else if loadError || !space}
     <p
