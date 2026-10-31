@@ -1046,16 +1046,22 @@ that consumes them next.
   reads to that member as "added a device": it is a device under a key they never saw, which is
   what the line says. Defensible, and deliberate - the line never claims the device id is new. A
   repair under the PINNED key announces nothing (`pinned`).
-- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
-  device's name when the device list has one, when this device learned of it, and a link to
-  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
-  last 256 announced keys) until dismissed or followed.
+- **The owner alert in the app** is a row of `/notifications` (`DeviceNoticeRow.svelte`, above the
+  date bands) since 2026-10-30; the app-wide `NewDeviceBanner` is deleted (owner decision: no
+  banner for device notices). It is a LOCAL entry - built on this device from a signed commit, never
+  sent to the server, never a push - and it counts in the bell's unread badge
+  (`postNotifStore.unread` adds `unreadDeviceNoticeCount()`). Opening `/notifications` READS it, as
+  for every other notification (`markDeviceNoticesRead`, persisted as `read` next to the notice): the
+  badge and the dot clear, the row stays until acted on. The row carries the device's name when the
+  device list has one, when this device learned of it, a link to `/settings/security`, "Not me"
+  (confirm, then `revokeNoticedDevice`; the toasts are kept) and "Got it". Durable per account
+  (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the last 256 announced keys) until dismissed,
+  revoked or followed.
 - **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
-  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
-  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
-  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
-  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
-  learns of it only from a device of their own that refuses it too.
+  SHOWN NOWHERE since 2026-10-30: `noteRefusedOwnDevices` only logs it, as an error (an anomaly),
+  once per device per session, from the refusals this device remembers at registration and from each
+  new one (`setRefusedDeviceListener`). The remedy stays the same (remove the device, sign in on it
+  again, and it enrols as a new device). A contact's refused device is not reported at all.
 - **The local notification** is raised by the native background engines only, from a commit they
   merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
   the account's new device once the server accepted it) and the iOS notification extension (a
