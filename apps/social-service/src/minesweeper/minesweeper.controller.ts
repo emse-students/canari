@@ -40,9 +40,9 @@ export class MinesweeperController {
 
   /** Best verified time per user, sorted ascending. */
   @Get('leaderboard')
-  leaderboard(@Query('limit') limit?: string) {
+  leaderboard(@Headers('x-user-id') userId: string, @Query('limit') limit?: string) {
     const n = limit ? Number.parseInt(limit, 10) : undefined;
-    return this.minesweeperService.leaderboard(Number.isFinite(n) ? n : undefined);
+    return this.minesweeperService.leaderboard(Number.isFinite(n) ? n : undefined, userId);
   }
 
   /** Caller's personal best + rank, if any. */
@@ -56,8 +56,11 @@ export class MinesweeperController {
    * when the user has never submitted a verified clear.
    */
   @Get('users/:userId')
-  async userStanding(@Param('userId') targetUserId: string) {
-    const standing = await this.minesweeperService.userStanding(targetUserId);
+  async userStanding(
+    @Headers('x-user-id') viewerId: string,
+    @Param('userId') targetUserId: string
+  ) {
+    const standing = await this.minesweeperService.userStanding(targetUserId, viewerId);
     if (!standing) {
       return { personalBestMs: null as number | null, rank: null as number | null };
     }

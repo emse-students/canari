@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { AssociationFollow } from './entities/association-follow.entity';
 import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
@@ -221,6 +222,13 @@ export class FollowsService {
     followedUserId: string
   ): Promise<{ status: FollowStatus; created: boolean; noticeClaimed: boolean }> {
     this.logger.debug(`[FOLLOW] ${short(followerUserId)} asks to follow ${short(followedUserId)}`);
+    // Never across the review cohort's boundary, either way (review-cohort.ts): typed 403.
+    if (!sameSideOfReviewCohort(followerUserId, followedUserId)) {
+      this.logger.log(
+        `[FOLLOW] ${short(followerUserId)} -> ${short(followedUserId)}: refused, across the review cohort's boundary`
+      );
+      throw new ReviewCohortBoundaryException();
+    }
     for (let attempt = 1; attempt <= 3; attempt++) {
       const written = await this.userFollowRepo.manager.transaction(async (tx) => {
         await tx.query(ASK_LOCK_SQL, [followerUserId]);

@@ -134,7 +134,9 @@ describe('FormsService - the seat a pending payment holds', () => {
     };
     const userTagService = {
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
-      // The paid form's pre-check before any payment request: nothing held, so a rise.
+      // The paid form's pre-check before any payment request: no catalogue to check the tier
+      // against, and nothing held, so a rise.
+      listCotisationTiers: jest.fn(() => Promise.resolve([])),
       rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 
@@ -305,6 +307,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // Nobody manages this form through the association: only its submitter may read its answer.
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
+      revertLydiaReadinessAfterRefusal: jest.fn(async () => undefined),
     };
     // A fake core-service: every call is recorded with what the ROWS looked like when it was made,
     // and the cancel route answers what the test sets (core reads Lydia's error 2 as
@@ -326,6 +329,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       duringState: null as null | (() => void),
       /** Runs inside the cancel call, as Lydia's own cancel callback for the old request may. */
       duringCancel: null as null | (() => Promise<unknown>),
+      /** What `create-checkout-session` answers instead of a request, when set (a core refusal). */
+      createAnswer: null as null | Error,
     };
     let requests = 0;
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
@@ -355,6 +360,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         return { data: { ok: true, state: core.stateAnswer, raw } };
       }
       expect(route).toBe('create-checkout-session');
+      if (core.createAnswer) throw core.createAnswer;
       requests += 1;
       return {
         data: {
@@ -382,6 +388,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     return {
       service,
       rows,
+      associationsService,
       userTagService,
       purchaseRecordService,
       organiserAlert,
@@ -2184,6 +2191,79 @@ describe('FormsService - the seat a pending payment holds', () => {
         { id: '4', paymentStatus: 'paid_over_capacity' },
       ]);
       expect(ordered.map((r) => r.id)).toEqual(['2', '4', '1', '3']);
+    });
+  });
+
+  /** Lydia's error 5 / 2701 on a form's request/do (lot 2): the HOLDER stops being ready. */
+  describe('a request/do refused on the Business itself', () => {
+    const savedSecret = process.env.INTERNAL_SECRET;
+    // A guest's visitor key is an HMAC under the internal secret (`guest-visitor.ts`).
+    beforeAll(() => (process.env.INTERNAL_SECRET = 'internal-secret-for-test'));
+    afterAll(() => {
+      if (savedSecret === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = savedSecret;
+    });
+    const refusedBy = (code: string) =>
+      Object.assign(new Error('refused'), {
+        response: { status: 400, data: { code, providerCode: '5' } },
+      });
+
+    it.each([
+      [
+        'member',
+        'LYDIA_BUSINESS_NOT_VALIDATED',
+        'request-refused',
+        'PAYMENTS_NOT_ACTIVATED',
+        'form',
+      ],
+      ['guest', 'LYDIA_BUSINESS_BLOCKED', 'request-blocked', 'PAYMENTS_BLOCKED', 'form-guest'],
+    ])(
+      'a %s submit: the row released, the holder reverted on %s (%s), the typed 409 %s',
+      async (who, coreCode, cause, payerCode, path) => {
+        const guest = who === 'guest';
+        const { service, rows, core, associationsService } = makeStore({
+          maxSubmissions: 5,
+          rows: [],
+          basePrice: 1500,
+          provider: 'lydia',
+          isPublic: guest,
+          allowMultipleSubmissions: true,
+          grantsCotisation: false,
+        });
+        core.createAnswer = refusedBy(coreCode);
+        jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+        const err = await (
+          guest
+            ? service.submit(
+                'f1',
+                { payerEmail: 'guest@example.org', answers: {} } as any,
+                'guest',
+                '203.0.113.7'
+              )
+            : service.submit('f1', { userId: 'u1', answers: {} } as any)
+        ).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({ code: payerCode });
+        expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled']);
+        expect(associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledWith(
+          'vendor',
+          cause,
+          { path, id: rows[0].id }
+        );
+      }
+    );
+
+    it('any other refusal reverts nothing', async () => {
+      const { service, core, associationsService } = makeStore({
+        maxSubmissions: 5,
+        rows: [],
+        basePrice: 1500,
+        provider: 'lydia',
+      });
+      core.createAnswer = refusedBy('PAYMENT_PROVIDER_REFUSED');
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      await service.submit('f1', { userId: 'u1', answers: {} } as any).catch(() => undefined);
+      expect(associationsService.revertLydiaReadinessAfterRefusal).not.toHaveBeenCalled();
     });
   });
 });

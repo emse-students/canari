@@ -254,12 +254,14 @@ updates:
   # opens a pull request, read its update job in the Actions log before believing there is nothing
   # to do.
   #
-  # IT OPENS PULL REQUESTS THAT DO NOT MERGE ON THEIR OWN, AND THAT IS THE CEILING SPEAKING. No
-  # pull-request job configures the `:app` module (it needs that generated file and the
-  # `google-services.json` secret); only `android.yml` builds it, at release time. So
-  # `ceiling_gate_for_ref` in `.github/scripts/lib/ceiling.sh` refuses every Gradle update to this
-  # directory and names the job that would lift it. One block per directory, never `directories:`,
-  # so the branch always names its directory - which is what that refusal reads.
+  # THE CEILING JUDGES THESE BY THE `compile-android-app` JOB OF `ci.yml` (2026-10-30). It
+  # generates the file above with the app crate's build script, stands a committed stub in for
+  # the `google-services.json` secret, and runs `:app:checkArm64DebugAarMetadata`,
+  # `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. That is evidence about
+  # the Kotlin and the dependency metadata, not about a signed release build; `android.yml` still
+  # alone builds that. `ceiling_gate_for_ref` in `.github/scripts/lib/ceiling.sh` allows only the
+  # direct `gen/android/<branch>` shape. One block per directory, never `directories:`, so the
+  # branch always names its directory - which is what that function reads.
   - package-ecosystem: "gradle"
     directory: "/frontend/src-tauri/gen/android"
     rebase-strategy: auto

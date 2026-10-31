@@ -38,6 +38,7 @@
     chatViewCountLine,
     isPinnedToBottom,
     respondToNewMessage,
+    keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
@@ -64,7 +65,6 @@
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
-  import { ownKeyFingerprint } from '$lib/utils/chat/deviceNoticeWiring';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
@@ -322,21 +322,11 @@
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
 
-  // THIS DEVICE'S OWN KEY, shown while it waits to be added (2026-10-27): a member asked to add a
-  // further device of this account is shown the key of the package it would add, and the owner
-  // compares the two here. Read once, when a waiting conversation is first shown. NOT for a person's
-  // invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person, not a key.
-  let ownKey = $state<string | null>(null);
+  // A device waiting to be added says so, in plain words and with no key on screen. NOT for a
+  // person's invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person.
   const waitingToBeAdded = $derived(
     conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
   );
-  $effect(() => {
-    if (!waitingToBeAdded || ownKey !== null) return;
-    void ownKeyFingerprint().then((key) => {
-      if (key !== null) ownKey = key.match(/.{1,4}/g)?.join(' ') ?? key;
-    });
-  });
-
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
   // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
@@ -1112,7 +1102,7 @@
    * l'interface"*).
    *
    * AN OBSERVER, NOT A TIMER. Every trigger is the change itself, so there is nothing to tune and
-   * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
+   * nothing that fires when nothing happened; `threadGrowthResponse` holds the judgement and is
    * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
    * nothing recomputes it without a scroll event, and content growing under a stationary reader
    * fires none.
@@ -1146,10 +1136,16 @@
       keyboardWasOpen = kbOpen;
       return;
     }
-    if (!keyboardWasOpen && kbOpen && _composerFocused && isNearBottom) {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    const response = keyboardChangeResponse({
+      wasOpen: keyboardWasOpen,
+      isOpen: kbOpen,
+      composerFocused: _composerFocused,
+      isNearBottom,
+    });
+    if (keyboardWasOpen !== kbOpen) {
+      Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
-    if (keyboardWasOpen && !kbOpen && isNearBottom) {
+    if (response === 'follow-bottom') {
       tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
     }
     keyboardWasOpen = kbOpen;
@@ -1690,10 +1686,10 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{heldNotice}</span>
           </div>
-        {:else if waitingToBeAdded && ownKey}
+        {:else if waitingToBeAdded}
           <div class="chat-send-notice is-pending" role="status" data-own-device-key>
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
-            <span>{m.chat_waiting_own_device_key({ fingerprint: ownKey })}</span>
+            <span>{m.chat_waiting_own_device()}</span>
           </div>
         {/if}
       {/snippet}
@@ -1728,7 +1724,7 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
-          notice={sendError || heldNotice || (waitingToBeAdded && ownKey) ? sendNotice : undefined}
+          notice={sendError || heldNotice || waitingToBeAdded ? sendNotice : undefined}
         />
       </div>
     {/if}

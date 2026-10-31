@@ -21,11 +21,15 @@ No token, signature or key value appears in this repository, on this page or any
 | `vendor_token` | yes | one Business (one association) | names the destination of a payment; `business/create` answers it as `api_token`; stored as `associations.lydiaAccountId` |
 | Business private token | no | one Business | **signs that Business's callbacks** (measured 2026-10-16 on the sandbox, and a `confirm` in production 2026-10-23); shown in the Lydia console, "Mes informations", once the Business is validated (csm) |
 
-- The Business private token is **not returned by an API call** (csm, 2026-10-20: it must be read from the
-  console after the documents are validated). `business/create` answers `api_token`, `api_token_id` and
-  `dashboard_url`; whether `api_token_id` IS the private token is **unmeasured** (it needs a validated
-  Business whose console value can be compared). Canari does not capture it: a payout manager pastes the
-  key, write-only, encrypted at rest ([payments](frontend/modules/payments.md), PR #1940).
+- `business/create` answers `api_token`, `api_token_id` and `dashboard_url`, and **`api_token_id` IS the
+  Business private token** (homologation, 2026-10-30, on a fresh Business): `auth/vendortoken` (`vendor_token`,
+  `vendor_id`) answers `{status: "ok"}` with it and error 103, "Le token id ne correspond pas au token", with a
+  wrong value (the control); the doc agrees ("api_token_id also known as private vendor token"). This
+  contradicts the csm's 2026-10-20 "read it from the console". Proven by `auth/vendortoken` only, NOT yet by
+  a callback verifying with it. **Canari captures it at creation** (enrolment lot 1): the onboarding
+  sends the pair to `auth/vendortoken`, and only an `ok` links the Business, the key stored encrypted
+  exactly as a pasted one; a 103 links nothing ([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)).
+  The paste field of PR #1940 is gone; its route answers a typed 410 to old store builds.
 - Lydia can regenerate a Business private token; the old one is invalid at once (csm, 2026-10-20). Nothing
   here regenerates it.
 - Lydia asked that the `vendor_token_id` stay strictly private in the backend (csm).
@@ -133,15 +137,18 @@ the request was paid or closed - read the state after it, which is what Canari d
 Needs the legal profile of the association and the Provider token. Answers `api_token` (the
 `vendor_token`), `api_token_id` (see section 1) and `dashboard_url`, **once**: the dashboard link is not
 re-issuable (measured). An unknown `provider_token` answers `{status: "error", code: 104}`. Re-running the
-onboarding replaces the linked Business silently: **refuse or confirm** is owed ([backlog](backlog.md)).
+onboarding would replace the linked Business silently, so **Canari refuses it** while one is linked: a typed
+409 `LYDIA_ACCOUNT_ALREADY_LINKED`, before any call to Lydia (enrolment lot 1; unlinking stays the
+confirmed "disconnect").
 
 Fields Canari sends: `provider_token`, `name`, `address`, `zipcode`, `city`, `country`, `business_email`,
 `business_phone`, each as typed in the onboarding form (`country` is the word typed, e.g. "France", not an
-ISO code). **That these seven SUFFICE is measured** (three creations accepted in production 2026-10-23;
+ISO code), and since enrolment lot 1 `webhook` (`<public origin>/api/payments/lydia-business-webhook`;
+**not yet observed** being called by Lydia). **That these seven SUFFICE is measured** (three creations accepted in production 2026-10-23;
 `provider_token` alone answers error 1). **That they are the WHOLE list is not**: it was taken from Lydia's
 API documentation during the 2026-09 migration plan, which is not kept in this repository, and no optional
-field was ever tried (the plan names an optional `webhook`). Which field, if any, names the Business's
-HOLDER is the open question of the console sign-in below (asked to Lydia). In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
+field was ever tried (the plan names an optional `webhook`). **Lydia's documentation (section 5b, read
+2026-10-27) lists exactly these seven plus `send_email` and `webhook`, and NO field names a holder**: a person is attached by `business/addcashier`, `auth/register` or `auth/login`. In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
 the Business is not validated, and `dashboard_url` is `.../console-pro/<business id>-<slug>`. That link
 answers **404 to anyone not signed in to the Lydia console**, on the sandbox and in production alike: it is
 not a sign-in link, and the console path is the one below.
@@ -161,16 +168,41 @@ names three steps (quoted from that e-mail, not yet walked through end to end):
 already held another Business, the console listed only that older Business, and nothing reached the new
 one. A second Business, created the same day through Canari's onboarding with the e-mail and phone of the
 person then signed in to the app, did not appear in that console either. So `business_phone` alone does not
-attach a Business to a Lydia Pro identity (measured 2026-10-23), and how the holder of a Business made by
-the Provider reaches its console is **unknown, asked to Lydia**. The e-mail's "Acceder a ma Console de
-Gestion" button is the one entry point not yet followed from a signed-out browser.
+attach a Business to a Lydia Pro identity (measured 2026-10-23).
 
-### Refunds and listings - documented, never called
+**The missing step, measured in production 2026-10-30:** a person added by the Provider-signed
+`business/addcashier` (all rights, `notify=yes`) receives Lydia's SMS and, signed in to the Lydia Pro app
+with that number, sees the Business. So the holder of a Business made by the Provider reaches it through
+`business/addcashier` (section 5b), not through `business_phone`.
 
-`transaction/cancel`, `transaction/refund`, `transaction/list` exist (doc). Refunding a transaction needs the
-equivalent sum to have been sent to Lydia's company beforehand; each Business has an authorised overdraft
-of 100 EUR which allows a few refunds if the tariff permits (csm, 2026-10-20). Whether `transaction/list`
-aggregates is **unconfirmed**. No Canari code calls any of the three.
+### Refunds - `transaction/refund`, measured on homologation (2026-10-31)
+
+Canari calls ONE of the three documented calls (`transaction/cancel`, `transaction/refund`,
+`transaction/list`): `POST /api/transaction/refund.json` with `vendor_token`, `order_ref` (or
+`transaction_identifier`), `amount` and `signature`; `notify_payer` and `notify_collecter` default to
+`yes` and are left so. Refunding needs the equivalent sum at Lydia beforehand; each Business has an
+authorised overdraft of 100 EUR which allows a few refunds if the tariff permits (csm, 2026-10-20).
+
+**Measured on homologation 2026-10-31, codes and amounts only:**
+
+- The signature is the md5 over the RAW values of `amount` and `order_ref`, sorted, with the
+  BUSINESS private key (`signLydiaParams`, `lydia-refund.ts`) - NOT the URL-encoded form the
+  enrolment calls take. Signed over the encoded values, with the Provider key, or with a wrong key:
+  error 444. No signature: error 1. An unknown transaction: error 2, which proves the signature
+  passed. `amount` is sent as `12.50` (two decimals, a dot); `0.5` passed the signature check too.
+- **Lydia offers Canari no read of a refund.** `request/state` with an unknown `order_ref` answers
+  error 2 and says nothing of refunds. So an unanswered refund cannot be read back, and Canari never
+  retries one blind
+  ([payments](frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
+- **The success path is UNMEASURED.** A fresh sandbox Business answers error 5 on `request/do`, so no
+  sandbox payment could be completed and no refund of a real transaction was made. Owed: one refund
+  of a validated sandbox Business's payment, or the first production refund read in its logs.
+
+Core maps Lydia's error to a typed code (`lydiaRefundRefusalCode`): 2 is
+`LYDIA_REFUND_TRANSACTION_NOT_REFUNDABLE`, 10 and 105 `LYDIA_REFUND_NOT_ALLOWED`, 444 / 102 / 103 /
+2701 the shared signature and Business codes, anything else `LYDIA_REFUND_REJECTED`; no usable answer
+is `LYDIA_REFUND_UNCONFIRMED`. `transaction/list` stays uncalled: the statement is built from Canari's
+own records.
 
 ## 3. Callbacks (`confirm_url`, `cancel_url`, `expire_url`)
 
@@ -186,7 +218,9 @@ knows which one it is (Lydia does not say).
   `key=value` pairs sorted by key, joined by `&`, followed by `&` and the key** (measured 2026-10-16:
   `cancel` and `expire` verified this way on the sandbox; a `confirm`, with its `transaction_identifier`,
   verified the same way IN PRODUCTION on 2026-10-23, by Canari's own route with the key a manager had
-  pasted). A field set that leaves `signed` out does not verify.
+  pasted). A field set that leaves `signed` out does not verify. **The values are signed RAW**: every one
+  of those callbacks carried an `order_ref` with `:`, which a URL-encoded signature would have written
+  `%3A` - the opposite of what Lydia checks on a request Canari SENDS (section 5b, 2026-10-30).
 - A decline sends **no callback** at all (measured 2026-10-21); a payer's "annuler" link and a merchant
   cancel send `cancel`; expiry sends `expire` (a single POST in the window watched). Whether a non-2xx is
   retried is **unknown**.
@@ -215,18 +249,37 @@ knows which one it is (Lydia does not say).
 - The sandbox and production answer the same shapes as far as measured. Production was first run on
   2026-10-23: one real payment of the minimum amount, its `confirm` verified (sections 1 and 3).
 
+## 5b. What Lydia's own documentation says (read 2026-10-27)
+
+The API documentation is an apiDoc site served by the sandbox itself (`https://homologation.lydia-app.com/doc/api/`, its data in `api_data.json` and `api_project.json` next to the page), open to anyone. Lydia's account manager said our open questions were answered there. **It is the primary source for everything below; it is not copied into this repository, read it at that address.** What it settles:
+
+- **Signature (all signed calls and callbacks):** the MD5 of the `key=value` pairs sorted alphabetically, joined by `&`, followed by `&` and the private token. Parameters are signed AS SENT: if a layer escapes them, they are signed escaped. **What that means in each direction was measured, and the two differ:**
+  - **A request Canari sends (homologation, 2026-10-30, authorised by Lydia):** Lydia checks the signature against the URL-ENCODED keys and values, as PHP `urlencode`/`http_build_query` write them (RFC 1738: a space becomes `+`, every byte outside `[A-Za-z0-9_.-]` becomes `%XX` in upper case), i.e. `md5(sorted urlencode(key)=urlencode(value) joined by & + & + private token)`. `business/addcashier` signed over the RAW values answered `444` every time; signed over the encoded values it passed; the same request with a deliberately wrong signature answered `444` (the control). The doc only hints at it ("the loop can be replaced by `http_build_query`").
+  - **A callback Lydia sends (section 3):** signed over the RAW values. Every Canari `order_ref` carries `:` (`form:...`, `product:...`), and the callbacks of 2026-10-16 and the production `confirm` of 2026-10-23 verified over the raw string. So `signLydiaParams` (core-service) stays RAW: it serves only the verification of what Lydia signs, and encoding it would refuse every callback. No Canari code signs an outgoing request yet; the one that does must encode first.
+- **`request/do` cannot be signed:** the doc says the `signed` field of a callback is "0 most of the time" because a call to `request/do` is not signable (a signature is reserved to another Lydia product).
+- **Reconciliation and the `request/state` signature:** the doc names three ways to learn a request was paid (callback, `request/state`, `transaction/list`, at least two of them) and advises checking the `request/state` signature; both are implemented, see section 2 and [section 7](#7-reconciliation---the-sweep-lydias-documentation-asks-for).
+- **`business/create`:** the documented parameters are `provider_token`, `name`, `address`, `zipcode`, `city`, `country`, `business_email`, `business_phone`, `send_email` (`yes` by default) and `webhook`. The doc lists `webhook` without marking it optional; production accepted our seven without it. The webhook receives two POST fields only, `vendor_token` and `event`, **unsigned**, with the events `BUSINESS_VALIDATED` and `BUSINESS_UNVALIDATED` (the second turns daily bank transfers off). Unsigned means anyone can send it. **No call reads a Business's validation state** (the one measured signal, error 5, comes from a real `request/do`, and 2701 when the Business is blocked). The owner decided for lot 2 (2026-10-30, risk ACCEPTED) that `BUSINESS_VALIDATED` marks the Business ready and that error 5 / 2701 on a real `request/do` - answered before any request exists - reverts it; `BUSINESS_UNVALIDATED` changes nothing and notifies nobody, a WARN line its only record ([payments](frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).
+- **Who holds a Business made by the Provider:** none of the creation parameters names a holder. The doc gives three ways to attach a person: (1) `business/addcashier` with `provider_token`, `vendor_token`, `cashier_phone` (a mobile number), `permissions` (the doc says a JSON object; **measured on homologation 2026-10-30, it must be a JSON-encoded ARRAY OF NAMES**, e.g. `["access_collect","access_cashier"]` - an object `{"access_collect":1,...}` gets a generic HTTP 500 HTML page with no error code, the array gets `error: 0` and `business/getpermission` then lists the rights granted; the names are `access_collect`, `access_allreceipt`, `access_checkout`, `access_statement`, `access_feedback`, `access_cashier`, `access_voucher`, `access_marketing`, `access_fee`, `access_cancelrequest`, `access_canceltransaction`, `access_manage_collects`, `access_easeofpayment`) and a `signature` over `cashier_phone` and `permissions` plus the Provider private token; `notify=no` skips the text message; the cashier "will next need to register"; (2) `auth/register` with the `vendor_token`: creates a pro account attached to the Business (which rights it gets is an operations matter, in the private operations notes); (3) `auth/login` with a `vendor_token`: links an existing account to the Business with the right to collect. This explains the measured 2026-10-23 failure (a phone alone attaches nothing) and makes `business/addcashier` the missing enrolment step - Canari calls it since enrolment lot 2, for the Responsable ([payments](frontend/modules/payments.md#the-responsable-enrolment-lot-2)). **Tried by Canari on 2026-10-27 and 2026-10-28, outcomes only:** `business/addcashier`, signed with the Provider private token as documented, answered `444` on the sandbox and on a production Business; `auth/create_account`, signed the same way, answered a signature error; `business/create` works unsigned; `auth/register` with the `vendor_token` is the route that attaches a person on the sandbox; `auth/login` on a production Business answered an HTTP 500 and linked nothing. The Lydia contact confirmed the key is "normally" the Provider's and could not answer on the string to sign. **Settled on homologation 2026-10-30:** the `444` was the RAW signature - the key was right, the string was not (see the signature bullet above); with the encoded string and `permissions` as an array of names, `business/addcashier` answers `error: 0`. `auth/create_account`'s signature error is most likely the same cause (its signed e-mail carries `@`), not re-tried yet. **The cashier calls (homologation, 2026-10-30, encoded signatures):** `business/addcashier` grants exactly the rights listed, and calling it again on the same phone REPLACES them (re-adding `["access_collect"]` leaves collect alone); an empty list `[]` answers error 3, "Format des permissions invalide". `business/getpermission` reads a cashier's rights, each `access_*` as `"0"` or `"1"`. It lists **18** `access_*` names on homologation (2026-10-30): the 13 the doc documents and 5 it does not - `access_b2c_cancel`, `access_b2c_list`, `access_b2c_payments`, `access_switch_3ds` and `access_tap2pay`; Canari never grants the five, and its read-back counts any of them at `"1"` as a right held (payments, lot 3). **Removing a cashier works** (homologation, 2026-10-30): Lydia's cashier-removal call answers `error: 0` and `business/getpermission` then reads every right of the removed cashier as `0`; the call shape is in the private operations notes. Canari calls it since enrolment lot 3, every removal followed by that re-read; the rights each cashier role is given are ONE constant, documented in [payments](frontend/modules/payments.md#the-cashiers-enrolment-lot-3). Every call needs the `.json` suffix (section 2); without it the answer is XML. The rights a registration gives are an operations matter, kept out of this public page.
+- **`auth/vendortoken`** validates that a vendor token and a private one match (`vendor_token`, `vendor_id`): the check an admin's pasted private key never had.
+- **Errors worth a typed answer:** `104` unknown Provider (also an unknown recipient), `102` invalid vendor token, `103` tokens do not match, `10` not authorised, `3` bad permission format or an `order_ref` already used, `444` invalid signature, `2701` blocked business, `5` no provider for a remote request (the documented name of the error a not-yet-validated Business gets on `request/do`), `106` user already exists, `198` missing information.
+- **The sandbox's own tools:** a developer back office at `https://homologation.lydia-app.com/backoffice` (sign in with the vendor token) to look at transactions and requests and simulate payments; two fake card numbers are listed there too, but section 5 measured that a real card flow is not the way in the sandbox since Lydia's update.
+- **Not in the doc:** which documents an association must give for validation, the console sign-in of a Provider-made Business (the three ways above are the only documented route), the format expected for `country`, and refund prerequisites.
+
 ## 6. Still unknown
 
 - The exact `request/state` signature: whether the amount is signed as sent (`"12.50"`) or normalised
-  (section 2). **Settled by the first reconciliation of a real request**: a `verified` line, or a
+  (section 2), and for an `order_ref` lookup whether its `:` is signed raw, like a callback, or
+  URL-encoded, like a request (section 5b). **Settled by the first reconciliation of a real request**: a `verified` line, or a
   `does NOT verify` ERROR on a row whose amount is right.
 
 - The default lifetime of a request with no `expire_time` (at least 47 minutes on the sandbox).
-- Whether `api_token_id` is the Business private token, and whether `business/create` ever returns the
-  private token itself.
-- How the holder of a Business made by `business/create` signs in to its console (section 2), and which
-  documents Lydia asks of an ASSOCIATION (the e-mail names a KBIS or SIRET extract).
-- What a refund does end to end.
+- Whether a callback verifies with `api_token_id` (section 1 proved it the private token by
+  `auth/vendortoken` only, 2026-10-30).
+- Whether `auth/create_account` passes once signed over the URL-encoded values (section 5b settled
+  `business/addcashier` on 2026-10-30; create_account was not re-tried). Whether `auth/register` makes a Business made by `business/create` appear in a
+  person's console on production is not tried there, and which documents Lydia asks of an ASSOCIATION
+  (the e-mail names a KBIS or SIRET extract).
+- What a SUCCESSFUL refund answers, and when the money reaches the payer (section 2: no sandbox payment could be made to refund).
 - Whether a callback is retried after a non-2xx, and from which addresses Lydia calls.
 - Whether `expire_time` has a ceiling.
 - Whether Lydia accepts the app's deep link as `end_mobile_url` and appends anything to it.
@@ -312,7 +365,7 @@ sweep** (`LydiaReconciliationService`, social-service, since 2026-10-27) is the 
   against seven returns, not two sweeps.
 - **The switch: OFF in production until the amount format is measured** (decided 2026-10-27).
   `LYDIA_RECONCILE_ENABLED`, social-service, COMPUTED by `render-env.sh`
-  (`compute_lydia_reconcile_enabled`) like `LIVE_ENABLED`: `true` on dev, `false` on production, `true`
+  (`compute_lydia_reconcile_enabled`), as `LIVE_ENABLED` was until 2026-10-30: `true` on dev, `false` on production, `true`
   on a local estate. Anything but exactly `true` is OFF: no row is selected, Lydia is not called, and the
   only trace is ONE startup line (`[RECONCILE] Lydia reconciliation sweep OFF ...`); the hourly line is
   not written. Production is turned on by a commit changing that function, after the measurement below.

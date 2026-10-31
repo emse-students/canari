@@ -126,6 +126,16 @@
 </script>
 
 <!--
+  The URL carries the invite, so the page sends only its origin as Referer (strict-origin: no-referrer
+  would outlive the page and make every same-origin POST carry `Origin: null`). The policy is a HEADER
+  of this page (`$capability_referrer_policy`, Dockerfile.frontend); this <meta> restates it where no
+  nginx answers - the Tauri app, a dev server - and for a client-side navigation here.
+-->
+<svelte:head>
+  <meta name="referrer" content="strict-origin" />
+</svelte:head>
+
+<!--
   THE PAGE IS A DECLARED SHAPE AND THE CARD OWNS ITS OWN WIDTH. This was `mx-auto max-w-md` on the
   page itself - 448px, a width no scale declares - which is the page column being written by hand.
   The 448 was never wrong FOR THE CARD: a one-decision interstitial should not run the width of a

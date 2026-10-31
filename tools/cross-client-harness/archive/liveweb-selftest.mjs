@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PHASES, devicesFor } from '../checks.mjs';
+import { LIVE_PLAYER_HELD_WAIT_BUDGET_MS } from '../../../frontend/src/lib/live/constants.ts';
 import { LIVE_ROWS, liveNarration, liveOwn, liveRefusals, stallFacts, stallsOf } from '../liverows.mjs';
 import { rowVerdict } from '../srvlog.mjs';
 import { ignoringExpectedLog, ignoringExpectedRefusal } from '../watch.mjs';
@@ -38,12 +39,20 @@ const failsOn = (viewer, st, re) => stallFacts(viewer, st).some(([o, why]) => !o
 console.log('the spellings, against the source');
 const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../frontend/src/lib/live/livePlayer.ts'), 'utf8');
 for (const t of [
-  '`[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${this.policy.targetMs} ms)`',
+  '`[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${Math.round(this.policy.targetMs)} ms)`',
+  '`[LIVE] viewer ${this.liveId}: delivery of ${count} appended of ${fresh.length} taken (${range}), gap ${d.gapMs === null ? \'-\' : Math.round(d.gapMs)} ms: ` +',
+  '`end ${fmtS(seen.end)} -> ${fmtS(now.end)}, at ${fmtS(seen.at)} -> ${fmtS(now.at)}, ` +',
+  '`ahead ${fmtS(seen.ahead)} -> ${fmtS(now.ahead)} s, ` +',
+  '`ranges ${seen.spans} -> ${now.spans}`',
+  "`[LIVE] viewer ${this.liveId}: waiting at ${at.toFixed(2)} with ${wait.ahead.toFixed(2)} s buffered ahead ${formatLiveRanges(ranges)} - the engine's own wait`",
+  "`[LIVE] viewer ${this.liveId}: the engine's own wait at ${held.at.toFixed(2)} ended by itself after ${Math.round(wallMs)} ms, now at ${at.toFixed(2)}: held about ${Math.round(heldMs)} ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`",
   '`[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`',
   '`[LIVE] viewer ${this.liveId}: a delivery gap of ${Math.round(d.gapMs ?? 0)} ms - target buffer now ${Math.round(d.targetMs)} ms`',
   '`[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`',
   '`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`',
   '`[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`',
+  '`[LIVE] viewer ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks, at ${this.last}`',
+  "this.summarise('playing')",
 ]) ok(`livePlayer.ts still writes ${t.slice(1, 60)}...`, SOURCE.includes(t));
 
 // ── the order of a viewer's lines ────────────────────────────────────────────────────────────────
@@ -137,6 +146,24 @@ ok('a seal is forgiven on the broadcaster, NOT on a viewer', forgiven('LIVE-WEB-
 ok('a viewer join, stall and gap are forgiven on a viewer', forgiven('LIVE-STALL-1', 'W2', VJOIN) && forgiven('LIVE-STALL-1', 'W4', VSTALL) && forgiven('LIVE-STALL-1', 'W2', VGAP));
 ok('... NOT on the broadcaster', !forgiven('LIVE-STALL-1', 'A1', VJOIN) && !forgiven('LIVE-STALL-1', 'A1', VSTALL));
 ok('a join seek and a stall seek are forgiven on a viewer, the wait while seeking too', forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', '(join)')}`) && forgiven('LIVE-STALL-1', 'W2', `debug: ${WAITING}`));
+const DELIVERY = (gap) => `debug: [LIVE] viewer ${S}: delivery of 2 appended of 2 taken (3-4), gap ${gap} ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s, ranges [0.00-4.00] -> [0.00-8.00]`;
+ok('a delivery line is forgiven on a viewer, measured gap or not, NOT on the broadcaster', forgiven('LIVE-STALL-1', 'W2', DELIVERY('2000')) && forgiven('LIVE-STALL-1', 'W4', DELIVERY('-')) && !forgiven('LIVE-STALL-1', 'A1', DELIVERY('2000')));
+ok('... and a delivery line with nothing buffered before it stays dirt', !forgiven('LIVE-STALL-1', 'W2', DELIVERY('2000').replace('end 4.00', 'end -')));
+ok('a delivery line with a hole in its ranges is forgiven too (the hole is the evidence, not dirt)', forgiven('LIVE-STALL-1', 'W4', DELIVERY('2000').replace('-> [0.00-8.00]', '-> [40.11-55.56 56.18-58.19]')));
+ok("... and the line of the build before the ranges (no ranges) stays dirt", !forgiven('LIVE-STALL-1', 'W2', DELIVERY('2000').replace(/, ranges .*$/, '')));
+const HELD = `debug: [LIVE] viewer ${S}: waiting at 55.56 with 2.63 s buffered ahead [40.11-58.19] - the engine's own wait`;
+const HELD_END_MS = (ms) => `debug: [LIVE] viewer ${S}: the engine's own wait at 55.56 ended by itself after 309 ms, now at 55.74: held about ${ms} ms (budget 500 ms)`;
+const HELD_END = HELD_END_MS(129);
+const VIEWER_SUMMARY = (why) => `log: [LIVE] viewer ${S} (${why}): 30 segments played, 0 skipped, 2 seeks, at 29`;
+ok('the summary while playing and at the end is forgiven on a viewer (LIVE-STALL-1, 1.5.1-alpha.9)', forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('playing')) && forgiven('LIVE-STALL-1', 'W4', VIEWER_SUMMARY('ended')));
+ok('COUNTER: a summary on `stopped` or `unavailable` stays dirt', !forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('stopped')) && !forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('unavailable')));
+ok("the engine's own wait and its end are forgiven on a viewer, NOT on the broadcaster", forgiven('LIVE-STALL-1', 'W4', HELD) && forgiven('LIVE-STALL-1', 'W4', HELD_END) && !forgiven('LIVE-STALL-1', 'A1', HELD));
+const heldRun = (...tail) => stallsOf([JOINED, GAP(3960, 4500), ...tail.map((l) => l.slice(7))]);
+ok("... and a hold under the budget is neither a stall nor an unreadable line: it passes", (() => { const st = heldRun(HELD, HELD_END); return st.stallsAfter === 0 && st.unread.length === 0 && stallFacts('W4', st).every(([o]) => o); })());
+ok(`COUNTER: a hold over the ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms budget fails as a stall, the budget being the player's own constant`, failsOn('W4', heldRun(HELD, HELD_END_MS(LIVE_PLAYER_HELD_WAIT_BUDGET_MS + 1)), /over the 500 ms budget: 501 ms/) && stallFacts('W4', heldRun(HELD, HELD_END_MS(LIVE_PLAYER_HELD_WAIT_BUDGET_MS))).every(([o]) => o));
+ok('COUNTER: a hold over the budget BEFORE the first gap still fails (no cadence explains it)', failsOn('W4', stallsOf([JOINED, HELD.slice(7), HELD_END_MS(900).slice(7)]), /over the 500 ms budget/));
+ok('COUNTER: a wait never shown to have ended fails', failsOn('W4', heldRun(HELD), /no delivery showed ended/));
+ok('a wait that turned into a stall is counted once, as that stall', (() => { const st = heldRun(HELD, `debug: ${STALL}`, `debug: ${SEEK}`); return st.heldOpen === 0 && st.stallsAfter === 1 && st.stallSeeksAfter === 1; })());
 ok('a catch-up, drift or time-gap seek stays dirt - not the steady path', ['catch-up', 'drift', 'time gap'].every((why) => !forgiven('LIVE-STALL-1', 'W2', `debug: ${SEEK.replace('(stall)', `(${why})`)}`)));
 ok('a viewer jumping segments behind stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S}: 3 segments behind - jumping from 4 to 7`));
 ok('a viewer reconnecting stays dirt', !forgiven('LIVE-STALL-1', 'W2', `debug: [LIVE] viewer ${S} -> reconnecting (network)`));
@@ -176,6 +203,18 @@ ok('a longer name-mirror line stays dirt', !forgiven('LIVE-WEB-2', 'A1', `${NAME
 ok('a phone that REBOOTS mid-row stays dirt: the boot narration is not forgiven',!forgiven('LIVE-WEB-2', 'A1', 'debug: [RESTORE] 12 conversation row(s) seeded - history follows'));
 ok('a viewer stall at warn stays dirt',!forgiven('LIVE-STALL-1', 'W2', `warn: ${STALL}`));
 ok('an append failure stays dirt', !forgiven('LIVE-STALL-1', 'W2', `error: [LIVE] viewer ${S}: append failed (1 in a row)`));
+// `1.5.1-alpha.8` (#2574, #2689), read on LIVE-STALL-1 and LIVE-WEB-2 on 2026-10-29, ids invented.
+const CAM = (how) => `debug: [23:25:20.712] [LIVE-CAM] opening user (${how})`;
+ok('the phone broadcaster asks its lens EXACT: forgiven on A1; IDEAL on a phone stays dirt', forgiven('LIVE-WEB-2', 'A1', CAM('exact')) && !forgiven('LIVE-WEB-2', 'A1', CAM('ideal')));
+ok('a web broadcaster asks it IDEAL: forgiven; EXACT on the web stays dirt', webForgiven(CAM('ideal')) && !webForgiven(CAM('exact')));
+ok('... and the lens line is NOT forgiven on a viewer', !forgiven('LIVE-WEB-2', 'W2', CAM('exact')));
+const SHORT_SEEK = `debug: [23:25:37.979] [LIVE] viewer ${S}: seek to the live edge (short) at 14.01, 6021 ms behind`;
+const SHORT_HOLD = `debug: [23:22:08.736] [LIVE] viewer ${S}: 5.98 s buffered, under the 6015 ms target - no seek (short)`;
+const LEAVE = `debug: [23:25:39.280] [LIVE] leave ${S}`;
+ok('a short re-anchor, its held form and the seat given back are forgiven on a viewer', forgiven('LIVE-WEB-2', 'W4', SHORT_SEEK) && forgiven('LIVE-STALL-1', 'W2', SHORT_HOLD) && forgiven('LIVE-WEB-2', 'W2', LEAVE));
+ok('... NOT on the broadcaster', !forgiven('LIVE-WEB-2', 'A1', SHORT_SEEK) && !forgiven('LIVE-WEB-2', 'A1', SHORT_HOLD) && !forgiven('LIVE-WEB-2', 'A1', LEAVE));
+ok('a no-seek line for any other reason stays dirt', !forgiven('LIVE-STALL-1', 'W2', SHORT_HOLD.replace('(short)', '(drift)')));
+ok('livePlayer.ts still writes the held short re-anchor sentence', SOURCE.includes('s buffered, under the ${Math.round(target)} ms target - no seek (short)'));
 
 console.log('the refusals');
 const http = (line) => ({ ...rep([]), badHttp: [line] });
@@ -219,12 +258,17 @@ ok('every line of a live is expected in a LIVE row', LIVE_LINES.every((l) => exp
 const LISTING = `${NEST('DEBUG', 'HttpLiveSegmentStore')}[LIVE] listing the live folders of the store`;
 ok("the retention tick's store listing is NOT claimed by the LIVE rule - it stays benign everywhere (LIVE-WEB-2, 2026-10-27)", rowVerdict(LISTING, 'LIVE-STALL-1') === null && rowVerdict(LISTING, 'TOK-3') === null);
 ok("the end's purge that left something stays dirt", !expectedIn(`${NEST('LOG', 'LiveSegmentsService')}[LIVE_GC] live ${L}: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
+const SEATED = (n) => `${NEST('DEBUG', 'LivesService')}[LIVE_GC] ${L} kept: ${n} viewer(s) still seated, owed the segments their last manifest named`;
+ok("the end's purge waiting for its seated viewers is expected in a LIVE row (#2689)", expectedIn(SEATED(2), 'LIVE-WEB-2') && expectedIn(SEATED(1), 'LIVE-STALL-1'));
+ok('... NOT outside one, and zero seated is another sentence', !expectedIn(SEATED(2), 'TOK-3') && !expectedIn(SEATED(0), 'LIVE-WEB-2'));
 ok("the sweep's 'kept' line is not this rule's", !expectedIn(`${NEST('LOG', 'LivesService')}[LIVE_GC] ${L} kept: deleted=8 failed=1 remaining=1`, 'LIVE-STALL-1'));
 ok('... and none of them outside a LIVE row',LIVE_LINES.every((l) => !expectedIn(l, 'CALL-WEB-1') && !expectedIn(l, 'TOK-3')));
 ok('a refused start stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] start refused: 0a1b2c3d already has an open live`, 'LIVE-STALL-1'));
 ok('a segment out of order stays dirt in a LIVE row', !expectedIn(`${NEST('DEBUG', 'LivesService')}[LIVE] segment 4 of ${L} out of order (expected 3)`, 'LIVE-STALL-1'));
 ok('a full live stays dirt in a LIVE row', !expectedIn(`${NEST('LOG', 'LiveSeats')}[LIVE_SEAT] ${L}: FULL, 24/24 seated - refused`, 'LIVE-STALL-1'));
 ok('a seat released that was never held stays dirt', !expectedIn(`${NEST('DEBUG', 'LiveSeats')}[LIVE_SEAT] ${L}: seat released (held=false)`, 'LIVE-STALL-1'));
+const RELEASED = (held) => `${NEST('DEBUG', 'LiveSeats')}[LIVE_SEAT] ${L}: seat released (held=${held})`;
+ok("the Lua release's count is read: held=1 expected, held=0 and held=2 stay dirt", expectedIn(RELEASED(1), 'LIVE-WEB-2') && !expectedIn(RELEASED(0), 'LIVE-WEB-2') && !expectedIn(RELEASED(2), 'LIVE-WEB-2'));
 ok('a live ended by max_duration stays dirt', !expectedIn(`${NEST('LOG', 'LivesService')}[LIVE] ${L} ended: max_duration (reached at segment 900)`, 'LIVE-STALL-1'));
 
 console.log(failures ? `\n${failures} FAILED` : '\nall good');

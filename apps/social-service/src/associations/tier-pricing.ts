@@ -16,8 +16,8 @@ import { PRODUCT_ALREADY_PURCHASED, TIER_NOT_A_RISE, TIER_NOT_RANKABLE } from '.
  * - `higher`: a rise - its product price is strictly greater than the held tier's - sold.
  * - `lower`: NOT a rise - its product price is lower than or EQUAL to the held tier's - refused, since
  *   the sibling XOR would replace the held tier.
- * - `unranked`: a tier is held, but it or the target has no fixed price (a grid, a free amount, a tag
- *   whose tier product is gone), so no rank can be defended - refused rather than guessed.
+ * - `unranked`: a tier is held, but it or the target has no rankable price (a grid, a free amount, a
+ *   named tier with no price, a tag whose tier product is gone - see `rankPriceCents`), so no rank can be defended - refused rather than guessed.
  */
 export type TierRelation = 'none' | 'held' | 'higher' | 'lower' | 'unranked';
 
@@ -26,6 +26,8 @@ export interface RankedTier {
   variantKey: string | null;
   amountCents: number | null;
   priceMatrix?: unknown;
+  /** A pay-what-you-want product: its `amountCents` is not a price, so it is never ranked. */
+  allowCustomAmount?: boolean | null;
 }
 
 /**
@@ -37,9 +39,19 @@ export interface HeldTier {
   product: RankedTier | null;
 }
 
-/** True when a tier has one price for everybody, so it can be ranked. */
-function hasFixedPrice(t: RankedTier | null): t is RankedTier & { amountCents: number } {
-  return t !== null && t.priceMatrix == null && t.amountCents !== null;
+/**
+ * THE rank of a tier, in cents, or null when none can be defended - the one place a tier's standing
+ * is decided (the client's `tierRankCents` mirrors it). A tier with one price ranks by it. The BASE
+ * tier (`variantKey` null) that carries no price at all - no grid, no amount, which is how every
+ * association gets it when it enables cotisations - ranks LOWEST of the association, as 0: it is the
+ * entry level, so every priced tier is a rise over it and it is never a rise over anything. A named
+ * tier with no price, a grid, a free amount (`allowCustomAmount`) or a missing product stays
+ * unrankable.
+ */
+export function rankPriceCents(t: RankedTier | null): number | null {
+  if (t === null || t.priceMatrix != null || t.allowCustomAmount) return null;
+  if (t.amountCents !== null) return t.amountCents;
+  return t.variantKey === null ? 0 : null;
 }
 
 /** Named keys in code-point order, the base tier (`null`) last: a total order on `variantKey`. */
@@ -62,10 +74,10 @@ function compareKeys(a: string | null, b: string | null): number {
 export function pickHeldTier(held: HeldTier[]): HeldTier | null {
   if (held.length === 0) return null;
   const sorted = [...held].sort((a, b) => compareKeys(a.variantKey, b.variantKey));
-  const unranked = sorted.find((h) => !hasFixedPrice(h.product));
+  const unranked = sorted.find((h) => rankPriceCents(h.product) === null);
   if (unranked) return unranked;
   return sorted.reduce((best, h) =>
-    (h.product?.amountCents ?? 0) > (best.product?.amountCents ?? 0) ? h : best
+    (rankPriceCents(h.product) ?? 0) > (rankPriceCents(best.product) ?? 0) ? h : best
   );
 }
 
@@ -77,8 +89,10 @@ export function pickHeldTier(held: HeldTier[]): HeldTier | null {
 export function tierRelation(target: RankedTier, held: HeldTier | null): TierRelation {
   if (!held) return 'none';
   if (target.variantKey === held.variantKey) return 'held';
-  if (!hasFixedPrice(target) || !hasFixedPrice(held.product)) return 'unranked';
-  return target.amountCents > held.product.amountCents ? 'higher' : 'lower';
+  const targetPrice = rankPriceCents(target);
+  const heldPrice = rankPriceCents(held.product);
+  if (targetPrice === null || heldPrice === null) return 'unranked';
+  return targetPrice > heldPrice ? 'higher' : 'lower';
 }
 
 /**
@@ -117,13 +131,57 @@ const TIER_REFUSALS: Record<TierRelation, TierRefusal | null> = {
 
 /**
  * The typed 409 a payment for a cotisation tier is refused with BEFORE any payment request is
- * opened, or null when it is sold (`none`, `higher`). ONE mapping for every way money is taken for
- * a tier - the boutique checkout and a paid form that grants one - so the two answer the same codes
- * the client already words: `held` -> `PRODUCT_ALREADY_PURCHASED`, `lower` -> `TIER_NOT_A_RISE`,
- * `unranked` -> `TIER_NOT_RANKABLE`.
+ * opened, or null when it is sold (`none`, `higher`). The boutique checkout's mapping, and the base
+ * of a paid form's (`formTierRefusal`): `held` -> `PRODUCT_ALREADY_PURCHASED`, `lower` ->
+ * `TIER_NOT_A_RISE`, `unranked` -> `TIER_NOT_RANKABLE`.
  */
 export function tierRefusal(relation: TierRelation): TierRefusal | null {
   return TIER_REFUSALS[relation];
+}
+
+/**
+ * The `code` of the 409 a paid answer gets when its form grants a cotisation tier that no longer
+ * EXISTS: the form's `cotisationVariantKey` names no tier product of the association, which happens
+ * only when that product was DELETED - a tier merely taken off sale (`isActive` false) is still in
+ * the catalogue (`listCotisationTiers`) and is ranked as usual. The grant could never succeed, for
+ * ANY submitter, so no money is taken. Not `TIER_NOT_RANKABLE`, whose sentence speaks of the
+ * submitter's current membership - meaningless to someone who holds none. (The code says "not
+ * sold" for history; what it means is "gone".)
+ */
+export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
+
+/**
+ * The `code` of the 409 a paid answer gets when the submitter already holds the very tier its form
+ * grants. The checkout's `PRODUCT_ALREADY_PURCHASED` would be worded "you already bought this
+ * product", which is not what a form is.
+ */
+export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
+
+/**
+ * Where a paid form's tier stands for one submitter: a `TierRelation`, or `not-sold` when the tier's
+ * product no longer exists (`FORM_TIER_NOT_SOLD`).
+ */
+export type FormTierRank = TierRelation | 'not-sold';
+
+/**
+ * The typed 409 a paid answer to a form that grants a cotisation tier is refused with, or null when
+ * it is taken: the checkout's rule (`tierRefusal`) with the two codes a form words its own way -
+ * `not-sold` -> `FORM_TIER_NOT_SOLD`, `held` -> `FORM_TIER_ALREADY_HELD`.
+ */
+export function formTierRefusal(rank: FormTierRank): TierRefusal | null {
+  if (rank === 'not-sold') {
+    return {
+      code: FORM_TIER_NOT_SOLD,
+      message: 'This form grants a membership tier that no longer exists',
+    };
+  }
+  if (rank === 'held') {
+    return {
+      code: FORM_TIER_ALREADY_HELD,
+      message: 'You already hold the membership this form grants',
+    };
+  }
+  return tierRefusal(rank);
 }
 
 /**
@@ -155,6 +213,45 @@ export function linkedTierKey(
   return undefined;
 }
 
+/**
+ * A cotisation tag an association issued for a tier it no longer has: what a holder keeps when the
+ * tier's product is deleted (docs/wiki/cotisations.md "A tier deleted while people still hold it").
+ * `variantKey` is the key read back from the tag name (`null` for the base tier's stem), and never
+ * equals the key of a tier that exists.
+ */
+export interface OrphanTierTag {
+  tagName: string;
+  variantKey: string | null;
+}
+
+const ACADEMIC_YEAR_TAIL = /-\d{4}-\d{4}$/;
+
+/**
+ * Which of `tagNames` - tags ISSUED BY the association whose slug is `slug` - are cotisation tags of
+ * a tier that is not among `tierKeys`. A tag is in the association's cotisation namespace when it is
+ * `cotisant:<slug>` or starts with `cotisant:<slug>-`; it belongs to an existing tier when
+ * `linkedTierKey` matches it (with or without an academic-year suffix, so a `dated` tag of a past or
+ * present year and a `lifetime` tag of the same tier both do). Everything else in the namespace is
+ * an orphan. The caller passes only rows the association itself issued, which is what keeps another
+ * association whose slug happens to extend this one (`bde` and `bde-ski`) out of it.
+ */
+export function orphanTierTags(
+  tagNames: readonly string[],
+  slug: string,
+  tierKeys: readonly (string | null)[]
+): OrphanTierTag[] {
+  const root = `cotisant:${slug}`;
+  const orphans: OrphanTierTag[] = [];
+  for (const tagName of new Set(tagNames)) {
+    if (tagName !== root && !tagName.startsWith(`${root}-`)) continue;
+    if (linkedTierKey(tagName, slug, [...tierKeys]) !== undefined) continue;
+    const rest = tagName.slice(root.length + 1);
+    const variant = /^\d{4}-\d{4}$/.test(rest) ? '' : rest.replace(ACADEMIC_YEAR_TAIL, '');
+    orphans.push({ tagName, variantKey: variant || null });
+  }
+  return orphans.sort((a, b) => (a.tagName < b.tagName ? -1 : a.tagName > b.tagName ? 1 : 0));
+}
+
 /** The pricing columns of a product with one price for everybody (no grid). */
 export interface FixedPricedProduct {
   amountCents: number;
@@ -178,4 +275,49 @@ export function fixedPriceFor(
     return { amountCents: product.amountCentsMember, preferential: true };
   }
   return { amountCents: product.amountCents, preferential: false };
+}
+
+/**
+ * What a settlement decides for a paid tier, from what the checkout OPENING froze (migration 112)
+ * and which tiers the buyer holds NOW - never from a price, which an admin can edit in between:
+ *
+ * - `held`: the target tier itself is held now (obtained since the opening) - not granted;
+ * - `nothing-held`: no tier is held, and none was at the opening - granted, the XOR replaces nothing;
+ * - `frozen-gone`: the opening ranked against a tier (`heldTierProductId` set) and the buyer holds
+ *   none now (it expired or was revoked since) - not granted: the price paid was the rise over a tier
+ *   the buyer no longer has;
+ * - `as-opened`: every tier held now is the one the opening ranked against - granted, which is
+ *   exactly what the opening decided;
+ * - `held-changed`: a tier the opening did not rank against is held (obtained since, or held where
+ *   the opening saw none, or a second tier beside the frozen one) - not granted, so the XOR cannot
+ *   replace a tier nobody ranked this purchase against.
+ */
+export type SettlementVerdict =
+  | 'held'
+  | 'nothing-held'
+  | 'frozen-gone'
+  | 'as-opened'
+  | 'held-changed';
+
+/**
+ * The settlement's decision (`SettlementVerdict`). `frozenKeys` is the CURRENT `variantKey` of the
+ * tier frozen at the opening - one entry, or none when nothing was held then (or its product is
+ * gone) - read by product id, so a retag in between still matches. `frozeATier` is whether the
+ * opening froze a tier at all (`heldTierProductId` set), which stays true when that product is gone.
+ */
+export function settlementVerdict(
+  targetKey: string | null,
+  heldKeys: readonly (string | null)[],
+  frozenKeys: readonly (string | null)[],
+  frozeATier: boolean
+): SettlementVerdict {
+  if (heldKeys.includes(targetKey)) return 'held';
+  if (heldKeys.length === 0) return frozeATier ? 'frozen-gone' : 'nothing-held';
+  if (heldKeys.every((k) => frozenKeys.includes(k))) return 'as-opened';
+  return 'held-changed';
+}
+
+/** True when a settlement verdict grants the tier paid for. */
+export function settlementGrants(verdict: SettlementVerdict): boolean {
+  return verdict === 'nothing-held' || verdict === 'as-opened';
 }

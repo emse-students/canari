@@ -98,9 +98,9 @@ ANDROID_APP_LINK_SHA256	warn	warn	secret:ANDROID_APP_LINK_SHA256	account restore
 APNS_VOIP_KEY_P8	warn	warn	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner
 APNS_VOIP_KEY_ID	silent	silent	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
 APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
-SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
+SERVICE_ACCOUNT_USER_ID	warn	warn	secret:SERVICE_ACCOUNT_USER_ID	the review cohort (the store reviewers' accounts, comma-separated ids) is no longer apart: members find and read it, and it reads every member
 LYDIA_PROVIDER_TOKEN	warn	warn	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
-LYDIA_PROVIDER_PRIVATE_TOKEN	warn	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
+LYDIA_PROVIDER_PRIVATE_TOKEN	required	warn	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	no Responsable can be added to a Lydia Business (it signs business/addcashier, enrolment lot 2)
 LYDIA_ENV	required	skip	secret:LYDIA_ENV	core-service cannot tell which Lydia base URL the production Provider pair belongs to, and the template default of homologation would send production credentials to the sandbox
 LYDIA_KEY_ENCRYPTION_SECRET	required	required	secret:LYDIA_KEY_ENCRYPTION_SECRET	no association can store or open its Lydia Business key, so every Lydia callback is refused and the PUT key route answers 503
 LIVE_KEY_ENCRYPTION_SECRET	required	required	secret:LIVE_KEY_ENCRYPTION_SECRET	no live key can be sealed or opened at rest, so every live start answers 503 and no viewer is served a key
@@ -108,5 +108,5 @@ DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two
 FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev
 GARAGE_ADMIN_HOST_PORT	computed	computed	computed	garage's admin API on 127.0.0.1 - 19011 prod, 19101 dev
-LIVE_ENABLED	computed	computed	computed	the live routes (docs/wiki/services/lives.md) - true on dev, false on production, so a stable release serves no live
+LIVE_ENABLED	literal	literal	literal:true	the live routes (docs/wiki/services/lives.md) - true on both estates since the production flip (2026-10-30); platform_config.lives_mode closes them at runtime
 LYDIA_RECONCILE_ENABLED	computed	computed	computed	the Lydia reconciliation sweep (docs/wiki/lydia-api.md) - true on dev, false on production until the signed amount format is measured, so a stable release asks Lydia nothing on its own

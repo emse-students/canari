@@ -1,11 +1,51 @@
 import {
   fixedPriceFor,
+  formTierRefusal,
   linkedTierKey,
+  orphanTierTags,
   pickHeldTier,
   tierRefusal,
+  settlementGrants,
+  settlementVerdict,
   tierRelation,
   tierRelationOf,
+  rankPriceCents,
 } from './tier-pricing';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/** The vector the client's `tierRankCents` test reads too (tools/tier-rank-vector.json). */
+const RANK_VECTOR: {
+  name: string;
+  variantKey: string | null;
+  amountCents: number | null;
+  priceMatrix: unknown;
+  allowCustomAmount: boolean;
+  rank: number | null;
+}[] = JSON.parse(
+  readFileSync(resolve(process.cwd(), '../../tools/tier-rank-vector.json'), 'utf-8')
+);
+
+describe('rankPriceCents - the shared rank vector', () => {
+  it.each(RANK_VECTOR.map((v) => [v.name, v] as const))('%s', (_name, v) => {
+    expect(rankPriceCents(v)).toBe(v.rank);
+  });
+
+  it('refuses a rise from a free-amount base as unranked, and keeps a 0-cent base ranked', () => {
+    const free = {
+      variantKey: null,
+      amountCents: null,
+      priceMatrix: null,
+      allowCustomAmount: true,
+    };
+    const zero = { variantKey: null, amountCents: 0, priceMatrix: null, allowCustomAmount: false };
+    const avec = { variantKey: 'avec', amountCents: 3000, priceMatrix: null };
+    const held = (t: typeof free) => ({ variantKey: t.variantKey, product: t });
+    expect(tierRelation(avec, held(free))).toBe('unranked');
+    expect(tierRefusal(tierRelation(avec, held(free)))?.code).toBe('TIER_NOT_RANKABLE');
+    expect(tierRelation(avec, held(zero))).toBe('higher');
+  });
+});
 
 describe('tierRelation - a tier is ranked by its PRODUCT price, against the tier held', () => {
   const sans = { variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null };
@@ -68,6 +108,43 @@ describe('tierRelationOf - a tier among SEVERAL held is held, whichever one rank
   });
 });
 
+describe('tierRelation - an unpriced BASE tier ranks lowest among the priced ones', () => {
+  const base = { variantKey: null, amountCents: null, priceMatrix: null };
+  const sans = { variantKey: 'sans', amountCents: 1500, priceMatrix: null };
+  const avec = { variantKey: 'avec', amountCents: 3000, priceMatrix: null };
+  const held = (t: {
+    variantKey: string | null;
+    amountCents: number | null;
+    priceMatrix: unknown;
+  }) => ({
+    variantKey: t.variantKey,
+    product: t,
+  });
+
+  it('is a rise to any priced tier from the unpriced base', () => {
+    expect(tierRelation(sans, held(base))).toBe('higher');
+    expect(tierRelation(avec, held(base))).toBe('higher');
+  });
+
+  it('is never a rise over a priced tier, so a holder of one is refused the base', () => {
+    expect(tierRelation(base, held(sans))).toBe('lower');
+    expect(tierRelation(base, held(avec))).toBe('lower');
+    expect(tierRefusal(tierRelation(base, held(sans)))?.code).toBe('TIER_NOT_A_RISE');
+  });
+
+  it('is held for itself, and a NAMED unpriced tier stays unranked', () => {
+    expect(tierRelation(base, held(base))).toBe('held');
+    const named = { variantKey: 'libre', amountCents: null, priceMatrix: null };
+    expect(tierRelation(named, held(base))).toBe('unranked');
+    expect(tierRelation(base, held(named))).toBe('unranked');
+  });
+
+  it('keeps a gridded base unranked', () => {
+    const grid = { variantKey: null, amountCents: null, priceMatrix: { dimensions: [] } };
+    expect(tierRelation(sans, held(grid))).toBe('unranked');
+  });
+});
+
 describe('pickHeldTier - one held tier, whatever order the tags were read in', () => {
   const t = (variantKey: string | null, amountCents: number | null) => ({
     variantKey,
@@ -89,7 +166,12 @@ describe('pickHeldTier - one held tier, whatever order the tags were read in', (
   });
 
   it('picks an unrankable held tier first, so the sale is refused rather than ranked', () => {
-    expect(pickHeldTier([t('avec', 3000), t(null, null)])?.variantKey).toBeNull();
+    expect(pickHeldTier([t('avec', 3000), t('libre', null)])?.variantKey).toBe('libre');
+  });
+
+  it('ranks an unpriced BASE tier lowest: the priced tier is the one ranked against', () => {
+    expect(pickHeldTier([t('avec', 3000), t(null, null)])?.variantKey).toBe('avec');
+    expect(pickHeldTier([t(null, null), t('avec', 3000)])?.variantKey).toBe('avec');
   });
 });
 
@@ -153,7 +235,7 @@ describe("fixedPriceFor - the preferential price is the admin's, never computed"
   });
 });
 
-describe('tierRefusal - one mapping from a relation to the typed 409, for the shop and the forms', () => {
+describe('tierRefusal - one mapping from a relation to the typed 409 of the shop', () => {
   it('sells none and higher', () => {
     expect(tierRefusal('none')).toBeNull();
     expect(tierRefusal('higher')).toBeNull();
@@ -163,5 +245,118 @@ describe('tierRefusal - one mapping from a relation to the typed 409, for the sh
     expect(tierRefusal('held')?.code).toBe('PRODUCT_ALREADY_PURCHASED');
     expect(tierRefusal('lower')?.code).toBe('TIER_NOT_A_RISE');
     expect(tierRefusal('unranked')?.code).toBe('TIER_NOT_RANKABLE');
+  });
+});
+
+describe('formTierRefusal - the shop mapping, with the two codes a form words its own way', () => {
+  it('takes none and higher', () => {
+    expect(formTierRefusal('none')).toBeNull();
+    expect(formTierRefusal('higher')).toBeNull();
+  });
+
+  it('refuses a tier no longer sold and the tier held with form codes, the rest as the shop', () => {
+    expect(formTierRefusal('not-sold')?.code).toBe('FORM_TIER_NOT_SOLD');
+    expect(formTierRefusal('held')?.code).toBe('FORM_TIER_ALREADY_HELD');
+    expect(formTierRefusal('lower')).toEqual(tierRefusal('lower'));
+    expect(formTierRefusal('unranked')).toEqual(tierRefusal('unranked'));
+  });
+});
+
+describe('settlementVerdict - a settlement grants on what the opening froze, never on a price', () => {
+  it.each([
+    ['nothing held now, nothing frozen', 'avec', [], [], false, 'nothing-held', true],
+    [
+      'nothing held now, a tier frozen (it expired since)',
+      'avec',
+      [],
+      ['sans'],
+      true,
+      'frozen-gone',
+      false,
+    ],
+    [
+      'nothing held now, a tier frozen whose product is deleted since',
+      'avec',
+      [],
+      [],
+      true,
+      'frozen-gone',
+      false,
+    ],
+    ['the frozen tier is still the one held', 'avec', ['sans'], ['sans'], true, 'as-opened', true],
+    ['the frozen tier is the base tier', 'avec', [null], [null], true, 'as-opened', true],
+    ['the target itself was obtained since', 'avec', ['avec'], ['sans'], true, 'held', false],
+    [
+      'another tier replaced the frozen one',
+      'avec',
+      ['autre'],
+      ['sans'],
+      true,
+      'held-changed',
+      false,
+    ],
+    [
+      'a tier is held where the opening saw none',
+      'avec',
+      ['sans'],
+      [],
+      false,
+      'held-changed',
+      false,
+    ],
+    [
+      'a second tier beside the frozen one',
+      'avec',
+      ['sans', null],
+      ['sans'],
+      true,
+      'held-changed',
+      false,
+    ],
+  ] as const)('%s', (_name, target, held, frozen, froze, verdict, grants) => {
+    const v = settlementVerdict(target, held, frozen, froze);
+    expect(v).toBe(verdict);
+    expect(settlementGrants(v)).toBe(grants);
+  });
+});
+
+describe('orphanTierTags - a tag of a tier that no longer exists', () => {
+  const keys = ['avec', null];
+
+  it('names a deleted named tier, lifetime or dated, by the key read back from the tag', () => {
+    expect(
+      orphanTierTags(['cotisant:bde-premium', 'cotisant:bde-gold-2026-2027'], 'bde', keys)
+    ).toEqual([
+      { tagName: 'cotisant:bde-gold-2026-2027', variantKey: 'gold' },
+      { tagName: 'cotisant:bde-premium', variantKey: 'premium' },
+    ]);
+  });
+
+  it('names a deleted BASE tier with a null key, lifetime or dated', () => {
+    expect(orphanTierTags(['cotisant:bde', 'cotisant:bde-2026-2027'], 'bde', ['avec'])).toEqual([
+      { tagName: 'cotisant:bde', variantKey: null },
+      { tagName: 'cotisant:bde-2026-2027', variantKey: null },
+    ]);
+  });
+
+  it('CONTROL: a tag of an existing tier, in any year, is not an orphan', () => {
+    expect(
+      orphanTierTags(
+        [
+          'cotisant:bde',
+          'cotisant:bde-2025-2026',
+          'cotisant:bde-avec',
+          'cotisant:bde-avec-2026-2027',
+        ],
+        'bde',
+        keys
+      )
+    ).toEqual([]);
+  });
+
+  it('ignores a tag outside the association namespace, and a slug it merely prefixes', () => {
+    expect(orphanTierTags(['cotisant:bdex', 'staff:bde', 'cotisant:other'], 'bde', keys)).toEqual(
+      []
+    );
   });
 });

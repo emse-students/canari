@@ -18,6 +18,8 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://live/l1')).toBe('/posts');
     // WP-L8b: a cut live, a suspension, a withdrawal - their row on the notifications list.
     expect(route('fr.emse.canari://notifications')).toBe('/notifications');
+    // WP-N: the bookings' notices - the Reservations page.
+    expect(route('fr.emse.canari://bookings')).toBe('/bookings');
     // The organiser alert: one form's responses, on the forms list.
     expect(route('fr.emse.canari://form-responses/f1')).toBe('/forms?responses=f1');
   });

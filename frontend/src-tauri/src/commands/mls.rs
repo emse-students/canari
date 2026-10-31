@@ -600,7 +600,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
 /// **IT IS A COMMAND RATHER THAN A LINE IN `initialiser_mls`, AND THAT IS THE WHOLE POINT.** It used
 /// to be a `log::info!` inside `load_or_create`, which put an O(pool) walk that deserialises every
 /// stored bundle in front of the first screen: 24.5 ms against 12.9 ms at a 1000-package pool,
-/// measured on OXYGEN 2026-09-17 - half of a cold load. Web already called its own census after
+/// measured on the workstation 2026-09-17 - half of a cold load. Web already called its own census after
 /// `MLS ready` for exactly that reason. Now both do.
 ///
 /// Returns the line rather than logging it, so the ONE place that decides where a diagnostic is
@@ -959,6 +959,44 @@ pub(crate) fn lister_identites_membres(
         );
         e.to_string()
     })
+}
+
+/// Classifies `group_id` for the admission rule (`mls_core::admission`): `closed` for a conversation,
+/// `open` for a community or salon key group, whose members enter by external commit by design.
+/// The caller checkpoints the state after it, like every mutation. Rejects any other name.
+#[tauri::command]
+pub(crate) fn definir_politique_admission(
+    group_id: String,
+    policy: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let policy = mls_core::AdmissionPolicy::parse(&policy)
+        .ok_or_else(|| format!("unknown admission policy '{policy}'"))?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.set_admission_policy(&group_id, policy);
+    Ok(())
+}
+
+/// The policy `group_id` was classified with: `closed`, `open`, or `unclassified` when nobody did
+/// (the behaviour every group had before the rule: its external commits are merged).
+#[tauri::command]
+pub(crate) fn lire_politique_admission(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<String, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .admission_policy(&group_id)
+        .map_or("unclassified", mls_core::AdmissionPolicy::as_str)
+        .to_string())
 }
 
 #[tauri::command]
@@ -1526,6 +1564,20 @@ pub(crate) async fn recevoir_message_bytes(
                     Err(err_str)
                 }
 
+                // A COMMIT BRINGING A NEW USER INTO A CLOSED GROUP, refused unmerged by mls-core
+                // (`admission.rs`). Never queued - a retry is refused again - and surfaced verbatim
+                // so the shared frontend classifier reaches the ONE policy that freezes the group
+                // instead of recovering it: every recovery rebuilds from the server's state, which
+                // is the very state this commit came from.
+                DecryptErrorKind::AdmissionRefused => {
+                    log::warn!(
+                        "[ADMISSION] Commit refused for group={}: {} - handing it to the frontend, the group is to be frozen and not recovered",
+                        group_id,
+                        err_str
+                    );
+                    Err(err_str)
+                }
+
                 // REFUSED AT EXACTLY ITS OWN EPOCH. Never queued, for the reason the arms above
                 // are not: a retry reads the same immutable epoch state and is refused again, so
                 // the row is dead weight until the sweeper reaches it. Surfaced verbatim, and the
@@ -1707,21 +1759,6 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
         log::error!("[GRAINE_SIG] signature batch task failed: {e}");
         e.to_string()
     })?
-}
-
-/// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
-///
-/// ASYNC so the UI's call never waits on the manager mutex on the main thread.
-#[tauri::command]
-pub(crate) async fn mls_own_signature_key(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    Ok(manager.own_signature_key())
 }
 
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.

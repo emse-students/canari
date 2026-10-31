@@ -9,6 +9,7 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import {
   assertAnsweredByApi,
@@ -19,7 +20,7 @@ import {
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
-import { DEVICE_REVOKED_BY_OWNER } from '$lib/utils/refusalCodes';
+import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -684,6 +685,19 @@ export class UserBlockedError extends Error {
 }
 
 /**
+ * The server refused a membership mutation across the review cohort's boundary (the store
+ * reviewers' accounts and the members never share a conversation): `REVIEW_COHORT_BOUNDARY`.
+ * Typed like {@link UserBlockedError} and for the same reason - the flow stops on it, cleanly, and
+ * nothing reads the server's sentence. Neutral: it never says the other account is a review account.
+ */
+export class ReviewCohortBoundaryError extends Error {
+  constructor(readonly userId: string) {
+    super(`${userId} cannot be added from this account`);
+    this.name = 'ReviewCohortBoundaryError';
+  }
+}
+
+/**
  * The member-add call named a person NO ACCEPTED COMMIT ADMITTED (`409 MEMBER_NOT_ADMITTED`, `POST
  * /api/mls/groups/:id/members`): the commit gate enrols the people an Add admits in the transaction
  * that accepts it, and refused this one - a member's Decline of their ask, or their departure, was
@@ -1152,6 +1166,18 @@ export class MlsDeliveryApi {
         }
         throw e;
       }
+      // THE GATEWAY'S ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the
+      // one that tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must
+      // also be the one that clears it: the raw fetch reaches no `trackedFetch`, and a flag only ever
+      // set would hold every later barrier, and demote every later gateway fault, after a long outage.
+      //
+      // WHO ANSWERED FIRST: an edge page (a captive portal's `511`, a WAF's HTML `403`) proves nothing
+      // about the server, so it does not clear the flag. Nor does it SET it: a non-2xx edge page is
+      // an answer of the edge, typed as such everywhere else (`SendEdgeRefusedError`, the origin a
+      // `SendServerError` carries) and never a transport failure - only a 2xx that is not the API's
+      // JSON is (`NotFromApiError`, thrown above), because only that one could be misread as data.
+      // A 2xx page reaching this line is the gateway's by construction.
+      if (page.ok || page.origin === 'gateway') connectivity.notifyServerReachable();
       // THE 401 RULE, OUTSIDE THE LADDER: whatever the renewal or the resend throws (a dead cookie, a
       // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
       // too big, and the resend has its own stall timer.
@@ -1162,7 +1188,13 @@ export class MlsDeliveryApi {
           where: 'GET /api/mls/messages',
         });
       }
-      if (!page.ok) break;
+      if (!page.ok) {
+        // Every swallowed branch logs: the pull stops here and keeps the pages already handed on.
+        console.warn(
+          `[PENDING] page answered ${page.status} by the ${page.origin} - the pull stops here, the next one asks again`
+        );
+        break;
+      }
       const batch = page.body;
       if (!Array.isArray(batch) || batch.length === 0) break;
 
@@ -1440,9 +1472,9 @@ export class MlsDeliveryApi {
    * Writes the device seats of `userId` in `groupId` once an accepted commit admitted them (and, for
    * a new group's creator, enrols them into its empty roster). Idempotent.
    *
-   * TWO refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`: the
-   * person may not be added, and a group that pretended otherwise would show a member the server does
-   * not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
+   * THREE refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`
+   * and `REVIEW_COHORT_BOUNDARY` ({@link ReviewCohortBoundaryError}): the person may not be added, and
+   * a group that pretended otherwise would show a member the server does not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
    * them - a Decline or a departure came before the Add was decided - so the caller withholds the
    * Welcome. Every other non-2xx keeps the historical tolerance of this call, which callers up and
    * down the invite path rely on, logged: `f` resolves rather than throwing on a bad status.
@@ -1457,10 +1489,17 @@ export class MlsDeliveryApi {
       if (res.ok) return;
       const refusal = await refusalFromResponse(res, 'registerMember refused');
       if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
+      if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
       if (refusal.code === 'MEMBER_NOT_ADMITTED') throw new MemberNotAdmittedError(groupId, userId);
       console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
-      if (e instanceof UserBlockedError || e instanceof MemberNotAdmittedError) throw e;
+      if (
+        e instanceof UserBlockedError ||
+        e instanceof ReviewCohortBoundaryError ||
+        e instanceof MemberNotAdmittedError
+      ) {
+        throw e;
+      }
       console.error('Failed to register member', e);
     }
   }
@@ -2267,6 +2306,16 @@ export class MlsDeliveryApi {
    * There is no second way to fetch a page here: an absent group simply arrives at
    * `replayConversationHistory` unprimed and that replay reads its own first page, which is the
    * ordinary path every group took before any of this existed.
+   *
+   * A CHUNK NOBODY ANSWERED IS NOT A REFUSED CHUNK, AND IT THROWS. A refusal is an answer about
+   * THOSE groups; a transport failure is a fact about the LINK, and every page a replay would then
+   * read goes to the same unreachable server. Leaving the groups out sent each one to its own
+   * replay: on production (`1.5.1`, a phone at a cold start with no network) three chunks of
+   * 50/50/25 got no answer, then 125 per-group history reads and 125 mailbox pulls left within one
+   * second, every one of them failing. So the failure is rethrown as it came (typed at the throw,
+   * `isTransportFailure`), the chunks after it are not sent, and the caller stops its catch-up.
+   *
+   * @throws a transport failure (`isTransportFailure`) - never a refusal, which is logged and skipped
    */
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
@@ -2281,9 +2330,10 @@ export class MlsDeliveryApi {
   /**
    * One `POST /api/mls/history/batch`, writing what it gets into `out`.
    *
-   * Never throws: a chunk that fails is a defect to READ, not a branch for the caller to take, so
-   * it is logged with the status AND the server's own words - a status alone cannot tell a refused
-   * request from an unreachable one, and it was a bare status that let the cap go unnoticed.
+   * A chunk the server REFUSES is a defect to READ, not a branch for the caller to take, so it is
+   * logged with the status AND the server's own words - it was a bare status that let the cap go
+   * unnoticed. A chunk that got NO answer is rethrown unlogged: the caller says it once, with what
+   * it does about it (see {@link fetchHistoryBatch}).
    */
   private async fetchHistoryBatchChunk(
     chunk: Array<{ groupId: string; afterStreamId?: string }>,
@@ -2300,6 +2350,11 @@ export class MlsDeliveryApi {
           })),
         }),
       });
+      // THE GATEWAY'S answer, whatever its status, proves the link up (this route reaches no
+      // `trackedFetch`). WHO ANSWERED is read from the head first: a captive portal's 2xx HTML page
+      // is an answer from the wrong party, and clearing `isOffline` on it would un-hold every barrier
+      // while the server is still out of reach.
+      if (responseOrigin(res) === 'gateway') connectivity.notifyServerReachable();
       const contentType = res.headers.get('content-type') ?? '';
       if (!res.ok || !contentType.toLowerCase().includes('application/json')) {
         console.error(
@@ -2316,13 +2371,13 @@ export class MlsDeliveryApi {
         out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
       }
     } catch (e) {
-      if (isTransportFailure(e)) {
-        console.warn(
-          `[History] batch of ${chunk.length} group(s) got no answer - each replays its own page: ${String(e)}`
-        );
-      } else {
-        console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
-      }
+      // Not logged here: the caller's line names the consequence (the catch-up stops), one line for
+      // the whole batch rather than one per chunk. NO ANSWER is told to the connectivity store, which
+      // the caller reads to decide whether the link is known down; a deadline is not - one expiry
+      // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
+      if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+      if (isTransportFailure(e)) throw e;
+      console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
   }
 

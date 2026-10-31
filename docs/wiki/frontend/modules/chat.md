@@ -1234,7 +1234,7 @@ backoff timer, and `enqueue`. **THREE are external moments nothing inside the mo
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
-| `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
@@ -1250,9 +1250,94 @@ flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it 
 goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
 flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
 
-`outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
-for each that the same gate refuses it shut and drains it open, and a source check pins the three
-external sites so a fourth has to be argued for rather than added.
+`outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
+`resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
+open, and a source check pins the three external sites so a fourth has to be argued for rather than
+added.
+
+### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
+
+Four defects of one seam, found by a read-only review and fixed together:
+
+- **A message sent during this device's own re-admission was failed for good (P2).** A
+  re-admission is a Remove then an Add, about 3 s apart. After the Remove the group is held, its
+  epoch gap cleared (`isGroupHealthy` yes) and `isGroupActive` false; `retireIfEvicted` has
+  already read `reAddInFlight` and written the row `pending` (`markAwaitingReAdmission`). The send
+  gate then took `failPermanently(..., 'evicted')`, and `recordEviction` retired the row, posted
+  the removal notice and deleted the entry - three seconds before the Welcome re-admitted the
+  device. Now **the Remove half DROPS the evicted state** (`retireIfEvicted`'s `reAddInFlight`
+  branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
+  `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
+  a group this device does not hold. A send in the window meets an unsendable group and is HELD
+  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
+  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+- **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
+  fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
+  `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
+  re-admission whose Welcome never came was waited on for ever behind a `pending` bubble. With the
+  state dropped, every pass reaches the server: a Welcome owed is waited for, a seat with none is
+  joined, and NO seat retires the row (`stopRecovering` on the roster's 403). The outbox reads the row
+  AFTER its `requestReAdd` and fails a held entry on a `removed` row (`failPermanently(...,
+  'removed')`: the row's banner tells the member, the bubble goes `error`, nothing is re-recorded).
+  The guard and its three readers (`recordEviction`, `verifyCurrentUserMembership`, the outbox) are
+  deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
+  the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
+  an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
+  rare and the inviter's history push covers.
+- **A kill can leave any pair of (row, state), and the restore is what is total over them (review
+  of #2808).** The merged Remove reaches disk through checkpoints the commit path does not order -
+  its own `persistNow`, a flush on backgrounding, another group's structural checkpoint, one already
+  running - because a checkpoint takes no lock against the commit path; the row lives in another
+  store. No write order on that path can therefore guarantee anything, and an `active` row over the
+  evicted state survives some kills, with `reAddIsInFlight` (memory only) gone. It was read as
+  `active` and the next send retired the conversation. `reconcileRestoredLifecycles`
+  (`admissionState.ts`) now reads membership for EVERY row over a held group (together, one local
+  read each): `true` promotes a `pending` row; `false`, on an `active` or a `pending` row, DROPS the
+  evicted state and leaves the row `pending`, so the recovery asks the server, whose answer is right
+  for both readings of the Remove (a Welcome owed is waited for, a seat is joined, no seat retires
+  the row); `null` changes nothing. The reads run at most eight at once (one IPC call each on
+  native); the drops share ONE awaited checkpoint, since each is a full encrypted save (~1.7 s on a
+  phone) and this runs before the connection opens; and `applyRestoredLifecycles` writes every row it
+  changed, so the verdict is durable. The row is still marked before the drop at run time, only so
+  no in-memory reader sees `active` over no state.
+
+  **A DELIBERATE TRADE:** a row whose eviction a kill left unrecorded now waits for the server's
+  answer instead of retiring locally - offline included, where it stays `pending` until a connection
+  answers. Nothing local separates a real eviction from the first half of this device's own
+  re-admission once `reAddIsInFlight` is gone, and retiring the second is the defect this fixes.
+- **The boot restore undid that row.** It promoted any `pending` row whose group
+  `getLocalGroups()` listed, and an evicted group stays listed: the promotion now reads membership,
+  as above.
+- **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
+  flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
+  after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
+  Every hold for the group writes the entry into `repairHeld` (in memory, like `transportHeld`);
+  `resumeGroup(conversationId)` moves that group's ids, and only those, into `resuming` and drains.
+  A group that becomes ready INSIDE the attempt that holds it (an external join landing within the
+  `requestReAdd` that attempt awaited) is caught by a per-group count of ready announcements read at
+  the gate and again after the hold: when it moved, the hold resumes itself and the lane re-runs. A
+  count of events, not a clock.
+- **A successful external join raised nothing (P3).** It set the row `active` and called
+  `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
+  REQUIRED and raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE
+  implementation both a Welcome and an external join reach (resume, statuses, deferred welcome
+  requests, the debounced invitation sweep).
+- **And it announces only into the session that started the work (review of #2808).** Every step of
+  `announceGroupReady` reaches module-level state, so a Welcome or a join landing after a sign-out
+  and the next sign-in acted on the NEXT session. The function is no longer exported: the session
+  registers it in `groupReadyAnnouncer.ts` with the outbox, and EVERY `onGroupReady` - the message
+  pipeline's, the in-session `makeRecoveryDeps`, `verifyCurrentUserMembership`'s and
+  `startNewConversation`'s repairs - is `captureGroupReadyAnnouncer()`, taken when its deps are
+  built. That one check forwards only while the registration it captured is still live. A session
+  ended since is an ordinary sign-out (`info`); work built with no session live is a `warn`. A
+  source test pins that no `onGroupReady` goes around it.
+
+Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
+recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no
+seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.test.ts`,
+`admissionState.test.ts` (an `active` row over a group this device is out of waits on the server),
+`groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
+(`onGroupReady` on both Welcome paths).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 
@@ -3583,7 +3668,8 @@ scroll handler, which nothing could test and nothing could explain.
 
 That last row is the one that makes a single mechanism correct rather than convenient: **composer
 growth and content growth are literally the same number**, so all three observers call one `follow()`
-closure, which asks `shouldFollowThreadBottom` about one `scrollHeight`. Three copies of this
+closure, which asks one predicate about one number (`threadGrowthResponse` and the reach since
+2026-10-30, below). Three copies of this
 judgement could disagree about where the bottom is; one cannot.
 
 Every trigger is the change itself. There is no timer, nothing to tune, and nothing that fires when
@@ -3611,6 +3697,65 @@ growing above, and the typing bubble sliding in, were already followed (0 px) an
 **iOS WebKit was not run.** The viewport numbers feeding the box (visual vs layout viewport, the iOS
 safe-area) are `keyboardViewport.svelte.ts`'s, corrected in PR #1667; this change reads only the
 resulting box, so the two combine without overlap.
+
+### A field that stays focused with the keyboard down: the rise that covered the thread, and the "+" that raised the keyboard (2026-10-29)
+
+Reported by the owner on 1.5.0 (Android, Gboard): the keyboard covered the conversation instead of
+lifting it, and once the keyboard had been opened, "+" opened the keyboard again instead of its menu.
+**One fact causes both: an Android WebView keeps the text field FOCUSED when the keyboard is put
+away** (Back, Gboard's down arrow). Read on the Mi 9T (`1.5.1-alpha.7`, LatinIME, over CDP):
+`document.activeElement` is still the composer's editor after Back, with `innerHeight` back at 945.
+
+- **The rise.** Focusing the composer goes to the end of the thread, from any distance (`ChatArea`'s
+  `_composerFocused` effect). A tap on a field that is ALREADY focused raises the keyboard with no
+  focus event, and the keyboard effect followed only a reader within the 120 px slack
+  (`isPinnedToBottom`). A reader 138 px up kept their `scrollTop` (2772 before and after) and the
+  distance to the bottom went from 138 to 483 px: the last messages stood behind the keyboard and the
+  scroll-down arrow appeared. `keyboardChangeResponse` (`threadAnchor.ts`) now answers a keyboard
+  rising for the focused composer like the focus itself, wherever the reader was; a keyboard FALLING
+  still moves only a reader at the bottom.
+- **The "+".** `keepsFocus` (#1345, first stable `1.0.1`) cancels the press's `mousedown` so the
+  keyboard stays up under the menu. With the keyboard already DOWN it left the field focused, and
+  Chromium raises the keyboard on any tap while an editable element holds focus; the rising keyboard
+  then closed the menu (`keyboardOpened`). Measured: no menu and the keyboard up; with the field
+  blurred first (`activeElement.blur()` over CDP, the control), the five entries and no keyboard. The
+  composer now asks for `keepsFocus` only while the keyboard is up (`menuPressKeepsFocus`,
+  `composerSurface.ts`): with it down the press takes focus, the field blurs, and the menu opens.
+
+**What was not a regression.** Nothing in this area changed between `1.5.0` and `1.5.1`; the "+" half
+dates from #1345 (2026-10-02) and the rise half from the keyboard effect of 2026-05 combined with the
+120 px slack of 2026-09-22. The native IME padding (`MainActivity.applyKeyboardInsets`) worked on the
+Mi 9T (Android 16, edge-to-edge enforced): `IME inset: 885 -> content padding`, `innerHeight`
+945 -> 588. Both fixes were read on the Mi 9T by reproducing the change over CDP on the installed
+build (a capture-phase `mousedown` that skips the hold while the keyboard is down: the menu, no
+keyboard; the hold kept with the keyboard up: the menu over the keyboard, focus kept); the built
+change itself is owed one reading ([check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+
+### A reader at the bottom is anchored to the bottom, in both directions (2026-10-30)
+
+Reported on production 1.5.1 by the owner (Pixel 6a) and a friend: in a DM whose tail holds a photo,
+opening the keyboard showed OLDER messages, the photo cut by the composer and the scroll-down arrow
+up; a text-only DM rose correctly. The friend read it as "it anchors on the end as it was when the
+app opened". **That reading, and the hypothesis of a stale `isNearBottom` snapshot, were refuted on
+the Mi 9T** (`1.5.1`, CDP, the real observer): late growth and new messages were followed every time
+and the flag was right.
+
+**The mover was the row anchor.** On Android the WebView itself resizes for the keyboard
+(`MainActivity.applyKeyboardInsets`), so every `svh` length shrinks with it, and a chat photo sits
+under `--media-max-height: 60svh`. Measured, a 567 px block (60svh) above the last rows, keyboard
+357 px: frame 1, the box shrinks, the reach grows, `follow()` pins (distance 0); frame 2, the WebView
+resize shrinks the block by 214 px (0.6 x 357), the reach SHRINKS, and `shouldFollowThreadBottom`
+followed growth only - so `anchorShift` kept the row at the top of the viewport in place by moving
+`scrollTop` 3527 -> 3313: distance 214, arrow up. The 214 px is the photo's loss, not the keyboard's.
+
+`threadGrowthResponse` (`threadAnchor.ts`) replaces the predicate with three answers: a reader at the
+bottom FOLLOWS any change of reach, growth or shrink (`follow-bottom`), holds when nothing moved
+(`hold-bottom`), and is never anchor-compensated; the row anchor (`keep-row`) is for a reader in
+history, while entering and while older messages are prepended, exactly as before.
+`threadGrowthObserver.test.ts` drives the observer through late growth, the keyboard box and the
+`svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
+in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
+portrait photo near its end.**
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 

@@ -317,7 +317,7 @@ else
 fi
 if [ "$(on_branch merge-base main "refs/heads/$BRANCH")" = "$(on_branch rev-parse main)" ] &&
   [ "$(on_branch log -1 --format='%an <%ae>' "refs/heads/$BRANCH~1")" = "$DEPENDABOT" ] &&
-  on_branch log -1 --format=%B "refs/heads/$BRANCH~1" | grep -q '^- dependency-name: serde$'; then
+  on_branch log -1 --format=%B "refs/heads/$BRANCH~1" | grep '^- dependency-name: serde$' >/dev/null; then
   pass "A2 the branch starts at main and carries Dependabot's commit, author and trailer intact"
 else
   fail "A2 Dependabot's commit was not carried intact" "$(on_branch log --format='%H %an <%ae> | %cn <%ce>' "main..refs/heads/$BRANCH")"
@@ -325,8 +325,8 @@ fi
 last_files="$(on_branch show --name-only --format= "refs/heads/$BRANCH")"
 if [ "$(on_branch log -1 --format='%an <%ae>|%cn <%ce>' "refs/heads/$BRANCH")" = "$APP_NAME <$APP_EMAIL>|$APP_NAME <$APP_EMAIL>" ] &&
   ! grep -qvE '(^|/)Cargo\.lock$' <<<"$last_files" &&
-  on_branch show "refs/heads/$BRANCH:frontend/mls-wasm/Cargo.lock" | grep -q 'version = "1.0.5"' &&
-  on_branch show "refs/heads/$BRANCH:frontend/src-tauri/Cargo.lock" | grep -q 'version = "1.0.5"'; then
+  on_branch show "refs/heads/$BRANCH:frontend/mls-wasm/Cargo.lock" | grep 'version = "1.0.5"' >/dev/null &&
+  on_branch show "refs/heads/$BRANCH:frontend/src-tauri/Cargo.lock" | grep 'version = "1.0.5"' >/dev/null; then
   pass "A3 the App's one commit touches only the two lockfiles, and both now satisfy their manifests"
 else
   fail "A3 the App's commit is not a lockfile-only refresh" "$last_files"

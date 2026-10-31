@@ -10,7 +10,8 @@
  * with a retry, a `404` once the key was served read as the end); every final screen pausing; the
  * seat given back on close and never by a stale run; append failures counted on their own; a video
  * error stopping the player; the buffer policy (L-F1): a seek's own `waiting` is no stall, a paired
- * cadence raises the target, an outage never does. No sleep and no wall clock: the timer is a queue
+ * cadence raises the target, an outage never does, a stall latched while a poll awaits its segments
+ * is re-anchored on them (LIVE-STALL-1), and each delivery says what it did to the buffer. No sleep and no wall clock: the timer is a queue
  * this file runs by hand, the policy's clock a number it sets, and the other times are the
  * manifest's database times.
  */
@@ -22,6 +23,7 @@ import {
   type LiveSourceBufferLike,
   type LivePlayerDeps,
 } from './livePlayer';
+import { LIVE_PLAYER_HELD_WAIT_BUDGET_MS } from './constants';
 import { LiveRefusalError } from './api';
 import { LiveSegmentOpenError, openLiveSegment, sealLiveSegment } from './liveCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -172,6 +174,7 @@ let video: {
   currentTime: number;
   paused: boolean;
   seeking: boolean;
+  readyState: number;
   play: () => Promise<void>;
   pause: () => void;
 };
@@ -220,6 +223,7 @@ beforeEach(() => {
     currentTime: 0,
     paused: true,
     seeking: false,
+    readyState: 4, // HAVE_ENOUGH_DATA: an engine playing on
     play: vi.fn(async () => {
       video.paused = false;
     }),
@@ -298,7 +302,7 @@ describe('the join', () => {
     expect(buffer().mode).toBe('segments');
     expect(buffer().appends).toEqual(['init0', 'm4', 'm5']);
     expect(vi.mocked(deps.fetchManifest).mock.calls.map((c) => c[1])).toEqual([undefined]);
-    expect(video.currentTime).toBe(1); // the one range is [0, 4]: edge 4 - target 3 (2 s + a poll)
+    expect(video.currentTime).toBe(0); // the one range is [0, 4]: edge 4 - the anchor 4 (a 3 s wait + a poll)
     expect(video.play).toHaveBeenCalled();
     expect(kinds()).toEqual(['connecting', 'playing']);
     expect(elapsed.at(-1)).toBe(12_000);
@@ -443,7 +447,7 @@ describe('the poll', () => {
     video.currentTime = 1;
     await tickTimer();
     expect(buffer().appends).toEqual(['init0', 'm1', 'm2', 'm7']);
-    expect(video.currentTime).toBe(3); // end 6 - target 3
+    expect(video.currentTime).toBe(2); // end 6 - target 4
   });
 
   it('far behind, asks for the NEWEST window rather than the oldest one from its index', async () => {
@@ -461,13 +465,13 @@ describe('the poll', () => {
 
   it('seeks back to the edge at the first segment after a stall', async () => {
     const p = await joined();
-    live.push(1);
+    live.push(1); // -> [0, 6]
     await tickTimer();
+    video.currentTime = 6; // played to the end of what it holds
     p.noteStall();
-    video.currentTime = 0.5;
     live.push(1);
     await tickTimer();
-    expect(video.currentTime).toBe(5); // end 8 - target 3
+    expect(video.currentTime).toBe(4); // end 8 - target 4
   });
 
   it('plays again after a pause from outside, at the next segment', async () => {
@@ -480,9 +484,11 @@ describe('the poll', () => {
 
   it('trims what was played long ago', async () => {
     await joined();
-    live.push(2);
+    buffer().ranges = [[0, 44]]; // a long live
+    live.push(2); // -> [0, 48]: 8 s ahead, inside the anchor and its slack
     video.currentTime = 40;
     await tickTimer();
+    expect(video.currentTime).toBe(40);
     expect(buffer().removed).toEqual([[0, 30]]);
   });
 
@@ -513,8 +519,8 @@ describe('the buffer policy (L-F1)', () => {
     expect(video.currentTime).toBe(1.7); // 4.3 s behind, inside the target and its slack: no seek
   });
 
-  it('a producer that delivers in PAIRS every 4 s raises the target to 4 s, then plays them without a stall', async () => {
-    const p = await joined(); // range [0, 4], seeked to 1, the first delivery at clock 0
+  it('a producer that delivers in PAIRS raises the wait to two segments plus a poll AT the pair, then plays them without a stall', async () => {
+    const p = await joined(); // range [0, 4], seeked to 0, the first delivery at clock 0
     // The 2 s target of old ran dry here: the video reaches the end of what it holds and waits.
     video.currentTime = 4;
     p.noteStall();
@@ -522,14 +528,274 @@ describe('the buffer policy (L-F1)', () => {
     live.push(2); // the pair: 3, 4
     await tickTimer();
     expect(buffer().ranges).toEqual([[0, 8]]);
-    expect(video.currentTime).toBe(4); // the stall's re-anchor: end 8 - the MEASURED 4 s
+    // The stall's re-anchor: end 8 - the anchor 6 s, one poll past the pair's 5 s wait (two 2 s
+    // segments plus a poll) - the bound the pair itself shows, not the 4 s gap it ended.
+    expect(video.currentTime).toBe(2);
     // The next pair, 4 s later: the video played 3.9 s and never ran dry, so nothing seeks.
-    video.currentTime = 7.9;
+    video.currentTime = 5.9;
     clock = 8_000;
     live.push(2);
     await tickTimer();
     expect(buffer().ranges).toEqual([[0, 12]]);
-    expect(video.currentTime).toBe(7.9);
+    expect(video.currentTime).toBe(5.9);
+  });
+
+  it('a stall latched WHILE the poll awaits its segments is re-anchored on them, never cleared without a seek (LIVE-STALL-1)', async () => {
+    // The segment fetch is held open by the test: the interleaving is chosen, not timed.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const plainFetch = deps.fetchSegment;
+    deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+      if (Number(name.slice(4)) >= 3) await held;
+      return plainFetch(id, name, signal);
+    });
+    const p = await joined(); // range [0, 4], seeked to 0, the first delivery at clock 0
+    clock = 2_000;
+    live.push(1); // 3
+    await tickTimer(); // the manifest answered; segment 3 is still on its way
+    expect(buffer().appends).toEqual(['init0', 'm1', 'm2']);
+    // The video runs dry while the fetch is awaited: the stall latches mid-poll.
+    video.currentTime = 4;
+    p.noteStall();
+    release();
+    await flush();
+    expect(buffer().ranges).toEqual([[0, 6]]);
+    // The stall's re-anchor, on the media that just arrived: end 6 - target 4. The old player read
+    // the latch BEFORE the fetch, saw none, did not seek (2 s behind is no drift) and cleared it.
+    expect(video.currentTime).toBe(2);
+    // And the latch was spent by that re-anchor: the next delivery, inside the target, seeks no more.
+    video.currentTime = 4.5;
+    clock = 4_000;
+    live.push(1);
+    await tickTimer();
+    expect(video.currentTime).toBe(4.5);
+  });
+
+  it('a delivery that leaves less media ahead than the longest wait re-anchors at once, before that wait drains it (LIVE-STALL-1)', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await joined(); // range [0, 4], seeked to 0
+    video.currentTime = 3.5;
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]: 2.5 s ahead, under the 3 s wait - no stall yet, but the next gap may be one
+    await tickTimer();
+    expect(video.currentTime).toBe(2); // end 6 - the anchor 4
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (short) at 6.00, 4000 ms behind`
+    );
+    debug.mockRestore();
+  });
+
+  it('a short buffer that does not hold the anchor behind its edge is left to fill, never replayed from its start', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await joined();
+    buffer().ranges = [[2.5, 4]]; // the start evicted
+    video.currentTime = 3.5;
+    clock = 2_000;
+    live.push(1); // 3 -> [2.5, 6]: 2.5 s ahead, but 6 - 4 = 2 lies before the start
+    await tickTimer();
+    expect(video.currentTime).toBe(3.5);
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE}: 3.50 s buffered, under the 4000 ms target - no seek (short)`
+    );
+    debug.mockRestore();
+  });
+
+  it('says once per delivery what it did to the buffer: the segments, the end, the playhead, the media ahead, every range', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    await joined(); // range [0, 4], seeked to 1
+    video.currentTime = 2.5;
+    clock = 2_000;
+    live.push(2); // 3, 4
+    await tickTimer();
+    const lines = debug.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('delivery of'));
+    expect(lines).toEqual([
+      `[LIVE] viewer ${LIVE}: delivery of 2 appended of 2 taken (3-4), gap 2000 ms: end 4.00 -> 8.00, at 2.50 -> 2.50, ahead 1.50 -> 5.50 s, ranges [0.00-4.00] -> [0.00-8.00]`,
+    ]);
+    // A poll that brings nothing says nothing.
+    await tickTimer();
+    expect(debug.mock.calls.filter((c) => String(c[0]).includes('delivery of'))).toHaveLength(1);
+    // A segment skipped inside the range: the line says how many were appended of how many taken.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    live.openErrors.add(5);
+    live.push(2); // 5 (does not open), 6
+    await tickTimer();
+    expect(
+      debug.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('delivery of'))[1]
+    ).toBe(
+      `[LIVE] viewer ${LIVE}: delivery of 1 appended of 2 taken (5-6), gap 0 ms: end 8.00 -> 10.00, at 2.50 -> 2.50, ahead 5.50 -> 7.50 s, ranges [0.00-8.00] -> [0.00-10.00]`
+    );
+    errors.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('a stall with nothing buffered to re-anchor on stays latched, and the next delivery that brings media spends it', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4]
+    buffer().ranges = []; // everything evicted: no edge to seek to
+    video.currentTime = 1.5;
+    p.noteStall(); // starved: latched
+    live.openErrors.add(3);
+    live.push(1); // 3 does not open: the poll appends nothing
+    await tickTimer();
+    const said = () => debug.mock.calls.map((c) => String(c[0]));
+    expect(said()).toContain(`[LIVE] viewer ${LIVE}: no media buffered - no seek (stall)`);
+    expect(video.currentTime).toBe(1.5);
+    // The latch was kept: the next delivery re-anchors on what it brings, as a STALL.
+    live.push(1); // 4 -> range [0, 2]
+    await tickTimer();
+    expect(video.currentTime).toBe(0); // max(start 0, end 2 - target 4)
+    const stallSeeks = () => said().filter((l) => l.includes('seek to the live edge (stall)'));
+    expect(stallSeeks()).toHaveLength(1);
+    // And that seek spent it: a delivery inside the target and its slack seeks no more.
+    video.currentTime = 0.5;
+    live.push(1); // 5 -> range [0, 4]: 3.5 s ahead
+    await tickTimer();
+    expect(video.currentTime).toBe(0.5);
+    expect(stallSeeks()).toHaveLength(1);
+    errors.mockRestore();
+    debug.mockRestore();
+  });
+
+  it('a stall latched during the trim stays latched, and the NEXT delivery re-anchors on it', async () => {
+    const p = await joined();
+    buffer().ranges = [[0, 70]]; // a long live: enough behind the playhead to trim
+    video.currentTime = 68;
+    const fake = buffer();
+    const remove = fake.remove.bind(fake);
+    // The video runs dry while the trim is awaited - after this poll's seek decision.
+    fake.remove = (start: number, end: number) => {
+      video.currentTime = 72;
+      p.noteStall();
+      remove(start, end);
+    };
+    live.push(1); // 3 -> range [0, 72], 4 s behind: inside the target and its slack
+    await tickTimer();
+    expect(fake.removed).toEqual([[0, 58]]);
+    expect(video.currentTime).toBe(72); // nothing seeked after the trim
+    fake.remove = remove;
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    live.push(1); // 4 -> range [0, 74]
+    await tickTimer();
+    expect(video.currentTime).toBe(70); // the stall's re-anchor: end 74 - target 4
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 74.00, 4000 ms behind`
+    );
+    debug.mockRestore();
+  });
+
+  it("the engine's own wait with media ahead is no stall: no seek, and the next delivery says it ended (LIVE-STALL-1, alpha.8)", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4], seeked to 0
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    // W4 waited at 55.56 with one range to 58.19, and played on to 55.74 before any seek.
+    video.currentTime = 2.5;
+    p.noteStall();
+    const said = () => debug.mock.calls.map((c) => String(c[0]));
+    expect(said()).toContain(
+      `[LIVE] viewer ${LIVE}: waiting at 2.50 with 3.50 s buffered ahead [0.00-6.00] - the engine's own wait`
+    );
+    expect(video.currentTime).toBe(2.5);
+    video.currentTime = 4.4; // it resumed by itself: 1.9 s played in the next 2 s
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8]: 3.6 s ahead, inside the target and its slack
+    await tickTimer();
+    expect(video.currentTime).toBe(4.4); // no seek: nothing was missing
+    expect(said()).toContain(
+      `[LIVE] viewer ${LIVE}: the engine's own wait at 2.50 ended by itself after 2000 ms, now at 4.40: held about 100 ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`
+    );
+    expect(said().filter((l) => l.includes('stall'))).toEqual([]);
+    debug.mockRestore();
+  });
+
+  it("the engine's own wait that never ends is a stall at the next delivery, re-anchored as one", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall(); // held: 3.5 s ahead
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8], and the playhead never moved
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said).toContain(`[LIVE] viewer ${LIVE} stalled at 2.50 (target 4000 ms)`);
+    expect(said).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 8.00, 4000 ms behind`
+    );
+    expect(video.currentTime).toBe(4); // end 8 - target 4
+    debug.mockRestore();
+  });
+
+  it('a playhead that moved while the engine still cannot play on (readyState under HAVE_FUTURE_DATA) is a stall, not an ended wait', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1); // 3 -> [0, 6]
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall(); // held: 3.5 s ahead
+    // It crept (a sub-frame, or a recovery that froze again with no second `waiting`), and the
+    // engine still has only the current frame.
+    video.currentTime = 2.6;
+    video.readyState = 2; // HAVE_CURRENT_DATA
+    clock = 4_000;
+    live.push(1); // 4 -> [0, 8]
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said).toContain(`[LIVE] viewer ${LIVE} stalled at 2.60 (target 4000 ms)`);
+    expect(said).toContain(
+      `[LIVE] viewer ${LIVE}: seek to the live edge (stall) at 8.00, 4000 ms behind`
+    );
+    expect(said.filter((l) => l.includes('ended by itself'))).toEqual([]);
+    expect(video.currentTime).toBe(4);
+    debug.mockRestore();
+  });
+
+  it("a paused video ends no wait of the engine's own: a stall", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1);
+    await tickTimer();
+    video.currentTime = 2.5;
+    p.noteStall();
+    video.currentTime = 2.9;
+    video.paused = true;
+    clock = 4_000;
+    live.push(1);
+    await tickTimer();
+    expect(debug.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE} stalled at 2.90 (target 4000 ms)`
+    );
+    debug.mockRestore();
+  });
+
+  it("a seek closes the engine's own wait: the playhead it moved is not read as that wait's end", async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const p = await joined(); // range [0, 4], seeked to 0
+    video.currentTime = 1;
+    p.noteStall(); // held: 3 s ahead
+    // Then a re-acquired camera's hole: the wait at the end of the first range crosses it.
+    buffer().ranges = [
+      [0, 4],
+      [34, 36],
+    ];
+    video.currentTime = 4;
+    p.noteStall();
+    expect(video.currentTime).toBe(34);
+    clock = 2_000;
+    live.push(1); // 3 -> [34, 38]
+    await tickTimer();
+    const said = debug.mock.calls.map((c) => String(c[0]));
+    expect(said.filter((l) => l.includes("engine's own wait at"))).toEqual([]);
+    expect(said.filter((l) => l.includes('stalled at'))).toEqual([]);
+    debug.mockRestore();
   });
 
   it("a poll's own outage is never read as the producer's cadence", async () => {
@@ -544,7 +810,7 @@ describe('the buffer policy (L-F1)', () => {
     live.push(1);
     await tickTimer(); // the retry brings a segment
     expect(buffer().ranges).toEqual([[0, 6]]);
-    expect(video.currentTime).toBe(3); // end 6 - the floor of 3 s, never 20
+    expect(video.currentTime).toBe(2); // end 6 - the floor's anchor of 4 s, never 20
   });
 
   it("a quiet broadcaster's absence is never read as its cadence", async () => {
@@ -558,7 +824,7 @@ describe('the buffer policy (L-F1)', () => {
     clock = 9_000;
     live.push(1);
     await tickTimer();
-    expect(video.currentTime).toBe(3); // end 6 - the floor of 3 s, never 9
+    expect(video.currentTime).toBe(2); // end 6 - the floor's anchor of 4 s, never 9
   });
 });
 
@@ -600,14 +866,15 @@ describe('every refusal has its screen', () => {
     expect(states.at(-1)).toEqual({ kind: 'playing' });
   });
 
-  it('ended stops the player cleanly: paused, no timer, no seat request', async () => {
+  it('ended stops the player cleanly: paused, no timer, and its seat given back - the purge of the end waits for it', async () => {
     await joined();
     live.manifestErrors.push(refusal('ended', 410));
     await tickTimer();
     expect(states.at(-1)).toEqual({ kind: 'ended', cut: false });
     expect(video.pause).toHaveBeenCalled();
     expect(timers).toHaveLength(0);
-    expect(deps.leaveSeat).not.toHaveBeenCalled();
+    expect(deps.leaveSeat).toHaveBeenCalledTimes(1);
+    expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
   });
 
   it('not-found after the join is the end (the row is deleted at the end)', async () => {

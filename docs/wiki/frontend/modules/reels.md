@@ -95,7 +95,13 @@ What that decided:
   the hardware), `unavailable` (`NotFoundError`, `OverconstrainedError`, or no `getUserMedia` at all).
   An unknown name is logged with the name and read as `unavailable`. Each has its own sentence and a
   retry on the camera screen.
-- **The lens is asked EXACTLY** (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
+- **The lens is asked EXACTLY ON A PHONE AND ON A SWITCH, IDEAL ON A DESKTOP'S FIRST CAPTURE** (one
+  builder, `utils/cameraFacing.ts`, shared by calls, reels, post and live; a phone is a coarse primary
+  pointer, `lensIsExact`). A desktop webcam reports no facing, so an exact one is an
+  `OverconstrainedError` and the camera never opened (found on dev by the rig, the live composer; the
+  reel camera had the same request). `CameraSession` passes `switching` to its opener on a flip, so a
+  lens the device lacks is still a typed `unavailable`. The rest of this item is the phone case
+  (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
   WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
   camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
   persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
@@ -464,6 +470,11 @@ and the editor still hand back; "Garder comme post" hands the video back with it
 [check CR](../../device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones).
 
 ## Publishing (R3, on C2 and C3)
+
+**Decided 2026-10-30, designed, not built:** on the TAB, "Suivant" becomes "Envoyer à...", a list whose
+first row publishes as below and whose other rows send the same take - the same stored file - to
+several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+The composer's camera keeps "Publier".
 
 **The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):
 "Next" has a bar of its own, and a take whose sound the member removed (`clip.soundRemoved`) is

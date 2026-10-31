@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
 import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
@@ -27,47 +28,101 @@ import {
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
   PURCHASE_PRICING_CHANGED,
+  PURCHASE_ALREADY_CLOSED,
+  PURCHASE_BUYER_ERASED,
+  PURCHASE_NOT_A_RISE,
+  PURCHASE_TIER_NOT_COMPARABLE,
+  PURCHASE_HELD_TIER_DELETED,
+  PURCHASE_TARGET_ALREADY_HELD,
+  PURCHASE_CLOSING_CHANGED,
+  PURCHASE_YEAR_OVER,
+  PURCHASE_NOT_CLOSABLE,
+  PURCHASE_TIER_GONE,
+  TIER_NOT_RANKABLE,
+  TIER_CHECKOUT_OPEN,
+  TIER_HAS_HOLDERS,
+  TIER_KEY_EXHAUSTED,
+  TIER_KEY_YEAR_SHAPED,
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
-import { toRequestState } from '../forms/seat-hold';
-import { isUniqueViolation } from '../common/pg-errors';
+import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
+import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
+import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
-import { AssociationsService } from './associations.service';
+import {
+  assertReviewerReachesAssociation,
+  associationsReachedByReviewer,
+} from './review-cohort-reach';
+import {
+  AssociationsService,
+  type LydiaReadinessOutcome,
+  type LydiaReadinessRef,
+} from './associations.service';
 import {
   issuedTagKey,
   TagHeldByAnotherIssuerError,
   UserTagService,
+  type CotisationTierInfo,
 } from '../users/user-tag.service';
 import { lockAssociationTiers, lockBuyerTiers } from '../users/buyer-tier-lock';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import {
   PurchaseRecord,
+  RECEIVED_PURCHASE_STATUSES,
   receivedStatus,
   type PurchasePaymentMethod,
 } from '../users/entities/purchase-record.entity';
+import {
+  CLOSING_UNIQUE_INDEX,
+  PurchaseRecordClosing,
+  type PurchaseClosingOutcome,
+} from '../users/entities/purchase-record-closing.entity';
+import type { UserTag } from '../users/entities/user-tag.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { cotisationStem, deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
-import { assertCotisationStemFree, TIER_TAG_NAME_TAKEN } from './cotisation-namespace';
+import {
+  type CotisationMode,
+  cotisationStem,
+  cotisationStemsCollide,
+  deriveCotisationTag,
+  getAcademicYear,
+  tierVariantKeys,
+  variantKeyCap,
+  VariantKeySpaceExhaustedError,
+  variantKeyFromLabel,
+  YEAR_SHAPED_VARIANT_KEY,
+} from './cotisation-tag.util';
+import {
+  assertCotisationStemFree,
+  stemCollidesElsewhere,
+  TIER_TAG_NAME_TAKEN,
+} from './cotisation-namespace';
 import {
   fixedPriceFor,
   linkedTierKey,
   MEMBER_PRICE_TAG_NOT_A_TIER,
+  orphanTierTags,
   pickHeldTier,
+  settlementGrants,
+  settlementVerdict,
   tierRefusal,
   tierRelationOf,
   type HeldTier,
+  type OrphanTierTag,
   type TierRelation,
 } from './tier-pricing';
 import {
+  approvedDelegateIds,
   isDelegating,
+  PAYMENTS_DISABLED_MESSAGE,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
   type PaymentProviderId,
   type PaymentTarget,
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { paymentsNotReady } from './lydia-readiness';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -77,6 +132,7 @@ import {
   LYDIA_REFUSALS_FINAL,
   type LydiaRefusalsFinal,
   mapCorePaymentError,
+  lydiaReadinessRefusal,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
@@ -118,14 +174,30 @@ export type ShopProduct = AssociationProduct & {
   viewerIsCotisant: boolean;
   viewerActiveTier: string | null;
   viewerPrice: ViewerPrice;
-  /** This product against the tier the viewer holds (`tierRelation`); `none` for a non-tier. */
+  /**
+   * This product against the tier the viewer holds (`relationOf`, the checkout's own call); `none`
+   * for a non-tier.
+   */
   viewerTierRelation: TierRelation;
   /**
    * Cents a checkout would charge this viewer now, from the same `fixedPriceFor` / grid cell the
-   * checkout uses. Null when the server would refuse the tier (`held`, `lower`), when the grid does
-   * not sell this combination, and for a free amount. Purchase caps and tag gates are not folded in.
+   * checkout uses. Null when the server would refuse the tier (`held`, `lower`, `unranked`) or the
+   * membership (`cotisationDisabled`), when the grid does not sell this combination, and for a free
+   * amount. Purchase caps and tag gates are not folded in.
    */
   viewerDueCents: number | null;
+  /**
+   * A membership product whose association has no cotisation mode: the checkout refuses it
+   * (`COTISATION_DISABLED`), so the listing says so rather than offer a button that cannot work.
+   */
+  cotisationDisabled: boolean;
+  /**
+   * The `variantKey` of the tier this product's `memberPriceTag` names (`linkedTierKey`), so a
+   * preferential price can be worded "for holders of" THAT tier - not the first tier the viewer
+   * holds. Absent when there is no tag, when it names no tier, or when the viewer's tiers in the
+   * association were not read (a guest, no cotisation mode).
+   */
+  memberPriceTierKey?: string | null;
 };
 
 /**
@@ -187,6 +259,7 @@ const TIER_RANK_COLUMNS = {
   variantKey: true,
   amountCents: true,
   priceMatrix: true,
+  allowCustomAmount: true,
 } as const;
 
 /** What `preparePurchase` fetched from other services, for `decidePurchase` to use under the lock. */
@@ -220,6 +293,197 @@ function sameRouting(a: PaymentTarget, b: PaymentTarget): boolean {
   );
 }
 
+/**
+ * One row of an association's purchases list and export: money received, with the buyer's display
+ * name, and - for a cotisation tier paid for and not granted - whether a person closed it, and how.
+ */
+export interface PurchaseListRow {
+  id: string;
+  userId: string | null;
+  source: 'form' | 'product';
+  productId: string | null;
+  formId: string | null;
+  productName: string;
+  amountCents: number;
+  paymentMethod: PurchasePaymentMethod;
+  paidAt: string;
+  firstName: string | null;
+  lastName: string | null;
+  /**
+   * Money received for something NOT delivered (`paid_not_granted`, `PurchaseStatus`): a boutique
+   * tier not granted at settlement, a product deleted or a buyer erased before the payment landed,
+   * or a paid form that grants a tier and did not grant it. A refund or a grant is owed.
+   */
+  notGranted: boolean;
+  /**
+   * How a `notGranted` payment was closed (`closePaidNotGranted`, migration 113): `refunded` or
+   * `granted`, null while nobody has recorded it - the mark stays, the closing says it is settled.
+   */
+  closedOutcome: PurchaseClosingOutcome | null;
+  /** When the closing was recorded, by the server's clock; null while open. */
+  closedAt: string | null;
+  /**
+   * For an OPEN marked payment, why it cannot be closed as `granted` (`closingGrantVerdict`, the
+   * same decision the closing takes under the lock), so the list offers "refunded" only; null when it
+   * can be granted, and for every other row.
+   */
+  grantRefusal: ClosingGrantRefusal | null;
+  /**
+   * For an OPEN marked payment, the tier its buyer holds NOW (its product name, else its key), so
+   * the manager sees what a grant would replace; null when none is held, and for every other row.
+   */
+  buyerTier: string | null;
+  /**
+   * For an OPEN marked payment, true when the tier it bought is already held as ITS delivery
+   * (`deliveryOf`): closing it as `granted` records that, and grants or replaces nothing.
+   */
+  delivered: boolean;
+}
+
+/** Why a payment paid for and not granted cannot be closed as `granted` (`closingGrantVerdict`). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable'
+  | 'held-tier-deleted';
+
+/** What `closingGrantVerdict` decided for one marked payment. */
+interface ClosingGrantVerdict {
+  /** Null when the tier may be granted. */
+  refusal: ClosingGrantRefusal | null;
+  /** The tier paid for (its CURRENT key); meaningful only when `refusal` is null. */
+  variantKey: string | null;
+  /** The tier the buyer holds now, by name (`PurchaseListRow.buyerTier`). */
+  buyerTier: string | null;
+  /**
+   * The held tag that IS the delivery of this payment (`deliveryOf`), null otherwise: the closing
+   * records `granted`, writes no grant, and stamps that tag with the record so it closes no other.
+   */
+  deliveredTagId: string | null;
+  /** What the decision rests on, for its log line. */
+  detail: string;
+}
+
+/**
+ * The `submissions.paymentStatus` values of an answer whose money is in (`Submission`): what
+ * `closingContextOf` counts as a buyer's paid answers to a form.
+ */
+const PAID_ANSWER_STATUSES = ['paid', 'paid_over_capacity'];
+
+/** What `closingGrantVerdict` reads, loaded once for many records (`closingContextOf`). */
+interface ClosingContext {
+  asso: Association | null;
+  /** The association's tiers with their current tags; empty without a cotisation mode. */
+  catalogue: CotisationTierInfo[];
+  /** Its membership products, the ranking columns only. */
+  tiers: AssociationProduct[];
+  /** The records' boutique products, by id (this association's only). */
+  products: Map<string, AssociationProduct>;
+  /** The records' forms, by id (this association's only). */
+  forms: Map<string, { grantsCotisation: boolean; cotisationVariantKey: string | null }>;
+  /** Each buyer's ACTIVE tier tags of this association. */
+  tagsByBuyer: Map<string, UserTag[]>;
+  /**
+   * Each buyer's ACTIVE tags of a tier this association no longer has
+   * (`UserTagService.heldOrphanTierTagsOf`): a held tier with no price, so a closing ranks
+   * `not-comparable` against it, as a checkout does.
+   */
+  orphansByBuyer: Map<string, OrphanTierTag[]>;
+  /**
+   * Whether `submissionId` is an answer to the form `record` paid for, by its buyer, who has exactly
+   * ONE paid record and ONE paid answer for that form - so that answer can only be this record's
+   * (`deliveryOf`).
+   */
+  ownFormAnswer: (record: PurchaseRecord, submissionId: unknown) => boolean;
+}
+
+/**
+ * Whether the held tag `tag` - of the tier payment `record` bought - is the DELIVERY of that payment,
+ * and why. Read from the tag's own provenance first, then from time:
+ * - `metadata.purchaseRecordId` set: the tag already closed (or was granted by) a payment - one
+ *   delivery closes at most one payment, so it is not this one's;
+ * - `metadata.submissionId` set: a form answer's grant - this payment's only when the record is that
+ *   form's, the answer is this buyer's, AND this buyer has exactly ONE paid record AND ONE paid
+ *   answer for that form - the answer counted too, since fulfilment writes the record after the
+ *   grant and apart from it (`ownSubmission`, `ClosingContext.ownFormAnswer`: a record names no answer, so with two the
+ *   answer cannot be told to be this one's) - a replay that raced the run still granting - whatever
+ *   the times say;
+ * - `metadata.legacy` set: a legacy claim's grant, not a payment's;
+ * - `metadata.paymentIntentId` present: a paid grant - this payment's only when it names this
+ *   record's payment (both non-null), else a second payment delivered it and this one is owed a
+ *   refund; it never falls back to time;
+ * - no provenance (a manager's roster grant, which the hourly report asks for): a delivery when first
+ *   granted AFTER the payment was recorded (`createdAt` > `paidAt`, both written by the database).
+ *   A tag that predates the payment is a renewal the payment did not buy. A revoke followed by a
+ *   fresh grant counts as a delivery: the closing is manager-attested (docs/wiki/cotisations.md).
+ */
+function deliveryOf(
+  tag: Pick<UserTag, 'createdAt' | 'metadata'>,
+  record: Pick<PurchaseRecord, 'paidAt' | 'stripePaymentIntentId'>,
+  ownSubmission: boolean
+): { delivered: boolean; detail: string } {
+  const meta = tag.metadata ?? {};
+  if (meta.purchaseRecordId != null) {
+    return { delivered: false, detail: 'its tag is already the delivery of another payment' };
+  }
+  if (meta.submissionId != null) {
+    return ownSubmission
+      ? { delivered: true, detail: 'its tag was granted by this form answer' }
+      : { delivered: false, detail: 'its tag was granted by another form answer' };
+  }
+  if (meta.legacy != null) {
+    return { delivered: false, detail: 'its tag was granted by a legacy claim' };
+  }
+  if ('paymentIntentId' in meta) {
+    // A paid grant never falls back to time: a null on either side matches nothing.
+    return meta.paymentIntentId != null && meta.paymentIntentId === record.stripePaymentIntentId
+      ? { delivered: true, detail: 'its tag was granted by this payment' }
+      : { delivered: false, detail: 'its tag was granted by another payment, or names none' };
+  }
+  return tag.createdAt.getTime() > record.paidAt.getTime()
+    ? { delivered: true, detail: 'its tag was granted by hand after the payment' }
+    : { delivered: false, detail: 'its tag was held before the payment' };
+}
+
+/** The typed 409 of each `ClosingGrantRefusal`. */
+const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; message: string }> = {
+  'buyer-erased': {
+    code: PURCHASE_BUYER_ERASED,
+    message: "The buyer's account was deleted: only a refund can be recorded.",
+  },
+  'tier-gone': {
+    code: PURCHASE_TIER_GONE,
+    message: 'The membership tier this payment was for no longer exists.',
+  },
+  'year-over': {
+    code: PURCHASE_YEAR_OVER,
+    message: 'This payment was for an academic year that is over: only a refund can be recorded.',
+  },
+  'target-held': {
+    code: PURCHASE_TARGET_ALREADY_HELD,
+    message:
+      'The buyer holds this tier, and it was not delivered for this payment: the payment is owed a refund.',
+  },
+  'not-a-rise': {
+    code: PURCHASE_NOT_A_RISE,
+    message:
+      'The buyer holds a tier worth at least this one: granting it would move them down. Only a refund can be recorded.',
+  },
+  'not-comparable': {
+    code: PURCHASE_TIER_NOT_COMPARABLE,
+    message:
+      'This tier or the one the buyer holds has no fixed price, so they cannot be compared: only a refund can be recorded.',
+  },
+  'held-tier-deleted': {
+    code: PURCHASE_HELD_TIER_DELETED,
+    message:
+      'The buyer holds a tier that was deleted, so it cannot be compared with this one. Grant this tier from the members roster (it replaces the deleted one), then close this payment as granted - or record a refund.',
+  },
+};
+
 /** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
 interface ResolvedPurchase {
   asso: Association;
@@ -228,6 +492,11 @@ interface ResolvedPurchase {
   paymentTarget: PaymentTarget;
   /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
   vendorToken: string;
+  /**
+   * The product id of the tier this purchase was ranked against (`TierFacts.held`), frozen on the
+   * attempt row: null when nothing was held or the product is not a tier.
+   */
+  heldTierProductId: string | null;
 }
 
 /** True when a create/update request sets any column member pricing is validated on. */
@@ -252,6 +521,17 @@ const FIXED_PRICE: ViewerPrice = { kind: 'fixed', amountCents: null, dependsOnPr
  * service needs the key itself.
  */
 export type SafeProduct = AssociationProduct & { webhookConfigured: boolean };
+
+/**
+ * What a cash sale records when the cashier types no amount (`cashSaleQuoteFor`): `priced` (the
+ * grid cell or the fixed price, `preferential` when it is the member price), `typed` (a free-amount
+ * product: there is no default, an amount must be typed), or `not-sold` (the grid closes this
+ * beneficiary's combination: the sale is refused unless an amount is typed).
+ */
+export type CashSaleQuote =
+  | { kind: 'priced'; amountCents: number; preferential: boolean }
+  | { kind: 'typed' }
+  | { kind: 'not-sold' };
 
 /**
  * A failed Cercle delivery as the admin dashboard sees it: the row, plus who and what it is about.
@@ -283,6 +563,8 @@ export interface FailedDelivery {
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
+  /** Products whose `memberPriceTag` names no tier, already said at WARN (`memberPriceTierKeyOf`). */
+  private readonly warnedMemberPriceTags = new Set<string>();
   /** The Lydia refusal codes a cancel closes an attempt on (`LYDIA_REFUSALS_FINAL`); a test overrides it. */
   protected readonly refusalsFinal: LydiaRefusalsFinal = LYDIA_REFUSALS_FINAL;
 
@@ -486,10 +768,45 @@ export class ProductsService {
     return this.releaseWithheldFor(asso);
   }
 
-  /** The release itself, for an association already loaded (see `releaseWithheldProducts`). */
+  /**
+   * The release itself, for an association already loaded (see `releaseWithheldProducts`).
+   *
+   * Readiness is RE-READ inside the release's own transaction, the association row (and its
+   * delegation parent, the holder whose readiness counts) share-locked: a revert
+   * (`AssociationsService.setLydiaReadiness`) locks that holder FOR UPDATE before it withholds, so
+   * a release running after a "ready" that a revert has since undone sees the revert and releases
+   * nothing - no withheld product goes back on sale while its holder is not ready. Only the
+   * provider (a core-service call) is read outside the lock.
+   */
   private async releaseWithheldFor(asso: Association): Promise<number> {
     const associationId = asso.id;
-    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    const provider = await this.activePaymentProvider();
+    const { count, paymentTarget } = await this.assoRepo.manager.transaction(async (manager) => {
+      const fresh = await manager.findOne(Association, {
+        where: { id: associationId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!fresh) return { count: 0, paymentTarget: null };
+      if (isDelegating(fresh)) {
+        await manager.query(`SELECT id FROM associations WHERE id = $1 FOR SHARE`, [
+          fresh.paymentParentAssociationId,
+        ]);
+      }
+      const target = await this.routeWith(fresh, provider, manager);
+      if (!target.ready) return { count: 0, paymentTarget: target };
+      const { affected } = await manager.update(
+        AssociationProduct,
+        { associationId, activationWithheld: true },
+        { isActive: true, activationWithheld: false }
+      );
+      return { count: affected ?? 0, paymentTarget: target };
+    });
+    if (!paymentTarget) {
+      this.logger.warn(
+        `[SHOP] nothing released for association=${associationId.slice(0, 8)}: it no longer exists`
+      );
+      return 0;
+    }
     if (!paymentTarget.ready) {
       this.logger.debug(
         `[SHOP] nothing released for association=${associationId.slice(0, 8)}: payment target not ready ` +
@@ -497,12 +814,6 @@ export class ProductsService {
       );
       return 0;
     }
-
-    const { affected } = await this.productRepo.update(
-      { associationId, activationWithheld: true },
-      { isActive: true, activationWithheld: false }
-    );
-    const count = affected ?? 0;
     if (count > 0) {
       this.logger.log(
         `[SHOP] released ${count} withheld product(s) for association=${associationId.slice(0, 8)}: ` +
@@ -577,24 +888,46 @@ export class ProductsService {
    * already happened - the same day-late, found-by-hand failure this mechanism exists to end.
    */
   async releaseWithheldForAssociationAndDelegates(associationId: string): Promise<number> {
-    const children = await this.assoRepo.find({
-      where: { paymentParentAssociationId: associationId, paymentDelegationStatus: 'approved' },
-      select: { id: true },
-    });
+    // The SAME predicate the readiness revert withholds with (`approvedDelegateIds`), so the
+    // release is the exact inverse of the withhold.
+    const children = await approvedDelegateIds(this.assoRepo.manager, associationId);
     let total = await this.releaseWithheldProducts(associationId);
-    for (const child of children) {
+    for (const childId of children) {
       // One failing club must not stop the others: this runs after a state change that is already
       // committed, so a throw here would lose every release queued behind it.
       try {
-        total += await this.releaseWithheldProducts(child.id);
+        total += await this.releaseWithheldProducts(childId);
       } catch (e) {
         this.logger.error(
-          `[SHOP] release FAILED for delegating child=${child.id.slice(0, 8)} of ` +
+          `[SHOP] release FAILED for delegating child=${childId.slice(0, 8)} of ` +
             `parent=${associationId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }
     return total;
+  }
+
+  /**
+   * Marks the HOLDER of `vendorToken` ready (`AssociationsService.setLydiaReadiness`, the one
+   * writer), then releases its withheld products and its approved delegates' - on EVERY call,
+   * replays included: a crash between the commit and the release is healed by the next replay, and
+   * `activationWithheld` is the release's allowlist, so a second release finds nothing. The ONE path
+   * the webhook's `BUSINESS_VALIDATED` and the global admin's "Valider l'onboarding" take.
+   */
+  async markLydiaReady(
+    vendorToken: string,
+    cause: 'webhook-validated' | 'admin',
+    ref: LydiaReadinessRef
+  ): Promise<LydiaReadinessOutcome> {
+    const outcome = await this.associationsService.setLydiaReadiness(vendorToken, true, cause, ref);
+    // Nothing became (or already was) ready: nothing to release.
+    if (outcome.kind !== 'transitioned' && outcome.kind !== 'replay') return outcome;
+    const released = await this.releaseWithheldForAssociationAndDelegates(outcome.associationId);
+    this.logger.debug(
+      `[SHOP] readiness ${outcome.kind} for association=${outcome.associationId.slice(0, 8)}: ` +
+        `${released} withheld product(s) released`
+    );
+    return outcome;
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -604,10 +937,17 @@ export class ProductsService {
    * annotated for `userId` (`annotateForViewer`).
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
-    const products = await this.productRepo.find({
+    const all = await this.productRepo.find({
       where: { isActive: true },
       order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
     });
+    // A review account's shop holds only the associations it is a member of (review-cohort-reach.ts).
+    const reached = await associationsReachedByReviewer(
+      this.productRepo.manager,
+      userId,
+      all.map((p) => p.associationId)
+    );
+    const products = reached === null ? all : all.filter((p) => reached.has(p.associationId));
     return this.annotateForViewer(products, userId);
   }
 
@@ -623,24 +963,67 @@ export class ProductsService {
     products: AssociationProduct[],
     userId: string | undefined
   ): Promise<ShopProduct[]> {
+    // The associations are read ONCE, for both readers: the viewer's tier facts need their slug and
+    // mode, and the cotisation-disabled mark their mode. A guest looking at no membership product
+    // needs neither, so nothing is read.
+    const needsAssociations = userId !== undefined || products.some((p) => p.type === 'membership');
+    const assocIds = [...new Set(products.map((p) => p.associationId))];
+    const assos =
+      needsAssociations && assocIds.length > 0
+        ? await this.assoRepo.find({
+            where: { id: In(assocIds) },
+            select: { id: true, slug: true, cotisationMode: true },
+          })
+        : [];
     const statusByAssoc = userId
-      ? await this.cotisantStatusFor(userId, [...new Set(products.map((p) => p.associationId))])
+      ? await this.cotisantStatusFor(userId, assos)
       : new Map<string, CotisantStatus>();
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
+    const disabled = this.cotisationDisabledAssociations(products, assos);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
+      const facts = status?.facts ?? null;
       const viewerPrice = viewerPrices.get(p.id) ?? FIXED_PRICE;
       const viewerTierRelation: TierRelation =
-        p.type === 'membership' ? this.relationOf(p, status?.facts ?? null) : 'none';
+        p.type === 'membership' ? this.relationOf(p, facts) : 'none';
+      const cotisationDisabled = p.type === 'membership' && disabled.has(p.associationId);
+      const memberPriceTierKey = this.memberPriceTierKeyOf(p, facts);
       return this.toSafeProduct({
         ...p,
         viewerIsCotisant: status?.isCotisant ?? false,
         viewerActiveTier: status?.activeTier ?? null,
         viewerPrice,
         viewerTierRelation,
-        viewerDueCents: this.dueCentsFor(p, viewerTierRelation, viewerPrice, status?.facts ?? null),
+        viewerDueCents: cotisationDisabled
+          ? null
+          : this.dueCentsFor(p, viewerTierRelation, viewerPrice, facts),
+        cotisationDisabled,
+        ...(memberPriceTierKey !== undefined ? { memberPriceTierKey } : {}),
       });
     });
+  }
+
+  /**
+   * The associations, among those `products` sell a membership of, whose cotisations are disabled
+   * (no cotisation mode): what the checkout refuses with `COTISATION_DISABLED`
+   * (`assertMembershipGrantable`), from the associations the listing already read (`assos`).
+   */
+  private cotisationDisabledAssociations(
+    products: AssociationProduct[],
+    assos: Pick<Association, 'id' | 'cotisationMode'>[]
+  ): Set<string> {
+    const selling = new Set(
+      products.filter((p) => p.type === 'membership').map((p) => p.associationId)
+    );
+    const disabled = new Set(
+      assos.filter((a) => selling.has(a.id) && !a.cotisationMode).map((a) => a.id)
+    );
+    if (disabled.size > 0) {
+      this.logger.debug(
+        `[SHOP] listing: membership products of ${disabled.size} association(s) with cotisations disabled - not offered`
+      );
+    }
+    return disabled;
   }
 
   /**
@@ -664,32 +1047,17 @@ export class ProductsService {
   /**
    * `fixedPriceFor` for one buyer, from their tier facts (null: no cotisation in this association).
    * The preferential price of a `memberPriceTag` product applies when the buyer holds, TODAY, the
-   * sibling tier the tag names (`linkedTierKey`). A tag naming no tier of the association applies no
-   * preferential price and is logged at WARN: create and update refuse to save one, so it is a row
-   * written before that rule, or a tier renamed outside `update`. Without facts (a guest, or an
-   * association with no cotisation mode) nothing is held, so no preferential price applies and the
-   * link is not judged: the tiers it would be judged against were not read.
+   * sibling tier the tag names (`memberPriceTierKeyOf`). Without facts (a guest, or an association
+   * with no cotisation mode) nothing is held, so no preferential price applies.
    */
   private fixedPriceOf(
     product: AssociationProduct,
     amountCents: number,
     facts: TierFacts | null
   ): { amountCents: number; preferential: boolean } {
-    let holdsLinkedTier = false;
-    if (product.memberPriceTag && facts) {
-      const linked = linkedTierKey(
-        product.memberPriceTag,
-        facts.slug,
-        facts.tiers.map((t) => t.variantKey)
-      );
-      if (linked === undefined) {
-        this.logger.warn(
-          `[SHOP] product=${product.id.slice(0, 8)} memberPriceTag names no cotisation tier of its association - preferential price not applied`
-        );
-      } else {
-        holdsLinkedTier = facts.heldKeys.includes(linked);
-      }
-    }
+    const linked = this.memberPriceTierKeyOf(product, facts);
+    const holdsLinkedTier =
+      linked !== undefined && facts !== null && facts.heldKeys.includes(linked);
     return fixedPriceFor(
       {
         amountCents,
@@ -701,16 +1069,50 @@ export class ProductsService {
   }
 
   /**
+   * The `variantKey` of the sibling tier `product.memberPriceTag` names (`linkedTierKey`), or
+   * `undefined` when the product has no tag, when there are no facts (the tiers it would be judged
+   * against were not read), or when it names no tier of the association. That last case applies no
+   * preferential price and is logged at WARN ONCE per product per process (`warnedMemberPriceTags`):
+   * create and update refuse to save such a tag, so it is a row written before that rule, or a tier
+   * renamed outside `update` - a fact about the row, not about each quote that reads it.
+   */
+  private memberPriceTierKeyOf(
+    product: AssociationProduct,
+    facts: TierFacts | null
+  ): string | null | undefined {
+    if (!product.memberPriceTag || !facts) return undefined;
+    const linked = linkedTierKey(
+      product.memberPriceTag,
+      facts.slug,
+      facts.tiers.map((t) => t.variantKey)
+    );
+    if (linked === undefined && !this.warnedMemberPriceTags.has(product.id)) {
+      this.warnedMemberPriceTags.add(product.id);
+      this.logger.warn(
+        `[SHOP] product=${product.id.slice(0, 8)} memberPriceTag names no cotisation tier of its association - preferential price not applied (said once per product until restart)`
+      );
+    }
+    return linked;
+  }
+
+  /**
    * The tier facts of one viewer in one association (`TierFacts`): every tier key whose CURRENT
    * derived tag `holds` answers for (named before base, `tierVariantKeys`), and the one held tier a
    * purchase is ranked against (`pickHeldTier`). Null when the association has no cotisation mode.
    * The single enumeration behind `isBuyerCotisant`, the checkout's rank check, its settlement and
    * the listings, so "is a cotisant", "holds this tier" and "what it costs" cannot drift apart.
+   *
+   * `orphans` are the viewer's tags of a tier the association no longer has
+   * (`UserTagService.heldOrphanTierTags`): ranked as a held tier with no product, so with no price,
+   * which makes every purchase of another tier `unranked` - never `none`, which would let a holder
+   * of a deleted dearer tier buy a cheaper one. They are not in `heldKeys`: a tier that is gone
+   * grants no member price and no gate, as it did before.
    */
   private async tierFactsFrom(
     asso: Pick<Association, 'slug' | 'cotisationMode'>,
     tiers: AssociationProduct[],
-    holds: (tagName: string) => boolean | Promise<boolean>
+    holds: (tagName: string) => boolean | Promise<boolean>,
+    orphans: readonly OrphanTierTag[]
   ): Promise<TierFacts | null> {
     if (!asso.cotisationMode) return null;
     const heldKeys: (string | null)[] = [];
@@ -723,17 +1125,19 @@ export class ProductsService {
       );
       if (await holds(tagName)) heldKeys.push(variantKey);
     }
-    const held = pickHeldTier(
-      heldKeys.map((variantKey) => ({
+    const held = pickHeldTier([
+      ...heldKeys.map((variantKey) => ({
         variantKey,
         product: tiers.find((t) => t.variantKey === variantKey) ?? null,
-      }))
-    );
+      })),
+      ...orphans.map((o) => ({ variantKey: o.variantKey, product: null })),
+    ]);
     return { slug: asso.slug, tiers, heldKeys, held };
   }
 
   /**
-   * Given a user and a set of association ids, returns per-association cotisation status: whether
+   * Given a user and the associations already read (`assos`), returns per-association cotisation
+   * status: whether
    * the user holds ANY active tier tag for it (`isCotisant`, back-compat `membersOnly`/generic
    * semantics - see `isBuyerCotisant`), which specific tier (`variantKey`) they hold first in
    * `tierVariantKeys` order (`activeTier`, WP-COT-3), and their `TierFacts`. Loads each
@@ -742,15 +1146,12 @@ export class ProductsService {
    */
   private async cotisantStatusFor(
     userId: string,
-    assocIds: string[]
+    assos: Pick<Association, 'id' | 'slug' | 'cotisationMode'>[]
   ): Promise<Map<string, CotisantStatus>> {
     const byAssoc = new Map<string, CotisantStatus>();
-    if (assocIds.length === 0) return byAssoc;
-    const [assos, tierProducts, activeTags] = await Promise.all([
-      this.assoRepo.find({
-        where: { id: In(assocIds) },
-        select: { id: true, slug: true, cotisationMode: true },
-      }),
+    if (assos.length === 0) return byAssoc;
+    const assocIds = assos.map((a) => a.id);
+    const [tierProducts, activeTags] = await Promise.all([
       // Every tier, on sale or not: `isActive` gates BUYING a forfait, never recognizing the one
       // a user already holds (see `listCotisationTiers`).
       this.productRepo.find({
@@ -768,8 +1169,19 @@ export class ProductsService {
       tiersByAssoc.set(p.associationId, list);
     }
     for (const asso of assos) {
-      const facts = await this.tierFactsFrom(asso, tiersByAssoc.get(asso.id) ?? [], (tag) =>
-        activeTagKeys.has(issuedTagKey(asso.id, tag))
+      const tiers = tiersByAssoc.get(asso.id) ?? [];
+      // The same rows `heldOrphanTierTags` reads, from the tags already loaded: the ones this
+      // association issued, in its namespace, naming none of its tiers.
+      const orphans = orphanTierTags(
+        activeTags.filter((t) => t.issuingAssocId === asso.id).map((t) => t.tagName),
+        asso.slug,
+        tierVariantKeys(tiers)
+      );
+      const facts = await this.tierFactsFrom(
+        asso,
+        tiers,
+        (tag) => activeTagKeys.has(issuedTagKey(asso.id, tag)),
+        orphans
       );
       if (!facts) continue;
       byAssoc.set(asso.id, {
@@ -841,7 +1253,13 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
-    const { webhookUrl, webhookSecret, ...rest } = dto;
+    const { webhookUrl, webhookSecret, deriveVariantKey, ...rest } = dto;
+
+    if (deriveVariantKey && (dto.type !== 'membership' || dto.variantKey !== undefined)) {
+      throw new BadRequestException(
+        'deriveVariantKey applies to a membership tier sent without a variantKey'
+      );
+    }
 
     // Membership tiers derive their granted tag server-side from the association's own
     // slug/mode + this tier's variantKey - the single source of truth (`deriveCotisationTag`),
@@ -852,20 +1270,30 @@ export class ProductsService {
       if (!asso.cotisationMode) {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
-      await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
-      await assertCotisationStemFree(
-        this.productRepo.manager,
-        associationId,
-        cotisationStem(asso.slug, dto.variantKey ?? null)
-      );
-      const derived = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        dto.variantKey ?? null
-      );
-      grantedTagName = derived.tagName;
-      tagExpiresAt = derived.expiresAt;
+      if (deriveVariantKey) {
+        // The key and its tag are decided under the association's tier lock, at the very end:
+        // here only the refusal that needs no lock - a slug leaving no room for any named tier.
+        if (variantKeyCap(asso.slug) < 1) {
+          throw new BadRequestException(
+            'The association slug is too long to name a cotisation tier within the tag length'
+          );
+        }
+      } else {
+        await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
+        await assertCotisationStemFree(
+          this.productRepo.manager,
+          associationId,
+          cotisationStem(asso.slug, dto.variantKey ?? null)
+        );
+        const derived = deriveCotisationTag(
+          asso.slug,
+          asso.cotisationMode,
+          new Date(),
+          dto.variantKey ?? null
+        );
+        grantedTagName = derived.tagName;
+        tagExpiresAt = derived.expiresAt;
+      }
     }
 
     // A grid is validated against the association's own tiers, so it is parsed here rather than
@@ -877,7 +1305,10 @@ export class ProductsService {
         amountCents: dto.amountCents ?? null,
         amountCentsMember: dto.amountCentsMember ?? null,
         memberPriceTag: dto.memberPriceTag ?? null,
-        variantKey: dto.type === 'membership' ? (dto.variantKey ?? null) : undefined,
+        // A derived key is not known yet and differs from every sibling's by construction, so no
+        // sibling is "itself" - `null` here would hide the base tier as a link target.
+        variantKey:
+          dto.type === 'membership' && !deriveVariantKey ? (dto.variantKey ?? null) : undefined,
       });
     }
 
@@ -915,7 +1346,99 @@ export class ProductsService {
           `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated}) - it goes on sale by itself once they are`
       );
     }
+    if (deriveVariantKey && asso.cotisationMode) {
+      return this.toSafeProduct(
+        await this.saveTierWithDerivedKey(product, asso.slug, asso.cotisationMode, dto.name)
+      );
+    }
     return this.toSafeProduct(await this.productRepo.save(product));
+  }
+
+  /**
+   * Inserts a new named tier whose key is derived from its label, under the association's tier
+   * lock EXCLUSIVE (`lockAssociationTiers`, the retag's): the sibling keys are read and the row
+   * inserted in ONE transaction, every read on its manager, so two concurrent creates of the same
+   * label get distinct keys (the second waits for the first to commit, then sees its row).
+   * Everything that may call another service ran before.
+   *
+   * The key is free BY CONSTRUCTION, so nothing here refuses it but the exhaustion of its suffixes
+   * (409 `TIER_KEY_EXHAUSTED`): unused among the siblings, never year-shaped, colliding with no other
+   * association's stem (`stemCollidesElsewhere`, the comparison `assertCotisationStemFree` makes on a
+   * typed key), and naming no tag this association still has ACTIVE holders of
+   * (`heldTierStems`) - a recreated "Avec alcool" must not silently adopt the holders a deleted
+   * one left behind. A manager who typed a label must not meet a refusal about a key they never saw.
+   */
+  private async saveTierWithDerivedKey(
+    product: AssociationProduct,
+    slug: string,
+    mode: CotisationMode,
+    name: string
+  ): Promise<AssociationProduct> {
+    return this.productRepo.manager.transaction(async (manager) => {
+      await lockAssociationTiers(manager, product.associationId);
+      const siblings = await manager.find(AssociationProduct, {
+        where: { associationId: product.associationId, type: 'membership' },
+      });
+      const collidesElsewhere = await stemCollidesElsewhere(manager, product.associationId);
+      const heldNames = await this.heldTierTagNames(manager, product.associationId, slug);
+      let key: string;
+      try {
+        key = variantKeyFromLabel(
+          name,
+          siblings.map((p) => p.variantKey ?? null),
+          variantKeyCap(slug),
+          (candidate) =>
+            collidesElsewhere(cotisationStem(slug, candidate)) ||
+            heldNames.some((held) =>
+              cotisationStemsCollide(`cotisant:${cotisationStem(slug, candidate)}`, held)
+            )
+        );
+      } catch (err) {
+        if (!(err instanceof VariantKeySpaceExhaustedError)) throw err;
+        this.logger.warn(
+          `[COTISATION] no free tier key for association=${product.associationId.slice(0, 8)}: "${err.base}" and every suffix are taken`
+        );
+        throw new ConflictException({
+          code: TIER_KEY_EXHAUSTED,
+          message:
+            'Every identifier this label could give a tier is already taken - choose another label',
+        });
+      }
+      const derived = deriveCotisationTag(slug, mode, new Date(), key);
+      product.variantKey = key;
+      product.grantedTagName = derived.tagName;
+      product.tagExpiresAt = derived.expiresAt;
+      this.logger.log(
+        `[COTISATION] derived tier key for association=${product.associationId.slice(0, 8)}: "${key}" (${siblings.length} existing tier(s))`
+      );
+      return manager.save(AssociationProduct, product);
+    });
+  }
+
+  /**
+   * The ACTIVE tag names this association issued under its cotisation root (`cotisant:<slug>` and
+   * `cotisant:<slug>-...`), whatever tier, live or deleted, they belong to. Read inside the derived
+   * create's lock, on its `manager`, so a derived key skips a stem whose holders a deleted tier left
+   * (`orphanTierTags`) instead of re-adopting them. A typed key (older clients) is not checked
+   * against it: that path can still re-adopt (docs/wiki/cotisations.md).
+   */
+  private async heldTierTagNames(
+    manager: EntityManager,
+    associationId: string,
+    slug: string
+  ): Promise<string[]> {
+    const root = `cotisant:${slug}`;
+    const rows: { tagName: string }[] = await manager.query(
+      `SELECT DISTINCT "tagName" FROM user_tags
+        WHERE "issuingAssocId" = $1
+          AND ("expiresAt" IS NULL OR "expiresAt" > now())
+          AND starts_with("tagName", $2)`,
+      [associationId, `${root}-`]
+    );
+    this.logger.debug(
+      `[COTISATION] ${rows.length} held tier tag name(s) under ${root}- for a derived key`
+    );
+    return rows.map((r) => r.tagName);
   }
 
   /**
@@ -1226,6 +1749,12 @@ export class ProductsService {
    * Throws when another membership product of the association already claims `variantKey`.
    * Two tiers sharing a key would derive the same tag, making the forfait a coin flip: the XOR
    * revoke, the roster label and `cotisant-status` would each pick whichever row they saw first.
+   *
+   * Also refuses a key shaped like an academic year (`2024-2025`, or ending `-2024-2025`): its tag
+   * would be the very name of a `dated` tag of another tier (`cotisant:<slug>-2024-2025` is the base
+   * tier's dated tag), so the tier reads (`linkedTierKey`, `orphanTierTags`) could not tell the two
+   * apart - and once such a tier is deleted, its holders' tag would read as the base tier's, not as
+   * an orphan.
    */
   private async assertVariantKeyFree(
     associationId: string,
@@ -1233,6 +1762,15 @@ export class ProductsService {
     exceptProductId?: string,
     manager: EntityManager = this.productRepo.manager
   ): Promise<void> {
+    if (variantKey !== null && YEAR_SHAPED_VARIANT_KEY.test(variantKey)) {
+      this.logger.debug(
+        `[COTISATION] tier key "${variantKey}" refused: shaped like an academic year`
+      );
+      throw new BadRequestException({
+        code: TIER_KEY_YEAR_SHAPED,
+        message: `Tier "${variantKey}" cannot be named like an academic year (YYYY-YYYY)`,
+      });
+    }
     const siblings = await manager.find(AssociationProduct, {
       where: { associationId, type: 'membership' },
     });
@@ -1254,25 +1792,137 @@ export class ProductsService {
    * Refuses to delete the association's LAST membership product while cotisations are enabled:
    * with no tier left, `deriveCotisationTag` still answers but nothing grants or recognizes the
    * tag, so the whole cotisation silently stops working. Dropping the now-redundant base tier of
-   * a multi-tier association is exactly what this DOES allow (WP-COT-11).
+   * a multi-tier association is exactly what this DOES allow (WP-COT-11) - once nobody holds it.
+   *
+   * Refuses, `409 TIER_HAS_HOLDERS` with `holderCount`, to delete a tier people hold ACTIVE
+   * (`UserTagService.countActiveTierHolders`): every tier read derives a holder's tier from the
+   * products that exist, so a deleted tier's holders would keep a tag naming nothing. The count and
+   * the delete run under the association's tier lock EXCLUSIVE (`lockAssociationTiers`, the retag's
+   * lock): it waits for every per-buyer transaction in flight (a settlement, a grant) and holds the
+   * next ones back until it commits, so no grant of the tier lands between the count and the delete,
+   * and no new order of locks is introduced. Holders are counted on the rows THIS association issued
+   * only - another association's row, or a row no association issued, is held for nobody here and
+   * out of this manager's reach - and whether or not cotisations are switched on. It also refuses
+   * `409 TIER_CHECKOUT_OPEN` while an attempt of the tier may still be paid
+   * (`assertNoOpenTierCheckout`), which would otherwise land as `paid_not_granted`.
    */
   async delete(associationId: string, productId: string): Promise<void> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
-    if (product.type === 'membership') {
-      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-      const remaining = await this.productRepo.count({
-        where: { associationId, type: 'membership' },
-      });
-      if (asso?.cotisationMode && remaining <= 1) {
-        throw new BadRequestException(
-          'Cannot delete the last cotisation tier while cotisations are enabled'
-        );
-      }
+    if (product.type !== 'membership') {
+      await this.productRepo.remove(product);
+      return;
     }
-    await this.productRepo.remove(product);
+    await this.productRepo.manager.transaction(async (manager) => {
+      await lockAssociationTiers(manager, associationId);
+      this.logger.debug(`[COTISATION] tier delete holds association=${associationId.slice(0, 8)}`);
+      const current = await manager.findOne(AssociationProduct, {
+        where: { id: productId, associationId },
+      });
+      if (!current) throw new NotFoundException('Product not found');
+      const asso = await manager.findOne(Association, { where: { id: associationId } });
+      if (!asso) throw new NotFoundException('Association not found');
+      if (asso.cotisationMode) {
+        const remaining = await manager.count(AssociationProduct, {
+          where: { associationId, type: 'membership' },
+        });
+        if (remaining <= 1) {
+          throw new BadRequestException(
+            'Cannot delete the last cotisation tier while cotisations are enabled'
+          );
+        }
+      }
+      // Asked with cotisations switched off too: the tags stay held while the mode is off, and
+      // switching it back on must not find them orphaned. The stem does not depend on the mode.
+      const holderCount = await this.userTagService.countActiveTierHolders(
+        associationId,
+        asso.slug,
+        current.variantKey,
+        manager
+      );
+      if (holderCount > 0) {
+        this.logger.log(
+          `[COTISATION] refused (${TIER_HAS_HOLDERS}): tier ${current.id.slice(0, 8)} of ` +
+            `association=${associationId.slice(0, 8)} has ${holderCount} active holder(s)`
+        );
+        throw new ConflictException({
+          code: TIER_HAS_HOLDERS,
+          message:
+            'People still hold this cotisation tier; a member manager must move them to another tier first',
+          holderCount,
+        });
+      }
+      await this.assertNoOpenTierCheckout(current.id, manager);
+      await this.assertNoOpenTierFormPayment(associationId, current.variantKey, manager);
+      await manager.remove(current);
+      // `remove` clears the entity's id, so the log names the one asked for.
+      this.logger.log(
+        `[COTISATION] tier ${productId.slice(0, 8)} of association=${associationId.slice(0, 8)} deleted`
+      );
+    });
+  }
+
+  /**
+   * Refuses `409 TIER_CHECKOUT_OPEN` while an attempt of tier `productId` may still be paid: open,
+   * and not past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS`, after which every other path treats it
+   * as closed too. Deleting the tier then would turn that payment into `paid_not_granted`, a refund
+   * owed. Asked under the association's exclusive tier lock, which a checkout opening holds shared
+   * while it writes its attempt, so an attempt being opened is committed (and seen) or not begun.
+   */
+  private async assertNoOpenTierCheckout(productId: string, manager: EntityManager): Promise<void> {
+    const rows: { n: number }[] = await manager.query(
+      `SELECT count(*)::int AS n FROM product_checkouts
+        WHERE "productId" = $1 AND status = 'open'
+          AND "expiresAt" > now() - make_interval(secs => $2)`,
+      [productId, CHECKOUT_EXPIRY_MARGIN_MS / 1000]
+    );
+    const open = rows[0]?.n ?? 0;
+    if (open === 0) return;
+    this.logger.log(
+      `[COTISATION] refused (${TIER_CHECKOUT_OPEN}): tier ${productId.slice(0, 8)} has ${open} payment(s) in progress`
+    );
+    throw new ConflictException({
+      code: TIER_CHECKOUT_OPEN,
+      message:
+        'A payment for this cotisation tier is in progress; take it off sale, then try again once it is settled',
+    });
+  }
+
+  /**
+   * `assertNoOpenTierCheckout` for the OTHER way a tier is paid for: an answer to one of the
+   * association's forms that grants tier `variantKey`, still waiting for its money - online and
+   * within its hold (`PENDING_HOLD_CUTOFF_SQL`, the forms' own definition of a live payment), or
+   * waiting for cash a manager will validate. Landing after the delete, its grant would name a tier
+   * that no longer exists and be recorded `paid_not_granted`, a refund owed. Same `409
+   * TIER_CHECKOUT_OPEN`. A form submit takes no tier lock, so an answer opened in the instant of the
+   * delete is not seen: it lands `paid_not_granted` and the hourly report names it.
+   */
+  private async assertNoOpenTierFormPayment(
+    associationId: string,
+    variantKey: string | null,
+    manager: EntityManager
+  ): Promise<void> {
+    const rows: { n: number }[] = await manager.query(
+      `SELECT count(*)::int AS n FROM submissions s JOIN forms f ON f.id = s."formId"
+        WHERE f."associationId" = $1 AND f."grantsCotisation"
+          AND f."cotisationVariantKey" IS NOT DISTINCT FROM $2
+          AND (s."paymentStatus" = 'pending_cash'
+               OR (s."paymentStatus" = 'pending' AND s."paymentRequestedAt" > ${PENDING_HOLD_CUTOFF_SQL}))`,
+      [associationId, variantKey]
+    );
+    const open = rows[0]?.n ?? 0;
+    if (open === 0) return;
+    this.logger.log(
+      `[COTISATION] refused (${TIER_CHECKOUT_OPEN}): tier ${variantKey ?? 'base'} of ` +
+        `association=${associationId.slice(0, 8)} has ${open} form payment(s) in progress`
+    );
+    throw new ConflictException({
+      code: TIER_CHECKOUT_OPEN,
+      message:
+        'A payment for this cotisation tier is in progress; take it off sale, then try again once it is settled',
+    });
   }
 
   /**
@@ -1424,6 +2074,12 @@ export class ProductsService {
     callbackUrls?: { successUrl?: string; cancelUrl?: string },
     payerEmail?: string
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+    await assertReviewerReachesAssociation(
+      this.productRepo.manager,
+      userId,
+      associationId,
+      'product checkout'
+    );
     for (const id of await this.productsToSettleBefore(associationId, productId)) {
       await this.settlePreviousOpenAttempt(id, userId);
     }
@@ -1454,6 +2110,7 @@ export class ProductsService {
             status: 'open',
             expiresAt: new Date(Date.now() + PRODUCT_REQUEST_LIFETIME_SECONDS * 1000),
             settledAt: null,
+            heldTierProductId: resolved.heldTierProductId,
             purchaseRecordId: null,
           })
         );
@@ -1526,6 +2183,15 @@ export class ProductsService {
       if (coreRefusedRequest(err)) {
         // An ANSWER: core refused the request, so nothing was issued and nothing is payable.
         await this.releaseUnissuedCheckout(checkout.id);
+        // Lydia's error 5 / 2701: the Business is not validated or blocked. The holder of the
+        // vendor token stops being ready, whatever had marked it ready (lydia-readiness.ts).
+        const cause = lydiaReadinessRefusal(err);
+        if (cause) {
+          await this.associationsService.revertLydiaReadinessAfterRefusal(vendorToken, cause, {
+            path: 'shop',
+            id: checkout.id,
+          });
+        }
       } else {
         // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
         // attempt stays open and is read by its order_ref - at the buyer's next attempt, return or
@@ -1903,13 +2569,16 @@ export class ProductsService {
   }
 
   /**
-   * Re-ranks a paid cotisation tier against the tier its buyer holds NOW, at settlement: the rank
-   * the checkout checked is the rank of the moment it opened, and the buyer may have obtained
-   * another tier since (another attempt paid, a manual grant). Granting only `none` and `higher`
-   * keeps the sibling XOR from replacing a tier it should not; anything else is a payment taken
-   * for a tier that is not granted, so it is logged at ERROR - a refund is owed - and the payment
-   * is recorded `paid_not_granted`, the durable marker the association's purchases and the hourly
-   * report read. Reads through `manager`, under the locks.
+   * Decides at settlement whether a paid cotisation tier is granted, on what the checkout OPENING
+   * decided and never on a price read now (user, 2026-10-27; migration 112). The opening ranked the
+   * tier against the tier the buyer held then and froze that tier's product id on the row
+   * (`heldTierProductId`), so a price an admin edits between the opening and the payment changes
+   * nothing here. What the settlement re-reads, under the buyer's lock, is WHICH tiers the buyer
+   * holds now (`settlementVerdict`): only the frozen tier, or nothing when nothing was frozen, is
+   * granted; the target itself, any other tier held, or no tier where the opening ranked against one
+   * (`frozen-gone`) is a payment taken for a tier that is not granted - logged at ERROR, a
+   * refund or a manual grant is owed, and recorded `paid_not_granted`, the durable marker the
+   * association's purchases and the hourly report read. Reads through `manager`, under the locks.
    */
   private async settlementMayGrant(
     product: AssociationProduct,
@@ -1919,12 +2588,33 @@ export class ProductsService {
     if (product.type !== 'membership') return true;
     const asso = await manager.findOne(Association, { where: { id: product.associationId } });
     const facts = asso ? await this.tierFactsOf(asso, row.userId, manager) : null;
-    const relation = this.relationOf(product, facts);
-    if (relation === 'none' || relation === 'higher') return true;
+    const heldKeys = facts?.heldKeys ?? [];
+    // The frozen tier by PRODUCT id, as it is named now: a retag in between still matches it. A
+    // product deleted since names no key, but the opening still froze a tier (`frozen-gone` when
+    // nothing is held); a row opened before migration 112 froze nothing.
+    const frozen = row.heldTierProductId
+      ? facts?.tiers.find((t) => t.id === row.heldTierProductId)
+      : undefined;
+    const frozenKeys = frozen ? [frozen.variantKey] : [];
+    const verdict = settlementVerdict(
+      product.variantKey,
+      heldKeys,
+      frozenKeys,
+      Boolean(row.heldTierProductId)
+    );
+    const describe =
+      `product=${product.id.slice(0, 8)} user=${row.userId.slice(0, 8)} ` +
+      `held=[${heldKeys.map((k) => k ?? 'base').join(',')}] ` +
+      `opened-over=${frozen ? (frozen.variantKey ?? 'base') : row.heldTierProductId ? 'a deleted tier' : 'none'}`;
+    if (settlementGrants(verdict)) {
+      this.logger.debug(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: tier granted (${verdict}) ${describe}`
+      );
+      return true;
+    }
     this.logger.error(
-      `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier product=${product.id.slice(0, 8)} is ` +
-        `${relation} against the tier user=${row.userId.slice(0, 8)} now holds ` +
-        `(${facts?.held?.variantKey ?? 'base'}) - payment recorded, tier NOT granted; a refund is owed`
+      `[SHOP] checkout ${row.id.slice(0, 8)}: paid tier is ${verdict} at settlement (${describe}) - ` +
+        'payment recorded, tier NOT granted; a refund is owed'
     );
     return false;
   }
@@ -1986,8 +2676,18 @@ export class ProductsService {
       // completes the record (`completePaidWithoutRequestId`).
       const paymentIntentId = row.requestId ?? row.requestUuid;
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
-      let granted = true;
-      if (product) {
+      // No initial value: every branch below decides, and the compiler's definite-assignment check
+      // refuses a future branch that forgets to - a default here would silently grant it.
+      let granted: boolean;
+      if (isErasedAccount(row.userId)) {
+        // An erasure rewrote the buyer (`[deleted]:<id>`) while the payment was in flight: there is
+        // nobody to deliver to. The money is marked for a refund, never granted to the placeholder.
+        granted = false;
+        this.logger.error(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: its buyer account was erased before the payment ` +
+            'landed - payment recorded paid_not_granted, nothing granted; a refund is owed'
+        );
+      } else if (product) {
         granted = await this.settlementMayGrant(product, row, manager);
         if (granted) {
           try {
@@ -2022,7 +2722,10 @@ export class ProductsService {
       }
       const record = await this.purchaseRecordService.create(
         {
-          userId: row.userId,
+          // ONE form of an erased buyer on `purchase_records`: the erasure writes `DELETED_ACCOUNT`
+          // there, so a record written after it does too, never the checkout's `[deleted]:<id>`, and
+          // a count of erased buyers' purchases by `userId` finds both.
+          userId: isErasedAccount(row.userId) ? DELETED_ACCOUNT : row.userId,
           source: 'product',
           productId: row.productId,
           amountCents: row.amountCents,
@@ -2043,10 +2746,11 @@ export class ProductsService {
         `[SHOP] purchase completed: checkout ${row.id.slice(0, 8)} product=${row.productId.slice(0, 8)} ` +
           `user=${row.userId.slice(0, 8)} amount=${row.amountCents}`
       );
-      return { row, product, paymentIntentId };
+      return { row, product, paymentIntentId, granted };
     });
 
-    if (!outcome?.product) return;
+    // Nothing granted (an erased buyer, a tier not granted) dispatches nothing either.
+    if (!outcome?.product || !outcome.granted) return;
     const { row, product, paymentIntentId } = outcome;
     if (!paymentIntentId) {
       if (product.type === 'balance_topup') {
@@ -2121,6 +2825,14 @@ export class ProductsService {
       this.logger.log(
         `[SHOP] checkout ${row.id.slice(0, 8)}: purchase record completed with request ${requestId}`
       );
+      // An erased buyer's payment was recorded `paid_not_granted` (`settlePaidCheckout`): nothing
+      // is delivered for it, a top-up no more than a tier.
+      if (isErasedAccount(row.userId)) {
+        this.logger.warn(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: buyer erased - nothing dispatched, a refund is owed`
+        );
+        return null;
+      }
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
       return product ? { row, product } : null;
     });
@@ -2216,11 +2928,15 @@ export class ProductsService {
     const paymentTarget = await this.routeWith(asso, provider);
     const vendorToken = paymentTarget.connectAccountId;
     if (!paymentTarget.ready || !vendorToken) {
-      throw new BadRequestException(
-        paymentTarget.delegated
-          ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
-          : 'Association has not completed onboarding to receive payments'
+      this.logger.warn(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} - payments not ready ` +
+          `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated} ` +
+          `cause=${paymentTarget.readinessCause ?? 'none'})`
       );
+      if (paymentTarget.provider === 'disabled') {
+        throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+      }
+      throw paymentsNotReady(paymentTarget.readinessCause, paymentTarget.delegated);
     }
     const profileFetched = product.priceMatrix
       ? dimensionsNeedProfile(product.priceMatrix.dimensions)
@@ -2261,11 +2977,21 @@ export class ProductsService {
     });
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
+    const now = await this.routeWith(asso, prepared.provider, manager);
+    // Read BEFORE the product's own flag: a readiness revert committed while the purchase was being
+    // prepared both clears the target's readiness and withholds the product, and the payer is owed
+    // the reason (payments not active), not "product not found" nor a routing change.
+    if (!now.ready) {
+      this.logger.warn(
+        `[SHOP] refused under the lock: product=${product.id.slice(0, 8)} - payments stopped being ` +
+          `ready while the purchase was being prepared (cause=${now.readinessCause ?? 'none'})`
+      );
+      throw paymentsNotReady(now.readinessCause, now.delegated);
+    }
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
-    const now = await this.routeWith(asso, prepared.provider, manager);
-    if (!now.ready || !sameRouting(now, paymentTarget)) {
+    if (!sameRouting(now, paymentTarget)) {
       this.logger.warn(
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'
@@ -2340,30 +3066,19 @@ export class ProductsService {
       throw new BadRequestException('No amount provided for this product');
     }
 
-    return { asso, product, amountCents, paymentTarget, vendorToken };
+    // What the opening decided, frozen on the row: the tier it ranked against. The settlement grants
+    // on it and never re-reads a price (`settlementMayGrant`). An opened tier checkout over a held
+    // tier always has that tier's product: a held tag with no product is `unranked`, refused above.
+    const heldTierProductId =
+      product.type === 'membership' ? this.heldTierProductIdOf(facts) : null;
+    return { asso, product, amountCents, paymentTarget, vendorToken, heldTierProductId };
   }
 
   /**
    * Lists all completed purchases for an association (boutique + paid forms).
    * Requires MANAGE_PRODUCTS on the association (enforced by controller).
    */
-  async listAssociationPurchases(associationId: string): Promise<
-    Array<{
-      id: string;
-      userId: string | null;
-      source: 'form' | 'product';
-      productId: string | null;
-      formId: string | null;
-      productName: string;
-      amountCents: number;
-      paymentMethod: PurchasePaymentMethod;
-      paidAt: string;
-      firstName: string | null;
-      lastName: string | null;
-      /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
-      notGranted: boolean;
-    }>
-  > {
+  async listAssociationPurchases(associationId: string): Promise<PurchaseListRow[]> {
     const records = await this.purchaseRecordService.listPaidByAssociation(associationId);
     return this.enrichPurchaseRecords(records);
   }
@@ -2384,24 +3099,31 @@ export class ProductsService {
     const assocName = nameRows[0]?.name ?? 'achats';
     const purchases = await this.listAssociationPurchases(associationId);
 
+    // Every French cell and header below is written as an escape, so this source stays ASCII.
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Achats');
     sheet.columns = [
       { header: 'Nom', key: 'lastName', width: 20 },
-      { header: 'Prénom', key: 'firstName', width: 20 },
+      { header: 'Pr\u00e9nom', key: 'firstName', width: 20 },
       { header: 'Type', key: 'source', width: 12 },
       { header: 'Produit', key: 'productName', width: 30 },
-      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "€"' } },
+      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "\u20ac"' } },
       { header: 'Paiement', key: 'paymentMethod', width: 12 },
       { header: 'Date', key: 'paidAt', width: 18, style: { numFmt: 'dd/mm/yyyy hh:mm' } },
       { header: 'Statut', key: 'status', width: 30 },
+      {
+        header: 'Montant conserv\u00e9',
+        key: 'kept',
+        width: 16,
+        style: { numFmt: '0.00 "\u20ac"' },
+      },
     ];
 
     purchases.forEach((p) => {
       sheet.addRow({
         // A guest (no account) is named as the responses table names one; the organiser finds the
         // person through the form's own answers ("Nom Prenom").
-        lastName: p.lastName ?? (p.userId ? '' : 'Invité'),
+        lastName: p.lastName ?? (p.userId ? '' : 'Invit\u00e9'),
         firstName: p.firstName ?? '',
         source: p.source === 'form' ? 'Formulaire' : 'Boutique',
         productName: p.productName,
@@ -2409,10 +3131,21 @@ export class ProductsService {
         // The sheet is French throughout, and this column says HOW rather than THROUGH WHOM:
         // 'Stripe' named the processor of the day, and the app's own label for the same fact
         // is `asso_achats_payment_online`.
-        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'En ligne',
+        paymentMethod: p.paymentMethod === 'cash' ? 'Esp\u00e8ces' : 'En ligne',
         paidAt: new Date(p.paidAt),
         // A tier paid for and not granted is money received that a refund or a grant must settle.
-        status: p.notGranted ? 'Payé, non accordé : à régulariser' : 'Payé',
+        // Closed or not, the mark stays: the column says how it was settled, if it was.
+        status: !p.notGranted
+          ? 'Pay\u00e9'
+          : p.closedOutcome === 'refunded'
+            ? 'Pay\u00e9, non accord\u00e9 : rembours\u00e9'
+            : p.closedOutcome === 'granted'
+              ? 'Pay\u00e9, non accord\u00e9 : accord\u00e9 \u00e0 la main'
+              : 'Pay\u00e9, non accord\u00e9 : \u00e0 r\u00e9gulariser',
+        // What the association keeps: a refunded payment went back, so a sum of this column is the
+        // income, where a sum of `Montant` is what was ever received. An OPEN payment not granted
+        // counts as kept until its refund is recorded - its `Statut` says it is still to settle.
+        kept: p.closedOutcome === 'refunded' ? 0 : p.amountCents / 100,
       });
     });
 
@@ -2444,34 +3177,41 @@ export class ProductsService {
     return this.enrichPurchaseRecords(records);
   }
 
-  /** Attaches buyer display names to purchase records. */
-  private async enrichPurchaseRecords(records: PurchaseRecord[]): Promise<
-    Array<{
-      id: string;
-      userId: string | null;
-      source: 'form' | 'product';
-      productId: string | null;
-      formId: string | null;
-      productName: string;
-      amountCents: number;
-      paymentMethod: PurchasePaymentMethod;
-      paidAt: string;
-      firstName: string | null;
-      lastName: string | null;
-      /** A cotisation tier paid for and NOT granted (`paid_not_granted`): a refund or a grant is owed. */
-      notGranted: boolean;
-    }>
-  > {
+  /**
+   * Attaches buyer display names, and the closing of each record marked `paid_not_granted`, to
+   * purchase records. `manager` reads inside the caller's transaction (a closing answering its row).
+   */
+  private async enrichPurchaseRecords(
+    records: PurchaseRecord[],
+    manager: EntityManager = this.productRepo.manager
+  ): Promise<PurchaseListRow[]> {
     // A guest's payment on a public form names no buyer (migration 103): nobody to look up.
     const userIds = [...new Set(records.map((r) => r.userId).filter((id) => id != null))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
       const rows: { id: string; firstName: string | null; lastName: string | null }[] =
-        await this.productRepo.manager.query(
-          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
-        );
+        await manager.query(`SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`, [
+          userIds,
+        ]);
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    }
+
+    // Only a record marked `paid_not_granted` can have been closed: nothing to read without one.
+    const marked = records.filter((r) => r.status === 'paid_not_granted').map((r) => r.id);
+    const closings =
+      marked.length > 0
+        ? await this.purchaseRecordService.closingsOf(marked, manager)
+        : new Map<string, PurchaseRecordClosing>();
+
+    // An OPEN marked payment says whether it can still be granted, and over what: the decision the
+    // closing takes under the lock, read here without one (the list is advice; the closing decides).
+    const verdicts = new Map<string, ClosingGrantVerdict>();
+    const open = records.filter((r) => r.status === 'paid_not_granted' && !closings.has(r.id));
+    // ONE context per association listed, whatever the number of open rows.
+    for (const associationId of new Set(open.map((r) => r.associationId))) {
+      const own = open.filter((r) => r.associationId === associationId);
+      const ctx = await this.closingContextOf(manager, associationId, own);
+      for (const r of own) verdicts.set(r.id, await this.closingGrantVerdict(r, ctx));
     }
 
     return records.map((r) => ({
@@ -2487,6 +3227,11 @@ export class ProductsService {
       firstName: nameMap.get(r.userId)?.firstName ?? null,
       lastName: nameMap.get(r.userId)?.lastName ?? null,
       notGranted: r.status === 'paid_not_granted',
+      closedOutcome: closings.get(r.id)?.outcome ?? null,
+      closedAt: closings.get(r.id)?.createdAt.toISOString() ?? null,
+      grantRefusal: verdicts.get(r.id)?.refusal ?? null,
+      buyerTier: verdicts.get(r.id)?.buyerTier ?? null,
+      delivered: Boolean(verdicts.get(r.id)?.deliveredTagId),
     }));
   }
 
@@ -2560,17 +3305,53 @@ export class ProductsService {
       where: { associationId: asso.id, type: 'membership' },
       select: TIER_RANK_COLUMNS,
     });
-    return this.tierFactsFrom(asso, tiers, (tag) =>
-      this.userTagService.hasActiveTag(userId, tag, asso.id, manager)
+    const orphans = await this.userTagService.heldOrphanTierTags(userId, asso.id, tiers, manager);
+    return this.tierFactsFrom(
+      asso,
+      tiers,
+      (tag) => this.userTagService.hasActiveTag(userId, tag, asso.id, manager),
+      orphans
     );
   }
 
   /**
+   * The product id of the tier a purchase is ranked against (`TierFacts.held`, picked by
+   * `pickHeldTier`), which a checkout opening freezes on its row: null when nothing is held.
+   *
+   * Deterministic when two products carry the held key (a catalogue from before the key was kept
+   * unique per association): the smallest id, logged at WARN. Either one names the same key while
+   * both exist. If the frozen one is deleted before the settlement, the frozen key is lost with it
+   * and the settlement reads `held-changed`: recorded `paid_not_granted`, reported, closed by a
+   * person - the cautious outcome, never a grant over a tier nobody ranked.
+   */
+  private heldTierProductIdOf(facts: TierFacts | null): string | null {
+    const held = facts?.held;
+    if (!held) return null;
+    const ids = facts.tiers
+      .filter((t) => t.variantKey === held.variantKey)
+      .map((t) => t.id)
+      .sort();
+    if (ids.length > 1) {
+      this.logger.warn(
+        `[SHOP] ${ids.length} tier products share key ${held.variantKey ?? 'base'} - freezing ` +
+          `the smallest id ${ids[0].slice(0, 8)}; the catalogue should hold one per key`
+      );
+    }
+    return ids[0] ?? null;
+  }
+
+  /**
    * Where a tier product stands against what the viewer holds (`tierRelationOf`): `none` without
-   * facts. ONE call shared by the listing, the checkout and the settlement.
+   * facts. A viewer holding TWO tiers at once is `unranked` for any tier but one they hold: ranked
+   * against one of them, a checkout would freeze only that one and its settlement would read the
+   * other as `held-changed`, taking the money for nothing (`assertTierIsARise` words that case).
+   * ONE call shared by the listing and the checkout, so the screen never offers what the checkout
+   * refuses; the settlement decides on what the checkout froze (`settlementMayGrant`).
    */
   private relationOf(product: AssociationProduct, facts: TierFacts | null): TierRelation {
-    return facts ? tierRelationOf(product, facts.heldKeys, facts.held) : 'none';
+    if (!facts) return 'none';
+    const relation = tierRelationOf(product, facts.heldKeys, facts.held);
+    return relation !== 'held' && facts.heldKeys.length > 1 ? 'unranked' : relation;
   }
 
   /**
@@ -2610,7 +3391,7 @@ export class ProductsService {
    *
    * - `held` -> `PRODUCT_ALREADY_PURCHASED`;
    * - `lower` (cheaper or equally priced) -> `TIER_NOT_A_RISE`;
-   * - `unranked` (the held tier or the target has no fixed price) -> `TIER_NOT_RANKABLE`;
+   * - `unranked` (the held tier or the target has no rankable price: a grid, a free amount, a named tier with none - `rankPriceCents`) -> `TIER_NOT_RANKABLE`;
    * - `none` and `higher` pass, at `fixedPriceFor`'s amount.
    */
   private assertTierIsARise(
@@ -2624,6 +3405,19 @@ export class ProductsService {
       `[SHOP] tier rank: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
         `held=${held ? (held.variantKey ?? 'base') : 'none'} relation=${relation}`
     );
+    // A buyer holding TWO tiers at once is `unranked` (`relationOf`), refused here before any
+    // request is opened, with the sentence that names the cause. (Not seen in production on
+    // 2026-10-27; holding two is a data fault the roster corrects.)
+    if (relation === 'unranked' && (facts?.heldKeys.length ?? 0) > 1) {
+      this.logger.warn(
+        `[SHOP] refused (${TIER_NOT_RANKABLE}): product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+          `holds ${facts?.heldKeys.length} tiers at once - no single tier to rank against`
+      );
+      throw new ConflictException({
+        code: TIER_NOT_RANKABLE,
+        message: 'You hold several membership tiers at once: the association must correct it first',
+      });
+    }
     const refusal = tierRefusal(relation);
     if (!refusal) return;
     this.logger.log(
@@ -2742,6 +3536,9 @@ export class ProductsService {
   /**
    * Manually records a product purchase for a user (cash payment, retroactive grant).
    * Grants membership tags like a real purchase but does not dispatch Cercle webhooks.
+   *
+   * With no `dto.amountCents`, the amount recorded is the one the checkout would charge this
+   * beneficiary: their grid cell, or the fixed price - the preferential one when they qualify.
    */
   async grantProductPurchase(
     associationId: string,
@@ -2785,34 +3582,32 @@ export class ProductsService {
 
     let amountCents: number;
     if (dto.amountCents != null) {
+      // A TYPED amount is what the bounds of a free-amount product bind - never the default resolved
+      // below, which is a price the checkout charges with no bounds check either. Typing the very
+      // amount the screen quoted is that default, so it is not bound either.
+      if (product.allowCustomAmount) {
+        const quote = await this.cashSaleQuoteFor(product, dto.userId);
+        if (quote.kind !== 'priced' || quote.amountCents !== dto.amountCents) {
+          this.assertWithinCustomBounds(
+            product,
+            associationId,
+            dto.amountCents,
+            'cash grant amount'
+          );
+        }
+      }
       amountCents = dto.amountCents;
-    } else if (product.priceMatrix) {
-      // The beneficiary is known, so their cell is known: falling back to `amountCents` here would
-      // record a cash sale at a price the grid never quoted, and `amountCents` may not even be set.
-      const cell = this.resolveGridPrice(
-        product.priceMatrix,
-        await this.userTagService.listHeldCotisationTiers(dto.userId, associationId),
-        await this.pricingFacts.profileFor(
-          dto.userId,
-          dimensionsNeedProfile(product.priceMatrix.dimensions)
-        )
-      );
-      if (cell === null) {
+    } else {
+      const quote = await this.cashSaleQuoteFor(product, dto.userId);
+      if (quote.kind === 'not-sold') {
         throw new BadRequestException(
           'The pricing grid does not sell this product to that person, so there is no amount to record.'
         );
       }
-      amountCents = cell;
-    } else if (product.amountCents != null) {
-      amountCents = product.amountCents;
-    } else {
-      throw new BadRequestException('amountCents is required for this product');
-    }
-
-    // Whenever the product takes a free amount - as the checkout does - so a max set with no min
-    // still binds the grant.
-    if (product.allowCustomAmount) {
-      this.assertWithinCustomBounds(product, associationId, amountCents, 'cash grant amount');
+      if (quote.kind === 'typed') {
+        throw new BadRequestException('amountCents is required for this product');
+      }
+      amountCents = quote.amountCents;
     }
 
     this.logger.log(
@@ -2829,6 +3624,508 @@ export class ProductsService {
     });
     const [enriched] = await this.enrichPurchaseRecords([record]);
     return enriched;
+  }
+
+  /**
+   * The amount a cash sale of `productId` to `userId` records when the cashier types none - what
+   * the cashier's screen shows before the sale, from the same `cashSaleQuoteFor` the sale itself
+   * calls, so the two cannot disagree. 404 for a product of another association or a top-up (no
+   * cash sale of one exists).
+   */
+  async quoteCashSale(
+    associationId: string,
+    productId: string,
+    userId: string
+  ): Promise<CashSaleQuote> {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product || product.type === 'balance_topup') {
+      throw new NotFoundException('Product not found');
+    }
+    const quote = await this.cashSaleQuoteFor(product, userId);
+    this.logger.debug(
+      `[SHOP] cash sale quoted: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} kind=${quote.kind}`
+    );
+    return quote;
+  }
+
+  /**
+   * What the checkout would charge this beneficiary, which a cash sale records by default (user,
+   * 2026-10-29): their grid cell (`not-sold` when the grid closes their combination), else the fixed
+   * price through `fixedPriceOf` - the preferential one when they qualify - else `typed`, a
+   * free-amount product the cashier must type an amount for. Read before the buyer's tier lock, as
+   * the backlog's P3 says: one tier stale at worst, never the grant itself.
+   */
+  private async cashSaleQuoteFor(
+    product: AssociationProduct,
+    userId: string
+  ): Promise<CashSaleQuote> {
+    const associationId = product.associationId;
+    if (product.priceMatrix) {
+      // A grid replaces the fixed pricing: falling back to `amountCents` here would record a price
+      // the grid never quoted, and `amountCents` may not even be set.
+      const cell = this.resolveGridPrice(
+        product.priceMatrix,
+        await this.userTagService.listHeldCotisationTiers(userId, associationId),
+        await this.pricingFacts.profileFor(
+          userId,
+          dimensionsNeedProfile(product.priceMatrix.dimensions)
+        )
+      );
+      return cell === null
+        ? { kind: 'not-sold' }
+        : { kind: 'priced', amountCents: cell, preferential: false };
+    }
+    if (product.amountCents == null) return { kind: 'typed' };
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) throw new NotFoundException('Association not found');
+    const price = this.fixedPriceOf(
+      product,
+      product.amountCents,
+      await this.tierFactsOf(asso, userId)
+    );
+    if (price.preferential) {
+      this.logger.debug(
+        `[SHOP] cash sale at the member price: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${price.amountCents}`
+      );
+    }
+    return { kind: 'priced', ...price };
+  }
+
+  /**
+   * CLOSES a payment marked `paid_not_granted` (user, 2026-10-27; migration 113): a manager records
+   * WHICH outcome settled it - `refunded` (the money went back, outside Canari) or `granted` (the tier
+   * is granted by hand, here, by the manual grant path `grantCotisantWithin`). One durable row per
+   * purchase record, its time the server's own `now()`; the record keeps its mark as history, and the
+   * hourly report stops counting it (`PaidNotGrantedScheduler`). No clock closes anything.
+   *
+   * Everything runs in ONE transaction, in the order every tier path takes: the association's and the
+   * buyer's tier locks (`lockBuyerTiers`), the purchase record row (`FOR UPDATE`), then the tags. So a
+   * grant here cannot interleave with a settlement or another grant of that buyer, and two closings of
+   * one payment run one after the other: the second reads the first one's row and is refused
+   * `PURCHASE_ALREADY_CLOSED`. The unique index is the durable guarantee under that check.
+   *
+   * Refusals, typed: 404 when the record is not this association's; 409 `PURCHASE_NOT_CLOSABLE` when
+   * it is not marked `paid_not_granted`; 409 `PURCHASE_ALREADY_CLOSED`; and for `granted`, the 409 of
+   * each `ClosingGrantRefusal` (`closingGrantVerdict`), judged on the LOCKED row under the buyer's
+   * tier lock, so an erasure or a grant committed while this waited is seen. `granted` is a manual
+   * grant, but a protected one: it only ever grants a first tier or a RISE - never a renewal of the
+   * tier held (that payment is owed a refund, and closing it as granted would take it off the report)
+   * nor a move down. A tier held because it IS this payment's delivery (`deliveryOf`) is recorded
+   * `granted` with nothing granted - its tag is only stamped with the record, so one delivery closes
+   * one payment - and the books do not book a refund that never happened. Nothing is written by a refusal, and `refunded` stays open in each case, so the
+   * report can always be drained.
+   *
+   * Only `granted` takes the buyer's tier lock: `refunded` writes no tag, and two closings of one
+   * payment are already serialised by the row lock.
+   */
+  async closePaidNotGranted(
+    associationId: string,
+    purchaseId: string,
+    closedBy: string,
+    outcome: PurchaseClosingOutcome,
+    expectDelivered: boolean
+  ): Promise<PurchaseListRow> {
+    this.logger.debug(
+      `[SHOP] closing purchase=${purchaseId.slice(0, 8)} association=${associationId.slice(0, 8)} as ${outcome}`
+    );
+    // Buyer and association never change on a record, so they can be read before any lock; the
+    // locks come FIRST, then the row - the order every tier path takes.
+    const head = await this.productRepo.manager.findOne(PurchaseRecord, {
+      where: { id: purchaseId, associationId },
+    });
+    if (!head) {
+      this.logger.warn(
+        `[SHOP] closing refused: purchase=${purchaseId.slice(0, 8)} is not a purchase of association=${associationId.slice(0, 8)}`
+      );
+      throw new NotFoundException('Purchase not found');
+    }
+    if (head.status !== 'paid_not_granted' || !head.userId) {
+      throw this.purchaseNotClosable(head);
+    }
+    const grants = outcome === 'granted';
+    const buyer = head.userId;
+    let closed: PurchaseListRow;
+    try {
+      closed = await this.productRepo.manager.transaction(async (manager) => {
+        if (grants) await this.lockBuyerTiers(manager, associationId, buyer);
+        const record = await manager.findOne(PurchaseRecord, {
+          where: { id: purchaseId, associationId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!record || record.status !== 'paid_not_granted') {
+          throw this.purchaseNotClosable(record ?? head);
+        }
+        if ((await this.purchaseRecordService.closingsOf([record.id], manager)).has(record.id)) {
+          throw this.purchaseAlreadyClosed(record.id);
+        }
+        if (grants) {
+          // Read on the LOCKED row: an erasure committed while this waited has rewritten its buyer.
+          const ctx = await this.closingContextOf(manager, associationId, [record]);
+          const verdict = await this.closingGrantVerdict(record, ctx);
+          if (verdict.refusal) throw this.closingGrantRefused(record.id, verdict);
+          // What the manager confirmed must still be what happens: "nothing is granted" never grants.
+          if (expectDelivered !== Boolean(verdict.deliveredTagId)) {
+            throw this.closingChanged(record.id, expectDelivered);
+          }
+          if (verdict.deliveredTagId) {
+            // Already delivered: nothing granted, nothing renewed. The tag is stamped with this
+            // record, so the same delivery cannot close a second payment.
+            const stamped = await this.userTagService.stampDelivery(
+              verdict.deliveredTagId,
+              record.id,
+              manager
+            );
+            if (!stamped) {
+              throw this.closingGrantRefused(record.id, {
+                ...verdict,
+                refusal: 'target-held',
+                detail: 'its tag became the delivery of another payment',
+              });
+            }
+            this.logger.log(
+              `[SHOP] purchase=${record.id.slice(0, 8)}: tier ${verdict.variantKey ?? 'base'} already ` +
+                `delivered (${verdict.detail}) - recorded granted, nothing granted`
+            );
+          } else {
+            await this.grantClosedTier(manager, record, verdict.variantKey, closedBy);
+          }
+        }
+        await manager.insert(PurchaseRecordClosing, {
+          purchaseRecordId: record.id,
+          outcome,
+          closedByUserId: closedBy,
+        });
+        const [row] = await this.enrichPurchaseRecords([record], manager);
+        return row;
+      });
+    } catch (err) {
+      // The unique index answering a closing that slipped past the check above: still the 409. Only
+      // THAT index: another unique violation in the transaction is not a second closing.
+      if (violatesUniqueIndex(err, CLOSING_UNIQUE_INDEX))
+        throw this.purchaseAlreadyClosed(purchaseId);
+      throw err;
+    }
+    // The audit line of a money decision: who recorded which outcome for which payment.
+    this.logger.log(
+      `[SHOP] [AUDIT] purchase=${purchaseId.slice(0, 8)} paid and not granted CLOSED as ${outcome} ` +
+        `by=${closedBy.slice(0, 8)} association=${associationId.slice(0, 8)} buyer=${buyer.slice(0, 8)}`
+    );
+    return closed;
+  }
+
+  /**
+   * Whether a `paid_not_granted` record may be closed as `granted`, and which tier it would grant -
+   * the ONE decision behind the closing (asked under the buyer's tier lock) and the purchases list
+   * (asked without, as advice). In order:
+   * - `buyer-erased`: the buyer is an erased account (`isErasedAccount`), a grant would make a
+   *   cotisant of nobody;
+   * - `tier-gone`: the tier paid for - a boutique record's product's `variantKey`, read now so a
+   *   retag still matches, or a paid form's `cotisationVariantKey` - is no longer one the association
+   *   sells (its product or form names none, the association has no mode, or the catalogue
+   *   `grantCotisantWithin` validates against lacks it), so that grant never has to refuse;
+   * - `year-over`: a `dated` association, and the payment's academic year (from `paidAt`) is not the
+   *   current one - the tier it bought cannot be granted now;
+   * - `target-held` / `not-a-rise` / `not-comparable`: ranked like a checkout (`tierRelationOf`, on
+   *   the product prices) against what the buyer holds now: `held` is a renewal the payment did not
+   *   buy - unless that tag is this payment's delivery (`deliveryOf`), which closes as `granted`
+   *   with `deliveredTagId` set - `lower` would move the buyer down, `unranked` (a grid, a free amount or a named tier with no price on either side)
+   *   cannot be told from a move down. `none` and `higher` grant.
+   * - `held-tier-deleted`: `unranked` because the tier held is the tag of a DELETED tier (an orphan,
+   *   no product): told apart from `not-comparable` because a repair exists - a roster grant of the
+   *   tier swaps the orphan out, and this closing then finds its delivery.
+   * `buyerTier` is read BEFORE any of these, so every refusal still says what the buyer holds.
+   */
+  private async closingGrantVerdict(
+    record: PurchaseRecord,
+    ctx: ClosingContext
+  ): Promise<ClosingGrantVerdict> {
+    const userId = record.userId;
+    if (!userId || isErasedAccount(userId)) {
+      // No account: no tier is held by anyone, and the list shows none.
+      return {
+        refusal: 'buyer-erased',
+        variantKey: null,
+        buyerTier: null,
+        deliveredTagId: null,
+        detail: 'its buyer account was erased',
+      };
+    }
+    // What the buyer holds NOW is read first, so every refusal below still shows it.
+    const { asso, catalogue } = ctx;
+    const buyerTags = ctx.tagsByBuyer.get(userId) ?? [];
+    const facts = asso
+      ? await this.tierFactsFrom(
+          asso,
+          ctx.tiers,
+          (tag) => buyerTags.some((t) => t.tagName === tag),
+          ctx.orphansByBuyer.get(userId) ?? []
+        )
+      : null;
+    const held = facts?.held ?? null;
+    const buyerTier = held
+      ? (catalogue.find((t) => t.variantKey === held.variantKey)?.name ?? held.variantKey ?? 'base')
+      : null;
+    const refused = (refusal: ClosingGrantRefusal, detail: string): ClosingGrantVerdict => ({
+      refusal,
+      variantKey: null,
+      buyerTier,
+      deliveredTagId: null,
+      detail,
+    });
+
+    let variantKey: string | null;
+    if (record.source === 'product') {
+      const product = record.productId ? ctx.products.get(record.productId) : undefined;
+      if (product?.type !== 'membership') return refused('tier-gone', 'its product names no tier');
+      variantKey = product.variantKey;
+    } else {
+      const form = record.formId ? ctx.forms.get(record.formId) : undefined;
+      if (!form?.grantsCotisation) return refused('tier-gone', 'its form grants no tier');
+      variantKey = form.cotisationVariantKey;
+    }
+    const tierLabel = variantKey ?? 'base';
+    if (!asso?.cotisationMode || !catalogue.some((t) => t.variantKey === variantKey)) {
+      return refused('tier-gone', `tier ${tierLabel} is absent from the cotisation catalogue`);
+    }
+    if (
+      asso.cotisationMode === 'dated' &&
+      getAcademicYear(record.paidAt) !== getAcademicYear(new Date())
+    ) {
+      return refused('year-over', `paid in ${getAcademicYear(record.paidAt)}`);
+    }
+    const target = facts?.tiers.find((t) => t.variantKey === variantKey) ?? {
+      variantKey,
+      amountCents: null,
+    };
+    const relation = facts ? tierRelationOf(target, facts.heldKeys, held) : 'none';
+    const against = `against the tier held (${held?.variantKey ?? 'base'})`;
+    if (relation === 'held') {
+      // Held BECAUSE this payment's tier was delivered since (`deliveryOf`): recorded `granted`.
+      const tagName = catalogue.find((t) => t.variantKey === variantKey)?.tagName;
+      const tag = buyerTags.find((t) => t.tagName === tagName);
+      if (!tag) return refused('target-held', `tier ${tierLabel} is held under no readable tag`);
+      const delivery = deliveryOf(
+        tag,
+        record,
+        ctx.ownFormAnswer(record, tag.metadata?.submissionId)
+      );
+      if (delivery.delivered) {
+        return {
+          refusal: null,
+          variantKey,
+          buyerTier,
+          deliveredTagId: tag.id,
+          detail: delivery.detail,
+        };
+      }
+      return refused('target-held', `the buyer holds tier ${tierLabel}: ${delivery.detail}`);
+    }
+    if (relation === 'lower') return refused('not-a-rise', `tier ${tierLabel} is lower ${against}`);
+    if (relation === 'unranked' && held && held.product === null) {
+      // A held tag of a DELETED tier (an orphan has no product): a manager's roster grant is the
+      // repair - its sibling swap removes the orphan - after which this closing finds its delivery.
+      return refused(
+        'held-tier-deleted',
+        `the buyer holds tier ${held.variantKey ?? 'base'}, which was deleted`
+      );
+    }
+    if (relation === 'unranked') {
+      return refused('not-comparable', `tier ${tierLabel} has no fixed price to rank ${against}`);
+    }
+    return { refusal: null, variantKey, buyerTier, deliveredTagId: null, detail: relation };
+  }
+
+  /**
+   * Everything `closingGrantVerdict` reads, for `records` of association `associationId`, in a fixed
+   * number of queries whatever their count: the association, its catalogue and tier products, the
+   * records' products and forms, the buyers' ACTIVE tier tags, and - for form records - the buyers'
+   * answers to those forms and how many paid records each buyer has per form. The closing loads it
+   * for its one locked row, under the locks; the purchases list once for all its open rows.
+   */
+  private async closingContextOf(
+    manager: EntityManager,
+    associationId: string,
+    records: PurchaseRecord[]
+  ): Promise<ClosingContext> {
+    const unique = <T>(xs: (T | null | undefined)[]) => [
+      ...new Set(xs.filter((x): x is T => x != null)),
+    ];
+    const buyers = unique(records.map((r) => r.userId)).filter((u) => !isErasedAccount(u));
+    const productIds = unique(records.map((r) => (r.source === 'product' ? r.productId : null)));
+    const formRecords = records.filter((r) => r.source === 'form' && r.formId && r.userId);
+    const formIds = unique(formRecords.map((r) => r.formId));
+    const formBuyers = unique(formRecords.map((r) => r.userId));
+
+    const asso = await manager.findOne(Association, { where: { id: associationId } });
+    // Empty when the association no longer sells cotisations (no mode).
+    const catalogue = await this.userTagService.listCotisationTiers(associationId, { manager });
+    const tiers = asso?.cotisationMode
+      ? await manager.find(AssociationProduct, {
+          where: { associationId, type: 'membership' },
+          select: TIER_RANK_COLUMNS,
+        })
+      : [];
+    const products = productIds.length
+      ? await manager.find(AssociationProduct, { where: { id: In(productIds), associationId } })
+      : [];
+    const forms: { id: string; grantsCotisation: boolean; cotisationVariantKey: string | null }[] =
+      formIds.length
+        ? await manager.query(
+            `SELECT id, "grantsCotisation", "cotisationVariantKey" FROM forms
+              WHERE id = ANY($1) AND "associationId" = $2`,
+            [formIds, associationId]
+          )
+        : [];
+    const tags = await this.userTagService.activeTagsOf(
+      buyers,
+      catalogue.map((t) => t.tagName),
+      associationId,
+      manager
+    );
+    // The form answers the buyers' tags name, by id: whose form and whose buyer each one is, is
+    // decided below (`ownFormAnswer`), never by this read.
+    const namedAnswers = unique(tags.map((t) => t.metadata?.submissionId)).filter(
+      (id): id is string => typeof id === 'string' && isUUID(id)
+    );
+    const answers: { id: string; formId: string; userId: string | null }[] =
+      formIds.length && namedAnswers.length
+        ? await manager.query(
+            `SELECT id::text AS id, "formId"::text AS "formId", "userId" FROM submissions
+              WHERE id = ANY($1)`,
+            [namedAnswers]
+          )
+        : [];
+    // The buyer's PAID answers to each form, counted where they are settled - before fulfilment
+    // writes the grant, then the record, apart and outside the tier lock - so an answer whose record
+    // is not written yet is still counted.
+    const paidAnswerCounts: { formId: string; userId: string; n: number }[] = formIds.length
+      ? await manager.query(
+          `SELECT "formId"::text AS "formId", "userId", count(*)::int AS n FROM submissions
+            WHERE "formId" = ANY($1) AND "userId" = ANY($2)
+              AND "paymentStatus" = ANY($3) AND "totalPaid" > 0
+            GROUP BY 1, 2`,
+          [formIds, formBuyers, PAID_ANSWER_STATUSES]
+        )
+      : [];
+    const paidCounts: { formId: string; userId: string; n: number }[] = formIds.length
+      ? await manager.query(
+          `SELECT "formId"::text AS "formId", "userId", count(*)::int AS n FROM purchase_records
+            WHERE source = 'form' AND "formId" = ANY($1) AND "userId" = ANY($2)
+              AND status = ANY($3)
+            GROUP BY 1, 2`,
+          [formIds, formBuyers, RECEIVED_PURCHASE_STATUSES]
+        )
+      : [];
+
+    const pair = (formId: string, userId: string) => `${formId}|${userId}`;
+    const answersById = new Map(answers.map((a) => [a.id, a]));
+    const paidCount = new Map(paidCounts.map((c) => [pair(c.formId, c.userId), c.n]));
+    const paidAnswerCount = new Map(paidAnswerCounts.map((c) => [pair(c.formId, c.userId), c.n]));
+    const tagsByBuyer = new Map<string, UserTag[]>();
+    for (const t of tags) tagsByBuyer.set(t.userId, [...(tagsByBuyer.get(t.userId) ?? []), t]);
+    const orphansByBuyer = await this.userTagService.heldOrphanTierTagsOf(
+      buyers,
+      associationId,
+      catalogue,
+      manager
+    );
+    return {
+      asso,
+      catalogue,
+      tiers,
+      products: new Map(products.map((p) => [p.id, p])),
+      forms: new Map(forms.map((f) => [f.id, f])),
+      tagsByBuyer,
+      orphansByBuyer,
+      ownFormAnswer: (record, submissionId) => {
+        if (record.source !== 'form' || !record.formId || !record.userId) return false;
+        if (typeof submissionId !== 'string') return false;
+        const answer = answersById.get(submissionId);
+        if (!answer) return false;
+        const sameForm = answer.formId === record.formId;
+        const sameBuyer = answer.userId === record.userId;
+        const key = pair(record.formId, record.userId);
+        const onlyPaidRecord = paidCount.get(key) === 1;
+        // The stricter of the two: a paid answer whose record is not written yet still counts.
+        const onlyPaidAnswer = paidAnswerCount.get(key) === 1;
+        return sameForm && sameBuyer && onlyPaidRecord && onlyPaidAnswer;
+      },
+    };
+  }
+
+  /**
+   * Grants, by hand, tier `variantKey` of a `paid_not_granted` record, inside the closing's
+   * transaction and only after `closingGrantVerdict` allowed it under the buyer's tier lock: a first
+   * tier or a rise. The manager's grant path (`grantCotisantWithin`): the sibling XOR replaces the
+   * tier held, which for a rise is the purpose.
+   */
+  private async grantClosedTier(
+    manager: EntityManager,
+    record: PurchaseRecord,
+    variantKey: string | null,
+    closedBy: string
+  ): Promise<void> {
+    await this.userTagService.grantCotisantWithin(
+      manager,
+      record.associationId,
+      record.userId as string,
+      closedBy,
+      variantKey,
+      {
+        purchaseRecordId: record.id,
+        paymentIntentId: record.stripePaymentIntentId,
+        manualGrant: true,
+      }
+    );
+    this.logger.log(
+      `[SHOP] purchase=${record.id.slice(0, 8)}: tier ${variantKey ?? 'base'} granted by hand ` +
+        `to user=${(record.userId as string).slice(0, 8)} by=${closedBy.slice(0, 8)}`
+    );
+  }
+
+  /** The typed 409 of a `granted` closing `closingGrantVerdict` refused, logged. */
+  private closingGrantRefused(purchaseId: string, verdict: ClosingGrantVerdict): ConflictException {
+    const refusal = CLOSING_GRANT_REFUSALS[verdict.refusal as ClosingGrantRefusal];
+    this.logger.warn(
+      `[SHOP] closing refused (${refusal.code}): purchase=${purchaseId.slice(0, 8)} - ${verdict.detail}; ` +
+        'only a refund can be recorded'
+    );
+    return new ConflictException(refusal);
+  }
+
+  /** The typed 409 of a `granted` closing whose delivered state is no longer the one confirmed. */
+  private closingChanged(purchaseId: string, expectDelivered: boolean): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_CLOSING_CHANGED}): purchase=${purchaseId.slice(0, 8)} was ` +
+        `confirmed as ${expectDelivered ? 'already delivered' : 'to grant'}, and no longer is - nothing written`
+    );
+    return new ConflictException({
+      code: PURCHASE_CLOSING_CHANGED,
+      message: 'This payment changed since the list was read: read it again before closing it.',
+    });
+  }
+
+  /** The typed 409 of a closing asked of a record that is not marked `paid_not_granted`, logged. */
+  private purchaseNotClosable(record: PurchaseRecord): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_NOT_CLOSABLE}): purchase=${record.id.slice(0, 8)} is ` +
+        `${record.status}${record.userId ? '' : ' with no buyer account'}`
+    );
+    return new ConflictException({
+      code: PURCHASE_NOT_CLOSABLE,
+      message: 'Only a payment marked paid and not delivered can be closed.',
+    });
+  }
+
+  /** The typed 409 of a second closing of one payment, logged. */
+  private purchaseAlreadyClosed(purchaseId: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] closing refused (${PURCHASE_ALREADY_CLOSED}): purchase=${purchaseId.slice(0, 8)} was already closed`
+    );
+    return new ConflictException({
+      code: PURCHASE_ALREADY_CLOSED,
+      message: 'The outcome of this payment was already recorded.',
+    });
   }
 
   // ── Post-purchase ─────────────────────────────────────────────────────────

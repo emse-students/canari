@@ -220,6 +220,8 @@ services:
     expose:
       - "3010"
     environment:
+      # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
       # NestJS service here is not in production mode, and `auth.controller.ts` then decided
       # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
@@ -253,6 +255,17 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The iOS VoIP ring (APNs, direct): rendered from the DEV_APNS_VOIP_* secrets (env-manifest.tsv),
+      # never production's names. Unset, a locked or killed iPhone is NOT rung and the service logs
+      # `APNS_VOIP_* is not configured`. SANDBOX and TOPIC are deliberately NOT rendered on dev: a
+      # TestFlight build is production-signed, so its VoIP token belongs to the PRODUCTION APNs
+      # gateway (`api.push.apple.com`, the default when SANDBOX is not exactly `true`), and the topic
+      # defaults to `fr.emse.canari.voip`. Only an Xcode debug build would need the sandbox.
+      APNS_VOIP_KEY_P8: ${APNS_VOIP_KEY_P8:-}
+      APNS_VOIP_KEY_ID: ${APNS_VOIP_KEY_ID:-}
+      APNS_VOIP_TEAM_ID: ${APNS_VOIP_TEAM_ID:-}
+      APNS_VOIP_TOPIC: ${APNS_VOIP_TOPIC:-}
+      APNS_VOIP_SANDBOX: ${APNS_VOIP_SANDBOX:-}
       # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
       # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
       QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
@@ -290,7 +303,7 @@ services:
       canari.deploy.replace: pinned
     # `v2.3.0` is an exact version rather than a floating tag, which is why it is not digest-pinned
     # the way redis and postgres are - and it matches production exactly, deliberately.
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
@@ -346,7 +359,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -423,7 +436,7 @@ services:
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       # CUT, NOT INHERITED. The previous version of this file defaulted this to
       # `https://gallery.mitv.fr`, which is the PRODUCTION MiGallery - a dev environment calling a
       # real service in another repository's estate. Empty means no MiGallery in dev.
@@ -478,10 +491,10 @@ services:
       USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on

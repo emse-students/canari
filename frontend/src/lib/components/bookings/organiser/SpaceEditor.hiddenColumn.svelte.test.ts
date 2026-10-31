@@ -51,6 +51,7 @@ const SPACE: ManagedSpace = {
   slotMode: 'step',
   stepMinutes: 30,
   maxSteps: 4,
+  slotMinutes: null,
   nameVisibility: 'occupied',
   discoverability: 'listed',
   audience: null,
@@ -65,6 +66,7 @@ const SPACE: ManagedSpace = {
   participantWithdrawMinMinutes: 0,
   maxPeople: null,
   retentionDays: 7,
+  reminderMinutes: 60,
 };
 
 const mounted: ReturnType<typeof mount>[] = [];
@@ -152,6 +154,43 @@ describe('SpaceEditor, the hidden column (WP-R1)', () => {
     expect(id).toBe('r1');
     expect(fields).not.toHaveProperty('name');
     expect(fields).toMatchObject({ description: 'Sous-sol' });
+  });
+
+  it('the mode switch stores a slot length, and a switch back to step clears it (migration 116)', async () => {
+    mounted.push(
+      mount(SpaceEditor, {
+        target: document.body,
+        props: {
+          initial: structuredClone(SPACE),
+          tiers: [],
+          formations: [],
+          onSaved: () => {},
+          onDeleted: () => {},
+        },
+      })
+    );
+    flushSync();
+    const tab = (label: string) =>
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+        (t) => t.textContent?.trim() === label
+      )!;
+    tab(m.bookings_mode_slots()).click();
+    flushSync();
+    expect(document.getElementById('space-slot-length')).not.toBeNull();
+    button(m.bookings_save_settings()).click();
+    await settle();
+    expect(updateSpace).toHaveBeenLastCalledWith(
+      's1',
+      expect.objectContaining({ slotMode: 'slots', slotMinutes: 30, stepMinutes: null })
+    );
+    tab(m.bookings_mode_step()).click();
+    flushSync();
+    button(m.bookings_save_settings()).click();
+    await settle();
+    expect(updateSpace).toHaveBeenLastCalledWith(
+      's1',
+      expect.objectContaining({ slotMode: 'step', slotMinutes: null })
+    );
   });
 
   it('a single column named otherwise is a visible column, renamable', () => {

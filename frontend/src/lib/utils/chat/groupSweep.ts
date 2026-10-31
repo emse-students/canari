@@ -1,6 +1,7 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
 import { reconcileAbsentLocalGroup, type AbsentLocalGroupVerdict } from './groupLifecycle';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -93,8 +94,16 @@ export async function readGroupSweepSnapshot(
     rows = await mlsService.getUserGroups(userId);
     fetchOk = true;
   } catch (e) {
-    log(`[SYNC] Failed to fetch user groups: ${e}`);
-    console.error('[SYNC] Failed to fetch user groups:', e);
+    // ONE LINE, BY CLASS. It was two - `log` (a `console.log`) and `console.error` - for every
+    // failure, a transport failure included: an absent link at a cold start is the expected state,
+    // and saying it at `error`, twice, buried the failures that are defects.
+    if (isTransportFailure(e)) {
+      log(
+        `[SYNC] the user group list got no answer - this sweep purges nothing without it, the next connection's sweep reads it: ${String(e)}`
+      );
+    } else {
+      console.error('[SYNC] Failed to fetch user groups:', e);
+    }
   }
 
   // Some backends can transiently return duplicates; keep the FIRST occurrence by groupId.

@@ -69,8 +69,8 @@ No row verdict depends on it; it stays here until it is explained.
 | DUP-3 | The first request stalls past the server's 5 s commit lock while our resubmission arrives | - | `SKIPPED` - not played on the bench (Q2): unit coverage stands in |
 | DUP-4 | A resubmission is answered `409 SEAT_CLAIM_OVERTAKEN` | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
 | DUP-5 | The commit is answered `503` | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
-| DUP-6 | The commit request never answers (30 s `write` deadline) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: the commit that never answers was not settled; fixed for alpha.5; predates rig c0eb44e1900d. To be replayed on alpha.5 |
-| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 invites W4 (the third account) - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig cdbf5ba7263a. To be replayed on alpha.5 |
+| DUP-6 | The commit request never answers (30 s `write` deadline) | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.5` (dev.615d4fa): the run was not clean (dirt recorded in the ledger); the alpha.4 `FAIL` (the commit that never answers) did not recur after the fix |
+| DUP-7 | An Add accepted only through a later resubmission still delivers its Welcome, once | W1 invites W4 (the third account) - U | `PASS-DIRTY` on `1.4.1-alpha.5` (dev.615d4fa): the same run read `PASS` on alpha.4 (dev.f49f499); the newest read is not clean |
 
 ## OFF - offline during a commit
 
@@ -87,8 +87,8 @@ No row verdict depends on it; it stays here until it is explained.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | KILL-1 | Close the web tab at a random point between the stage and the answer, 20 runs | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 0b7fe696970b |
-| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `FAIL` on `1.4.1-alpha.4`, two PRODUCT findings: (A) while its first commit's answer was held, W1 built a second leaf refresh on top of it, and refreshed again after the revive - two commits no run armed; (B) a clean reload re-walked a control frame whose generation was already spent and reported it `unreadable for good (secret-reuse)`. The row's "2 accepts, the epoch moved 1" was also a RIG miscount (the epoch was read before the window opened), fixed: commits are now sorted by the epoch they name, a stray one fails the run, and each run keeps its dying and revived console. The alpha.4 runs recorded as 'answer unseen' were INVALID, not findings: every run saw its answer, and the kill-then-close order that misread it is fixed in the rig; predates rig 0b7fe696970b. To be replayed on alpha.5 |
-| KILL-3 | W1's whole browser killed a short time after a send or a receive, 12 runs over four windows (moved from the A1 swipe on 2026-10-26: the A1 commit POST cannot be held, and the localStorage ratchet ledger and seen-marks are web-side) | W1 W2 - U | `pending` - the web row is written; it runs on `1.4.1-alpha.5` after the main replay, off the stable's critical path |
+| KILL-2 | Kill Chrome's whole browser process at the same point (no unload handlers) | W1 W2 - U | `ERROR` on `1.4.1-alpha.5` (dev.615d4fa), three runs on 2026-10-26: the rig lost the browser profile's storage, the revived tab did not unlock (no modal), then `armLeafRefresh` found no ledger entry - nothing judged. The two PRODUCT findings of the alpha.4 `FAIL` (a second leaf refresh built on a held commit; a spent control frame re-walked as `secret-reuse`) were not re-read and are neither confirmed nor cleared |
+| KILL-3 | W1's whole browser killed a short time after a send or a receive, 12 runs over four windows (moved from the A1 swipe on 2026-10-26: the A1 commit POST cannot be held, and the localStorage ratchet ledger and seen-marks are web-side) | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.6` (dev.349f092): the run held; dirt is a `[History]` `secret-reuse` severe line on W1 and an unclean server window (a restore-credentials debug line) |
 | KILL-4 | `am kill` during the checkpoint itself | +A1 - B | `pending` - BLOCKED-ON-RIG: as OFF-5 (its window is measured on a held commit); class B on A1 |
 | KILL-5 | Kill between the merge of an Add and its Welcome send (`owed_welcome`) | W1 + W3 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 0b7fe696970b |
 
@@ -119,16 +119,16 @@ No row verdict depends on it; it stays here until it is explained.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| ADM-1 | A new person follows the group link (new clients everywhere) | W1 W2 + W4 joiner - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig b937940da71c. To be replayed on alpha.5 |
-| ADM-2 | A member Declines | as ADM-1 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product: a stale re-add retry after a Decline re-lists the conversation; fixed for alpha.5 (#2493); predates rig b937940da71c. To be replayed on alpha.5 |
+| ADM-1 | A new person follows the group link (new clients everywhere) | W1 W2 + W4 joiner - U | `PASS` on `1.4.1-alpha.5` (dev.615d4fa) (server window clean); the alpha.4 `PASS-DIRTY` is superseded |
+| ADM-2 | A member Declines | as ADM-1 - U | `PASS` on `1.4.1-alpha.5` (dev.615d4fa) (server window clean); the alpha.4 `FAIL` (a stale re-add retry re-listed the conversation) is fixed by #2493 |
 | ADM-3 | Two members answer at once: one Adds, one Declines | W1 W2 + W4 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: server clean; dirt is the deleted-salon read-mark 404 |
-| ADM-4 | : the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | W4 waiting - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig b937940da71c. To be replayed on alpha.5 |
+| ADM-4 | : the waiting seat calls every member route from its own page (roster, members, enrol someone, mint a link, vouch, history, exclusions, call initiate/ring) | W4 waiting - U | `PASS` on `1.4.1-alpha.5` (dev.615d4fa) (server window clean), second run; the first alpha.5 run read `PASS-DIRTY` |
 | ADM-5 | OLD joiner: A1 on the `v1.4.0` APK follows a link created on new clients | +A1 (old) W1 W2 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-6 | OLD member: A1 on `v1.4.0` is a member when a NEW joiner follows the link | +A1 (old) W1 + W4 - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-7 | An external join by a non-member, from an old client, at the base | +A1 (old) - B | `pending` - needs A1 on the old v1.4.0 APK, installed by the operator (class B) |
 | ADM-8 | The link in a 1:1 conversation and in a key group | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean. The `ERROR` it recorded on the current rig (a user-id check written for UUIDs) is fixed in #2491; predates rig b937940da71c |
-| ADM-9 | Declined, then re-invited by a new link: the Add built after the Decline admits | W1 W2 + W4 joiner - U | `pending` - added for `1.4.1-alpha.5` |
-| ADM-10 | An Add held past a settled Decline: refused at the commit gate AND by the member-add route | W1 W2 + W4 - U | `pending` - added for `1.4.1-alpha.5` |
+| ADM-9 | Declined, then re-invited by a new link: the Add built after the Decline admits | W1 W2 + W4 joiner - U | `PASS` on `1.4.1-alpha.5` (dev.615d4fa), second run; the first alpha.5 run read `PASS-DIRTY` |
+| ADM-10 | An Add held past a settled Decline: refused at the commit gate AND by the member-add route | W1 W2 + W4 - U | `PASS` on `1.4.1-alpha.6` (dev.349f092) (also `PASS` on alpha.5 after a `PASS-DIRTY` first run) |
 
 ## DEV - device add, revoke, and the background Welcome
 
@@ -136,10 +136,10 @@ No row verdict depends on it; it stays here until it is explained.
 | --- | --- | --- | --- |
 | DEV-1 | A new device of an existing member (W3 owner) | W1 W2 + W3 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig cdbf5ba7263a |
 | DEV-2 | Revoke W3 from W1 | W1 W2 W3 - U | `PASS-DIRTY` - `1.5.0-alpha.2`: server clean; dirt is the deleted-salon read-mark 404 and two `absorbed N seed(s)` debug lines on W3 |
-| DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | W1 W2 W3 - U | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - product, by ANALYSIS of the run's logs (the ledger records the failed assertions only): the same 401 read as "unreachable" (the revoke reset never runs), and a 500 on a Welcome to a revoked device; predates rig cdbf5ba7263a. To be replayed on alpha.5 |
+| DEV-3 | Revoke W3 while it is OFFLINE, then bring it back | W1 W2 W3 - U | `PASS-DIRTY` on `1.4.1-alpha.6` (dev.349f092) (also on alpha.5): dirt is undeclared narration (`[AUTHORSHIP]` restored messages marked unverified, `[GRAINE]` absorbed seeds); the alpha.4 `FAIL` (401 read as unreachable, 500 on a Welcome to a revoked device) did not recur |
 | DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | W1 W2 + W3 W6 new - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.4` (dev.f49f499) - the server window was not clean; predates rig cdbf5ba7263a |
 | DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | W1 + W3 copy - U | `pending` - not a runner row: attached to CORRUPT-8 and played later, blocked on Q5 |
-| DEV-6 | A revoked device does not erase its owner's arrival (#2254) | W1 W3 W6 - U, PIN | `FAIL` on `1.4.1-alpha.4` (dev.f49f499) - rig race: the first invariant pass was judged during a commit in flight (the rig now settles first); predates rig cdbf5ba7263a. To be replayed on alpha.5 |
+| DEV-6 | A revoked device does not erase its owner's arrival (#2254) | W1 W3 W6 - U, PIN | `PASS-DIRTY` on `1.4.1-alpha.6` (dev.349f092) (also on alpha.5): dirt is undeclared narration (`[AUTHORSHIP]` restored messages); the alpha.4 `FAIL` was a rig race, since settled |
 | DEV-7 | , its three variants: cold process, app opened inside the round trip, phone stale | +A1 killed, W1 W3 - B | `pending` - hand row, class B: A1 is swiped away by hand (variants cold, opened, stale) |
 
 ## BIG - a large group
@@ -150,7 +150,7 @@ No row verdict depends on it; it stays here until it is explained.
 | BIG-2 | 30 rapid messages from three senders while two commits land in the middle | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-3 | A community of twelve seats: a removal, then a new user | all - B | `pending` - class B: needs every seat including A1 and I1; scheduled for the alpha.5 replay |
 | BIG-1-noI1 | BIG-1 without I1 (W1-W8 + A1), recorded under its own id while the iPhone reads no rows | W1-W8 +A1 - B | `PASS-DIRTY` - `1.5.0-alpha.1`: own and the invariant held; dirt is undeclared narration (restored messages marked unverified) |
-| BIG-2-noI1 | BIG-2 without I1 | W1-W8 +A1 - B | `ERROR` - `1.4.1-alpha.5`: product finding, the desktop thread panel scrolled under a sr-only status label (fixed by #2535); replayed on `1.4.1-alpha.6` |
+| BIG-2-noI1 | BIG-2 without I1 | W1-W8 +A1 - B | `PASS-DIRTY` on `1.4.1-alpha.6` (dev.349f092): dirt is undeclared narration (`[NOTIF]` already read, `[AUTHORSHIP]`, `[QUEUE]` crossing); the alpha.5 `ERROR` (thread panel under a sr-only label) is fixed by #2535 |
 | BIG-3-noI1 | BIG-3 without I1 | W1-W8 +A1 - B | `FAIL` - `1.5.0-alpha.1`: FAIL-PRODUCT, pre-existing since `v1.4.0`, details in the private operations notes; seven of nine assertions held |
 
 ## LIST - a salon heard of live while its community's listing is in flight
@@ -233,7 +233,7 @@ that build predates the fix (#2583); the AFTER readings are on `1.5.1-alpha.1`, 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | LIVE-WEB-1 | W2 goes live from desktop Chrome; W4 and W5 watch from the feed card; W2 ends | W2 W4 W5 - U | `ERROR` - `1.4.1-alpha.6`: ERROR-PRODUCT, a desktop camera reports no facing and the live asks an exact one (#2574, after the stable) |
-| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end; no viewer stalls after its first delivery gap | A1 W2 W4 - B | `PASS-DIRTY` - 2026-10-28, A1 on the #2652 branch head 582975676 (the Publier composer fix, not main) against dev.87d84bf (`1.5.1-alpha.1`), judged with #2635's seek pairing: W2 and W4 0 stalls before and 0 after their one delivery gap (3782 and 3722 ms); card, play, count and end seen by both; server window clean. Dirt: W2's known read-mark 404 for a deleted salon, and two A1 decision logs of its in-app navigation (`[AvatarPresence] ... not requested`, `[NameMirror] mirrored ...`) dirt until #2654 scopes them. The web viewers ran `1.5.1-alpha.1` code, so this is a reading of the alpha.1 buffer policy, NOT of main's: rerun owed once a pre-release carrying main's lives buffer policy is on dev |
+| LIVE-WEB-2 | A1 goes live as a member; W2 and W4 see the card, play, are counted; A1 ends and both see the end; no viewer stalls after its first delivery gap | A1 W2 W4 - B | `PASS` - 2026-10-29, `1.5.1-alpha.8`: dev.7a83364, and A1 on a debug build of the same commit 7a833643b. Clients and server window are clean, judged with the alpha.8 narration of #2703. W2 and W4 each had 0 stalls before and 0 after their delivery gaps: W2 one gap (3385 ms, target 4385 ms), W4 two (3518 and 1216 ms, targets 6017 and 6022 ms). Both saw the card, played, were counted, and saw the end. The end-of-live segment purge no longer cuts the viewers short: the end waits for its seated viewers (#2689), and no segment 404 was seen |
 | LIVE-STALL-1 | L-F1: A1 broadcasts for a minute to W2 and W4; no viewer stalls after its first delivery gap; each target buffer is recorded | A1 W2 W4 - B | `FAIL` - 2026-10-28, A1 on the #2652 branch head 582975676 (not main) against dev.87d84bf (`1.5.1-alpha.1`), judged with #2635's seek pairing: each viewer stalled once before its first delivery gap (at the initial 3000 ms target) and twice after it, including at a target already raised to 4749 ms (W4, both post-gap stalls, after its last gap). W2: post-gap stalls at target 3693 ms, 1 paired stall seek after the gap (3 seeks in its console: join plus 2 stall); gaps/targets 3693, 4674, 4737 ms. W4: no post-gap seek; gaps/targets 3562, 3676, 4749 ms. Server window clean; W4's stall line prints its target unrounded (backlog P3). The web viewers ran `1.5.1-alpha.1` code, so this FAIL is on the alpha.1 buffer policy and is NOT a verdict on main: the row stays open, rerun owed once a pre-release carrying main's lives buffer policy is on dev |
 | LIVE-WEB-3 | LIVE-WEB-2 with W4's account following the broadcaster: the announcement names one follower | A1 W2 W4 - B | `PASS-DIRTY` - `1.4.1-alpha.6`: `followers=1`, the push found no token on a web account (a device reading is owed) |
 
@@ -255,7 +255,7 @@ button's state is read off its `data-follow-status`, and every list off its own 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | TOK-1 | The commit POST is answered `401` once | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig c0eb44e1900d |
-| TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS` on `1.4.1-alpha.4` (dev.f49f499); predates rig 06d5be3d143b. To be replayed on alpha.5 |
+| TOK-2 | The refresh itself fails as TRANSPORT during a commit | W1 W2 - U | `PASS-DIRTY` on `1.4.1-alpha.5` (dev.615d4fa): the alpha.4 `PASS` (dev.f49f499) is superseded by a run that was not clean |
 | TOK-3 | The access token really expires (1 h TTL) while the socket stays open, then a commit and a reconnect | W1 W2 - U | `VACUOUS` - `1.5.0-alpha.2` (dev.6c5d9ef): the 61 min idle ran, but W2's pane rendered nothing after the Welcome, the same miss as OFF-2 (backlog P2, #2608). Rerun alone once that fix is on dev |
 
 ## RMC - a removal committed, not only unrouted
@@ -275,9 +275,9 @@ does not have yet.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
-| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
-| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `FAIL` - `1.5.0-alpha.2` (dev.6c5d9ef), the baseline before the removal stack: FAIL-PRODUCT, details in the private notes |
+| KICK-COMMIT | W1 removes the peer from a community whose public and private salons it held: both key groups advance by W1's commit, no reload | W1 W2 - U | `PASS-DIRTY` on `1.5.1-alpha.6` (dev.dce778b): the ledger records no failed assertion; dirt is a 404 on `read-mark`. The `FAIL` on `1.5.0-alpha.2` (dev.6c5d9ef) was the baseline before the removal stack |
+| SALON-REVOKE-COMMIT | W1 revokes the peer from a private salon and opens it again: the salon's key group advances by W1's commit, no reload | W1 W2 - U | `PASS-DIRTY` on `1.5.1-alpha.6` (dev.dce778b): the ledger records no failed assertion; dirt is a 404 on `read-mark`. The `FAIL` on `1.5.0-alpha.2` (dev.6c5d9ef) was the baseline before the removal stack |
+| DEVREVOKE-KEYGROUP | W6 revokes a fresh owner device (W3) that loaded a community and its private salon: every key group it held advances by a remaining device's commit | W1 W6, W3 minted - U | `PASS-DIRTY` on `1.5.1-alpha.6` (dev.dce778b): dirt is a 404 on `read-mark`. The `FAIL` on `1.5.0-alpha.2` (dev.6c5d9ef) was the baseline before the removal stack |
 
 ## NET - a flaky network
 

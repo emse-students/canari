@@ -177,8 +177,8 @@
    * replaced and the microphone and the recorder run on (`flipDuringTake`). The flip resets the zoom.
    */
   function flip() {
-    if (!flipAllowed) {
-      console.debug('[camera] flip asked while the capture forbids it - ignored');
+    if (!flipAllowed || !session.canSwitch) {
+      console.debug('[camera] flip asked while it is forbidden or there is one camera - ignored');
       return;
     }
     console.debug(`[camera] flip ${recording ? 'during a take' : 'outside a take'}`);
@@ -343,7 +343,10 @@
      while the capture forbids it (`flipAllowed`). -->
 <section
   class="relative h-full w-full overflow-hidden bg-black text-white"
-  use:previewDoubleTap={{ onDoubleTap: flip, enabled: session.phase === 'live' && flipAllowed }}
+  use:previewDoubleTap={{
+    onDoubleTap: flip,
+    enabled: session.phase === 'live' && flipAllowed && session.canSwitch,
+  }}
   aria-label={m.reels_camera_title()}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
@@ -467,16 +470,18 @@
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
-        <button
-          type="button"
-          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
-          aria-label={m.reels_camera_switch()}
-          title={m.reels_camera_switch()}
-          disabled={session.flipping || !flipAllowed}
-          onclick={flip}
-        >
-          <SwitchCamera size={22} strokeWidth={2.25} />
-        </button>
+        {#if session.canSwitch}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+            aria-label={m.reels_camera_switch()}
+            title={m.reels_camera_switch()}
+            disabled={session.flipping || !flipAllowed}
+            onclick={flip}
+          >
+            <SwitchCamera size={22} strokeWidth={2.25} />
+          </button>
+        {/if}
         {#if session.torchAvailable}
           <button
             type="button"

@@ -4,7 +4,8 @@
  * the three refusals with its own sentence and a retry, and the live preview with its lens controls.
  * The session's opener is injected, so the order of events is the test's, never a clock's.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubCameraCount } from '../../../test/cameraDevices';
 import { flushSync, mount, unmount } from 'svelte';
 import CameraScreen from './CameraScreen.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
@@ -34,7 +35,13 @@ vi.mock('$lib/reels/gallery', () => ({
 
 const mounted: Record<string, unknown>[] = [];
 
+let unstubCameras = () => {};
+beforeEach(() => {
+  unstubCameras = stubCameraCount(2);
+});
+
 afterEach(() => {
+  unstubCameras();
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   nativeApp = false;
@@ -165,6 +172,15 @@ describe('CameraScreen', () => {
     expect(dark.target.querySelector(`[aria-label="${m.reels_camera_torch_on()}"]`)).toBeNull();
   });
 
+  it('offers no switch on a device with one camera (owner, 2026-10-31)', async () => {
+    unstubCameras();
+    unstubCameras = stubCameraCount(1);
+    const one = await render(() => Promise.resolve(stream(false)));
+    await vi.waitFor(() => expect(one.session.cameraCount).toBe(1));
+    flushSync();
+    expect(one.target.querySelector(`[aria-label="${m.reels_camera_switch()}"]`)).toBeNull();
+  });
+
   describe('between the track and the first frame', () => {
     const preview = (t: HTMLElement) => t.querySelector('video')!;
     const standIn = (t: HTMLElement) => t.querySelector<HTMLElement>('[data-camera-standin]')!;
@@ -212,7 +228,7 @@ describe('CameraScreen', () => {
     const flip = () =>
       target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_camera_switch()}"]`)!;
 
-    expect(open).toHaveBeenCalledWith('user');
+    expect(open).toHaveBeenCalledWith('user', false);
     expect(session.facing).toBe('user');
     expect(target.querySelector('video')!.className).toContain('-scale-x-100');
     expect(torch()).toBeNull();
@@ -221,7 +237,7 @@ describe('CameraScreen', () => {
     await Promise.resolve();
     await Promise.resolve();
     flushSync();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(target.querySelector('video')!.className).not.toContain('-scale-x-100');
     expect(torch()).not.toBeNull();
 
@@ -490,8 +506,31 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     const target = await mountLive({}, session);
     doubleTap(target);
     for (let i = 0; i < 4; i++) await Promise.resolve();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(session.facing).toBe('environment');
+  });
+
+  it('a MEASURED single camera stands the double tap down; an unknown count keeps it (fails open)', async () => {
+    const one = lensWithMic();
+    const openOne = vi.fn((_facing: CameraFacing) => Promise.resolve(one.stream));
+    const single = new CameraSession(openOne, openOne, async () => 1);
+    const oneTarget = await mountLive({}, single);
+    await vi.waitFor(() => expect(single.cameraCount).toBe(1));
+    doubleTap(oneTarget);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openOne).toHaveBeenCalledTimes(1);
+
+    const unknown = lensWithMic();
+    const openUnknown = vi.fn((_facing: CameraFacing) => Promise.resolve(unknown.stream));
+    const session = new CameraSession(openUnknown, openUnknown, async () => {
+      throw new Error('no list');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unknownTarget = await mountLive({}, session);
+    expect(session.cameraCount).toBeNull();
+    doubleTap(unknownTarget, 3);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openUnknown).toHaveBeenLastCalledWith('environment', true);
   });
 
   it('DURING A TAKE a double tap flips only the lens: the microphone runs on, the zoom is back at 1x', async () => {
@@ -508,7 +547,7 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     for (let i = 0; i < 4; i++) await Promise.resolve();
     flushSync();
 
-    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(openLens).toHaveBeenCalledWith('environment', true);
     expect(first.lens.stop).toHaveBeenCalled();
     expect(first.mic.stop).not.toHaveBeenCalled();
     expect(session.stream!.getAudioTracks()).toEqual([first.mic]);

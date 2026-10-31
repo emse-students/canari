@@ -1,5 +1,6 @@
 import type { PostNotification } from './api';
 import type { AppPath } from '$lib/utils/internalPath';
+import { BOOKINGS_HREF } from '$lib/bookings/routes';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
@@ -13,6 +14,12 @@ export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests' satisfies 
  * (`fr.emse.canari://follow-requests`) both land.
  */
 export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies AppPath;
+
+/**
+ * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
+ * allows, and what to do with Lydia's SMS. Also linked from the association's "Caissiers" section.
+ */
+export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
 
 /**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
@@ -55,10 +62,19 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'profile_correction_applied':
     case 'profile_correction_refused':
       return '/profile';
+    // An association refunded the reader (Lydia refunds, lot 4): their purchases, where the payment
+    // now reads as refunded. `postId` is the association's id, which that page does not need.
+    case 'lydia_refund_issued':
+      return '/account/purchases';
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
+    // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
+    case 'lydia_cashier_added':
+      return LYDIA_PRO_HELP_ROUTE;
     case 'repost_proposed':
     case 'coorganise_proposed':
+    case 'lydia_payments_active':
+    case 'lydia_payments_paused':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
@@ -90,6 +106,13 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'live_suspended':
     case 'live_withdrawn':
       return null;
+    // The bookings' notices (WP-N): `postId` is the BOOKING, which has no page of its own - the
+    // reader's bookings are listed on Reservations (a cancelled one there too, marked).
+    case 'booking_cancelled':
+    case 'booking_withdrawn':
+    case 'booking_added':
+    case 'booking_reminder':
+      return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -129,6 +152,14 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_withdrawn',
   'follow_request',
   'follow_accepted',
+  'booking_cancelled',
+  'booking_withdrawn',
+  'booking_added',
+  'booking_reminder',
+  'lydia_payments_active',
+  'lydia_payments_paused',
+  'lydia_cashier_added',
+  'lydia_refund_issued',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -159,6 +190,9 @@ export function reportUnknownNotificationType(type: string): void {
 const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   repost_proposed: 'republications',
   coorganise_proposed: 'republications',
+  // An association's Lydia payments became active / were paused: its payments section.
+  lydia_payments_active: 'payments',
+  lydia_payments_paused: 'payments',
 };
 
 /**

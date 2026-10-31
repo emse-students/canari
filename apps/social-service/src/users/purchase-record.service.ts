@@ -3,10 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import {
   PurchaseRecord,
+  LISTED_PURCHASE_STATUSES,
   RECEIVED_PURCHASE_STATUSES,
   type PurchasePaymentMethod,
   type PurchaseStatus,
 } from './entities/purchase-record.entity';
+import { PurchaseRecordClosing } from './entities/purchase-record-closing.entity';
 
 export interface CreatePurchaseData {
   /** NULL for a guest's payment on a public form: a guest has no account. */
@@ -14,6 +16,8 @@ export interface CreatePurchaseData {
   source: 'form' | 'product';
   formId?: string | null;
   productId?: string | null;
+  /** The form answer a form payment's record was written for (migration 120). */
+  submissionId?: string | null;
   amountCents: number;
   paymentMethod: PurchasePaymentMethod;
   status: PurchaseStatus;
@@ -42,6 +46,7 @@ export class PurchaseRecordService {
       source: data.source,
       formId: data.formId ?? null,
       productId: data.productId ?? null,
+      submissionId: data.submissionId ?? null,
       amountCents: data.amountCents,
       paymentMethod: data.paymentMethod,
       status: data.status,
@@ -53,11 +58,36 @@ export class PurchaseRecordService {
   }
 
   /**
-   * The number of purchases paid for and not granted (`paid_not_granted`), across every association:
-   * what the hourly report counts (`PaidNotGrantedScheduler`).
+   * The number of purchases paid for and not granted (`paid_not_granted`) that NO person has closed
+   * yet (no `purchase_record_closings` row, migration 113), across every association: what the
+   * hourly report counts (`PaidNotGrantedScheduler`). A closed record keeps its mark as history and
+   * leaves the count; nothing else does.
    */
-  async countPaidNotGranted(): Promise<number> {
-    return this.repo.count({ where: { status: 'paid_not_granted' } });
+  async countUnclosedPaidNotGranted(): Promise<number> {
+    return this.repo
+      .createQueryBuilder('pr')
+      .where('pr.status = :status', { status: 'paid_not_granted' })
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM purchase_record_closings c WHERE c."purchaseRecordId" = pr.id)'
+      )
+      .getCount();
+  }
+
+  /**
+   * The closings of `recordIds`, by purchase record id: at most one each (the unique index of
+   * migration 113). Read through `manager` when given, so a closing reads its own transaction.
+   */
+  async closingsOf(
+    recordIds: string[],
+    manager?: EntityManager
+  ): Promise<Map<string, PurchaseRecordClosing>> {
+    const out = new Map<string, PurchaseRecordClosing>();
+    if (recordIds.length === 0) return out;
+    const rows = await (manager ?? this.repo.manager).find(PurchaseRecordClosing, {
+      where: { purchaseRecordId: In(recordIds) },
+    });
+    for (const row of rows) out.set(row.purchaseRecordId, row);
+    return out;
   }
 
   /** Returns all purchase records for a user, newest first. */
@@ -114,11 +144,12 @@ export class PurchaseRecordService {
 
   /**
    * Lists the money an association received (boutique + formulaires), newest first, `paid_not_granted`
-   * included: those rows are where the association sees a tier paid for and not granted.
+   * included: those rows are where the association sees a tier paid for and not granted; `refunded`
+   * too, so a payment given back in full stays on the list with its refund beside it.
    */
   async listPaidByAssociation(associationId: string): Promise<PurchaseRecord[]> {
     return this.repo.find({
-      where: { associationId, status: In(RECEIVED_PURCHASE_STATUSES) },
+      where: { associationId, status: In(LISTED_PURCHASE_STATUSES) },
       order: { paidAt: 'DESC' },
     });
   }

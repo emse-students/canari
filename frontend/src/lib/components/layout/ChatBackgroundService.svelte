@@ -101,6 +101,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -132,7 +133,10 @@
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
-  import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import {
+    drainNativePendingCallAccept,
+    listenForNativeCallAccept,
+  } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
@@ -1250,7 +1254,15 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        // A mark still owed for it could only meet the server's 404 CHANNEL_NOT_FOUND.
+        forgetSalonReadMark(globalSession.userId || currentUserId() || '', channelConversationId);
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            console.warn(
+              `[CHANNEL] deleted salon ${event.channelId.slice(0, 8)} left its local row: ${String(e)}`
+            )
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1757,8 +1769,9 @@
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
     globalSession.initServices(appendLog);
-    // WP-XP-5: a CallKit answer may predate this cold start (app launched from the call UI).
-    // Drain it before login so the auto-accept fires as soon as the invite arrives over WS.
+    // WP-XP-5: an answer on the native ring (Android or CallKit) may predate this cold start - the
+    // answer is what launched the app. Held now, it is joined from its own facts once the login's
+    // socket has caught up; no invite is awaited (`pendingCallAccept.ts`).
     void drainNativePendingCallAccept();
     void startLoginFlow();
 
@@ -1772,7 +1785,9 @@
     // background writers on BOTH platforms, but iOS only refreshes it once (canari_ios_on_resume);
     // without this 10s heartbeat the guard would expire ~30s into a genuinely-foregrounded iOS
     // session and an in-process FCM data push could clobber the warm engine's in-memory state. The
-    // native mls_foreground_heartbeat command is platform-agnostic (mark_foreground_active).
+    // native mls_foreground_heartbeat command is platform-agnostic, and holds the guard only while a
+    // foreground manager is loaded (`heartbeat_foreground_guard`): at the PIN gate there is nothing
+    // to protect, and a page iOS launched in the background believes itself visible.
     // createPausableInterval auto-pauses on hidden, so the guard expires shortly after backgrounding
     // even without a clean `hidden` event.
     const stopForegroundHeartbeat = isMobileTauriRuntime()
@@ -1802,6 +1817,11 @@
           })
           .finally(() => invokeNative('pause_mls_foreground'));
         return;
+      }
+      if (document.visibilityState === 'visible' && !globalSession.isLoggedIn) {
+        // A warm app still at its PIN gate: an answer given on the native ring meanwhile is held
+        // now, and joined once the login's socket has caught up (`pendingCallAccept.ts`).
+        void drainNativePendingCallAccept();
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
         const { deviceKeyB64, storage } = globalSession;
@@ -1840,8 +1860,8 @@
           stepDone('key-group-joins');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
-          // WP-XP-5: the user may have answered a CallKit ring while we were away - record
-          // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
+          // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
+          // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).
           await drainNativePendingCallAccept();
           stepDone('call');
           // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order
@@ -1904,6 +1924,10 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnlineResume);
+    // The native side says an answer waits (`canari:call-accept`): a page that sees no
+    // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
+    // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
+    const stopNativeCallAccept = listenForNativeCallAccept();
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1942,6 +1966,7 @@
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
+      stopNativeCallAccept();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
@@ -2220,7 +2245,6 @@
       ? m.auth_pin_reset_withheld_key_unreadable()
       : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
-  account={globalSession.userId}
 />
 
 <!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->
@@ -2235,7 +2259,6 @@
   externalError={recoverError}
   isLoading={recoverLoading}
   loadingProgress={recoverProgress}
-  account={globalSession.userId}
 />
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}

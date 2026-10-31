@@ -18,7 +18,6 @@
     ChevronUp,
     CornerDownRight,
     Flag,
-    Heart,
     Pencil,
     Send,
     Trash2,
@@ -26,7 +25,8 @@
   } from '@lucide/svelte';
   import { tick } from 'svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import PostImage from './PostImage.svelte';
+  import CommentMedia from './CommentMedia.svelte';
+  import CommentLikeButton from './CommentLikeButton.svelte';
   import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import CommentItem from './CommentItem.svelte';
@@ -38,7 +38,6 @@
     commentRevealedAuthorId,
   } from '$lib/posts/commentAuthor';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
-  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { reportLineClamp } from '$lib/actions/reportLineClamp';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -279,15 +278,7 @@
           {/if}
         {/if}
         {#if comment.media && authToken}
-          {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
-          <div
-            class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
-              ? 'max-w-56 bg-black/5 dark:bg-white/5'
-              : 'max-w-[20rem]'}"
-            style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
-          >
-            <PostImage media={comment.media} {authToken} />
-          </div>
+          <CommentMedia media={comment.media} {authToken} />
         {/if}
       </div>
     {/if}
@@ -346,23 +337,12 @@
           </button>
         {/if}
 
-        <!-- THE ONE LIKE CONTROL: a heart at the right end of the row, under the bubble, with the count
-             beside it when there is one. It is not a reaction chip laid over the bubble, and the count
-             is not said a second time anywhere else. -->
-        <button
-          type="button"
-          onclick={() => onLike(comment.id)}
-          aria-pressed={liked}
-          aria-label={likeCount > 0
-            ? m.post_likes_count_label({ count: likeCount })
-            : m.post_like_label()}
-          class="tap-target text-2xs ml-auto flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {liked
-            ? 'text-red-500'
-            : 'text-text-muted hover:text-text-main'}"
-        >
-          <Heart size={15} strokeWidth={2.25} class={liked ? 'fill-current' : ''} />
-          {#if likeCount > 0}<span class="tabular-nums">{likeCount}</span>{/if}
-        </button>
+        <CommentLikeButton
+          {liked}
+          count={likeCount}
+          onLike={() => onLike(comment.id)}
+          class="ml-auto"
+        />
       {/if}
     </div>
 

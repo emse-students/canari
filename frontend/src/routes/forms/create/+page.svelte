@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
@@ -261,7 +262,7 @@
         );
       }
     } catch (e: any) {
-      error = e.message;
+      error = providerRefusalMessage(e) ?? e.message;
     } finally {
       isSubmitting = false;
     }

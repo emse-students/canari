@@ -277,13 +277,6 @@ pub fn verify_packed_graine_signatures(
 }
 
 impl MlsManager {
-    /// This device's own credential SIGNATURE key, public half - the key every leaf and KeyPackage it
-    /// publishes carries. Shown to its owner while it waits for a member's Add (2026-10-27), so the
-    /// owner can compare it with the key the member is asked to approve.
-    pub fn own_signature_key(&self) -> Vec<u8> {
-        self.keypair.to_public_vec()
-    }
-
     /// Signs `message` with this device's MLS credential key - the key every group this device is in
     /// already knows it by, which is what makes an endorsement checkable from a distribution group's
     /// tree without any new key to distribute.

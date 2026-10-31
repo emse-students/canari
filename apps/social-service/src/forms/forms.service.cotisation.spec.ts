@@ -71,6 +71,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       listCotisationTiers: jest.fn(() => Promise.resolve(opts.tiers ?? [])),
       holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
       holdsCotisationTier: jest.fn(() => Promise.resolve(false)),
+      holdsTierDeliveredBy: jest.fn(() => Promise.resolve(false)),
       grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
       rankCotisationTier: jest.fn(() => Promise.resolve('none')),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
@@ -436,7 +437,8 @@ describe('FormsService - cotisation configuration and granting', () => {
         'user1',
         'system',
         'avec-alcool',
-        { submissionId: 's1', sessionId: 'cs_test_1' }
+        { submissionId: 's1', sessionId: 'cs_test_1' },
+        null
       );
       // The old path called this directly with a tag string it had stored, which skipped both the
       // derivation and the sibling-tier revoke.
@@ -461,7 +463,8 @@ describe('FormsService - cotisation configuration and granting', () => {
         'user1',
         'system',
         null,
-        expect.objectContaining({ submissionId: 's1' })
+        expect.objectContaining({ submissionId: 's1' }),
+        null
       );
     });
 
@@ -487,6 +490,93 @@ describe('FormsService - cotisation configuration and granting', () => {
       );
     });
 
+    // Owner, 2026-10-30: nobody pays a cotisation twice. Admitted at submit as a non-holder, the
+    // submitter bought the tier in the shop before the form's payment landed. The decision is the
+    // LOCKED grant's (`grantCotisantIfARise`, judged in `user-tag.service.spec.ts`): the form hands
+    // it the excluded set and records whatever refusal it answers as a refund owed.
+    describe('a form for people who do NOT hold the tier it sells', () => {
+      const notHeld = {
+        id: 'f1',
+        title: 'Cotisation BDE',
+        associationId: 'asso1',
+        grantsCotisation: true,
+        cotisationVariantKey: null,
+        submitCondition: { notCotisation: { variantKeys: [null] } },
+      };
+
+      it('hands the excluded tiers to the locked grant, and records its refusal paid_not_granted', async () => {
+        const { service, userTagService, purchaseRecordService } = makeService({
+          submission: { ...paid },
+          form: notHeld,
+        });
+        userTagService.grantCotisantIfARise.mockResolvedValue({ refused: 'EXCLUDED_TIER_HELD' });
+
+        await service.markPaid('s1', 'cs_test_1');
+
+        expect(userTagService.grantCotisantIfARise).toHaveBeenCalledWith(
+          'asso1',
+          'user1',
+          'system',
+          null,
+          expect.objectContaining({ submissionId: 's1' }),
+          { variantKeys: [null] }
+        );
+        expect(purchaseRecordService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'paid_not_granted', amountCents: 1500 })
+        );
+      });
+
+      // Defect A of the review: a throw of the lock or of a read inside the grant is a failure a
+      // replay can retry, so the claim is released - never a refusal recorded on a read that failed.
+      it('releases the grant claim when the locked grant throws, and records nothing yet', async () => {
+        const { service, userTagService, submissionRepo, purchaseRecordService } = makeService({
+          submission: { ...paid },
+          form: notHeld,
+        });
+        userTagService.grantCotisantIfARise.mockRejectedValue(new Error('lock timeout'));
+
+        await service.markPaid('s1');
+
+        expect(submissionRepo.update).toHaveBeenCalledWith(
+          's1',
+          expect.objectContaining({ cotisationGrantedAt: null })
+        );
+        expect(purchaseRecordService.create).not.toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'paid' })
+        );
+      });
+    });
+
+    // The pre-existing double charge, closed on every granting form: a current holder of the very
+    // tier the form sells (bought in the shop while the payment was in flight) is not renewed.
+    it('records a renewal the locked grant refused (held) as paid_not_granted', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          title: 'Cotisation',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: null,
+        },
+      });
+      userTagService.grantCotisantIfARise.mockResolvedValue({ refused: 'held' });
+
+      await service.markPaid('s1', 'cs_test_1');
+
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'system',
+        null,
+        expect.anything(),
+        null
+      );
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
+    });
+
     it('CONTROL: a granted tier is recorded paid', async () => {
       const { service, purchaseRecordService } = makeService({
         submission: { ...paid },
@@ -506,8 +596,8 @@ describe('FormsService - cotisation configuration and granting', () => {
     });
 
     // A replay whose grant an earlier run claimed (and whose record write failed) decides nothing
-    // about the tier itself: the record reads what the submitter holds NOW, so a refused tier is
-    // still marked, never recorded as an ordinary paid purchase.
+    // about the tier itself: the record reads DURABLE state - is the tier held as THIS answer's
+    // delivery - so a refused tier is still marked, never recorded as an ordinary paid purchase.
     it('a replay that runs no grant records paid_not_granted when the tier is not held', async () => {
       const { service, userTagService, purchaseRecordService } = makeService({
         submission: { ...paid },
@@ -528,20 +618,43 @@ describe('FormsService - cotisation configuration and granting', () => {
       await service.markPaid('s1', 'cs_test_1');
 
       expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
-      expect(userTagService.holdsCotisationTier).toHaveBeenCalledWith(
+      expect(userTagService.holdsTierDeliveredBy).toHaveBeenCalledWith(
         'user1',
         'asso1',
-        'sans-alcool'
+        'sans-alcool',
+        's1'
       );
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'paid_not_granted' })
       );
-      // The read may over-mark (a concurrent run still granting), so the line asks for a check
-      // before any refund rather than asserting one is owed.
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('before refunding'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('do not grant by hand'));
     });
 
-    it('CONTROL: a replay that runs no grant records paid when the tier is held', async () => {
+    // Defect B of the review: the first run's grant was refused (the tier held, bought in the
+    // shop) and its record write failed. The replay sees the tier HELD - but not as this answer's
+    // delivery - so the refund owed survives; reading "held" alone recorded it `paid`.
+    it('a replay after a refused grant and a failed record still records paid_not_granted', async () => {
+      const { service, userTagService, purchaseRecordService } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: null,
+        },
+        claimed: ['cotisationGrantedAt'],
+      });
+      userTagService.holdsCotisationTier.mockResolvedValue(true);
+      userTagService.holdsTierDeliveredBy.mockResolvedValue(false);
+
+      await service.markPaid('s1');
+
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
+    });
+
+    it('CONTROL: a replay that runs no grant records paid when the tier is held as its delivery', async () => {
       const { service, userTagService, purchaseRecordService } = makeService({
         submission: { ...paid },
         form: {
@@ -552,7 +665,7 @@ describe('FormsService - cotisation configuration and granting', () => {
         },
         claimed: ['cotisationGrantedAt'],
       });
-      userTagService.holdsCotisationTier.mockResolvedValue(true);
+      userTagService.holdsTierDeliveredBy.mockResolvedValue(true);
 
       await service.markPaid('s1');
 
@@ -618,7 +731,8 @@ describe('FormsService - cotisation configuration and granting', () => {
         'user1',
         'treasurer1',
         'avec-alcool',
-        expect.objectContaining({ paymentMethod: 'cash', validatedBy: 'treasurer1' })
+        expect.objectContaining({ paymentMethod: 'cash', validatedBy: 'treasurer1' }),
+        null
       );
     });
 
@@ -661,7 +775,8 @@ describe('FormsService - cotisation configuration and granting', () => {
     it.each([
       ['lower', 'TIER_NOT_A_RISE'],
       ['unranked', 'TIER_NOT_RANKABLE'],
-      ['held', 'PRODUCT_ALREADY_PURCHASED'],
+      // A form words "already held" its own way: it is not a product the submitter bought.
+      ['held', 'FORM_TIER_ALREADY_HELD'],
     ])('refuses a %s tier with %s and writes nothing', async (relation, code) => {
       const { service, userTagService, submissionRepo } = makeService({ form: grantingForm });
       userTagService.rankCotisationTier.mockResolvedValue(relation);
@@ -673,9 +788,55 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
         'asso1',
         'user1',
-        'sans-alcool'
+        'sans-alcool',
+        []
       );
       expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    // A form naming a tier that no longer exists (deleted) refuses EVERYONE, a holder of nothing
+    // included, with its own code - never `TIER_NOT_RANKABLE`, which speaks of a membership held.
+    it('refuses a tier that no longer exists with FORM_TIER_NOT_SOLD, before ranking', async () => {
+      const { service, userTagService, submissionRepo } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'avec-alcool',
+            name: 'Avec alcool',
+            tagName: 'cotisant:cercle-avec-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'FORM_TIER_NOT_SOLD' }),
+      });
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: a tier that still exists is ranked, and a holder of nothing is taken', async () => {
+      const { service, userTagService } = makeService({
+        form: grantingForm,
+        tiers: [
+          {
+            variantKey: 'sans-alcool',
+            name: 'Sans alcool',
+            tagName: 'cotisant:cercle-sans-alcool',
+          },
+        ],
+      });
+
+      await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+      // The catalogue is read ONCE per submit and handed to the rank.
+      expect(userTagService.listCotisationTiers).toHaveBeenCalledTimes(1);
+      expect(userTagService.rankCotisationTier).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        'sans-alcool',
+        [expect.objectContaining({ variantKey: 'sans-alcool' })]
+      );
     });
 
     it('CONTROL: a rise is taken', async () => {

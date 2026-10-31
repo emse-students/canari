@@ -72,7 +72,8 @@ maybe('an association member write against PostgreSQL', () => {
       {} as never,
       unused,
       unused,
-      unused
+      unused,
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
     // No budget here: every integration spec has one, `jest-integration-budget.cjs`.
   });

@@ -59,6 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
+import { nextPageRingHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -98,7 +99,24 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
  */
 export class TauriMlsService extends BaseMlsService {
-  private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
+  private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** This instance's name in the native ring's holder set (`page_ring.rs`). */
+  private readonly socketHolder = nextPageRingHolder('mls-service');
+  private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
+    return this._ws;
+  }
+  /**
+   * THE ONE SEAM THAT HOLDS THE SOCKET, so the one place that says so. Holding it is what makes this
+   * page ring an incoming call (the caller's invite is a transport frame, delivered over an open
+   * socket only), and the native ring stands back for an app in front only while it is held
+   * ({@link reportPageGatewaySocket}). A change is reported; a repeat is not.
+   */
+  private set ws(next: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null) {
+    const before = this._ws !== null;
+    this._ws = next;
+    if (before !== (next !== null)) reportPageGatewaySocket(this.socketHolder, next !== null);
+  }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
   /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
@@ -659,7 +677,7 @@ export class TauriMlsService extends BaseMlsService {
    *
    * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
    * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
-   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on the workstation
    * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
    * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
    * bundles do not belong in front of the connected badge; native was doing exactly that.
@@ -1758,6 +1776,16 @@ export class TauriMlsService extends BaseMlsService {
     return invoke<string[]>('lister_identites_membres', { groupId });
   }
 
+  /** Classifies a group for the admission rule (`definir_politique_admission`). */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    await invoke<void>('definir_politique_admission', { groupId, policy });
+  }
+
+  /** The admission policy a group was classified with (`lire_politique_admission`). */
+  async getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'> {
+    return invoke<'closed' | 'open' | 'unclassified'>('lire_politique_admission', { groupId });
+  }
+
   /** The tree's signature key for one leaf, or null when it has none (`graine_member_signature_key`). */
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });
@@ -1775,11 +1803,6 @@ export class TauriMlsService extends BaseMlsService {
   /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
   async graineRun(groupId: string): Promise<GraineRunReading> {
     return invoke<GraineRunReading>('graine_run', { groupId });
-  }
-
-  /** This device's own credential signature key (`mls_own_signature_key`). */
-  async ownSignatureKey(): Promise<Uint8Array> {
-    return new Uint8Array(await invoke<number[]>('mls_own_signature_key'));
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */

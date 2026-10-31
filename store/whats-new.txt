@@ -1,3 +1,3 @@
-version: 1.5.0
+version: 1.5.3
 
-Nouveau : partager un post ou un CanaReel dans une conversation, aussi depuis le menu de partage du téléphone ; une personne qui rejoint un groupe est admise par un membre, via une carte Ajouter / Refuser ; un nouvel appareil sur votre compte est signalé. Amélioré : lecteur CanaReels plus sobre, vidéos du fil sans recadrage, sélecteur de GIF plus fluide. Corrigé : un salon créé en ligne ne disparaît plus de la liste, l'en-tête du fil ne défile plus hors écran.
+Nouveau : la liste complète des votants d'un sondage en un geste ; un nouvel appareil d'un membre rejoint seul ses conversations ; un nouveau membre d'un groupe ne reçoit plus les messages d'avant son arrivée. Amélioré : le filtre du fil tient dans une pastille flottante ; une réservation peut passer minuit. Corrigé : un message écrit pendant qu'un appareil attend d'être réintégré part ensuite ; le compteur d'associations du profil ; le GIF d'un commentaire replié.

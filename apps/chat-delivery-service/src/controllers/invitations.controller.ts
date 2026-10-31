@@ -35,10 +35,11 @@ import { In } from 'typeorm';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { announceJoinAsk } from '../utils/join-ask-announce';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   assertCallerActsOnGroup,
   isKeyDistributionGroup,
@@ -188,6 +189,14 @@ export class InvitationsController {
       where: { groupId: group.id, userId: callerId },
     });
     if (existing) return { groupId: group.id, alreadyMember: true };
+    // A link never seats a review account among members, nor a member among review accounts.
+    await assertGroupStaysOnOneSide(
+      this.groupMemberRepo.manager,
+      group.id,
+      callerId,
+      undefined,
+      '[GROUP_INVITE]'
+    );
 
     // The invitee needs at least one non-revoked KeyPackage so a member can add them.
     const keyPackages = await this.keyPackageRepo.find({
@@ -222,7 +231,7 @@ export class InvitationsController {
       group.id,
       callerId,
       deviceIds,
-      true
+      'awaiting_admission'
     );
     if (outcome !== 'written') {
       this.logger.warn(
@@ -466,7 +475,7 @@ export class InvitationsController {
     });
 
     const pendingGroupIds = memberships.filter((m) => m.status === 'pending').map((m) => m.groupId);
-    const { welcomed, locked } = await readPendingMembershipFacts(
+    const facts = await readPendingMembershipFacts(
       this.queuedMessageRepo,
       this.redis,
       safeDeviceId,
@@ -485,8 +494,8 @@ export class InvitationsController {
 
     const answer = memberships.map((m) => ({
       ...m,
-      welcomeQueued: welcomed.has(m.groupId),
-      addInFlight: locked.has(m.groupId),
+      welcomeQueued: facts.welcomed.has(m.groupId),
+      addInFlight: addInFlightOf(facts, m.groupId),
       // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
       awaitingAdmission: m.status !== 'active' && awaiting.has(m.groupId),
     }));
@@ -496,7 +505,11 @@ export class InvitationsController {
     // only past its own window. A non-zero count here on a device that keeps asking IS the defect.
     // A seat awaiting a member's answer is not stranded: a member is the one who answers it.
     const stranded = answer.filter(
-      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight && !m.awaitingAdmission
+      (m) =>
+        m.status === 'pending' &&
+        !m.welcomeQueued &&
+        m.addInFlight === false &&
+        !m.awaitingAdmission
     ).length;
     const statuses = answer
       .map(

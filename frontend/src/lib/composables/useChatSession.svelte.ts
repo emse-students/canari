@@ -19,6 +19,11 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
+import {
+  markConnectionCaughtUp,
+  setPendingCallAcceptHandler,
+  setSessionCaughtUp,
+} from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
@@ -193,7 +198,10 @@ export function useChatSession() {
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
       isWsConnected = v;
+      // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
+      if (!v) setSessionCaughtUp(false);
     },
+    onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected),
     getLoginError: () => loginError,
     setLoginError: (v) => {
       loginError = v;
@@ -434,8 +442,15 @@ export function useChatSession() {
       if (callServiceMls === svc) return;
       callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
+      // The replaced service (an account switch) withdraws what it told the native ring, so its
+      // holder does not outlive it (`CallService.retireFromPageRing`).
+      callService?.retireFromPageRing();
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
+      // An answer given on the ring joins once the socket's catch-up is done, whichever of the two
+      // comes second (`pendingCallAccept.ts`; calls.md, "An answer from the ring joins on the
+      // ring's facts").
+      setPendingCallAcceptHandler((why) => callService?.answerFromSystemSurface(why));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,

@@ -263,6 +263,22 @@ describe('FormsService - the file question', () => {
       expect((open.service as any).pricingFacts.build).not.toHaveBeenCalled();
     });
 
+    // Owner, 2026-10-30: a holder cannot park a file on a form for people without the cotisation -
+    // refused with the same TYPED code as submit, before a byte is stored.
+    it('refuses a holder of an excluded cotisation, typed FORM_COTISATION_HELD', async () => {
+      const { service } = makeService(
+        baseForm({ submitCondition: { notCotisation: { variantKeys: [null] } } })
+      );
+      (service as any).pricingFacts.build.mockResolvedValueOnce({
+        ...facts(null),
+        cotisationTiers: [null],
+      });
+      await expect(service.assertMayUploadAnswerFile('f1', 'u1')).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'FORM_COTISATION_HELD' },
+      });
+    });
+
     it('is a 404 for a form that is gone', async () => {
       const { service } = makeService(null as any);
       await expect(service.assertMayUploadAnswerFile('f1', 'u1')).rejects.toThrow('Form not found');

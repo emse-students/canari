@@ -29,6 +29,14 @@ nothing shared, and it works.
 All five are SvelteKit + Paraglide. That is what makes the divergences below comparable, and what
 makes each of them a choice rather than a consequence of the stack.
 
+**The user's standing mandate, verbatim:** *"Je veux de l'homogeneite et les meilleurs standards de
+partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
+avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."* The migration
+closed in all five repos on 2026-08-27; **what is left is JUDGEMENT, not migration**, and this page is
+its only copy - add to its tables rather than re-deriving them elsewhere. **NestJS 12 is HALF DONE and
+needs nothing done to it**, an ASSERTION rather than an ignore, so it ends unattended
+([nestjs-framework](services/nestjs-framework.md)).
+
 ---
 
 ## 1. Tolerant name search - SIX boxes, FOUR implementations, TWO with no tolerance at all
@@ -710,7 +718,7 @@ the container on `migrate-drop-profile-columns.js` - renamed to `migrate-drop-de
 stages are now `oven/bun:1.4.0-alpine`.
 
 `deploy.yml` lost its pm2 cutover step, and not on faith: the host no longer has the binary at all
-(`/home/mitv/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
+(`<home>/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
 
 **Verified locally, then IN PRODUCTION.** Locally: `docker build` green, container started, four
 migrations ran, `GET /api/health` 200. In production after the deploy went green on `1e9d62d`:

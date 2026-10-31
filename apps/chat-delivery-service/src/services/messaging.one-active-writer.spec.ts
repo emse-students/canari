@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { GroupsController } from '../controllers/groups.controller';
 import { InvitationsController } from '../controllers/invitations.controller';
@@ -921,5 +921,29 @@ describe('the CREATE_GROUP door', () => {
     expect(groupRepo.save).toHaveBeenCalled();
     expect(messaging.deviceAddressability).not.toHaveBeenCalled();
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+  });
+
+  it('records the AUTHENTICATED caller as the creator - the one account the empty roster admits', async () => {
+    await controller.createGroup(BODY, 'u1');
+
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('compares the body and the header in canonical form: an id differing only in case is the caller', async () => {
+    await controller.createGroup({ ...BODY, createdBy: ' U1 ' }, 'U1');
+
+    // Stored lower-cased, the form the guard verifies the header against.
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('refuses 403 a body createdBy naming someone other than the caller, and writes no row', async () => {
+    const err = await controller.createGroup(BODY, 'mallory').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({
+      code: 'MEMBERSHIP_NOT_ALLOWED',
+    });
+    expect(groupRepo.save).not.toHaveBeenCalled();
+    expect(messaging.deviceAddressability).not.toHaveBeenCalled();
   });
 });
