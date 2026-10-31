@@ -150,6 +150,20 @@ production.
 
 Decided with the user, not to be re-litigated.
 
+- **THREE COMMANDS RUN BEFORE ANY MEASUREMENT IS BELIEVED**, each because skipping it has already
+  cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
+  free of debris that would REATTRIBUTE the run - and it PRINTS what it does not sweep), `bun
+  identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
+  `fcmlink.mjs`. The counts and incidents behind them are on [methodology](testing-methodology.md).
+- **FOUR STANDING RULES FOR A RUN.** The bar is `PASS`, **never `PASS-DIRTY`** (user) - a P1 met on
+  the way is fixed in the SAME session, P2/P3 go to [backlog](backlog.md) rather than inline. **READ
+  THE LOGS ON EVERY PASS** (user, 2026-08-28): a heal that works is not a heal that was observed.
+  **READ THE OTHER END BEFORE FILING A CLIENT DEFECT** - one P1 died to three `docker logs`, every
+  load-bearing claim wrong. **A killed run can destroy a measurement seconds from being recorded**,
+  and losing a `chrome-w1`/`chrome-w2` profile costs a DEVICE.
+- **PIN's four rows change a PIN or restart a browser, so they run last**; HEAL-NEW's rung redesign
+  is open on a clean pass ([backlog](backlog.md)).
+
 - **THE REFRESH COOKIE IS NOT THE SAME LOCALLY, AND EVERY ROW THAT REASONS ABOUT IT SAYS SO.**
   `auth.controller.ts` emits `Secure; SameSite=None` in production and flips to `SameSite=Lax`
   without `Secure` as soon as `ALLOW_INSECURE_COOKIES=true`, which is what local runs with
