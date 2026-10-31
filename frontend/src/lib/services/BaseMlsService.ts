@@ -3504,13 +3504,20 @@ export abstract class BaseMlsService implements IMlsService {
         return 'unverified';
       }
       const settledBefore = this.keyPackageRoundsSettled;
-      const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
-      const publication = keyPackagePublication(answer);
+      // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: no round has settled in this client's
+      // life and one is running, so this is its FIRST publication in flight and the server cannot yet
+      // hold the package. The wake-up is round-driven, so the read is made when that round settles.
+      const firstPublicationRunning =
+        pass === 1 && this.keyPackageRoundsActive > 0 && this.keyPackageRoundsSettled === 0;
+      const answer = firstPublicationRunning
+        ? null
+        : await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+      const publication = answer ? keyPackagePublication(answer) : 'absent';
       if (publication === 'published') {
         this.ownKeyPackageUnverifiedReported = null;
         return 'published';
       }
-      if (answer.kind === 'unanswered') {
+      if (answer?.kind === 'unanswered') {
         console.warn(
           `[MLS] externalJoin ${short}... could not read this device's KeyPackage publication: ${sanitizeForLog(answer.detail)}`
         );
@@ -3528,7 +3535,7 @@ export abstract class BaseMlsService implements IMlsService {
       }
       if (this.keyPackageRoundsActive > 0) {
         console.log(
-          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${publication}, a round is running): the commit gate refuses an activation without one`
+          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${answer ? publication : 'first publication running, not read'}, a round is running): the commit gate refuses an activation without one`
         );
         const tornDown = await new Promise<boolean>((resolve) => {
           this.keyPackageRoundWaiters.push(resolve);
