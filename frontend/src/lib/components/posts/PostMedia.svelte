@@ -101,6 +101,13 @@
     minimalPlayer?: boolean;
     /** With `minimalPlayer`: whether its line pads for the home indicator (the frame reaches the bottom). */
     playerSafeBottom?: boolean;
+    /**
+     * `galleryMode` only: a picture of the video's first frame, drawn while the file loads and
+     * until the player holds that frame (the reel viewer's poster, `reelPosters.svelte.ts`).
+     */
+    poster?: string | null;
+    /** Called with the decrypted URL once the WHOLE file is in this device's media pool. */
+    onLoaded?: (url: string) => void;
   }
 
   let {
@@ -114,7 +121,17 @@
     postInfo,
     minimalPlayer = false,
     playerSafeBottom = true,
+    poster = null,
+    onLoaded,
   }: Props = $props();
+
+  // The whole file is in the pool: the caller may draw from it (a reel's first frame).
+  $effect(() => {
+    if (blobUrl && onLoaded) {
+      const url = blobUrl;
+      untrack(() => onLoaded(url));
+    }
+  });
 
   let blobUrl = $state<string | null>(null);
   /**
@@ -349,7 +366,15 @@
 
 {#if galleryMode}
   <!-- Inside parent gallery lightbox - just render the content -->
-  {#if loading}
+  {#if loading && poster}
+    <img
+      src={poster}
+      alt=""
+      aria-hidden="true"
+      class="pointer-events-none h-full w-full object-contain select-none"
+      data-video-first-frame-poster
+    />
+  {:else if loading}
     <div class="flex min-h-[12rem] w-full items-center justify-center">
       <ImageIcon size={32} class="animate-pulse text-white opacity-20" strokeWidth={1.5} />
     </div>
@@ -380,6 +405,7 @@
         class="h-full w-full"
         minimal={minimalPlayer}
         safeBottom={playerSafeBottom}
+        {poster}
       />
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">

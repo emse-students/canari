@@ -39,3 +39,20 @@ describe('PostMediaDto.encoding', () => {
     ]);
   });
 });
+
+describe('PostMediaDto.placeholder', () => {
+  it('keeps a reel first frame ThumbHash through the whitelist', () => {
+    const dto = plainToInstance(PostMediaDto, {
+      ...MEDIA,
+      placeholder: 'YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==',
+    });
+    expect(validateSync(dto, { whitelist: true })).toEqual([]);
+    expect(dto.placeholder).toBe('YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==');
+  });
+
+  it('refuses a value too long to be a ThumbHash', () => {
+    expect(validate({ ...MEDIA, placeholder: 'a'.repeat(129) }).map((e) => e.property)).toEqual([
+      'placeholder',
+    ]);
+  });
+});
