@@ -69,6 +69,15 @@ export function internalLydiaCallbackKeyUrl(): string {
   return socialUrl('internal/associations/lydia-callback-key');
 }
 
+/**
+ * Internal route answering WHICH association holds a `vendor_token`, and whether its onboarding is
+ * marked complete - a read, nothing else, for the log line of an unsigned business webhook. Under
+ * `/api/internal/` like the key route, the token in the body so no access log records it.
+ */
+export function internalLydiaBusinessOfVendorTokenUrl(): string {
+  return socialUrl('internal/associations/lydia-business-of-vendor-token');
+}
+
 /** Internal route releasing the products withheld while payments were disabled (provider switched on). */
 export function providerActivatedUrl(): string {
   return socialUrl('internal/payments/provider-activated');

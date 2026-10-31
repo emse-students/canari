@@ -8,6 +8,9 @@ import { Log } from '$lib/utils/Log';
  * node and paints what it shows: the photo when one has loaded, the glyph when it is an icon, and
  * otherwise the initials on their own background - plus the presence dot when the web shows one.
  * The colours are the node's computed ones, so they are the design tokens of the current theme.
+ * A PLACEHOLDER (`.avatar-placeholder`, a gradient since #2776) has no `background-color` to read:
+ * its two stops are read from the custom properties `app.css` resolves for its `data-hue`, and
+ * painted as the same 135deg gradient - no second copy of the palette lives here.
  */
 
 /** The bitmap's side in CSS pixels (the web pill's `h-8` avatar), drawn at 3x like the tab icons. */
@@ -63,6 +66,39 @@ function paintedBackground(box: HTMLElement, root: HTMLElement): string | null {
 }
 
 /**
+ * The two gradient stops the CSS paints on the placeholder inside `root`, or null when `root` holds
+ * none. They are the COMPUTED `--avatar-hue-from/to` of the `.avatar-placeholder[data-hue]` rule,
+ * so `app.css` stays the one source of the palette.
+ */
+export function placeholderStops(root: HTMLElement): { from: string; to: string } | null {
+  const node = root.matches('.avatar-placeholder')
+    ? root
+    : root.querySelector<HTMLElement>('.avatar-placeholder');
+  if (!node) return null;
+  const style = getComputedStyle(node);
+  const from = style.getPropertyValue('--avatar-hue-from').trim();
+  const to = style.getPropertyValue('--avatar-hue-to').trim();
+  if (!from || !to) {
+    Log.i('avatarBitmap', `the placeholder (hue ${node.dataset.hue}) resolved no gradient stops`);
+    return null;
+  }
+  return { from, to };
+}
+
+/** Fills the square with CSS's `linear-gradient(135deg, from, to)`: corner to corner on a square. */
+function fillPlaceholderGradient(
+  ctx: CanvasRenderingContext2D,
+  side: number,
+  stops: { from: string; to: string }
+): void {
+  const gradient = ctx.createLinearGradient(0, 0, side, side);
+  gradient.addColorStop(0, stops.from);
+  gradient.addColorStop(1, stops.to);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, side, side);
+}
+
+/**
  * `root` (the node the web avatar is drawn in) as a PNG data URL, or null when it shows nothing
  * yet. The circle is the pill's; a square photo is cropped to it like `object-cover`.
  */
@@ -96,14 +132,19 @@ export async function renderedAvatarPng(root: HTMLElement): Promise<string | nul
       side
     );
   } else if (svg) {
+    const stops = placeholderStops(root);
+    if (stops) fillPlaceholderGradient(ctx, side, stops);
     // A glyph (a channel's `#`) sits in the middle of the circle at the size the web gives it.
     const image = await svgImage(svg);
     const glyph = (svg.getBoundingClientRect().width || SIDE * 0.56) * SCALE;
     ctx.drawImage(image, (side - glyph) / 2, (side - glyph) / 2, glyph, glyph);
   } else if (initials) {
     const style = getComputedStyle(initials);
-    const ground = paintedBackground(initials, root);
-    if (ground) {
+    const stops = placeholderStops(root);
+    const ground = stops ? null : paintedBackground(initials, root);
+    if (stops) {
+      fillPlaceholderGradient(ctx, side, stops);
+    } else if (ground) {
       ctx.fillStyle = ground;
       ctx.fillRect(0, 0, side, side);
     } else {
