@@ -302,13 +302,13 @@ add_declared() {
   if [ -z "$2" ]; then fail "could not read the dev host port from $1"; else declared="$declared $1=$2"; fi
 }
 add_declared "docker-compose.dev.yml" \
-  "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | head -1 |
+  "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | sed -n 1p |
     grep -oE '[0-9]+' || true)"
 add_declared "deploy-environment.sh" \
   "$(grep -A4 '^dev)' infrastructure/deploy/deploy-environment.sh |
     grep -oE 'DEFAULT_FRONTEND_PORT=[0-9]+' | grep -oE '[0-9]+' || true)"
 add_declared "scheduled.yml" \
-  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/scheduled.yml | head -1 |
+  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/scheduled.yml | sed -n 1p |
     grep -oE ':[0-9]+' | tr -d ':' || true)"
 
 disagree=""
@@ -365,7 +365,7 @@ if [ ! -f "$out" ]; then
 else
   pass "a complete production environment renders"
 
-  got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
+  got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
   # WHAT PRODUCTION IS ACTUALLY SERVING, read off the running estate on 2026-09-24 and pinned here.
   # This used to compare against the value `serve-prod.yml` computed inline, which was the right
   # check while the conversion to `render-env.sh` was still ahead; that shell is gone, and a
@@ -388,7 +388,7 @@ else
   canon_out="$TMP/allow-origin-canonical.env"
   # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
   render prod "$canon_out" $(prod_env) BASE_URL=https://canari.emse.fr >"$TMP/canon.log" 2>&1 || true
-  canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | head -1)"
+  canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | sed -n 1p)"
   canon_want="ALLOW_ORIGIN=https://canari.emse.fr,https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
   if [ "$canon_got" = "$canon_want" ]; then
     pass "with BASE_URL on the canonical apex, BOTH public names are allowed"
@@ -478,7 +478,7 @@ else
     fail "dev's JWT_SECRET is not devjwt"
   fi
 
-  got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
+  got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
   case "$got" in
   *"https://canari-emse.fr"*) fail "dev's CORS list carries production's origin: $got" ;;
   *"https://dev.canari-emse.fr"*) pass "dev's CORS list carries dev's origin and not production's" ;;
@@ -768,7 +768,7 @@ for wf in .github/workflows/*.yml; do
   # A workflow-level group covers every job in the file, which is the right shape for the three
   # deploy libraries: they share one group, so no two of them overlap either.
   if grep -q '^concurrency:' "$wf"; then
-    group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | head -1)"
+    group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | sed -n 1p)"
     pass "$name serialises the whole file (group: $group)"
     continue
   fi
@@ -800,7 +800,7 @@ done
 # that splitting the file changed nothing about what may overlap; a file that forgot the word
 # would silently leave that group killable, which is the harm this asserts against.
 for wf in build serve-dev serve-prod; do
-  if grep -A2 '^concurrency:' ".github/workflows/$wf.yml" | grep -q 'cancel-in-progress: false'; then
+  if grep -A2 '^concurrency:' ".github/workflows/$wf.yml" | grep 'cancel-in-progress: false' >/dev/null; then
     pass "$wf.yml queues behind a running deploy instead of killing it"
   else
     fail "$wf.yml does not declare 'cancel-in-progress: false' - a cancelled deploy leaves the estate in whatever state the kill found"
