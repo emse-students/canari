@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Réservations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="mockup.js"></script>
+  </head>
+  <body>
+    <div id="page" class="page reading">
+      <div class="stack loose">
+        <div class="note">
+          <b>Mockup - Reservations (D16, D37, D45).</b> The poster becomes a THUMBNAIL in the list
+          (WP-B6 left the list on icons: <code>SectionHub</code> rows carry no image). A space with no
+          poster keeps an icon in the same box. Nothing else on this page changes.
+        </div>
+
+        <div class="stack tight">
+          <h1>Réservations</h1>
+          <p class="muted">Les salles et créneaux que vous pouvez réserver.</p>
+        </div>
+
+        <div class="stack tight">
+          <h3>Vos prochaines réservations</h3>
+          <div class="card list">
+            <a class="list-row" href="space.html" style="text-decoration: none; color: inherit">
+              <div class="thumb" style="width: 40px; height: 40px"><i data-lucide="music"></i></div>
+              <div class="grow">
+                <div class="strong">Aujourd'hui · 17:00 – 18:00</div>
+                <div class="xs muted">Salle de musique · avec Léa M.</div>
+              </div>
+              <span class="pill"><i data-lucide="bell" class="icon-sm"></i>16:00</span>
+            </a>
+            <a class="list-row" href="space.html?case=alumni" style="text-decoration: none; color: inherit">
+              <div class="thumb" style="width: 40px; height: 40px"><i data-lucide="briefcase"></i></div>
+              <div class="grow">
+                <div class="strong">Jeu. 12 nov. · 14:25 – 14:50</div>
+                <div class="xs muted">Entretiens Alumni 2026 · Camille — Conseil</div>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <div class="stack tight">
+          <h3>Espaces</h3>
+          <div class="card list" id="spaces"></div>
+        </div>
+
+        <div class="stack tight">
+          <div class="row"><h3 class="grow">Mes espaces</h3><a class="btn sm" href="wizard.html"><i data-lucide="plus"></i>Créer un espace</a></div>
+          <div class="card list">
+            <div class="list-row">
+              <div class="thumb"><i data-lucide="calendar-clock"></i></div>
+              <div class="grow"><div class="strong">Cours particuliers de maths</div><div class="xs muted">Personnel · lien seulement</div></div>
+              <a class="btn icon ghost" href="dashboard.html" aria-label="Gérer"><i data-lucide="settings-2"></i></a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      MK.shell({ active: 'bookings' });
+      const spaces = [
+        ['music', 'Salle de musique', 'BDA', '1 salle', 'space.html', true],
+        ['briefcase', 'Entretiens Alumni 2026', 'Association des Alumni', '14 alumni · 12 et 13 nov.', 'space.html?case=alumni', true],
+        ['dumbbell', 'Salle de sport', 'BDS', '2 salles', 'space.html', false],
+        ['printer', 'Imprimante 3D', 'Club Robotique', '2 machines', 'space.html', true],
+      ];
+      document.getElementById('spaces').innerHTML = spaces.map(([ic, n, o, sub, href, poster]) =>
+        '<a class="list-row" href="' + href + '" style="text-decoration:none;color:inherit">' +
+        '<div class="thumb"' + (poster ? '' : ' style="background:var(--control-fill)"') + '>' + MK.icon(ic) + '</div>' +
+        '<div class="grow"><div class="strong ellipsis">' + n + '</div><div class="xs muted ellipsis">' + o + ' · ' + sub + '</div></div>' +
+        MK.icon('chevron-right') + '</a>').join('');
+      MK.paintIcons();
+    </script>
+  </body>
+</html>

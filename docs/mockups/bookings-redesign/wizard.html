@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Créer un espace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="mockup.js"></script>
+  </head>
+  <body>
+    <div id="page" class="page reading">
+      <div class="stack loose">
+        <div class="note">
+          <b>Mockup - the optional 3-step creation (D52).</b> Offered when a space is created; "Je
+          règle tout moi-même" skips to the five sections. Each step writes only settings that exist;
+          everything else keeps its default (nothing in section 4, purge after 7 days). Steps:
+          <a href="?step=1">1</a> · <a href="?step=2">2</a> · <a href="?step=3">3</a>.
+        </div>
+
+        <div class="row">
+          <a class="btn icon ghost" href="spaces.html" aria-label="Fermer"><i data-lucide="x"></i></a>
+          <h1 class="grow">Nouvel espace</h1>
+          <a class="xs" href="settings.html">Je règle tout moi-même</a>
+        </div>
+
+        <div class="stepper" id="stepper"></div>
+
+        <div id="s1" class="stack">
+          <h2>C'est quoi ?</h2>
+          <div class="field"><label>Nom</label><input class="input" placeholder="Ex. : Salle de musique, Permanence du BDE…" value="Salle de musique" /></div>
+          <div class="field"><label>En une phrase <span class="muted">(facultatif)</span></label><textarea class="input" placeholder="Ce qu'on y trouve, les règles à connaître">Piano droit, batterie, deux amplis.</textarea></div>
+          <div class="field">
+            <span class="label">Affiche <span class="muted">(facultatif)</span></span>
+            <button class="poster" style="border: 1px dashed var(--cn-border); cursor: pointer; justify-content: center; align-items: center">
+              <span class="row strong"><i data-lucide="image-plus"></i>Ajouter une image</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="s2" class="stack">
+          <h2>Quand peut-on réserver ?</h2>
+          <div class="tpl" id="tpl" style="grid-template-columns: repeat(2, minmax(0, 1fr))"></div>
+          <div id="mini-painter"></div>
+          <span class="xs muted">Vous pourrez affiner en peignant la semaine, ajouter des fermetures et des colonnes plus tard.</span>
+          <div class="field">
+            <span class="label">Combien de temps dure une réservation ?</span>
+            <div class="choice on"><span class="dot"></span><div class="grow"><div class="strong">Au choix</div><div class="row wrap xs">jusqu'à <select class="input" style="width: 96px"><option>3 h</option></select>, par 30 min</div></div></div>
+            <div class="choice"><span class="dot"></span><div><div class="strong">Créneaux fixes</div><div class="xs muted">Tous de la même durée</div></div></div>
+          </div>
+        </div>
+
+        <div id="s3" class="stack">
+          <h2>Pour qui ?</h2>
+          <div class="field">
+            <span class="label">Qui peut réserver ?</span>
+            <div class="choice on"><span class="dot"></span><div class="strong">Tout le monde sur Canari</div></div>
+            <div class="choice"><span class="dot"></span><div><div class="strong">Seulement certaines personnes</div><div class="xs muted">Par promo, formation ou cotisation</div></div></div>
+          </div>
+          <div class="field">
+            <span class="label">Les autres voient-ils qui a réservé ?</span>
+            <div class="seg"><button>Oui</button><button class="on">Non, juste « Réservé »</button></div>
+          </div>
+          <div class="field">
+            <span class="label">Comment le trouve-t-on ?</span>
+            <div class="seg"><button class="on">Dans la liste</button><button>Lien ou QR code seulement</button></div>
+          </div>
+        </div>
+
+        <div class="row" style="justify-content: space-between">
+          <a class="btn" id="back">Retour</a>
+          <a class="btn primary" id="next"></a>
+        </div>
+      </div>
+    </div>
+    <script>
+      MK.shell({ active: 'bookings' });
+      const step = +(MK.params.get('step') || 1);
+      const names = ['C\'est quoi ?', 'Quand ?', 'Pour qui ?'];
+      document.getElementById('stepper').innerHTML = names.map((n, i) =>
+        (i ? '<span class="bar"></span>' : '') +
+        '<span class="st ' + (i + 1 === step ? 'on' : i + 1 < step ? 'done' : '') + '"><b>' + (i + 1 < step ? MK.icon('check', 'icon-sm') : i + 1) + '</b><span class="desktop-only">' + n + '</span></span>').join('');
+      [1, 2, 3].forEach((i) => (document.getElementById('s' + i).style.display = i === step ? '' : 'none'));
+      const q = (s) => '?step=' + s + (MK.params.get('theme') ? '&theme=' + MK.params.get('theme') : '') + (MK.params.get('notes') ? '&notes=' + MK.params.get('notes') : '');
+      const back = document.getElementById('back');
+      if (step === 1) back.style.visibility = 'hidden';
+      back.href = q(step - 1);
+      const next = document.getElementById('next');
+      next.href = step < 3 ? q(step + 1) : 'dashboard.html';
+      next.innerHTML = step < 3 ? 'Suivant' + MK.icon('arrow-right') : MK.icon('check') + 'Créer l\'espace';
+
+      const T = [
+        ['always', 'Toujours ouvert', [[0, 48], [0, 48], [0, 48], [0, 48], [0, 48], [0, 48], [0, 48]]],
+        ['weekdays', 'Jours ouvrés 8h-20h', [[16, 40], [16, 40], [16, 40], [16, 40], [16, 40], null, null]],
+        ['event', 'Événement ponctuel', [null, null, null, [28, 38], [28, 38], null, null]],
+        ['empty', 'Vide', [null, null, null, null, null, null, null]],
+      ];
+      const tpl = document.getElementById('tpl');
+      tpl.innerHTML = T.map(([k, name, mini]) =>
+        '<button data-k="' + k + '" class="' + (k === 'weekdays' ? 'on' : '') + '"><div class="mini">' +
+        mini.map((r) => '<span>' + (r ? '<i style="top:' + (r[0] / 48) * 100 + '%;height:' + ((r[1] - r[0]) / 48) * 100 + '%"></i>' : '') + '</span>').join('') +
+        '</div><span class="strong">' + name + '</span></button>').join('');
+      const p = MK.painter(document.getElementById('mini-painter'), { initial: MK.TEMPLATES.weekdays(), fromRow: 12, toRow: 46 });
+      tpl.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        tpl.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        p.set(MK.TEMPLATES[b.dataset.k]());
+      });
+      MK.paintIcons();
+    </script>
+  </body>
+</html>

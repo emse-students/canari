@@ -92,6 +92,62 @@ see who else booked.
 | D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
 | D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
 
+**The mockups of D44-D54 (D54's first step, 2026-10-27)** are static pages in
+[`docs/mockups/bookings-redesign/`](../mockups/bookings-redesign/index.html): open `index.html`
+for every screen at 390 and 1280 px, light or dark, with or without the annotations. They copy the
+tokens of `frontend/src/app.css` and draw Lucide icons; nothing in them is shipped code. Screens:
+`spaces.html` (the list and its thumbnails), `space.html` (music room) and `space.html?case=alumni`
+(14 columns, fixed slots), `dashboard.html`, `availability.html` (and `?tpl=event`),
+`settings.html`, `wizard.html` (`?step=1..3`). The drag on the grid and the painter work.
+
+### The redesign's work packages (draft 2026-10-27, NOT STARTED: waiting for the user's answers below)
+
+One draft pull request per package, as for WP-B*. Nothing here changes D1-D43 except where D44-D53
+already did; the data model of WP-B1 stays, and every screen writes through the routes WP-B3..B6
+built. **"Front" = `frontend/` and Paraglide only; "server" = social-service (and a migration when
+named).**
+
+| WP | What | Front / server | Named starting point | Proof it is done |
+|---|---|---|---|---|
+| **WP-R1** | D44 - the hidden default column. `POST spaces` creates ONE resource named after the space, in the creation's transaction, and accepts an optional initial availability for it (the wizard's one call, D52: no half-created space when a second call fails). The editor and the booker's page show no column while the space has exactly one; "Ajouter une colonne" names both. An existing space with no resource is offered the same "Ajouter une colonne" | **server** (`booking-spaces.service.ts` `create`, `CreateSpaceDto`) + front (`SpaceEditor.svelte`, `ResourceEditor.svelte`) | `booking-spaces.service.ts` `create` | integration: a created space has one resource, a refused availability rolls the space back; front: one-column space renders no column word at 390/1280 |
+| **WP-R2** | D46-D48 - the booker's page: the poster as a banner (D45, `SpacePoster` exists), the WEEK with days as columns, the column selector (pills up to 5, a list beyond), drag-for-duration per day column, the phone's one day with its week strip (a dot per day from the same read); closed days folded. **Deletes** `SpacePlanning.svelte` and the grid/planning choice (D47) | **front only** - one `GET spaces/:id/slots` of 8 local days (the day before included, as `slotsReadRange` does) | `components/bookings/booker/SpaceGrid.svelte`, `lib/bookings/grid.ts` (`dragRange`, `gridOpeningDate`) | `grid.ts` tests for a week (DST week, a night window, a folded day); seen at 390/1280; the finger hold-and-drag read on both phones |
+| **WP-R3** | D45 - the poster as a thumbnail in Reservations' list. `GET spaces` ALREADY returns `poster`; the rows decrypt it lazily (in view only) | **front only** | `routes/bookings/+page.svelte`, `SectionHub` row | a list of 20 spaces decrypts only what is on screen |
+| **WP-R4** | D49 - the painted week: the four templates, press-and-drag paints or erases a rectangle at a 30-min grain, the "En clair" rows as the precise and accessible way, "Événement ponctuel" as a list of dated lines; the 24/7 warning and the D29 refusal (`StrandedBookings`) kept | **front only** - the painter writes the same `PUT resources/:id/availability` | `lib/bookings/availability.ts`, `AvailabilityEditor.svelte` | painter set <-> stored lines round-trip tests (a night range, a whole day, dated lines); seen at 390/1280 |
+| **WP-R5** | D50 - the organiser's dashboard: upcoming (live, coming, by start), who booked, quick cancel in place, the week grid in block mode (a drag opens "Bloquer"), "Ajouter une colonne" | front + **server**: `GET spaces/:id/bookings` gains `from` (and live only) - today it pages EVERY booking from the oldest, so the coming ones sit behind the history | `bookings.service.ts` `spaceBookings`, `BlockSheet.svelte` | integration: `from` returns only coming live ones, paged; the block drag stops at a booking |
+| **WP-R6** | D51 - the five sections reworded as plain questions, each with its one-line current answer, sections 4 and 5 collapsed with their badges | **front only** (Paraglide, `SpaceEditor.svelte`) | `SpaceEditor.svelte`, `lib/bookings/spaceSettings.svelte.ts` | `paraglideMessages.test.ts`; seen at 390/1280 and 200 % text |
+| **WP-R7** | D52 - the optional 3-step wizard (C'est quoi ? / Quand ? / Pour qui ?), one `POST spaces` at the end (WP-R1), "Je règle tout moi-même" to the sections | **front only** after WP-R1 | `EditBookingsTab.svelte` (where a space is created today) | a wizard space and a sections space read the same settings back |
+| **WP-N** | D53 - notifications, its OWN package: (1) the ORGANISER's cancellation tells the holder and every participant still in; (2) a participant ADDED to a booking is told (and the holder of a booking made on their behalf); (3) a REMINDER before the slot, delay adjustable. In-app row and push through `PostNotificationsService` (`pushContent` gains the three types). The reminder is CLAIMED in durable state before it is sent, as `forms-reminder.scheduler.ts` does (one claim column per person: the holder on `bookings`, a participant on `booking_participants`), never decided by a clock alone; a cancelled or withdrawn person is never reminded. The D13 sentences ("personne n'est prévenu") go from every screen and from the confirmations. The privacy policy and register row C17 gain the notifications | **server** (migration: the delay setting and the claim columns; next free number re-checked on `main`) + front (settings field, the booking sheet, the strings) | `forms/forms-reminder.scheduler.ts`, `posts/post-notifications.service.ts`, `bookings.service.ts` `cancel` / `book` | integration: a reminder run twice sends once; a booking cancelled before its reminder sends none; an organiser cancel notifies holder and participants, a holder's own cancel notifies as the user decides (Q-R2) |
+| **WP-R8** | Readings and the guide: both phones (the finger drag, the painter under a finger, the strip), the French user guide's bookings page redone with the new words | - | `docs/user-guide/` | the readings recorded here |
+
+Order: **WP-R1 first** (every screen assumes the default column); then WP-R2, R3, R4 and R6 in
+parallel; WP-R5 after R2 (it reuses the week grid); WP-R7 after R1 and R6. **WP-N is independent**
+and can start at once. WP-R8 closes.
+
+**What the mockups deliberately did NOT change**: D29 (an availability change over coming bookings
+is refused and names them), D36 (a booking is never edited), D9 (names per space), D32 (private
+info to the booking's people), the drag's ceiling (`maxSteps`) and its 250 ms finger hold.
+
+### Questions for the user (to answer before WP-R1 starts)
+
+| # | Question | What the mockups assume |
+|---|---|---|
+| Q-R1 | **Who sets the reminder delay** (D53)? The organiser for the space, each person on their booking, or the organiser's default with a per-person override? Default value, and may it be "no reminder"? | organiser default (1 h) + per-person select in the booking sheet |
+| Q-R2 | Besides the organiser's cancellation: does a **holder's own cancellation** notify their participants, and a **participant's withdrawal** notify the holder? | not notified (D53 names neither) |
+| Q-R3 | May the organiser add an **optional message** to a cancellation (carried by the notification only, not stored in the history)? | yes |
+| Q-R4 | **Deleting a space** (D27), and a personal space erased with its owner's account (WP-B1), erase coming bookings: are their people notified? | not decided; drawn as a question |
+| Q-R5 | **What a push shows on a lock screen** for a link-only space (the psychologist case): the space's name, or a neutral "Votre rendez-vous" ? | the space's name everywhere |
+| Q-R6 | A booking made **inside its reminder delay** (booked at 16:30 for 17:00 with a 1 h reminder): no reminder, or one at once? | no reminder |
+| Q-R7 | Is the organiser **told when someone books or cancels**? (not in D53) | no |
+| Q-R8 | Keep, for the organiser only, the OLD **one-day grid with all columns side by side** (alumni: who is free at 15:00)? D46 replaces it for bookers; D47 removed the planning | removed |
+| Q-R9 | A space brought **back to one column**: does that column hide again? | yes |
+| Q-R10 | **Closed days fold** to a narrow strip in the week (the alumni event shows 2 wide days, 5 strips): agreed? | yes |
+| Q-R11 | The painter's grain is **30 min**, the "En clair" rows give the exact times: fine enough? And on a phone, does a finger paint at once (the painter then never scrolls the page) or hold first like the grid? | 30 min; paints at once |
+| Q-R12 | An "**apply these hours to every column**" button in the painter (N calls, one per column)? | absent |
+| Q-R13 | Section placement: the drawing puts the **ceiling of people** and the **"after booking" info** in section 3 ("Qui peut réserver, et que demande-t-on ?"), where D35 had the ceiling in section 4. And the five titles as drawn: L'essentiel / Quand peut-on réserver ? / Qui peut réserver, et que demande-t-on ? / Règles de réservation / Données | as drawn |
+| Q-R14 | **When is the wizard offered** (D52 "optional variant")? On every creation with a "Je règle tout moi-même" link, or only on request? | on every creation, skippable |
+| Q-R15 | A **"Réservations" category** in the notification settings, so a person can mute the three kinds? | not drawn |
+| Q-R16 | The dashboard's **counters** (bookings this week, hours taken, blocks): wanted, or noise? | drawn |
+
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
@@ -606,6 +662,7 @@ until the lead session says so.
 ## Open
 
 - Validation of the work-package plan below by the user, then the pull request carrying this page and the backlog pointer.
+- The redesign (D44-D54): the user's look at the mockups and answers to Q-R1..Q-R16, then WP-R1 ([work packages](#the-redesigns-work-packages-draft-2026-10-27-not-started-waiting-for-the-users-answers-below)).
 
 ## Coordination
 
