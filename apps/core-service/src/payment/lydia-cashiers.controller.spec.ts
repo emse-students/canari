@@ -20,7 +20,7 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 const ASSO = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
 const ROW = '5b0b7d0e-4f8e-4d3a-9c55-0d6b7c0f1a11';
 const PHONE = '+33612345678';
-const HOLDER = '+33698765432';
+const CONTEXT_PHONE = '+33698765432';
 const TOKEN = '2d0b7c6a-3f4e-4d5c-9b8a-7f6e5d4c3b2a';
 const req = { headers: { 'x-user-id': 'treasurer' } } as never;
 
@@ -189,7 +189,7 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
   const claim = {
     vendorToken: 'vendor-1',
     cashierPhone: PHONE,
-    actorPhone: HOLDER,
+    contextPhone: CONTEXT_PHONE,
     claimToken: TOKEN,
   };
 
@@ -199,7 +199,7 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
     await expect(
       make({ removeLydiaCashier }).revokeCashier(ASSO, ROW, { number: 'current' }, req)
     ).resolves.toEqual({ ok: true });
-    expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', HOLDER, PHONE);
+    expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', CONTEXT_PHONE, PHONE);
     expect(postsTo('/lydia-cashier-revoke')[0][1]).toEqual({
       cashierId: ROW,
       number: 'current',
@@ -210,7 +210,7 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
     });
   });
 
-  it('a refusal before any change at Lydia (the control read) releases the claim with its token', async () => {
+  it('a refusal before any change at Lydia releases the claim with its token', async () => {
     social({ '/lydia-cashier-revoke-claim': claim });
     await expect(
       make({
@@ -272,7 +272,7 @@ describe('InternalLydiaCashiersController - the erasure removal is internal only
       controller.revokeForErasure('wrong', {
         associationId: ASSO,
         vendorToken: 'vendor-1',
-        actorPhone: HOLDER,
+        contextPhone: CONTEXT_PHONE,
         cashierPhone: PHONE,
       })
     ).rejects.toBeInstanceOf(HttpException);

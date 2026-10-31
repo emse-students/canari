@@ -85,10 +85,10 @@ export class LydiaCashierOps {
 
   /**
    * REMOVES ONE NUMBER of cashier row `cashierId` at Lydia, and proves it: social-service checks
-   * and claims (`lydia-cashier-revoke-claim`: the row, the last-holder guard, the confirmed
-   * Responsable, the numbers opened under the claim's lock), Lydia's control read must show the
-   * Responsable's 13 rights (`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING` otherwise, nothing changed), Lydia
-   * is asked to remove the number, and its re-read decides (`removeCashier`). Only 0
+   * and claims (`lydia-cashier-revoke-claim`: the row, the guard that keeps the Responsable's
+   * current number, the numbers opened under the claim's lock), nothing is removed unless the
+   * Responsable still holds full rights (`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING` otherwise, nothing
+   * changed), Lydia is asked to remove the number, and its re-read decides (`removeCashier`). Only 0
    * rights is a removal: the row is closed (`current`) or the old number cleared (`previous`).
    * Anything else is recorded as a removal NOT confirmed - the row stays live, flagged - and answered
    * 502 `LYDIA_CASHIER_REVOKE_UNCONFIRMED`, at ERROR. Repeating a removal is safe, so every outcome
@@ -105,7 +105,7 @@ export class LydiaCashierOps {
     const target = await this.socialStep<{
       vendorToken: string;
       cashierPhone: string;
-      actorPhone: string;
+      contextPhone: string;
       claimToken: string;
     }>(associationId, 'lydia-cashier-revoke-claim', { cashierId, number });
     let removal: { verified: boolean; held: number | null };
@@ -113,11 +113,11 @@ export class LydiaCashierOps {
       removal = await this.paymentService.removeLydiaCashier(
         associationId,
         target.vendorToken,
-        target.actorPhone,
+        target.contextPhone,
         target.cashierPhone
       );
     } catch (err: unknown) {
-      // Refused before any change (no Provider key, a malformed number, the control read):
+      // Refused before any change (no Provider key, a malformed number, the Responsable not intact):
       // nothing changed at Lydia.
       await this.release(associationId, target.claimToken);
       throw err;

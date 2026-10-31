@@ -1048,7 +1048,7 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
 describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
   const PRIVATE = 'provider-private';
   const PHONE = '+33612345678';
-  const HOLDER = '+33698765432';
+  const CONTEXT_PHONE = '+33698765432';
   /** Five names Lydia listed on homologation beyond the documented 13 (2026-10-31). */
   const EXTRAS = [
     'access_b2c_cancel',
@@ -1062,8 +1062,8 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     ...none,
     ...Object.fromEntries(names.map((n) => [n, '1'])),
   });
-  /** The control read of the Responsable's number before a removal: 13 of 13. */
-  const holderOk = { data: { error: '0', data: rightsOf(LYDIA_CASHIER_PERMISSIONS) } };
+  /** The Responsable reads 13 of 13: intact. */
+  const responsableIntact = { data: { error: '0', data: rightsOf(LYDIA_CASHIER_PERMISSIONS) } };
 
   function withKey() {
     return new LydiaPaymentProvider({
@@ -1221,12 +1221,14 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     ]);
   });
 
-  it('a removal: the control read first, then the removal, then a re-read at 0 - confirmed', async () => {
+  it('a removal: the Responsable intact, then the removal, then a re-read at 0 - confirmed', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(holderOk)
+      .mockResolvedValueOnce(responsableIntact)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockResolvedValueOnce({ data: { error: '0', data: none } });
-    await expect(withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)).resolves.toEqual({
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
       verified: true,
       held: 0,
     });
@@ -1234,19 +1236,19 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     expect(urls[0]).toMatch(/\/api\/business\/getpermission\.json$/);
     expect(
       new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string).get('cashier_phone')
-    ).toBe(HOLDER);
+    ).toBe(CONTEXT_PHONE);
     expect(urls[1]).toMatch(/\/api\/business\/removecashier\.json$/);
     expect(
       Object.fromEntries(new URLSearchParams(mockedAxios.post.mock.calls[1][1] as string))
     ).toEqual({
       vendor_token: 'vendor-1',
-      phone: HOLDER,
+      phone: CONTEXT_PHONE,
       cashier_phone: PHONE,
     });
     expect(urls[2]).toMatch(/\/api\/business\/getpermission\.json$/);
   });
 
-  it('the control read short of 13: the typed 409 HOLDER_RIGHTS_MISSING, and nothing is removed', async () => {
+  it('the Responsable short of 13: the typed 409 HOLDER_RIGHTS_MISSING, and nothing is removed', async () => {
     mockedAxios.post.mockResolvedValueOnce({
       data: {
         error: '0',
@@ -1254,7 +1256,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
       },
     });
     await expect(
-      withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
     ).rejects.toMatchObject({
       status: 409,
       response: { code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING },
@@ -1262,16 +1264,16 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
   });
 
-  it('the control read malformed or unanswered: refused before any removal', async () => {
+  it('the Responsable check malformed or unanswered: refused before any removal', async () => {
     mockedAxios.post.mockResolvedValueOnce({ data: { error: '0', data: null } });
     await expect(
-      withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
     ).rejects.toMatchObject({
       response: { code: LYDIA_CASHIER_READBACK_INVALID },
     });
     mockedAxios.post.mockRejectedValueOnce(new Error('socket hang up'));
     await expect(
-      withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
     ).rejects.toMatchObject({
       response: { code: LYDIA_UNREACHABLE },
     });
@@ -1283,10 +1285,12 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
   it('a removal whose re-read still shows a right - documented or not - is NOT confirmed', async () => {
     for (const left of ['access_collect', 'access_tap2pay']) {
       mockedAxios.post
-        .mockResolvedValueOnce(holderOk)
+        .mockResolvedValueOnce(responsableIntact)
         .mockResolvedValueOnce({ data: { error: '0' } })
         .mockResolvedValueOnce({ data: { error: '0', data: rightsOf([left]) } });
-      await expect(withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)).resolves.toEqual({
+      await expect(
+        withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+      ).resolves.toEqual({
         verified: false,
         held: 1,
       });
@@ -1295,10 +1299,12 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a removal whose re-read cannot be trusted is NOT confirmed (held unknown)', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(holderOk)
+      .mockResolvedValueOnce(responsableIntact)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockResolvedValueOnce({ data: { error: '0' } });
-    await expect(withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)).resolves.toEqual({
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
       verified: false,
       held: null,
     });
@@ -1306,10 +1312,12 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a refused removal of a number that holds nothing reads 0 rights: confirmed by the re-read', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(holderOk)
+      .mockResolvedValueOnce(responsableIntact)
       .mockResolvedValueOnce({ data: { error: '2', message: 'x' } })
       .mockResolvedValueOnce({ data: { error: '0', data: none } });
-    await expect(withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)).resolves.toEqual({
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
       verified: true,
       held: 0,
     });
@@ -1317,10 +1325,12 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a re-read that fails is NOT confirmed (held unknown), never a throw', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(holderOk)
+      .mockResolvedValueOnce(responsableIntact)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockRejectedValueOnce(new Error('socket hang up'));
-    await expect(withKey().removeCashier('asso-1', 'vendor-1', HOLDER, PHONE)).resolves.toEqual({
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
       verified: false,
       held: null,
     });
@@ -1331,7 +1341,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
       new LydiaPaymentProvider({ LYDIA_ENV: 'homologation' }).removeCashier(
         'asso-1',
         'vendor-1',
-        HOLDER,
+        CONTEXT_PHONE,
         PHONE
       )
     ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NOT_CONFIGURED } });

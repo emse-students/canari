@@ -31,7 +31,7 @@ describe('lydiaResponsableErrorText after a number change (lot 3)', () => {
     expect(text).not.toContain('LYDIA');
   });
 
-  it('the number change refusals each have their own plain sentence', () => {
+  it('the number change refusals, and a number another cashier holds, each have their own plain sentence', () => {
     const generic = lydiaResponsableErrorText(new Error('x'));
     const texts = [
       LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED,
@@ -39,6 +39,7 @@ describe('lydiaResponsableErrorText after a number change (lot 3)', () => {
       LYDIA_CASHIER_REFUSAL.HOLDER_RIGHTS_MISSING,
       LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST,
       LYDIA_CASHIER_SOCIAL_REFUSAL.NUMBER_CHANGED,
+      LYDIA_CASHIER_SOCIAL_REFUSAL.PHONE_IN_USE,
     ].map((code) => {
       const text = lydiaResponsableErrorText(new SocialApiError('English prose', code, 409));
       expect(text, code).not.toBe(generic);

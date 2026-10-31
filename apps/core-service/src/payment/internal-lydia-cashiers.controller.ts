@@ -30,7 +30,7 @@ export class InternalLydiaCashiersController {
   /**
    * Removes one number for an account's erasure: the numbers come in the body - opened by
    * social-service, which owns them, under the association's cashier claim - and nothing is recorded
-   * here. The control read and the re-read are `LydiaPaymentProvider.removeCashier`'s; the answer is
+   * here. The checks before the removal and the re-read after it are `LydiaPaymentProvider.removeCashier`'s; the answer is
    * the re-read (`{ verified, held }`). Phones are never logged.
    */
   @Post('revoke')
@@ -41,7 +41,7 @@ export class InternalLydiaCashiersController {
     body: {
       associationId?: unknown;
       vendorToken?: unknown;
-      actorPhone?: unknown;
+      contextPhone?: unknown;
       cashierPhone?: unknown;
     }
   ): Promise<LydiaCashierRemoval> {
@@ -57,7 +57,7 @@ export class InternalLydiaCashiersController {
     return this.paymentService.removeLydiaCashier(
       associationId,
       vendorToken,
-      text(body?.actorPhone),
+      text(body?.contextPhone),
       text(body?.cashierPhone)
     );
   }

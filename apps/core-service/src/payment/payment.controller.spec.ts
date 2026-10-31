@@ -1180,7 +1180,7 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
           data: {
             vendorToken: 'vendor-1',
             cashierPhone: OLD,
-            actorPhone: NEW,
+            contextPhone: NEW,
             claimToken: REVOKE_CLAIM,
           },
         };
@@ -1324,7 +1324,7 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
     expect(postsTo('/lydia-cashier-revoke')[0][1]).toMatchObject({ verified: false });
   });
 
-  it('the control read refusing: the removal claim is released and nothing is recorded as removed', async () => {
+  it('a refusal before the removal: the claim is released and nothing is recorded as removed', async () => {
     const { controller, paymentService } = setup({ verified: true, held: 0 });
     paymentService.removeLydiaCashier.mockRejectedValueOnce(
       new ConflictException({ code: provider.LYDIA_CASHIER_HOLDER_RIGHTS_MISSING })

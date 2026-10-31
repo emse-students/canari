@@ -22,6 +22,13 @@ export const LYDIA_CASHIER_CLAIM_LOST = 'LYDIA_CASHIER_CLAIM_LOST';
  * was removed at Lydia is not recorded against another number.
  */
 export const LYDIA_CASHIER_NUMBER_CHANGED = 'LYDIA_CASHIER_NUMBER_CHANGED';
+/**
+ * The `code` (409) of a number already held by a live cashier row of the association (its own or a
+ * Responsable's other number): adding it again would REPLACE that cashier's rights at Lydia. Shared
+ * by the cashier steps and the Responsable's step.
+ */
+export const LYDIA_CASHIER_PHONE_IN_USE = 'LYDIA_CASHIER_PHONE_IN_USE';
+
 /** The `code` (400) of a record whose body does not say whether Lydia confirmed the rights. */
 export const LYDIA_CASHIER_CONFIRMED_REQUIRED = 'LYDIA_CASHIER_CONFIRMED_REQUIRED';
 

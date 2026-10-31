@@ -23,6 +23,7 @@ import {
 } from './lydia-cashiers-list';
 import {
   LYDIA_CASHIER_NUMBER_CHANGED,
+  LYDIA_CASHIER_PHONE_IN_USE,
   claimLost,
   claimTokenOf,
   clearClaim,
@@ -40,14 +41,9 @@ export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
 /** The `code` (409) of adding a member who already is a live cashier of the association. */
 export const LYDIA_CASHIER_ALREADY_SET = 'LYDIA_CASHIER_ALREADY_SET';
-/**
- * The `code` (409) of a number already held by a live cashier row of the association (its own or a
- * Responsable's other number): adding it again would REPLACE that cashier's rights at Lydia.
- */
-export const LYDIA_CASHIER_PHONE_IN_USE = 'LYDIA_CASHIER_PHONE_IN_USE';
-/** The `code` (409) when no CONFIRMED Responsable exists: nobody Lydia lets remove a cashier. */
+/** The `code` (409) when the association has no CONFIRMED Responsable: no cashier step runs before one. */
 export const LYDIA_CASHIER_NO_HOLDER = 'LYDIA_CASHIER_NO_HOLDER';
-/** The `code` (409) of removing the Responsable's current number: the only one managing cashiers. */
+/** The `code` (409) of removing the Responsable's current number: it keeps every right, always. */
 export const LYDIA_CASHIER_LAST_HOLDER = 'LYDIA_CASHIER_LAST_HOLDER';
 /** The `code` (404) of a cashier row (or other number) that is not live on the current Business. */
 export const LYDIA_CASHIER_NOT_FOUND = 'LYDIA_CASHIER_NOT_FOUND';
@@ -55,7 +51,7 @@ export const LYDIA_CASHIER_NOT_FOUND = 'LYDIA_CASHIER_NOT_FOUND';
 export const LYDIA_CASHIER_ROLE_FIXED = 'LYDIA_CASHIER_ROLE_FIXED';
 /** core-service's `code` (409) of an association with no Business linked, reused for the cashier steps. */
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
-export { LYDIA_CASHIER_NUMBER_CHANGED };
+export { LYDIA_CASHIER_NUMBER_CHANGED, LYDIA_CASHIER_PHONE_IN_USE };
 
 /** What a cashier phone must look like: E.164, as core-service validated it. */
 const E164_RE = /^\+[1-9]\d{7,14}$/;
@@ -63,11 +59,11 @@ const E164_RE = /^\+[1-9]\d{7,14}$/;
 /** How long one erasure removal may take at core-service before it is given up (best effort). */
 export const ERASURE_REVOKE_TIMEOUT_MS = 30_000;
 
-/** What a removal needs from this service: the Business, the number to remove, who acts, the claim. */
+/** What a removal needs from this service: the Business, the number to remove, its context, the claim. */
 export interface LydiaCashierRevokeTarget {
   vendorToken: string;
   cashierPhone: string;
-  actorPhone: string;
+  contextPhone: string;
   claimToken: string;
 }
 
@@ -90,11 +86,6 @@ const LIVE_ROWS_SQL = `SELECT id, "userId", role, "phoneSealed", "previousPhoneS
 
 function conflict(code: string, message: string): ConflictException {
   return new ConflictException({ code, message });
-}
-
-/** The written row count of a raw `UPDATE ... RETURNING`, whatever shape the driver answered. */
-function returnedCount(result: unknown[]): number {
-  return Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
 }
 
 /** The claim token of a body, or the 400 that says it is missing. */
@@ -142,11 +133,14 @@ export class LydiaCashiersService {
   }
 
   /**
-   * The CONFIRMED Responsable's current number, opened. The typed 409
+   * The CONFIRMED Responsable's row and current number, opened. The typed 409
    * `LYDIA_CASHIER_NO_HOLDER` when there is none (or it is not confirmed), a 503 when its seal does
    * not open.
    */
-  private holderPhoneOrThrow(id: string, rows: LiveRow[]): { row: LiveRow; phone: string } {
+  private confirmedResponsableOrThrow(
+    id: string,
+    rows: LiveRow[]
+  ): { row: LiveRow; phone: string } {
     const holder = rows.find((row) => row.role === 'responsable' && row.confirmedAt != null);
     if (!holder) {
       this.logger.warn(`[LYDIA-CASHIER] refused on ${sanitizeLog(id)}: no confirmed Responsable`);
@@ -214,7 +208,7 @@ export class LydiaCashiersService {
    * The checks and claim before Lydia is asked to add `userId` (number `phone`) as a `role`: a
    * Business is linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`)
    * and not already a live cashier (`LYDIA_CASHIER_ALREADY_SET`), a confirmed Responsable exists
-   * (`LYDIA_CASHIER_NO_HOLDER`: nobody could remove the cashier otherwise), and the number is not
+   * (`LYDIA_CASHIER_NO_HOLDER`: no cashier is added before one), and the number is not
    * one a live row holds (`LYDIA_CASHIER_PHONE_IN_USE`: Lydia would REPLACE that cashier's rights).
    * A row whose seal does not open counts as holding the number - refused rather than risked.
    */
@@ -239,7 +233,7 @@ export class LydiaCashiersService {
         this.logger.warn(`[LYDIA-CASHIER] add refused on ${sanitizeLog(id)}: already a cashier`);
         throw conflict(LYDIA_CASHIER_ALREADY_SET, 'This member already is a cashier');
       }
-      this.holderPhoneOrThrow(id, rows);
+      this.confirmedResponsableOrThrow(id, rows);
       for (const row of rows) {
         for (const sealed of [row.phoneSealed, row.previousPhoneSealed]) {
           if (!sealed) continue;
@@ -261,7 +255,9 @@ export class LydiaCashiersService {
   /**
    * The checks and claim before Lydia is asked to change cashier `cashierId`'s role (a re-add with
    * the new set): the row is live on the current Business (`LYDIA_CASHIER_NOT_FOUND`) and is not
-   * the Responsable (`LYDIA_CASHIER_ROLE_FIXED`). Answers its number, opened, for the re-add.
+   * the Responsable (`LYDIA_CASHIER_ROLE_FIXED`), and its number is not one of the Responsable's
+   * (`LYDIA_CASHIER_PHONE_IN_USE`: the re-add would REPLACE the Responsable's rights with the role's;
+   * a seal that does not open counts as one). Answers its number, opened, for the re-add.
    */
   async claimRoleChange(
     id: string,
@@ -282,6 +278,20 @@ export class LydiaCashiersService {
       }
       const phone = this.open(id, row.phoneSealed, "a cashier's number");
       if (!phone) throw new ServiceUnavailableException("The cashier's number cannot be read");
+      for (const other of rows.filter((r) => r.role === 'responsable')) {
+        for (const sealed of [other.phoneSealed, other.previousPhoneSealed]) {
+          if (!sealed) continue;
+          const held = this.open(id, sealed, "a Responsable's number");
+          if (held === null || held === phone) {
+            this.logger.error(
+              `[LYDIA-CASHIER] role change refused on ${sanitizeLog(id)}: the row's number is ` +
+                `the Responsable's` +
+                (held === null ? ' (or its seal does not open)' : '')
+            );
+            throw conflict(LYDIA_CASHIER_PHONE_IN_USE, 'This number is the Responsable number');
+          }
+        }
+      }
       return { phone, userId: row.userId };
     });
   }
@@ -319,20 +329,27 @@ export class LydiaCashiersService {
     const role = text(input.role);
     const addedBy = text(input.addedByUserId);
     const cashierId = text(input.cashierId);
-    if (
-      !vendorToken ||
-      !userId ||
-      !addedBy ||
-      !E164_RE.test(phone) ||
-      (role !== 'tresorier' && role !== 'vendeur')
-    ) {
-      this.logger.warn(`[LYDIA-CASHIER] record refused on ${sanitizeLog(id)}: malformed body`);
-      throw new BadRequestException(
-        'vendorToken, userId, addedByUserId, an E.164 phone and a role are required'
-      );
-    }
-    const confirmed = confirmedOf(input.confirmed);
     const claimToken = requiredClaimToken(input.claimToken);
+    let confirmed: boolean;
+    try {
+      if (
+        !vendorToken ||
+        !userId ||
+        !addedBy ||
+        !E164_RE.test(phone) ||
+        (role !== 'tresorier' && role !== 'vendeur')
+      ) {
+        this.logger.warn(`[LYDIA-CASHIER] record refused on ${sanitizeLog(id)}: malformed body`);
+        throw new BadRequestException(
+          'vendorToken, userId, addedByUserId, an E.164 phone and a role are required'
+        );
+      }
+      confirmed = confirmedOf(input.confirmed);
+    } catch (err: unknown) {
+      // A malformed record is a typed outcome too: its claim is released, never left stuck.
+      await this.release(id, claimToken);
+      throw err;
+    }
     if (!isSecretBoxConfigured()) {
       this.logger.error(
         `[LYDIA-CASHIER] record refused on ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
@@ -473,11 +490,11 @@ export class LydiaCashiersService {
    * The checks and claim before Lydia is asked to remove a number of row `cashierId`: `current`
    * (the row's own number) or `previous` (a Responsable's OTHER number). The row must be live on
    * the current Business (`LYDIA_CASHIER_NOT_FOUND`, also for a `previous` that is not there); the
-   * Responsable's CURRENT number is never removed (`LYDIA_CASHIER_LAST_HOLDER`); a removal
-   * needs a CONFIRMED Responsable (`LYDIA_CASHIER_NO_HOLDER`); and the number to remove is never that Responsable's
-   * current one (`LYDIA_CASHIER_LAST_HOLDER` again). Both numbers are opened inside the transaction
-   * that locks the rows and takes the claim, and answered for core-service alone with the claim
-   * token; a seal that does not open is a 503, nothing claimed.
+   * Responsable's CURRENT number is never removed, by its own row or through another row holding the
+   * same number (`LYDIA_CASHIER_LAST_HOLDER`: it keeps every right); the association must have a
+   * CONFIRMED Responsable (`LYDIA_CASHIER_NO_HOLDER`). The numbers the removal needs are opened inside
+   * the transaction that locks the rows and takes the claim, and answered for core-service alone with
+   * the claim token; a seal that does not open is a 503, nothing claimed.
    */
   async claimRevoke(
     id: string,
@@ -492,31 +509,31 @@ export class LydiaCashiersService {
       }
       if (input.number === 'current' && row.role === 'responsable') {
         this.logger.warn(
-          `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the Responsable is the last holder`
+          `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the Responsable's current number`
         );
         throw conflict(
           LYDIA_CASHIER_LAST_HOLDER,
-          'The Responsable is the only one managing the cashiers'
+          "The Responsable's current number is not removed"
         );
       }
-      const holder = this.holderPhoneOrThrow(id, rows);
+      const responsable = this.confirmedResponsableOrThrow(id, rows);
       const cashierPhone = this.open(
         id,
         input.number === 'previous' ? row.previousPhoneSealed : row.phoneSealed,
         'the number to remove'
       );
       if (!cashierPhone) throw new ServiceUnavailableException('The number cannot be read');
-      if (cashierPhone === holder.phone) {
+      if (cashierPhone === responsable.phone) {
         this.logger.error(
           `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the number to remove is the ` +
             `Responsable's current number`
         );
         throw conflict(
           LYDIA_CASHIER_LAST_HOLDER,
-          'The Responsable is the only one managing the cashiers'
+          "The Responsable's current number is not removed"
         );
       }
-      return { cashierPhone, actorPhone: holder.phone };
+      return { cashierPhone, contextPhone: responsable.phone };
     });
   }
 
@@ -577,7 +594,7 @@ export class LydiaCashiersService {
             input.cashierPhone,
             'removal'
           );
-          returnedCount(await manager.query(sql, [input.cashierId, id]));
+          await manager.query(sql, [input.cashierId, id]);
           if (input.verified) {
             this.logger.log(`[AUDIT] ${audit} - confirmed by Lydia (0 rights)`);
           } else {
@@ -635,7 +652,7 @@ export class LydiaCashiersService {
           const verified = await this.revokeThroughCore(
             mine.associationId,
             plan.vendorToken,
-            plan.actorPhone,
+            plan.contextPhone,
             cashierPhone
           );
           allVerified = allVerified && verified;
@@ -677,14 +694,14 @@ export class LydiaCashiersService {
     all: LiveRow[],
     who: string,
     where: string
-  ): { targets: string[]; actorPhone: string; complete: boolean } {
+  ): { targets: string[]; contextPhone: string; complete: boolean } {
     const id = mine.associationId;
     const row = all.find((r) => r.id === mine.id);
     if (!row || vendorToken !== mine.vendorToken) {
       throw new NotFoundException(`the row is no longer live on the Business of ${where}`);
     }
-    const holder = this.holderPhoneOrThrow(id, all);
-    const othersHold = new Set<string>([holder.phone]);
+    const responsable = this.confirmedResponsableOrThrow(id, all);
+    const othersHold = new Set<string>([responsable.phone]);
     for (const other of all) {
       if (other.id === row.id) continue;
       for (const sealed of [other.phoneSealed, other.previousPhoneSealed]) {
@@ -696,7 +713,7 @@ export class LydiaCashiersService {
     if (!complete) {
       this.logger.error(
         `[LYDIA-CASHIER] erasure of user=${who}: the Responsable of ${where} - their current ` +
-          `number is not removed at Lydia (nobody else manages the Business)`
+          `number is not removed at Lydia (the Responsable keeps every right)`
       );
     }
     const targets: string[] = [];
@@ -717,21 +734,21 @@ export class LydiaCashiersService {
       }
       targets.push(phone);
     }
-    return { targets, actorPhone: holder.phone, complete };
+    return { targets, contextPhone: responsable.phone, complete };
   }
 
   /** One removal through core-service's internal route; false on any failure, never a throw. */
   private async revokeThroughCore(
     associationId: string,
     vendorToken: string,
-    actorPhone: string,
+    contextPhone: string,
     cashierPhone: string
   ): Promise<boolean> {
     try {
       const res = await firstValueFrom(
         this.httpService.post<{ verified: boolean; held: number | null }>(
           coreUrl('internal/lydia-cashiers/revoke'),
-          { associationId, vendorToken, actorPhone, cashierPhone },
+          { associationId, vendorToken, contextPhone, cashierPhone },
           { ...internalCoreRequestConfig(), timeout: ERASURE_REVOKE_TIMEOUT_MS }
         )
       );

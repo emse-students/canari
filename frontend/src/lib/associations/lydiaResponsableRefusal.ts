@@ -93,6 +93,9 @@ export function lydiaResponsableErrorText(err: unknown): string {
         return m.asso_lydia_cashier_err_interrupted();
       case LYDIA_CASHIER_SOCIAL_REFUSAL.NUMBER_CHANGED:
         return m.asso_lydia_cashier_err_number_changed();
+      // The number asked is already another cashier's (lot 3).
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.PHONE_IN_USE:
+        return m.asso_lydia_cashier_err_phone_in_use();
     }
     if (err.status === 403) return m.asso_lydia_resp_err_forbidden();
   }

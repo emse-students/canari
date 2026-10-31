@@ -29,7 +29,11 @@ import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import { AssociationsService, LYDIA_CASHIER_PHONE_PURPOSE } from './associations.service';
 import { LYDIA_CASHIER_IN_FLIGHT, LydiaCashiersService } from './lydia-cashiers.service';
 import { listLydiaCashiers } from './lydia-cashiers-list';
-import { LYDIA_CASHIER_CLAIM_LOST, LYDIA_CASHIER_NUMBER_CHANGED } from './lydia-cashier-claim';
+import {
+  LYDIA_CASHIER_CLAIM_LOST,
+  LYDIA_CASHIER_NUMBER_CHANGED,
+  LYDIA_CASHIER_PHONE_IN_USE,
+} from './lydia-cashier-claim';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -332,7 +336,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     expect(numbers).toMatchObject({ current: '+33611111111', other: HOLDER_PHONE });
     // The removal of the old number.
     const target = await revoke(numbers.id, 'previous', false);
-    expect(target).toMatchObject({ cashierPhone: HOLDER_PHONE, actorPhone: '+33611111111' });
+    expect(target).toMatchObject({ cashierPhone: HOLDER_PHONE, contextPhone: '+33611111111' });
     // Halfway: Lydia did not confirm - the old number stays, listed, flagged.
     let [responsable] = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
     expect(responsable).toMatchObject({ phoneEnd: '11', previousPhoneEnd: '32' });
@@ -356,7 +360,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     expect(numbers).toMatchObject({ current: HOLDER_PHONE, other: '+33611111111' });
     // Removing "the other number" now removes the unproven new one, never the live one.
     const target = await revoke(numbers.id, 'previous', true);
-    expect(target).toMatchObject({ cashierPhone: '+33611111111', actorPhone: HOLDER_PHONE });
+    expect(target).toMatchObject({ cashierPhone: '+33611111111', contextPhone: HOLDER_PHONE });
     expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
   });
 
@@ -374,8 +378,37 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     const numbers = await responsableNumbers();
     expect(numbers).toMatchObject({ current: HOLDER_PHONE, other: '+33611111111' });
     const target = await revoke(numbers.id, 'previous', true);
-    expect(target).toMatchObject({ cashierPhone: '+33611111111', actorPhone: HOLDER_PHONE });
+    expect(target).toMatchObject({ cashierPhone: '+33611111111', contextPhone: HOLDER_PHONE });
     expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
+  });
+
+  it('the Responsable never takes a number another live cashier holds, and a role change never re-adds a Responsable number', async () => {
+    await reset();
+    const vendeur = await record('member-2', '+33600000002');
+    // A number change onto the Vendeur's number: refused, nothing claimed or written.
+    await expect(
+      associations.claimLydiaResponsable(ASSO, 'holder', '+33600000002', {
+        mode: 'add',
+        allowNumberChange: true,
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
+    expect(await claimHeld()).toBe(false);
+    expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
+    // A row left on the Responsable's number (an older state): its role change is refused.
+    await ds.query(`UPDATE lydia_cashiers SET "phoneSealed" = $2 WHERE id = $1`, [
+      vendeur.id,
+      sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO, HOLDER_PHONE),
+    ]);
+    await expect(
+      cashiers.claimRoleChange(ASSO, { cashierId: vendeur.id, role: 'tresorier' })
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
+    expect(await claimHeld()).toBe(false);
+    // The Responsable erased: a new Responsable on a live Vendeur's number is refused too.
+    await ds.query(`DELETE FROM lydia_cashiers WHERE role = 'responsable'`);
+    await expect(
+      associations.claimLydiaResponsable(ASSO, 'member-3', HOLDER_PHONE, { mode: 'add' })
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
+    expect(await claimHeld()).toBe(false);
   });
 
   describe('under concurrency (Promise.all, one connection each)', () => {

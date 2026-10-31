@@ -28,6 +28,7 @@ import {
   LYDIA_CASHIER_CLAIM_LOST,
   LYDIA_CASHIER_CONFIRMED_REQUIRED,
   LYDIA_CASHIER_NUMBER_CHANGED,
+  LYDIA_CASHIER_PHONE_IN_USE,
 } from './lydia-cashier-claim';
 
 /**
@@ -442,6 +443,8 @@ type Cashier = {
   confirmed?: boolean;
   previousPhoneSealed?: string | null;
   previousPhoneEnd?: string | null;
+  /** Absent: the Responsable. */
+  role?: string;
 };
 type Asso = { linked: string | null; startedAt: Date | null; token: string | null };
 
@@ -451,7 +454,19 @@ function makeResponsableService(
   opts: { member?: boolean; insertFails?: boolean } = {}
 ) {
   const live = (vendor?: unknown) =>
-    rows.filter((r) => r.removedAt === null && (vendor === undefined || r.vendorToken === vendor));
+    rows.filter(
+      (r) =>
+        r.removedAt === null &&
+        (r.role ?? 'responsable') === 'responsable' &&
+        (vendor === undefined || r.vendorToken === vendor)
+    );
+  const others = (vendor: unknown) =>
+    rows.filter(
+      (r) =>
+        r.removedAt === null &&
+        (r.role ?? 'responsable') !== 'responsable' &&
+        r.vendorToken === vendor
+    );
   const query = jest.fn(async (sql: string, params: unknown[]): Promise<unknown> => {
     if (sql.includes('FROM associations WHERE id = $1 FOR UPDATE')) {
       return [{ vendorToken: asso.linked, startedAt: asso.startedAt, claimToken: asso.token }];
@@ -466,6 +481,12 @@ function makeResponsableService(
       asso.startedAt = null;
       asso.token = null;
       return [{ id: HOLDER }];
+    }
+    if (sql.includes(`role <> 'responsable'`)) {
+      return others(params[1]).map((r) => ({
+        phoneSealed: r.phoneSealed,
+        previousPhoneSealed: r.previousPhoneSealed ?? null,
+      }));
     }
     if (sql.includes('SELECT "userId", "phoneSealed", "previousPhoneSealed" FROM lydia_cashiers')) {
       return live(params[1]).map((r) => ({
@@ -762,7 +783,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     ['absent', undefined],
     ['not a boolean', 'yes'],
   ])(
-    'a `confirmed` %s is the typed 400 CONFIRMED_REQUIRED, nothing written',
+    'a `confirmed` %s is the typed 400 CONFIRMED_REQUIRED, nothing written, the claim released',
     async (_what, value) => {
       captureLogs();
       const rows: Cashier[] = [];
@@ -775,6 +796,36 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
         response: { code: LYDIA_CASHIER_CONFIRMED_REQUIRED },
       });
       expect(rows).toHaveLength(0);
+      expect(asso.token).toBeNull();
+    }
+  );
+
+  it.each([
+    ['current', 'phoneSealed'],
+    ['other', 'previousPhoneSealed'],
+  ] as const)(
+    'a number another live cashier holds as its %s number is PHONE_IN_USE, nothing written, the claim released',
+    async (_what, slot) => {
+      captureLogs();
+      const vendeur: Cashier = {
+        id: 'v1',
+        userId: 'user-9',
+        vendorToken: VENDOR,
+        phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, '+33600000055'),
+        phoneEnd: '55',
+        removedAt: null,
+        role: 'vendeur',
+      };
+      vendeur[slot] = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, OTHER);
+      const rows: Cashier[] = [vendeur];
+      const asso = free();
+      const { service } = makeResponsableService(asso, rows);
+      await expect(record(service, asso, OTHER)).rejects.toMatchObject({
+        status: 409,
+        response: { code: LYDIA_CASHIER_PHONE_IN_USE },
+      });
+      expect(rows).toHaveLength(1);
+      expect(asso.token).toBeNull();
     }
   );
 
@@ -925,6 +976,31 @@ describe('AssociationsService.claimLydiaResponsable - the checks and the claim o
       await expect(
         service.claimLydiaResponsable(HOLDER, 'user-1', phone, opts)
       ).resolves.toMatchObject({ numberChange: false, claimed: false });
+      expect(asso.token).toBeNull();
+    }
+  });
+
+  it('a number another live cashier holds (a Vendeur, before or after a Responsable erasure) is PHONE_IN_USE, never claimed', async () => {
+    captureLogs();
+    const vendeur: Cashier = {
+      id: 'v1',
+      userId: 'user-9',
+      vendorToken: VENDOR,
+      phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, OTHER),
+      phoneEnd: '99',
+      removedAt: null,
+      role: 'vendeur',
+    };
+    for (const [rows, opts] of [
+      [[responsable(), vendeur], change],
+      // The Responsable row erased: a new Responsable on a Vendeur's number.
+      [[vendeur], {}],
+    ] as const) {
+      const asso = free();
+      const { service } = makeResponsableService(asso, [...rows]);
+      await expect(
+        service.claimLydiaResponsable(HOLDER, 'user-1', OTHER, opts)
+      ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
       expect(asso.token).toBeNull();
     }
   });

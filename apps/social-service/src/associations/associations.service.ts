@@ -38,6 +38,7 @@ import { assertCotisationStemFree, isCotisationStemCollision } from './cotisatio
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
+  LYDIA_CASHIER_PHONE_IN_USE,
   claimLost,
   claimTokenOf,
   clearClaim,
@@ -3663,6 +3664,54 @@ ${rejectionReason}`
   }
 
   /**
+   * Refuses (409 `LYDIA_CASHIER_PHONE_IN_USE`) a Responsable number that ANOTHER live cashier row of
+   * `vendorToken`'s Business holds - its current or its other number - as the cashier steps' add does:
+   * the Responsable's add would REPLACE that cashier's rights at Lydia and leave two rows on one
+   * number. The rows are locked by `manager`'s transaction; a seal that does not open counts as
+   * holding the number, refused rather than risked. The phone is never logged.
+   */
+  private async assertNotAnotherCashierNumber(
+    manager: EntityManager,
+    id: string,
+    vendorToken: string,
+    phone: string
+  ): Promise<void> {
+    const others: Array<{ phoneSealed: string | null; previousPhoneSealed: string | null }> =
+      await manager.query(
+        `SELECT "phoneSealed", "previousPhoneSealed" FROM lydia_cashiers
+          WHERE "associationId" = $1 AND "vendorToken" = $2 AND role <> 'responsable'
+            AND "removedAt" IS NULL
+          ORDER BY id FOR UPDATE`,
+        [id, vendorToken]
+      );
+    for (const other of others) {
+      for (const sealed of [other.phoneSealed, other.previousPhoneSealed]) {
+        if (!sealed) continue;
+        let held: string | null;
+        try {
+          held = openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed);
+        } catch (err: unknown) {
+          this.logger.error(
+            `[LYDIA] a cashier number of ${sanitizeLog(id)} cannot be opened - counted as the ` +
+              `Responsable's: ${err instanceof Error ? err.name : String(err)}`
+          );
+          held = null;
+        }
+        if (held === null || held === phone) {
+          this.logger.warn(
+            `[LYDIA] Responsable step refused on ${sanitizeLog(id)}: the number is another ` +
+              `cashier's`
+          );
+          throw new ConflictException({
+            code: LYDIA_CASHIER_PHONE_IN_USE,
+            message: 'This number already is a cashier number',
+          });
+        }
+      }
+    }
+  }
+
+  /**
    * What core-service checks before asking Lydia to add a Responsable, AND the claim of that step,
    * in ONE transaction that locks the association row and the live Responsable row, so the numbers
    * compared are the numbers the step then acts on. Answers the Business linked now, whether the
@@ -3751,6 +3800,7 @@ ${rejectionReason}`
         );
         return { ...answer, numberChange: false };
       }
+      await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone);
       if (asso.claimed) {
         this.logger.warn(
           `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: another cashier operation is in flight`
@@ -3834,13 +3884,26 @@ ${rejectionReason}`
     const phone = text(input.phone);
     const addedBy = text(input.addedByUserId);
     const claimToken = claimTokenOf(input.claimToken);
-    if (!vendorToken || !userId || !addedBy || !E164_RE.test(phone) || !claimToken) {
-      this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`);
-      throw new BadRequestException(
-        'vendorToken, userId, addedByUserId, an E.164 phone and claimToken are required'
-      );
+    if (!claimToken) {
+      this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: no claim token`);
+      throw new BadRequestException('claimToken is required');
     }
-    const confirmed = confirmedOf(input.confirmed);
+    let confirmed: boolean;
+    try {
+      if (!vendorToken || !userId || !addedBy || !E164_RE.test(phone)) {
+        this.logger.warn(
+          `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`
+        );
+        throw new BadRequestException(
+          'vendorToken, userId, addedByUserId and an E.164 phone are required'
+        );
+      }
+      confirmed = confirmedOf(input.confirmed);
+    } catch (err: unknown) {
+      // A malformed record is a typed outcome too: its claim is released, never left stuck.
+      await this.releaseLydiaResponsable(id, claimToken);
+      throw err;
+    }
     if (!isSecretBoxConfigured()) {
       this.logger.error(
         `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
@@ -3883,6 +3946,7 @@ ${rejectionReason}`
           [id]
         );
         const current = live[0];
+        await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone);
         const sameBusiness = !!current && current.vendorToken === vendorToken;
         if (sameBusiness && current.userId !== userId) {
           this.logger.warn(

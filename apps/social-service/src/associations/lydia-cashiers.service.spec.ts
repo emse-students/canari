@@ -285,7 +285,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     }
   });
 
-  it('no confirmed Responsable: nobody could remove the cashier, so no add', async () => {
+  it('no confirmed Responsable: no add', async () => {
     await expect(
       make([responsable({ confirmedAt: null })]).service.claimAdd(ASSO, add)
     ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NO_HOLDER } });
@@ -331,13 +331,26 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     expect(first).toEqual({
       vendorToken: 'vendor-1',
       cashierPhone: PHONE,
-      actorPhone: HOLDER_PHONE,
+      contextPhone: HOLDER_PHONE,
       claimToken: asso.token,
     });
     await service.release(ASSO, first.claimToken);
     await expect(
       service.claimRevoke(ASSO, { cashierId: 'r1', number: 'previous' })
-    ).resolves.toMatchObject({ cashierPhone: OLD, actorPhone: HOLDER_PHONE });
+    ).resolves.toMatchObject({ cashierPhone: OLD, contextPhone: HOLDER_PHONE });
+  });
+
+  it('a role change of a row holding one of the Responsable numbers is PHONE_IN_USE, nothing claimed', async () => {
+    for (const rows of [
+      [responsable(), vendeur({ phoneSealed: seal(HOLDER_PHONE) })],
+      [responsable({ previousPhoneSealed: seal(PHONE) }), vendeur()],
+    ]) {
+      const { service, asso } = make(rows);
+      await expect(
+        service.claimRoleChange(ASSO, { cashierId: 'v1', role: 'tresorier' })
+      ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
+      expect(asso.claimed).toBe(false);
+    }
   });
 
   it('the Responsable role is never changed through a role change', async () => {
@@ -395,18 +408,22 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
   it.each([
     ['absent', undefined],
     ['not a boolean', 'true'],
-  ])('a record whose `confirmed` is %s is the typed 400 CONFIRMED_REQUIRED', async (_w, value) => {
-    const { service, query } = make([responsable(), vendeur()], {
-      asso: { claimed: true, token: TOKEN },
-    });
-    await expect(service.record(ASSO, { ...roleRecord(), confirmed: value })).rejects.toMatchObject(
-      {
+  ])(
+    'a record whose `confirmed` is %s is the typed 400 CONFIRMED_REQUIRED, the claim released',
+    async (_w, value) => {
+      const { service, query, asso } = make([responsable(), vendeur()], {
+        asso: { claimed: true, token: TOKEN },
+      });
+      await expect(
+        service.record(ASSO, { ...roleRecord(), confirmed: value })
+      ).rejects.toMatchObject({
         status: 400,
         response: { code: LYDIA_CASHIER_CONFIRMED_REQUIRED },
-      }
-    );
-    expect(query).not.toHaveBeenCalled();
-  });
+      });
+      expect(writes(query)).toHaveLength(0);
+      expect(asso).toMatchObject({ claimed: false, token: null });
+    }
+  );
 
   const revoke = (over: Record<string, unknown> = {}) => ({
     cashierId: 'v1',
@@ -461,7 +478,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     ];
     expect(url).toContain('/api/internal/lydia-cashiers/revoke');
     expect(body).toMatchObject({
-      actorPhone: HOLDER_PHONE,
+      contextPhone: HOLDER_PHONE,
       cashierPhone: PHONE,
       vendorToken: 'vendor-1',
     });
@@ -508,6 +525,6 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       string,
       Record<string, string>,
     ];
-    expect(body).toMatchObject({ actorPhone: HOLDER_PHONE, cashierPhone: OLD });
+    expect(body).toMatchObject({ contextPhone: HOLDER_PHONE, cashierPhone: OLD });
   });
 });

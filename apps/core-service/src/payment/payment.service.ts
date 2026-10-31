@@ -99,10 +99,10 @@ export class PaymentService {
   async removeLydiaCashier(
     associationId: string,
     vendorToken: string,
-    actorPhone: string,
+    contextPhone: string,
     cashierPhone: string
   ): Promise<LydiaCashierRemoval> {
-    return this.lydiaProvider.removeCashier(associationId, vendorToken, actorPhone, cashierPhone);
+    return this.lydiaProvider.removeCashier(associationId, vendorToken, contextPhone, cashierPhone);
   }
 
   /** Reads the admin-configured provider choice and returns the matching instance. */

@@ -876,7 +876,8 @@ grants the 13 and not the five, so the five are not required of it).
 (a repeat add replaces the rights), read back exactly, recorded on the same row - only while that row
 still holds the number Lydia was asked about (`LYDIA_CASHIER_NUMBER_CHANGED`), and the record clears a
 removal flag (`revokeUnconfirmedAt`): the number holds the new role's rights again. Never the
-Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`).
+Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`), and never a row whose number is one of the
+Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`: the re-add would replace the Responsable's rights).
 
 **The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
 the frontend constant of the same name, and `switches.cashierAddEnabled` in
@@ -887,9 +888,9 @@ Responsable's number is behind the same gate (below).
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.
-Before anything is removed, a CONTROL read must show the Responsable still holding the 13 documented
-rights; short of that, or unreadable, it is the typed 409 `LYDIA_CASHIER_HOLDER_RIGHTS_MISSING`, the
-claim released and nothing removed. Lydia's cashier-removal call (its shape is in the private operations
+A holder keeps full rights: nothing is removed unless Lydia shows the association's Responsable with
+the 13 documented rights; short of that, or unreadable, it is the typed 409
+`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING`, the claim released and nothing removed. Lydia's cashier-removal call (its shape is in the private operations
 notes) is followed by a `business/getpermission` RE-READ, and only **no `access_*` at `"1"`** - the
 undocumented five included - is a removal: the row is closed (`removedAt`, every number and number ending
 cleared, as the unlink does) or the other number cleared. Anything else - rights still read, the re-read
@@ -918,6 +919,7 @@ record, the row locked and the numbers compared there:
 | the other one | yes | the two swap (going BACK to the old number, or completing a retried new one); core removes the other next |
 | the other one | no | nothing changes |
 | a third one while another is tracked | - | `LYDIA_RESPONSABLE_PHONE_LOCKED` |
+| a number another live cashier holds (its current or other number) | - | `LYDIA_CASHIER_PHONE_IN_USE`, claim and record alike - also for a new Responsable after an erasure |
 
 So the old number's rights are stripped only after the new number is CONFIRMED at 13 of 13: a new number
 that fails its confirmation never displaces the live Responsable, and "Retirer cet autre numéro" then
@@ -932,10 +934,16 @@ by every add, role change, removal and erasure, IN the transaction that locks th
 request; ONLY a release or a record carrying it clears the claim (`LYDIA_CASHIER_CLAIM_LOST` otherwise,
 nothing written), so a late answer can never clear a claim another operation took after a global admin
 cleared the first (`lydia-enrolment-clear`, which clears both columns). A record takes `confirmed` only as
-an explicit boolean (`LYDIA_CASHIER_CONFIRMED_REQUIRED`, 400). One live row per member
+an explicit boolean (`LYDIA_CASHIER_CONFIRMED_REQUIRED`, 400); that 400, like any malformed record
+carrying its token, releases the claim. One live row per member
 (`lydia_cashiers_one_live_member`, migration 119) refuses two records of the same member, typed
 (`LYDIA_CASHIER_ALREADY_SET`). Integration specs on PostgreSQL race two adds, two records under one
 claim, and an add with a removal, and walk the number change, the unconfirmed new number and the way back.
+
+**core-service and social-service DEPLOY TOGETHER for lot 3.** The claim token is written by social
+and carried by core: a core older than this lot never sends it back, so its releases and records are
+refused and the claim stays held (every cashier step of that association answers `IN_FLIGHT`). The
+global admin's clear (`lydia-enrolment-clear`) lifts such a stuck claim.
 
 **The account's erasure** first asks Lydia to remove the account's cashier numbers, best effort
 ([account-erasure](../../account-erasure.md)), through core's INTERNAL route

@@ -89,7 +89,7 @@ export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
 /** The `code` (400) of a Responsable who is not a member of the association. */
 export const LYDIA_RESPONSABLE_NOT_A_MEMBER = 'LYDIA_RESPONSABLE_NOT_A_MEMBER';
-/** The `code` (409) of a "record" whose phone Lydia does not list as a cashier managing cashiers. */
+/** The `code` (409) of a "record" whose phone Lydia does not list with the Responsable's rights. */
 export const LYDIA_RESPONSABLE_NOT_A_CASHIER = 'LYDIA_RESPONSABLE_NOT_A_CASHIER';
 /** The `code` (409) of a second person asked as Responsable: changing them is lot 3. */
 export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
@@ -438,7 +438,7 @@ export class PaymentController {
    * to that Responsable or a global admin (403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`) - both
    * refused before Lydia is asked anything. The new number is added; only once Lydia CONFIRMS it
    * with every right does it become the live one, and only then is the number it replaced removed
-   * (`LydiaCashierOps.revoke`, `previous`, with its own control read and re-read). Unconfirmed, the
+   * (`LydiaCashierOps.revoke`, `previous`, with its own checks and re-read). Unconfirmed, the
    * old number stays the live one with every right. Switching back to the other number tracked on
    * the row is the same path.
    */
@@ -544,11 +544,11 @@ export class PaymentController {
         );
         if (!rights.access_cashier) {
           this.logger.warn(
-            `Lydia Responsable of ${associationId} not recorded: that number does not manage cashiers at Lydia`
+            `Lydia Responsable of ${associationId} not recorded: that number lacks a Responsable right at Lydia`
           );
           throw new ConflictException({
             code: LYDIA_RESPONSABLE_NOT_A_CASHIER,
-            message: 'That number is not a cashier managing cashiers of this Business at Lydia',
+            message: "That number does not hold the Responsable's rights on this Business at Lydia",
           });
         }
       }

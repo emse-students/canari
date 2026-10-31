@@ -289,8 +289,9 @@ export interface LydiaCashierReading {
 export const LYDIA_CASHIER_READBACK_INVALID = 'LYDIA_CASHIER_READBACK_INVALID';
 
 /**
- * The `code` (409) of a removal or a number change refused BEFORE any change at Lydia because the
- * CONTROL read of the Responsable's number did not show all 13 documented rights.
+ * The `code` (409) of a removal refused BEFORE any change at Lydia because the association's
+ * Responsable does not read all 13 documented rights: nothing is removed while the Responsable is not
+ * intact.
  */
 export const LYDIA_CASHIER_HOLDER_RIGHTS_MISSING = 'LYDIA_CASHIER_HOLDER_RIGHTS_MISSING';
 
@@ -796,24 +797,24 @@ export class LydiaPaymentProvider implements PaymentProvider {
   }
 
   /**
-   * The CONTROL read before a removal: `holderPhone` (the association's confirmed Responsable)
-   * must read all 13 documented rights at Lydia. Otherwise the typed 409
+   * Refuses unless the association's Responsable reads all 13 documented rights at Lydia - the
+   * guarantee that a holder keeps full rights whatever else changes. Otherwise the typed 409
    * `LYDIA_CASHIER_HOLDER_RIGHTS_MISSING`, and nothing changes at Lydia; a read that cannot be
    * trusted or made throws its own typed error (`LYDIA_CASHIER_READBACK_INVALID`, `LYDIA_UNREACHABLE`).
    */
-  async assertHolderRights(
+  async assertResponsableIntact(
     associationId: string,
     vendorToken: string,
-    holderPhone: string
+    contextPhone: string
   ): Promise<void> {
-    const reading = await this.readCashierReading(associationId, vendorToken, holderPhone);
+    const reading = await this.readCashierReading(associationId, vendorToken, contextPhone);
     const lacking = cashierRightsDifference(reading, 'responsable');
     if (lacking.length === 0) {
-      this.logger.debug(`[LYDIA-CASHIER] association ${associationId}: control read 13/13`);
+      this.logger.debug(`[LYDIA-CASHIER] association ${associationId}: Responsable intact, 13/13`);
       return;
     }
     this.logger.error(
-      `[LYDIA-CASHIER] association ${associationId}: the Responsable's number lacks ` +
+      `[LYDIA-CASHIER] association ${associationId}: the Responsable lacks ` +
         `${lacking.length} right(s) at Lydia (${lacking.join(',')}) - refused before any change`
     );
     throw new ConflictException({
@@ -823,10 +824,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
   }
 
   /**
-   * Removes `cashierPhone` from the Business `vendorToken`, then RE-READS `cashierPhone`'s rights: the removal counts only when no
-   * `access_*` reads 1, documented or not, in an answer that parses (`parseCashierReading`). First,
-   * the CONTROL read ({@link assertHolderRights}) - its refusal, like a malformed number or a missing
-   * Provider key, throws BEFORE any change. After that it never throws: whatever Lydia answers to the
+   * Removes `cashierPhone` from the Business `vendorToken` (`contextPhone`, opened by
+   * social-service, is part of the call), then RE-READS `cashierPhone`'s rights: the removal counts
+   * only when no `access_*` reads 1, documented or not, in an answer that parses
+   * (`parseCashierReading`). First, {@link assertResponsableIntact} - its refusal, like a malformed
+   * number or a missing Provider key, throws BEFORE any change. After that it never throws: whatever Lydia answers to the
    * removal, the re-read decides; a refused removal of a number that holds nothing is a confirmed one.
    * Answers `{ verified, held }`, `held` null when the re-read itself failed or could not be
    * trusted. Phones are never logged, only their last two digits.
@@ -834,12 +836,12 @@ export class LydiaPaymentProvider implements PaymentProvider {
   async removeCashier(
     associationId: string,
     vendorToken: string,
-    actorPhone: string,
+    contextPhone: string,
     cashierPhone: string
   ): Promise<LydiaCashierRemoval> {
-    this.cashierKeyOrThrow(associationId, actorPhone);
+    this.cashierKeyOrThrow(associationId, contextPhone);
     this.cashierKeyOrThrow(associationId, cashierPhone);
-    await this.assertHolderRights(associationId, vendorToken, actorPhone);
+    await this.assertResponsableIntact(associationId, vendorToken, contextPhone);
     const tag =
       `[LYDIA-CASHIER] association ${associationId}: removal of phone ending ` +
       `${cashierPhone.slice(-2)}`;
@@ -847,7 +849,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     try {
       await this.cashierCall(associationId, 'business/removecashier', {
         vendor_token: vendorToken,
-        phone: actorPhone,
+        phone: contextPhone,
         cashier_phone: cashierPhone,
       });
     } catch (err: unknown) {
