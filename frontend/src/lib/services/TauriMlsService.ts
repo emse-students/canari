@@ -1776,6 +1776,16 @@ export class TauriMlsService extends BaseMlsService {
     return invoke<string[]>('lister_identites_membres', { groupId });
   }
 
+  /** Classifies a group for the admission rule (`definir_politique_admission`). */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    await invoke<void>('definir_politique_admission', { groupId, policy });
+  }
+
+  /** The admission policy a group was classified with (`lire_politique_admission`). */
+  async getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'> {
+    return invoke<'closed' | 'open' | 'unclassified'>('lire_politique_admission', { groupId });
+  }
+
   /** The tree's signature key for one leaf, or null when it has none (`graine_member_signature_key`). */
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });

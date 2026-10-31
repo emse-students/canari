@@ -3487,6 +3487,8 @@
   "chat_system_device_added": "{user} added a device",
   "chat_system_uninvited_entry": "{user} entered the conversation without being added by a member",
   "chat_system_unvouched_device_entry": "A never-seen device of {user} entered the conversation by itself, without being added by a member",
+  "chat_system_admission_refused": "{user} entered this conversation without a member adding them. This device no longer follows it.",
+  "admission_frozen_toast": "{user} entered a conversation without being added: this device no longer follows it.",
   "device_notice_title": "New device on your account",
   "device_notice_body": "A new device was added to your account ({when}).",
   "device_notice_body_named": "\"{label}\" was added to your account ({when}).",
