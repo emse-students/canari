@@ -2166,7 +2166,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(told.find((t) => t.type === 'booking_reminder')?.text).toContain('10:00');
       expect(told.every((t) => t.bookingId === id)).toBe(true);
       // The row carries the owning association, so the bell draws its logo (owner, 2026-10-30).
-      expect(told.every((t) => t.associationId === space.associationId)).toBe(true);
+      // (`told` also holds the booking's own `booking_added` notice, where the actor is a person.)
+      expect(
+        told
+          .filter((t) => t.type === 'booking_reminder')
+          .every((t) => t.associationId === space.associationId)
+      ).toBe(true);
     });
 
     it('no reminder for a cancelled booking, a withdrawn participant, or one made inside its delay (Q-R6)', async () => {
