@@ -83,25 +83,40 @@
     />
   </div>
 
-  <!-- Conteneur du texte -->
+  <!--
+    Conteneur du texte. OPTICALLY CENTRED ON THE ICON: each line box is trimmed to its glyphs, so the
+    block's top edge is the cap top of the name and its bottom edge the baseline of the tagline, and
+    `min-h-10` (the icon's height) with `justify-between` pins those two edges to the icon's. A
+    line box otherwise adds space above the cap height and below the baseline (the half-leading
+    plus the font's ascender and descender gaps), which pushed the block 1.5px low at the default
+    size. Without a tagline the trimmed name is simply centred. The trim is `text-box: trim-both
+    cap alphabetic` written out in `em`, because Firefox has not shipped that property.
+  -->
   <div
     bind:this={nameBlock}
     aria-hidden={fitContainer && !nameFits ? 'true' : undefined}
-    class="flex flex-col justify-center gap-0.5 whitespace-nowrap {compact
+    class="flex min-h-10 flex-col whitespace-nowrap {subtitle
+      ? 'justify-between'
+      : 'justify-center'} {compact
       ? 'hidden sm:flex'
       : fitContainer && !nameFits
         ? 'invisible absolute'
         : 'flex'}"
   >
+    <!-- Fredoka Variable 700: ascender 0.974em, descender 0.236em, cap height 0.703em. With
+         line-height 1 the cap top sits 0.166em below the line box top and the baseline 0.131em
+         above its bottom (measured from canvas metrics at 1000px, 2026-10-31). -->
     <p
-      class="font-brand text-text-main text-xl font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
+      class="font-brand text-text-main -mt-[0.166em] -mb-[0.131em] text-xl leading-none font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
     >
       {brandName}
     </p>
 
     {#if subtitle}
+      <!-- Nunito Variable 500: ascender 1.011em, descender 0.353em, cap height 0.719em, so the cap
+           top is 0.110em below the line box top and the baseline 0.171em above its bottom. -->
       <p
-        class="text-text-muted text-2xs mt-[1px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+        class="text-text-muted text-2xs -mt-[0.11em] -mb-[0.171em] leading-none font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
       >
         {subtitle}
       </p>
