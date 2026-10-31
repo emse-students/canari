@@ -22,6 +22,14 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_previous_payment_open());
   });
 
+  it('words an association whose payments are not active, and one Lydia blocked, apart', () => {
+    const notActive = new SocialApiError('Payments off', 'PAYMENTS_NOT_ACTIVATED', 409);
+    const blocked = new SocialApiError('Blocked', 'PAYMENTS_BLOCKED', 409);
+    expect(providerRefusalMessage(notActive)).toBe(m.shop_payments_not_activated());
+    expect(providerRefusalMessage(blocked)).toBe(m.shop_payments_blocked());
+    expect(m.shop_payments_not_activated()).not.toBe(m.shop_payments_blocked());
+  });
+
   it('words an out-of-range amount from the typed bounds, not from the server prose', () => {
     const err = new SocialApiError('Lydia accepts ...', 'AMOUNT_OUT_OF_RANGE', 400, {
       minCents: 50,
@@ -107,6 +115,21 @@ describe('providerRefusalMessage', () => {
   it('words a second answer on a single-answer form from its code', () => {
     const err = new SocialApiError('You have already answered this form.', 'ALREADY_ANSWERED', 409);
     expect(providerRefusalMessage(err)).toBe(m.form_already_answered());
+  });
+
+  it('words a held cotisation, and any other audience refusal, from its code', () => {
+    expect(providerRefusalMessage(new SocialApiError('x', 'FORM_COTISATION_HELD', 403))).toBe(
+      m.form_cotisation_held()
+    );
+    expect(providerRefusalMessage(new SocialApiError('x', 'FORM_NOT_OPEN_TO_YOU', 403))).toBe(
+      m.form_view_not_open_to_you_title()
+    );
+  });
+
+  it('words a condition both requiring and excluding a cotisation from its code', () => {
+    expect(
+      providerRefusalMessage(new SocialApiError('x', 'AUDIENCE_COTISATION_BOTH_MODES', 400))
+    ).toBe(m.form_condition_cotisation_both_modes());
   });
 
   it("words a guest's ceiling of waiting answers from its code, never the server English", () => {

@@ -34,7 +34,7 @@ un artefact deploye**, et il a derive de celui qui tourne :
 | --- | --- | --- | --- |
 | Image | `ghcr.io/goauthentik/server` | `docker.io/authentik/server` | `ghcr.io/...` - **ce fichier** |
 | Version | `2026.8.5` (2026-10-23, version corrective courante) | `2026.8.0` | `2026.8.0` jusqu a la mise a jour de l operateur |
-| Volume | `database` (nomme `miconnect_database` par le projet) | `miconnect_database`, `external: true` | `database`, cree par ce fichier |
+| Volume | `database_18` (nomme `miconnect_database_18` par le projet) | `miconnect_database`, `external: true` | `database_18` depuis le passage a PostgreSQL 18 du 2026-10-31 ; l ancien volume (16) a ete supprime le meme jour |
 
 **La derive est fermee : c est ce `compose.yml` qui tourne maintenant**, au `.env`
 pres - sauf la version, que ce fichier porte en avance : aucun pipeline ne relance
@@ -140,7 +140,8 @@ Elles vivent dans le `.env` de la boite, a cote du `compose.yml`.
 
 ## Donnees et sauvegarde
 
-La base PostgreSQL (volume `miconnect_database`) contient toute la configuration
+La base PostgreSQL (volume `miconnect_database_18`, PostgreSQL 18 depuis le 2026-10-31 :
+[procedure](../../docs/wiki/infrastructure/authentik.md#postgresql-16---18-2026-10-31)) contient toute la configuration
 - providers, applications, utilisateurs, OIDC - et **elle est le seul endroit ou
 elle existe**. La perdre, c est un estate applicatif intact dont plus personne ne
 peut ouvrir de session.
@@ -165,7 +166,7 @@ cible - ce qui est la seule preuve qu ils l ont ete.
    `AUTHENTIK_VERSION`).
 2. `docker compose up -d`, depuis n importe quel dossier - **`name: miconnect` est
    DECLARE dans le `compose.yml` depuis le 2026-09-24**, donc le volume s appelle
-   `miconnect_database` quel que soit le chemin. Cette ligne manquait : le nom
+   `miconnect_database_18` quel que soit le chemin. Cette ligne manquait : le nom
    etait deduit du DOSSIER, et un dossier nomme autrement aurait demarre sur une
    base VIDE au lieu d echouer. Il n a tenu pendant le demenagement que parce que
    les deux chemins successifs finissaient par `miconnect`, par chance.

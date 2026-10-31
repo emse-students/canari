@@ -975,7 +975,7 @@ describe('the E2E worker report (2026-10-19)', () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (5 s after connected): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.callState)).toBe('incall');
 
@@ -1086,7 +1086,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     pc.videoInboundPackets = 400;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1111,7 +1111,7 @@ describe('the E2E worker report (2026-10-19)', () => {
       pc.videoInboundPackets = 400;
       await vi.advanceTimersByTimeAsync(5_000);
       expect(lines()).toContain(
-        '[Call] E2E path check (after a new video m-line): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+        '[Call] E2E path check (after a new video m-line): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
       );
       expect(get(service.callState)).toBe('incall');
       const shown = get(service.remoteStream)?.getTracks() ?? [];
@@ -1208,7 +1208,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     camTrack.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the camera unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the camera unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });
@@ -1255,7 +1255,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     mic.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the local audio unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the local audio unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
   });
 
@@ -1313,7 +1313,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     (pc.onsignalingstatechange as unknown as () => void)();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after signalling reached stable): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after signalling reached stable): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1515,7 +1515,10 @@ describe('the E2E worker report (2026-10-19)', () => {
       const first = await turnCameraOn(service);
       const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
       let hidden = true;
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => (hidden ? 'hidden' : 'visible'),
+      });
       try {
         document.dispatchEvent(new Event('visibilitychange'));
         await settle();
@@ -1533,8 +1536,240 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(t.direction).toBe('sendrecv');
         expect(get(service.isVideoOff)).toBe(false);
       } finally {
-        delete (document as unknown as { hidden?: boolean }).hidden;
+        delete (document as unknown as { visibilityState?: string }).visibilityState;
+        // Ended, so its listener cannot answer a later test's `canari:foreground` with a camera.
+        service.endCall();
       }
+    });
+
+    describe('on Android, where the WebView stays "visible" in the background', () => {
+      // MainActivity writes `window.__canariForeground` and dispatches `canari:foreground`; the
+      // document never changes (utils/appForeground.ts). The camera must follow THAT signal.
+      const win = window as unknown as { __canariForeground?: boolean };
+      const announce = (foreground: boolean) => {
+        win.__canariForeground = foreground;
+        window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+      };
+      // Each test's call is ENDED: a call left up keeps its window listener, and its camera would
+      // answer the next test's `canari:foreground` into the shared `cameras` list.
+      const live: CallService[] = [];
+      const androidCall = async () => {
+        const c = await connectedCall();
+        live.push(c.service);
+        return c;
+      };
+      afterEach(() => {
+        for (const s of live.splice(0)) s.endCall();
+        delete win.__canariForeground;
+      });
+
+      it('canari:foreground false turns the camera OFF, true turns it ON again', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        announce(false);
+        await settle();
+        expect(first.stop).toHaveBeenCalled();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] backgrounded - camera off until the app returns (audio continues)'
+        );
+
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('a camera the OS ends while the app is off screen comes back at the return', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        // The OS wins the race: the flag is already false, the event not yet delivered.
+        win.__canariForeground = false;
+        first.onended?.();
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] the system ended the camera of a backgrounded app - on again at return'
+        );
+
+        announce(false); // the late event finds the camera off and changes nothing
+        await settle();
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+      });
+
+      /** The sender's next `replaceTrack` waits for `release()`: an OFF still in flight. */
+      function holdNextReplace(sender: {
+        replaceTrack: (t: { kind: string } | null) => Promise<void>;
+      }) {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        const real = sender.replaceTrack;
+        sender.replaceTrack = async (t) => {
+          sender.replaceTrack = real;
+          await gate;
+          return real(t);
+        };
+        return release;
+      }
+
+      it('the permission dialog pauses the activity: the first camera still ends ON', async () => {
+        const { service, pc, lines } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo(); // the dialog is up
+        announce(false); // MainActivity.onPause - the pause's off is queued behind the ON
+        await settle();
+        announce(true); // granted: onResume
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - the queued background off is cancelled, the camera opens'
+        );
+        release();
+        await opening;
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track).toBe(cam);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('an OFF in flight, then the background and the return: the camera stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the user's off, waiting on replaceTrack(null)
+        await settle();
+        announce(false); // backgrounded while the user's off still runs
+        await settle();
+        release();
+        await off;
+        await settle();
+        announce(true); // the return, the off long done
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+        // No capture came back into THIS call (the shared `cameras` list also sees other tests').
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it('an OFF tapped while an ON opens, then the background and the return: stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo();
+        await service.toggleVideo(); // off, queued behind the opening ON
+        announce(false);
+        await settle();
+        release(); // the ON ends, the user's queued off applies - all while off screen
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track ?? null).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
+
+      it('the return while the background off still runs: the camera comes back when it ends', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        announce(false); // the pause's off, held on replaceTrack(null)
+        await settle();
+        announce(true);
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - camera on again once the running off ends'
+        );
+        release();
+        await settle();
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('the OS ends a camera the user was turning off, off screen: it stays OFF at the return', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        await service.toggleVideo(); // off, done
+        await settle();
+        const release = holdNextReplace(t.sender);
+        const opening = service.toggleVideo(); // on again: the capture is adopted, replaceTrack held
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        await service.toggleVideo(); // the user's off, queued behind the opening ON
+        announce(false); // not headed on: nothing to pause
+        await settle();
+        cam.onended?.(); // the OS takes it in the same replaceTrack await
+        await settle();
+        release();
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        expect(get(service.isVideoOff)).toBe(true);
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it("an OFF that outlives its call does not release the NEXT call's camera lock", async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const releaseOff = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the old call's off, held on replaceTrack(null)
+        await settle();
+        service.endCall();
+        await vi.advanceTimersByTimeAsync(1_500);
+        const next = service.startCall('group-1', false);
+        await settle();
+        const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+        ws.open();
+        ws.deliver({ type: 'Joined', room_id: 'room-2' });
+        await next;
+        const releaseOn = holdNextCapture();
+        const opening = service.toggleVideo(); // the new call's camera, its lock held
+        await settle();
+        const lock = service as unknown as { cameraBusy: boolean };
+        expect(lock.cameraBusy).toBe(true);
+        releaseOff();
+        await off; // the old finally runs now
+        await settle();
+        expect(lock.cameraBusy).toBe(true);
+        releaseOn();
+        await opening;
+        await settle();
+        expect(lock.cameraBusy).toBe(false);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('a camera the OS ends ON screen stays off (another app took it)', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        first.onended?.();
+        await settle();
+        announce(false);
+        await settle();
+        announce(true);
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
     });
 
     describe('the quality ladder (utils/callVideoQuality.ts)', () => {
@@ -1729,7 +1964,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     workerAnswers.report = { sender: 500, receiver: 501 };
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });
@@ -4078,5 +4313,84 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
         /^\[CALL_REPORT\] call=- phase=refused engine=\S+ e2e=refused reason=no-rtp-script-transform$/
       ),
     ]);
+  });
+});
+
+/**
+ * AN ANSWER ON THE NATIVE RING JOINS WITH NO INVITE (calls.md, "An answer from the ring joins on the
+ * ring's facts"). Driven through the real `pendingCallAccept` gate and the real `acceptCall`: the
+ * room token is the authority, and nothing happens before the session's catch-up is done.
+ */
+describe('an answer on the native ring, no invite ever delivered', () => {
+  const RING_ANSWER = {
+    groupId: 'group-1',
+    callId: 'room-1',
+    hasVideo: false,
+    callerId: 'peer@example.org',
+  };
+
+  afterEach(async () => {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setSessionCaughtUp(false);
+    gate.takePendingCallAccept();
+    gate.setPendingCallAcceptHandler(null);
+  });
+
+  async function answeredOnTheRing(service: CallService) {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setPendingCallAcceptHandler((why) => service.answerFromSystemSurface(why));
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    return gate;
+  }
+
+  it('waits for the catch-up, then asks the room token and joins', async () => {
+    const service = new CallService(fakeMls);
+    order.length = 0;
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    await settle();
+    // The socket is not caught up yet: nothing asked, nothing sent.
+    expect(order).toHaveLength(0);
+    expect(get(service.callState)).toBe('idle');
+
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(sentCallFrames().some((c) => c.answered)).toBe(true);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(service.incomingCallerId).toBe('peer@example.org');
+  });
+
+  it('joins nothing when the room token says the ring is over (410)', async () => {
+    server.roomTokenStatus = 410;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+  });
+
+  it('a second answer of the call being joined starts nothing and accuses nothing', async () => {
+    const service = new CallService(fakeMls);
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    order.length = 0;
+
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    await settle();
+
+    expect(order).toHaveLength(0);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('WARN'))).toBe(false);
   });
 });

@@ -1,3 +1,3 @@
-version: 1.5.1
+version: 1.5.3
 
-Nouveau : les directs, pour filmer et diffuser en direct ; les appels audio en tête-à-tête ; les réservations préviennent désormais de chaque réservation et annulation, avec un rappel réglable ; la boutique présente une seule carte d'adhésion avec ses formules et ses prix ; suivre une personne passe désormais par une demande qu'elle accepte ou refuse. Corrigé : le clavier ne recouvre plus la conversation, et « + » ouvre bien son menu après que le clavier a été fermé.
+Nouveau : la liste complète des votants d'un sondage en un geste ; un nouvel appareil d'un membre rejoint seul ses conversations ; un nouveau membre d'un groupe ne reçoit plus les messages d'avant son arrivée. Amélioré : le filtre du fil tient dans une pastille flottante ; une réservation peut passer minuit. Corrigé : un message écrit pendant qu'un appareil attend d'être réintégré part ensuite ; le compteur d'associations du profil ; le GIF d'un commentaire replié.

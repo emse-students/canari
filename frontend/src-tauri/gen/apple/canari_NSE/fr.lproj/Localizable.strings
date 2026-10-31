@@ -12,11 +12,6 @@
 /* A mention token in a decrypted body: the one user the extension can name, and everybody else. */
 "notif.mention.you" = "vous";
 "notif.mention.someone" = "quelqu'un";
-/* The legacy MLS call invite: only pre-WP-XP-5 callers send it as an alert push, and this process
-   is the one that renders it when the app is killed. The emoji stays in the code - it is not a
-   translation. */
-"notif.call.incoming" = "Appel entrant";
-"notif.call.incoming_video" = "Appel vidéo entrant";
 
 /* Server-composed pushes, moved here 2026-08-19: social-service sends a `contentKey` and at most a
    name and one fragment, and this process writes the sentence in the language chosen in the app. */
@@ -66,6 +61,12 @@
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
+"notif.lydia_payments_active.title" = "Paiements Lydia actifs";
+"notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
+"notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";
+"notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
+"notif.lydia_refund_issued.title" = "Remboursement";
+"notif.lydia_refund_issued.body" = "%1$@ vous a remboursé un paiement.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";

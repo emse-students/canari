@@ -25,6 +25,9 @@ import {
 } from '@lucide/svelte';
 import { m } from '$lib/paraglide/messages';
 import type { Crumb, HubRow } from '$lib/components/navigation/breadcrumb';
+import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
+import { isPastCampaignList } from '$lib/associations/campaign';
+import type { UserMembershipRow } from '$lib/profile/api';
 
 /** The path segment between `/profile/` and the section key; no user id can equal it. */
 export const PROFILE_SELF_SEGMENT = 'me';
@@ -64,7 +67,7 @@ const ENTRIES: Record<ProfileSection, ProfileEntry> = {
 /** What the hub already knows, used for the summaries and for which rows exist. */
 export interface ProfileHubFacts {
   /** Memberships loaded, `null` while they are not. */
-  membershipCount: number | null;
+  memberships: UserMembershipRow[] | null;
   /** Role-history entries loaded, `null` while they are not. */
   careerCount: number | null;
   /** The sponsorship tree has someone in it. */
@@ -97,11 +100,31 @@ export function mayOpenProfileSection(section: ProfileSection, facts: ProfileHub
   return section !== 'sponsorship' || facts.hasSponsorship;
 }
 
+/**
+ * What the "Mes associations" row says: the memberships the section LISTS (a finished campaign list
+ * is left out there, so it is left out here), counted BY KIND - "7 associations · 1 liste" - since
+ * the section shows lists and institutions beside associations and a bare count read as too many
+ * associations (owner, 2026-10-31). A kind with none is omitted.
+ */
+export function associationsSummary(memberships: UserMembershipRow[]): string {
+  const shown = memberships.filter((mb) => !isPastCampaignList(mb));
+  const { assos, lists, institutions } = groupAssociationsForSelect(shown);
+  const parts: string[] = [];
+  if (assos.length > 0 || (lists.length === 0 && institutions.length === 0)) {
+    parts.push(m.profile_hub_associations_summary({ count: assos.length }));
+  }
+  if (lists.length > 0) parts.push(m.profile_hub_lists_summary({ count: lists.length }));
+  if (institutions.length > 0) {
+    parts.push(m.profile_hub_institutions_summary({ count: institutions.length }));
+  }
+  return parts.join(' · ');
+}
+
 /** The hub's rows, in order, with a count where one is already loaded. */
 export function profileHubRows(facts: ProfileHubFacts): HubRow[] {
   const summary = (section: ProfileSection): string | undefined => {
-    if (section === 'associations' && facts.membershipCount !== null) {
-      return m.profile_hub_associations_summary({ count: facts.membershipCount });
+    if (section === 'associations' && facts.memberships !== null) {
+      return associationsSummary(facts.memberships);
     }
     if (section === 'career' && facts.careerCount !== null) {
       return m.profile_hub_career_summary({ count: facts.careerCount });

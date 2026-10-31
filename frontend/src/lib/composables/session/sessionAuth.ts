@@ -114,7 +114,6 @@ import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
-import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
@@ -189,11 +188,6 @@ import {
   settleSweptJoinRequests,
 } from '$lib/utils/chat/joinRequests.svelte';
 import {
-  markSweepOwed,
-  setMemberDeviceSweep,
-  takeOwedSweep,
-} from '$lib/utils/chat/memberDeviceAnswers';
-import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
   type WelcomeRequestContext,
@@ -204,10 +198,16 @@ import {
   markConversationDeletedRemotely,
 } from '$lib/utils/chat/conversations';
 import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
+import { applyRestoredLifecycles } from '$lib/utils/chat/admissionState';
+import {
+  captureGroupReadyAnnouncer,
+  setGroupReadyAnnouncer,
+} from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   registerOutbox,
   unregisterOutbox,
   flushOutbox,
+  resumeOutboxGroup,
   applyOutboxPendingStatuses,
   OutboxPrepareRefusedError,
   type PreparedOutboxMedia,
@@ -299,7 +299,53 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
     log: cb.log,
+    // An external join is the other way a group becomes ready, and it owes what a Welcome owes -
+    // to THIS session only: captured now, it announces nothing once the session has ended.
+    onGroupReady: captureGroupReadyAnnouncer(),
   };
+}
+
+/** The pending debounce of {@link announceGroupReady}'s invitation sweep, one per session. */
+const groupReadySweeps = new WeakMap<SessionContext, ReturnType<typeof setTimeout>>();
+
+/**
+ * ONE GROUP JUST BECAME SENDABLE - a Welcome installed (the message pipeline's `onGroupReady`) or an
+ * external join landed (`requestReAdd`, through `RecoveryDeps.onGroupReady`). ONE function for both,
+ * because what is owed is the same and the external join used to owe it and do none of it: its row
+ * went `active` and nothing resumed the messages held for the group.
+ *
+ * Owed, in order: the entries held for this group are resumed and the queue drained
+ * (`resumeOutboxGroup`, which skips their backoff - a plain flush did not); their statuses are
+ * refreshed; the askers this group kept waiting are served; and the invitation sweep runs, debounced
+ * once per session, since a burst of Welcomes needs one sweep.
+ *
+ * NOT EXPORTED, AND REACHED ONLY THROUGH THE REGISTRY: every one of those steps reaches module-level
+ * state, so a call that lands after this session ended acts on the next. The session registers this
+ * function (`setGroupReadyAnnouncer`) and every `onGroupReady` is `captureGroupReadyAnnouncer()`,
+ * whose one liveness check is the only way in.
+ */
+function announceGroupReady(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  readyGroupId: string
+): void {
+  resumeOutboxGroup(readyGroupId);
+  void applyOutboxPendingStatuses();
+  // The askers this group kept waiting. Served through the SAME path the socket uses, so one that
+  // is still too early is put back on the queue rather than dropped: "ready" here is the MLS group
+  // becoming sendable, which is not yet this device's conversation row.
+  void drainDeferredWelcomeRequests(makeWelcomeRequestContext(ctx, cb), readyGroupId);
+  const pending = groupReadySweeps.get(ctx);
+  if (pending !== undefined) clearTimeout(pending);
+  groupReadySweeps.set(
+    ctx,
+    setTimeout(() => {
+      groupReadySweeps.delete(ctx);
+      processDeviceInvitationsLocally(ctx, cb).catch((e: unknown) =>
+        cb.log(`[SYNC] invitation sweep after a group became ready failed: ${String(e)}`)
+      );
+    }, 500)
+  );
 }
 
 /**
@@ -317,6 +363,7 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     deviceKeyB64: ctx.getDeviceKey(),
     scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
     setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+    onCaughtUp: () => ctx.onConnectionCaughtUp(),
     setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
     processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
     log: cb.log,
@@ -494,19 +541,9 @@ export function makeWelcomeRequestContext(
 /** Processes any pending MLS invitations from our own other devices (multi-device sync). Re-entrant safe. */
 export async function processDeviceInvitationsLocally(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks,
-  opts: {
-    /** A member approved an unseen device (`memberDeviceAnswers.ts`): a busy sweep is followed by one more. */
-    owed?: boolean;
-  } = {}
+  cb: ChatSessionCallbacks
 ) {
-  if (ctx.isSyncing()) {
-    if (opts.owed) {
-      markSweepOwed();
-      cb.log('[PENDING] a sweep is running - one more follows it for the device a member approved');
-    }
-    return;
-  }
+  if (ctx.isSyncing()) return;
   ctx.setIsSyncing(true);
   try {
     // A new person's pending device is never added by the sweep; it raises a member's approval. The
@@ -530,9 +567,6 @@ export async function processDeviceInvitationsLocally(
   } finally {
     ctx.setIsSyncing(false);
   }
-  // A sweep a member's answer asked for while this one ran (`owed`): this one may have passed the
-  // row already, so one more runs - never more than one, however many asked.
-  if (takeOwedSweep()) await processDeviceInvitationsLocally(ctx, cb);
 }
 
 /**
@@ -1877,6 +1911,8 @@ export async function loginImpl(
     // Message outbox: register the flusher before loading conversations so that
     // applyOutboxPendingStatuses can restore the "pending" status on restored messages.
     registerOutbox(makeOutboxDeps(ctx, cb));
+    // With the outbox it resumes: the recovery callers built outside the session reach it by name.
+    setGroupReadyAnnouncer((groupId) => announceGroupReady(ctx, cb, groupId));
 
     // Watch for connectivity returning. Registered on every session, not only the offline ones:
     // promoteOfflineSession no-ops on a session that already holds a token, and registering here
@@ -1911,10 +1947,15 @@ export async function loginImpl(
     // communities API.
     const distributionChannels = new ChannelService();
     mlsService.setDistributionGroupInfoTransport({
-      fetch: async (scope) => {
-        const ref = await distributionChannels.getDistributionGroup(scope);
+      fetch: async (scope, deviceId) => {
+        const ref = await distributionChannels.getDistributionGroup(scope, deviceId);
         return ref.groupInfo !== null && ref.baseEpoch !== null
-          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch, activeEpoch: ref.activeEpoch }
+          ? {
+              groupInfo: ref.groupInfo,
+              baseEpoch: ref.baseEpoch,
+              activeEpoch: ref.activeEpoch,
+              ...(ref.seat ? { seat: ref.seat } : {}),
+            }
           : null;
       },
       publish: (scope, groupInfo, baseEpoch, deviceId) =>
@@ -2029,24 +2070,10 @@ export async function loginImpl(
             ctx.ensureMls().getDeviceId()
           );
       },
-      onGroupReady: (() => {
-        let t: ReturnType<typeof setTimeout> | null = null;
-        return (readyGroupId: string) => {
-          // The group just became sendable (Welcome processed / external join complete): drain
-          // the outbox to deliver pending messages and refresh their status.
-          flushOutbox();
-          void applyOutboxPendingStatuses();
-          // The askers this group kept waiting. Served through the SAME path the socket uses, so
-          // one that is still too early is put back on the queue rather than dropped: "ready" here
-          // is the MLS group becoming sendable, which is not yet this device's conversation row.
-          void drainDeferredWelcomeRequests(makeWelcomeRequestContext(ctx, cb), readyGroupId);
-          if (t !== null) clearTimeout(t);
-          t = setTimeout(() => {
-            t = null;
-            processDeviceInvitationsLocally(ctx, cb).catch(() => {});
-          }, 500);
-        };
-      })(),
+      // The group just became sendable (a Welcome processed): the one seam an external join shares.
+      // Captured after `setGroupReadyAnnouncer` above: a Welcome processed after this session ended
+      // announces nothing into the next one.
+      onGroupReady: captureGroupReadyAnnouncer(),
       onMlsFatalError: (kind) => {
         ctx.setMlsFatalError(kind);
         if (kind === 'oom') {
@@ -2086,8 +2113,6 @@ export async function loginImpl(
       addMessageToChat: (senderId, content, contactName, options) =>
         cb.addMessageToChat(senderId, content, contactName, options),
     });
-    // A member's approval of a device this one never saw is carried out by this session's sweep.
-    setMemberDeviceSweep(() => processDeviceInvitationsLocally(ctx, cb, { owed: true }));
     endStartupCatchupPhase();
 
     /**
@@ -2128,7 +2153,7 @@ export async function loginImpl(
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
-    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    // there is no network, and it logs "[WS] Gateway connection failed" for a device that never had one.
     let gatewayIsOpen = false;
     if (offlineSession) {
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
@@ -2241,37 +2266,15 @@ export async function loginImpl(
           `[INIT] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group (missing ${ids})`
         );
       }
-      const missingKeys: string[] = [];
-      // Conversations stuck in 'pending' while their local MLS state exists:
-      // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
-      // groups but never promoted the inverse - this adds the mirror promotion.
-      const recoveredKeys: string[] = [];
-      for (const [key, c] of cb.conversations.entries()) {
-        if (isChannelConversationId(c.id)) continue;
-        if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
-          // Admitted once, so never read as a never-admitted ask again.
-          cb.conversations.set(key, { ...c, lifecycle: 'pending', awaitingAdmission: false });
-          missingKeys.push(key);
-        } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, lifecycle: 'active' });
-          recoveredKeys.push(key);
-        }
-      }
-      if (missingKeys.length > 0) {
-        cb.log(
-          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
-        );
-        console.warn(
-          `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
-        );
-        await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
-      if (recoveredKeys.length > 0) {
-        cb.log(
-          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
-        );
-        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
+      // The demotion of rows whose group is not held, and its mirror: the promotion of `pending`
+      // rows whose group is - on MEMBERSHIP, never on held state alone - each written as it changed.
+      await applyRestoredLifecycles({
+        conversations: cb.conversations,
+        localGroups: localMlsGroups,
+        mlsService,
+        saveConversation: cb.saveConversation,
+        log: cb.log,
+      });
     } catch (e) {
       console.warn('[INIT] Error detecting missing MLS groups:', e);
     }
@@ -3290,6 +3293,7 @@ export function tearDownLiveSession(
   reason: 'logout' | 'revoked' | 'lost'
 ): Promise<void> {
   unregisterOutbox();
+  setGroupReadyAnnouncer(null);
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
   unregisterOfflinePromotion();

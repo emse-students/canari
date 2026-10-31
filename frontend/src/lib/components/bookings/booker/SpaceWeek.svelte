@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, type Snippet } from 'svelte';
+  import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
+  import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
   import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
   import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
@@ -50,7 +52,10 @@
    */
   interface Props {
     space: BookerSpace;
-    /** The device's clock, which only DRAWS (the server decides every request). */
+    /**
+     * The device's clock: it decides what is OFFERED (a unit whose start the booking window
+     * refuses is not), while the server's clock decides every request.
+     */
     nowMs: number;
     /** `block`: the organiser's dashboard, a free unit opens the block sheet (WP-R5). */
     mode?: 'book' | 'block';
@@ -58,9 +63,11 @@
     onWeekRead?: (slots: ResourceSlots[], week: string[]) => void;
     /** Called after a sheet changed something (a booking, a block, a cancel). */
     onChanged?: () => void;
+    /** Under "Vos reservations ici" in the side column of the booker's page (`book` mode only). */
+    aside?: Snippet;
   }
 
-  let { space, nowMs = $bindable(), mode = 'book', onWeekRead, onChanged }: Props = $props();
+  let { space, nowMs = $bindable(), mode = 'book', onWeekRead, onChanged, aside }: Props = $props();
 
   type Sheet =
     | {
@@ -70,7 +77,6 @@
         /** The units a drag over the grid already selected (1 for a tap). */
         initialCount: number;
         blockRun: SlotUnit[];
-        windowNote: boolean;
       }
     | { kind: 'block'; resource: BookerResource; run: SlotUnit[]; initialCount: number }
     | { kind: 'detail'; resource: BookerResource; unit: SlotUnit };
@@ -86,6 +92,13 @@
   /** The column shown: a space with several columns shows one at a time (D44, D46). */
   let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
   let sheet = $state<Sheet | null>(null);
+  /**
+   * The LATEST start the server refused as `started` or `notice` while the device's clock still
+   * took it. Both refusals only grow with time, so every start at or before it is refused too: with
+   * a clock behind the server's, one refusal retires every earlier unit, not one refusal per unit.
+   * It holds for the life of this view, whatever the device's clock says.
+   */
+  let lastRefusedStart = $state<number | null>(null);
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
@@ -95,6 +108,21 @@
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
   /** What the grid draws: the week, or on a phone the chosen day alone on its own axis. */
   const layout = $derived(narrow ? weekLayout(columnUnits, [date], space, nowMs) : week);
+  /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
+  const weekHeld = $derived.by(() => {
+    const want = weekReadRange(date);
+    return loaded !== null && loaded.from <= want.from && want.to <= loaded.to;
+  });
+  /**
+   * The grid of the last week whose read landed, kept on screen, inert and dimmed, while the week
+   * moved to loads. Dropping it for the empty line collapsed the page, and the browser clamped the
+   * scroll to the top on every arrow (owner, 2026-10-31): the page must stay where the reader is.
+   */
+  let lastDrawn: typeof layout | null = null;
+  const drawn = $derived.by(() => {
+    if (weekHeld || !lastDrawn) lastDrawn = layout;
+    return lastDrawn;
+  });
   const freeCounts = $derived(
     new Map(
       space.resources.map((r) => [
@@ -107,6 +135,7 @@
       ])
     )
   );
+  const mineRows = $derived(mineHere(mine.values(), space.id, nowMs));
   const weekLabel = $derived(weekAll.length ? formatWeekRange(weekAll) : '');
 
   onMount(() =>
@@ -180,12 +209,21 @@
   /**
    * What tapping a unit opens: the reading of a taken unit; on a free one, the booking sheet - with
    * "block instead" for whoever may - or, in block mode, the block sheet with the run a drag drew.
-   * A unit the device's clock puts outside the window still opens, with a note: the server judges
-   * the START of the range, on its clock, and its answer is final.
+   * A free unit that cannot be booked now (over, too soon, too far, not open yet) is not offered:
+   * the grid draws it inert and nothing opens. Should the server still refuse at the send, its
+   * typed refusal is said in plain words (`refusals.ts`).
    */
   function pick(picked: BookerResource, unit: SlotUnit, count = 1) {
     if (unit.state !== 'free') {
       sheet = { kind: 'detail', resource: picked, unit };
+      return;
+    }
+    if (
+      mode !== 'block' &&
+      (windowRefusal(space, unit.startMs, nowMs) !== null ||
+        (lastRefusedStart !== null && unit.startMs <= lastRefusedStart))
+    ) {
+      Log.d('BOOKINGS', 'pick ignored: the unit is outside the booking window');
       return;
     }
     const units = unitsInOrder(slots, picked.id);
@@ -206,7 +244,6 @@
       run: freeRunFrom(units, unit, bookingUnitLimit(space)),
       initialCount: count,
       blockRun: mayBlock ? freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES) : [],
-      windowNote: windowRefusal(space, unit.startMs, nowMs) !== null,
     };
   }
 
@@ -218,58 +255,75 @@
   }
 </script>
 
-<div class="space-y-4">
-  {#if space.resources.length > 1 && resource}
-    <ColumnSelect
-      resources={space.resources}
-      value={resource.id}
-      counts={freeCounts}
-      onSelect={(id) => (resourceId = id)}
-    />
-  {/if}
+<div class={mode === 'book' ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start' : ''}>
+  <div class="min-w-0 space-y-4">
+    {#if space.resources.length > 1 && resource}
+      <ColumnSelect
+        resources={space.resources}
+        value={resource.id}
+        counts={freeCounts}
+        onSelect={(id) => (resourceId = id)}
+      />
+    {/if}
 
-  {#if slotsError}
-    <p
-      class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm"
-      role="alert"
-    >
-      {slotsError}
-    </p>
-  {:else if resource}
-    {#if narrow}
-      <DayStrip
-        days={week.days}
-        {date}
-        {today}
-        label={weekLabel}
-        onSelect={chooseDate}
-        onPrevious={() => moveWeek(-1)}
-        onNext={() => moveWeek(1)}
-      />
-    {:else}
-      <WeekBar
-        label={weekLabel}
-        away={!weekAll.includes(today)}
-        onPrevious={() => moveWeek(-1)}
-        onNext={() => moveWeek(1)}
-        onToday={() => chooseDate(today)}
-      />
-    {/if}
-    {#if layout.endMin === layout.startMin}
-      <p class="text-text-muted py-8 text-center text-sm">
-        {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+    {#if slotsError}
+      <p
+        class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm"
+        role="alert"
+      >
+        {slotsError}
       </p>
-    {:else}
-      <SpaceGrid
-        {space}
-        {resource}
-        {layout}
-        mode={narrow ? 'day' : 'week'}
-        blockMode={mode === 'block'}
-        {nowMs}
-        onPick={pick}
-      />
+    {:else if resource}
+      {#if narrow}
+        <DayStrip
+          days={week.days}
+          {date}
+          {today}
+          label={weekLabel}
+          onSelect={chooseDate}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          away={date !== today}
+          onToday={() => chooseDate(today)}
+        />
+      {:else}
+        <WeekBar
+          label={weekLabel}
+          away={!weekAll.includes(today)}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          onToday={() => chooseDate(today)}
+        />
+      {/if}
+      <div
+        class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
+        inert={!weekHeld}
+        data-week-grid
+      >
+        {#if drawn.endMin === drawn.startMin}
+          <p class="text-text-muted py-8 text-center text-sm">
+            {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+          </p>
+        {:else}
+          <SpaceGrid
+            {space}
+            {resource}
+            layout={drawn}
+            mode={narrow ? 'day' : 'week'}
+            blockMode={mode === 'block'}
+            {nowMs}
+            {lastRefusedStart}
+            onPick={pick}
+          />
+        {/if}
+      </div>
     {/if}
+  </div>
+  {#if mode === 'book'}
+    <aside class="space-y-3">
+      <MineHereCard bookings={mineRows} />
+      {@render aside?.()}
+    </aside>
   {/if}
 </div>
 
@@ -281,8 +335,10 @@
       resource={s.resource}
       run={s.run}
       initialCount={s.initialCount}
-      windowNote={s.windowNote}
       onReread={reread}
+      onStartRefused={(startMs) => {
+        lastRefusedStart = Math.max(lastRefusedStart ?? startMs, startMs);
+      }}
       onBlockInstead={s.blockRun.length
         ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun, initialCount: 1 })
         : undefined}

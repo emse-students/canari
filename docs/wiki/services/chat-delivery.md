@@ -1417,7 +1417,7 @@ group names nobody. The client removes exactly those leaves
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
-| GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head` |
+| GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head`. Both history routes drop every row inside the READER's `withheld` windows - the gaps, and in a group conversation the span before their arrival ([history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)) |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
 | POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
@@ -1859,9 +1859,10 @@ opened the app.
   ringtone audio attributes, `setBypassDnd`). `showIncomingCallNotification` builds a
   `NotificationCompat.CallStyle.forIncomingCall` (API 31+; two-action fallback below) with
   full-screen intent (`USE_FULL_SCREEN_INTENT`), `FLAG_INSISTENT` looping ringtone,
-  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = deep link
-  `fr.emse.canari://chat/<groupId>?acceptCall=<callId>&video=<0|1>`; decline = local dismiss
-  broadcast (`ACTION_CALL_DECLINE` - group decline only means "stop ringing me").
+  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = a private intent
+  (`CallRingAnswer`: the plain `fr.emse.canari://chat/<groupId>` link plus a per-ring nonce in the
+  extras, [calls](../frontend/modules/calls.md#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30));
+  decline = the `ACTION_CALL_DECLINE` broadcast, which also tells the caller.
   `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
   (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
 - **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;
@@ -1885,9 +1886,10 @@ opened the app.
   `interruptionLevel = .timeSensitive` (app-alive path and NSE), which needs the
   `com.apple.developer.usernotifications.time-sensitive` entitlement - without it iOS silently
   downgrades to `.active`.
-- **NSE** (`NotificationService.swift`): `call_invite` → ringtone + time-sensitive banner with
-  the accept deep link; `call_control` with `callEnded` → blank passive content + removes any
-  delivered notification whose `userInfo["canariCallId"]` matches.
+- **NSE** (`NotificationService.swift`): a decrypted `call_invite` → blank passive content, never a
+  ring (since 2026-10-30: the ring is the server's `call_ring` alone, [calls](../frontend/modules/calls.md));
+  `call_control` with `callEnded` → blank passive content + removes any delivered notification
+  whose `userInfo["canariCallId"]` matches.
 
 #### Unified rich notification grouping (WP-XP-7)
 

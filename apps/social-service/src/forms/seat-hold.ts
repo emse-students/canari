@@ -54,10 +54,15 @@ export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
  */
 export const PENDING_HOLD_CUTOFF_SQL = `now() - make_interval(secs => ${PENDING_PAYMENT_HOLD_SECONDS})`;
 
-/** The statuses whose money has already landed: a second `markPaid` on them is a replay. */
+/**
+ * The statuses whose money has already landed: a second `markPaid` on them is a replay. `refunded`
+ * (a confirmed TOTAL refund through Canari, migration 120) landed too: a late confirmation of that
+ * payment must not make the answer paid again and take back the seat the refund freed.
+ */
 export const SETTLED_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
   'paid',
   'paid_over_capacity',
+  'refunded',
 ]);
 
 /**

@@ -34,6 +34,13 @@ const DAY_MIN = 24 * 60;
 /** One open range of a day, in minutes from midnight; `[1320, 1440]` is 22:00 to the day's end. */
 export type Run = readonly [start: number, end: number];
 
+/** A run picked in the painter to edit its exact hours: its day (0..6) and its edges in minutes. */
+export interface SelectedRun {
+  day: number;
+  start: number;
+  end: number;
+}
+
 /** The open runs of Monday..Sunday (index 0..6), each day sorted and merged. */
 export type WeekRuns = Run[][];
 
@@ -146,6 +153,74 @@ export function paintRows(
   return rowsOfWeek(after, rows);
 }
 
+/**
+ * The rows after one run of `day` (the run `[from, to)`) is given new edges, off the painter's
+ * grain if the organiser picks so (the keyboard's and the exact route). The new run is merged with
+ * what it now touches; THE SAME `rows` come back when nothing changed, and `null` when the edges
+ * are not a range (an end that is not after its start), so the caller can say so.
+ */
+export function editRun(
+  rows: readonly EditorLine[],
+  day: number,
+  run: Run,
+  start: number,
+  end: number
+): readonly EditorLine[] | null {
+  if (end <= start || start < 0 || end > DAY_MIN) return null;
+  const before = weekRunsOf(rows);
+  const after = before.map((runs, d) =>
+    d === day ? merge([...subtract(runs, run[0], run[1]), [start, end]]) : runs
+  );
+  if (JSON.stringify(before) === JSON.stringify(after)) return rows;
+  return rowsOfWeek(after, rows);
+}
+
+/**
+ * The same on a FIXED-SLOT space, where a run is one slot (one weekly line) and slots never merge:
+ * the rows with that slot's edges changed, or `null` when the slot cannot be moved (the edges are
+ * not a range, it is a night split in two lines, or the new range would overlap another slot) - the
+ * caller says so rather than doing nothing.
+ */
+export function editSlot(
+  rows: readonly EditorLine[],
+  day: number,
+  run: Run,
+  start: number,
+  end: number
+): readonly EditorLine[] | null {
+  if (end <= start || start < 0 || end > DAY_MIN) return null;
+  const index = rows.findIndex((r) => {
+    const pieces = slotPieces(r);
+    return (
+      pieces.length === 1 &&
+      pieces[0][0] === day &&
+      pieces[0][1] === run[0] &&
+      pieces[0][2] === run[1]
+    );
+  });
+  if (index < 0) return null;
+  const others = weekSlotsOf(rows.filter((_, i) => i !== index));
+  if (others[day].some(([s, e]) => s < end && e > start)) return null;
+  const next = [...rows];
+  next[index] = {
+    ...(rows[index] as EditorLine),
+    start: timeOfMinutes(start),
+    end: timeOfMinutes(end),
+  };
+  return next;
+}
+
+/**
+ * The step the exact-hours pickers of a FIXED-SLOT space sit on: the largest of 5, 10, 15, 20, 30
+ * or 60 minutes dividing every edge of its slots and its slot length, so a slot starting at 14:25
+ * can be set again. A week with edges on no such step falls back to 5 (the edge itself is kept).
+ */
+export function slotStep(rows: readonly EditorLine[], slotMinutes: number | null): number {
+  const edges = weekSlotsOf(rows).flatMap((runs) => runs.flat());
+  if (slotMinutes) edges.push(slotMinutes);
+  return [60, 30, 20, 15, 10].find((s) => edges.every((e) => e % s === 0)) ?? 5;
+}
+
 /** The week a template draws. */
 export function templateWeek(key: TemplateKey): WeekRuns {
   const open = (days: number, start: number, end: number): WeekRuns =>
@@ -158,6 +233,27 @@ export function templateWeek(key: TemplateKey): WeekRuns {
     default:
       return open(0, 0, 0);
   }
+}
+
+/** One bar of a template's miniature week: a day, and where it starts and ends as 0..1 of the day. */
+export interface PreviewBar {
+  day: number;
+  from: number;
+  to: number;
+}
+
+/**
+ * The miniature week a template card draws (the mockup's mini bars): what `templateWeek` opens, so
+ * the card cannot disagree with what it does. `event` opens nothing weekly, so it shows the one
+ * thing it adds - a short window on two days.
+ */
+export function templatePreview(key: TemplateKey): PreviewBar[] {
+  if (key === 'event') {
+    return [3, 4].map((day) => ({ day, from: 14 / 24, to: 18 / 24 }));
+  }
+  return templateWeek(key).flatMap((runs, day) =>
+    runs.map(([start, end]) => ({ day, from: start / DAY_MIN, to: end / DAY_MIN }))
+  );
 }
 
 /**

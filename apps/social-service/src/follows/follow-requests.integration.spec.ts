@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
+import { ReviewCohortBoundaryException } from '../review-cohort';
 import { UserFollow } from './entities/user-follow.entity';
 import {
   FOLLOW_ASKS_PER_DAY,
@@ -68,6 +69,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   let admin: Client;
   let ds: DataSource;
   let follows: FollowsService;
+  let notifications: PostNotificationsService;
   let requests: FollowRequestsService;
   const pushed: Pushed[] = [];
   /** The internal routes' secret for this file, set for its duration and restored after. */
@@ -81,6 +83,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       {} as never,
       {} as never,
       ds.getRepository(UserFollow),
+      {} as never,
       {} as never,
       {} as never,
       {} as never
@@ -144,7 +147,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
         "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, read boolean NOT NULL DEFAULT false,
+        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, read boolean NOT NULL DEFAULT false,
         "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
     `);
     for (const id of PEOPLE) {
@@ -163,7 +166,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     });
     await ds.initialize();
     follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
-    const notifications = new PostNotificationsService(
+    notifications = new PostNotificationsService(
       ds.getRepository(PostNotification),
       { manager: ds.manager } as never,
       push as never,
@@ -292,6 +295,67 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await requests.accept('bob', 'ann');
     expect(pushed.map((x) => x.key)).toEqual(['social_follow_request', 'social_follow_accepted']);
     expect(await statusOf('ann', 'bob')).toBe('accepted');
+  });
+
+  /** The review cohort (review-cohort.ts): no ask and no acceptance crosses it, either way. */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it.each([
+      ['a review account asking a member', 'ann'],
+      ['a member asking a review account', 'bob'],
+    ])('refuses %s, typed, and writes and tells nothing', async (_case, reviewer) => {
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      const err = await requests.ask('ann', 'bob').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      expect(await bellOf('bob')).toEqual([]);
+      expect(pushed).toEqual([]);
+    });
+
+    it.each([
+      ['the asker is a review account', 'ann'],
+      ['the person asked is a review account', 'bob'],
+    ])('refuses an acceptance written before the rule when %s', async (_case, reviewer) => {
+      await requests.ask('ann', 'bob');
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      const err = await requests.accept('bob', 'ann').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await statusOf('ann', 'bob')).toBe('pending');
+    });
+
+    it('leaves every row written before the rule out of the lists and the bell, both ways', async () => {
+      // ann -> bob accepted, cid -> bob pending, bob -> dan pending, and their bell rows: all
+      // written before bob became a review account.
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      await requests.ask('cid', 'bob');
+      await requests.ask('bob', 'dan');
+      expect((await notifications.getNotifications('bob')).length).toBeGreaterThan(0);
+      process.env.SERVICE_ACCOUNT_USER_ID = 'bob';
+      expect(await requests.followers('bob', 50, 0)).toEqual([]);
+      expect(await requests.incoming('bob', 50, 0)).toEqual([]);
+      expect(await requests.incomingCount('bob')).toEqual({ pending: 0 });
+      expect(await requests.outgoing('bob', 50, 0)).toEqual([]);
+      expect(await requests.incoming('dan', 50, 0)).toEqual([]);
+      expect(await notifications.getNotifications('bob')).toEqual([]);
+      expect(await notifications.getNotifications('dan')).toEqual([]);
+      expect(await notifications.getNotifications('ann')).toEqual([]);
+      // The rows are still there: lifting the cohort shows them again, nothing was deleted.
+      delete process.env.SERVICE_ACCOUNT_USER_ID;
+      expect((await requests.followers('bob', 50, 0)).map((r) => r.userId)).toEqual(['ann']);
+    });
+
+    it('lets two review accounts ask and accept each other', async () => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'ann,bob';
+      await requests.ask('ann', 'bob');
+      expect(await requests.accept('bob', 'ann')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
   });
 
   it('no acceptance across a block, even when the severing never ran', async () => {

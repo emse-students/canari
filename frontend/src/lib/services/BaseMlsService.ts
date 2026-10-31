@@ -162,15 +162,18 @@ import {
 } from '$lib/utils/hex';
 import { m } from '$lib/paraglide/messages';
 import { showPinnedToast } from '$lib/stores/toast.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
   forgetRefusedRotationReloads,
 } from '$lib/mls-client/refusedRotationReloads';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  WelcomeRequestAnswer,
+  DistributionSeat,
   DistributionGapListener,
   DistributionGapVerdict,
   DistributionGroupStore,
@@ -188,6 +191,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
+import { isWelcomeOwed, readWelcomeOwedFromSeat } from '$lib/utils/chat/welcomeOwed';
 import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
@@ -1657,7 +1661,8 @@ export abstract class BaseMlsService implements IMlsService {
    * together with `isWsOpen()`, never alone: a socket that has since dropped means frames may have
    * been queued while this device was unreachable, and the pull that covers them is the reconnect's
    * (`initializeConnection` runs one immediately after every `connect`). Cleared at the start of
-   * each pull, so a pull that failed half-way leaves it false and the next barrier pulls again.
+   * each pull, so a pull that failed half-way leaves it false and the next barrier pulls again -
+   * unless the link is known down, when the pull is the reconnect's ({@link settleBarrier}).
    */
   private mailboxEmptiedByAPull = false;
 
@@ -1990,11 +1995,31 @@ export abstract class BaseMlsService implements IMlsService {
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
       this.userId !== UNRESOLVED_USER_ID
     ) {
+      // A LINK KNOWN DOWN OWES ITS PULL TO THE RECONNECT, NOT TO EVERY BARRIER. With the socket
+      // closed and the server known unreachable (a request - this device's last pull included - got
+      // no answer, or the browser reports no network), a pull here can only fail, and every barrier
+      // took one: measured on production (`1.5.1`, a phone at a cold start with no network), 327
+      // `[PENDING] ... got no answer` lines, one per conversation the catch-up settled. The pull the
+      // mailbox is owed is the reconnect's (`initializeConnection` pulls after every connect), and
+      // the first answered request clears `isOffline` - an event, not a clock - so a barrier taken
+      // after it pulls again. Said once per spell, not once per barrier.
+      if (!this.isWsOpen() && connectivity.isOffline) {
+        if (!this.barrierPullHeldSaid) {
+          this.barrierPullHeldSaid = true;
+          console.info(
+            "[PENDING] mailbox barrier: no pull while the link is down (socket closed, server unreachable) - the reconnect's pull covers the mailbox"
+          );
+        }
+        return this.settleMailbox();
+      }
       // Ends by awaiting `settleMailbox` itself, so this is the whole barrier and not a step of it.
       return this.fetchPendingMessages().catch(() => {});
     }
     return this.settleMailbox();
   }
+
+  /** Whether {@link settleBarrier} already said, this spell, that it holds its pull for the reconnect. */
+  private barrierPullHeldSaid = false;
 
   /**
    * The wait alone: whatever pull is in flight has landed, and the scheduler has applied it.
@@ -2706,6 +2731,9 @@ export abstract class BaseMlsService implements IMlsService {
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.
     this.mailboxEmptiedByAPull = false;
+    // A pull is being made, so the barrier's "held for the reconnect" spell is over: the next one
+    // that holds says so again.
+    this.barrierPullHeldSaid = false;
     /** The refusals this pull is certain to list: every one marked before it started. */
     const refusalsCovered = refusedBacklogMark();
 
@@ -2780,6 +2808,13 @@ export abstract class BaseMlsService implements IMlsService {
           console.warn(
             `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
           );
+          // THE CONNECTIVITY STORE IS TOLD: this route reads the raw fetch (it applies the 401 rule
+          // itself), so nothing else records that it got no answer. It is the fact the barrier reads
+          // to hold its pull for the reconnect, and the store's probe announces the link's return.
+          // NOT for a deadline (`RequestDeadlineError`, e.g. the token refresh's): `trackedFetch`
+          // already counts that one towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow
+          // moment, not a dead link. The page itself answering clears it (`pullPendingMessagesJson`).
+          if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
         } else {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
@@ -2931,13 +2966,26 @@ export abstract class BaseMlsService implements IMlsService {
   // All methods below are pure pass-throughs to this.delivery. Both Web and Tauri
   // implementations were 100% identical, so they live here once.
 
-  /** Announces to group members that this device needs a Welcome. */
-  async sendWelcomeRequest(groupId: string): Promise<void> {
-    await this.delivery.deliveryPost('welcome-request', {
+  /**
+   * Asks a member to Welcome this device, and reads what the server did with the ask
+   * ({@link WelcomeRequestAnswer}): `forwarded` to one online member, `stored` for every member's
+   * next connection, or `null` when no answer said either - said here, since no answer is not a
+   * statement that the ask was put.
+   */
+  async sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer> {
+    const answer = await this.delivery.deliveryPost('welcome-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    if (answer?.status === 'forwarded' && typeof answer.target === 'string') {
+      return { status: 'forwarded', target: answer.target };
+    }
+    if (answer?.status === 'no_peer_online') return { status: 'stored' };
+    console.warn(
+      `[MLS] welcome_request for ${groupId.slice(0, 8)}... got no answer naming what was done with it (status ${answer === null ? 'none' : String(answer.status)})`
+    );
+    return null;
   }
 
   /**
@@ -5981,6 +6029,7 @@ export abstract class BaseMlsService implements IMlsService {
     const previous = this.distributionScopeByGroup.get(groupId);
     this.distributionScopeByGroup.set(groupId, scope);
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     // Written only when it is NEWS: the community loop re-registers every group on every load, and
     // a row restored by `hydrateDistributionGroups` already says exactly this.
     if (previous === undefined || !sameScope(previous, scope)) {
@@ -6000,7 +6049,26 @@ export abstract class BaseMlsService implements IMlsService {
    */
   noteDistributionGroup(groupId: string): void {
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     this.collectFramesLeftForKeyGroup(groupId);
+  }
+
+  /**
+   * Classifies a key-distribution group as OPEN for the admission rule: its members enter by
+   * external commit by design, and a group a conversation's rule closed would refuse every newcomer
+   * of a community. Called wherever this session learns a group IS a key group, which is always
+   * BEFORE it is joined or created (the registration precedes both), and keyed by group id so it
+   * stands whether or not the group is held yet.
+   *
+   * Never throws: a failure leaves the group unclassified, which merges its external commits exactly
+   * as before - the safe side - and is said at WARN because the rule then does not apply to it.
+   */
+  private openAdmissionOfKeyGroup(groupId: string): void {
+    void this.setAdmissionPolicy(groupId, 'open').catch((e: unknown) => {
+      console.warn(
+        `[ADMISSION] key group ${groupId.slice(0, 8)}... could not be classified open (it stays unclassified): ${String(e)}`
+      );
+    });
   }
 
   /**
@@ -6546,6 +6614,16 @@ export abstract class BaseMlsService implements IMlsService {
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
       // Redelivery is exactly the right outcome - including after a logout, where the session this
       // handler needs is gone by construction.
+      //
+      // BY CLASS: a handler that could not REACH the server (it asks the delivery service, which got
+      // no answer - `DeliveryUnreachableError`) refused nothing about the frame. That is the expected
+      // state of an absent link, said as what is owed next; anything else is a defect and accuses.
+      if (isTransportFailure(e)) {
+        console.warn(
+          `[GRAINE] frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} not handled - the server got no answer; not acknowledged, so the next pull redelivers it: ${String(e)}`
+        );
+        return false;
+      }
       console.error(
         `[GRAINE] handler refused a frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} - not acknowledged:`,
         String(e)
@@ -6621,6 +6699,15 @@ export abstract class BaseMlsService implements IMlsService {
     // accused it at ERROR, so the "comes back through a history request" line below would only be
     // a second, wrong, account of it.
     if (kind === 'sender-mismatch') return true;
+    // A KEY GROUP IS OPEN: a refused admission here means this group was classified closed by
+    // mistake, which would refuse every newcomer of a community. Acknowledged - the refusal repeats
+    // identically - and accused, so the misclassification is read rather than lived with.
+    if (kind === 'admission-refused') {
+      console.error(
+        `[GRAINE] a key group refused an admission - it is classified closed and must be open: ${groupId.slice(0, 8)}...`
+      );
+      return true;
+    }
     const permanent =
       kind === 'own-message' ||
       kind === 'secret-reuse' ||
@@ -6680,7 +6767,13 @@ export abstract class BaseMlsService implements IMlsService {
    * problem and send the next reader to entirely the wrong place.
    */
   protected groupInfoChannel(groupId: string): {
-    fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
+    /** `seat` is served by a key group's transport only - see {@link DistributionSeat}. */
+    fetch(): Promise<{
+      groupInfo: string;
+      baseEpoch: number;
+      activeEpoch: number;
+      seat?: DistributionSeat;
+    } | null>;
     publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
   } {
     const scope = this.distributionScopeByGroup.get(groupId);
@@ -6708,7 +6801,7 @@ export abstract class BaseMlsService implements IMlsService {
       );
     }
     return {
-      fetch: () => transport.fetch(scope),
+      fetch: () => transport.fetch(scope, this.deviceId),
       publish: (gi, epoch) => transport.publish(scope, gi, epoch, this.deviceId),
     };
   }
@@ -6821,7 +6914,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async externalJoin(
     groupId: string,
-    opts: { asAFurtherDevice?: 'ask' } = {}
+    opts: { asAFurtherDevice?: 'ask'; welcomeOwed?: 'ask' } = {}
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
@@ -6936,6 +7029,29 @@ export abstract class BaseMlsService implements IMlsService {
               `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
             );
             return { joined: false, reason: 'further_device' };
+          }
+        }
+
+        // ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (key groups, channel-encryption section 20).
+        // An admitter's Add writes this device's `pending` seat and stores the base for the epoch it
+        // creates in ONE transaction, and holds the add lock until its Welcomes are queued - so the
+        // seat the server read AFTER this base, in the same answer, says whether the base already
+        // carries our leaf. The caller's own roster read came BEFORE it: on 11 of 11 kept rig
+        // consoles (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29) a device whose roster
+        // read predated the Add joined on the base the Add stored, the admitter's Welcome then landed
+        // on the group that join had just built (`already held - redelivered Welcome ignored`), and
+        // the external commit replaced the leaf the Add wrote. One Welcome, never a redelivery - two
+        // doors opened on one seat. Served WITH the base: one read, no extra round trip.
+        if (opts.welcomeOwed === 'ask') {
+          const reading = readWelcomeOwedFromSeat(gi.seat);
+          if (reading === null) {
+            console.warn(
+              `[MLS] externalJoin ${short}... base ${gi.baseEpoch} came without a readable seat (${gi.seat ? 'add lock unread' : 'none served'}) - not built this pass`
+            );
+            return { joined: false, reason: 'seat_unreadable' };
+          }
+          if (isWelcomeOwed(reading)) {
+            return { joined: false, reason: 'welcome_owed', reading };
           }
         }
 
@@ -7193,7 +7309,7 @@ export abstract class BaseMlsService implements IMlsService {
     if (holdsGroupState(this, groupId)) return { joined: true };
 
     if (ref.groupInfo !== null) {
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     }
 
     console.log(
@@ -7238,7 +7354,7 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(
         `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
       );
-      return this.externalJoin(groupId);
+      return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     } finally {
       this.unsettledDistributionGroups.delete(groupId);
     }
@@ -7847,6 +7963,8 @@ export abstract class BaseMlsService implements IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
+  abstract setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void>;
+  abstract getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'>;
 
   /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
   abstract isGroupActive(groupId: string): Promise<boolean>;
@@ -7857,7 +7975,6 @@ export abstract class BaseMlsService implements IMlsService {
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
-  abstract ownSignatureKey(): Promise<Uint8Array>;
   abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
 }

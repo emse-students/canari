@@ -31,6 +31,11 @@ object BackgroundWelcomeAnswer {
         CONCURRENT_COMMIT("concurrent_commit"),
         /** The target was removed from the group: no Welcome is owed. */
         NOT_A_MEMBER("not_a_member"),
+        /**
+         * The target's seat is an invitation link's ask: only a member's own Accept admits it, never
+         * a push (2026-10-31). A refusal of this target, not of the bytes' epoch.
+         */
+        AWAITING_ADMISSION("awaiting_admission"),
         /** No device is registered under the Welcome's target. */
         WELCOME_TARGET_UNKNOWN("welcome_target_unknown"),
         /** The Welcome's target is not on the roster, or not entitled to the key group. */
@@ -135,7 +140,11 @@ object BackgroundWelcomeAnswer {
             outcome.reason == Refusal.CONCURRENT_COMMIT -> Settlement.Leave
             outcome.reason == Refusal.EPOCH_MISMATCH && outcome.serverEpoch != null && baseEpoch >= 0 ->
                 Settlement.Clear(baseEpoch, outcome.serverEpoch)
-            outcome.reason == Refusal.WELCOME_TARGET_UNKNOWN || outcome.reason == Refusal.WELCOME_TARGET_NOT_MEMBER ->
+            // The requester re-asks every 60 s while it waits for a member's Accept: the same bytes
+            // are not offered for it again (`target-refused-known`).
+            outcome.reason == Refusal.WELCOME_TARGET_UNKNOWN ||
+                outcome.reason == Refusal.WELCOME_TARGET_NOT_MEMBER ||
+                outcome.reason == Refusal.AWAITING_ADMISSION ->
                 Settlement.Clear(null, null, targetRefused = true)
             else -> Settlement.Clear(null, null)
         }
@@ -175,6 +184,26 @@ object BackgroundWelcomeAnswer {
 
     /** The level a line is logged at, so the decision is tested here and only printed by the service. */
     enum class Level { DEBUG, WARN, ERROR }
+
+    /**
+     * The refusals of the native prepare (`prepare_welcome_background_with_key`, `background.rs`)
+     * that are the ORDINARY course of a push, not a fault: a new person, whom only a member's gesture
+     * admits, and the three ways the state is someone else's right now. Every member's phone meets
+     * them on every re-ask (about one a minute per group), so they are said quietly.
+     */
+    private val EXPECTED_PREPARE_REFUSALS =
+        setOf("newcomer", "foreground-active", "warm-process", "commit-pending")
+
+    /**
+     * The level a refusal of the native prepare is logged at: [Level.DEBUG] for an
+     * [EXPECTED_PREPARE_REFUSALS] token, [Level.WARN] for any other - a refused key package, an
+     * unreadable state, a token this build was not taught.
+     *
+     * THE ONE OWNER OF THAT LINE AND OF THIS SET: the Rust prepare says its refusal at debug only
+     * (`welcome_refused`, `background.rs`), since its log reaches no logger in a killed app.
+     */
+    fun prepareRefusalLevel(token: String?): Level =
+        if (token in EXPECTED_PREPARE_REFUSALS) Level.DEBUG else Level.WARN
 
     private const val ALREADY_SETTLED = "already-settled"
     private const val ACCEPTED_NOT_HELD = "accepted-not-held"
@@ -224,6 +253,9 @@ object BackgroundWelcomeAnswer {
             Refusal.CONCURRENT_COMMIT ->
                 "REFUSED concurrent_commit - the lock may be this commit's own first copy; the Add is left to the foreground"
             Refusal.NOT_A_MEMBER -> "REFUSED not_a_member - the target was removed; the Add is cleared"
+            Refusal.AWAITING_ADMISSION ->
+                "REFUSED awaiting_admission - the target's seat is a link's ask, answered only by a member; " +
+                    "the Add is cleared, not answered again from this mls.bin"
             Refusal.WELCOME_TARGET_UNKNOWN, Refusal.WELCOME_TARGET_NOT_MEMBER ->
                 "REFUSED ${outcome.token} - the server does not admit this target; the Add is cleared, " +
                     "not answered again from this mls.bin"

@@ -12,6 +12,17 @@ than an archaeology exercise. Every shim below also carries a comment at its sit
 **Nothing below is WORK.** Each entry is a date, and the code change behind it is minutes. What is
 being waited on is the world, not a decision - do not "do" these early, and do not re-argue them.
 
+## The floor rule: raised when both stores serve the latest update (owner, 2026-10-24)
+
+**`minClientVersion` is raised, on both estates, to the latest stable as soon as BOTH Play AND the App
+Store serve it** - read with `bun tools/play-vitals/vitals.mjs` and the App Store state, never inferred.
+It replaces every per-entry "the user's gesture, when the time comes": a removal condition below names
+the version the floor must pass, and this rule is what moves the floor there. The raise is a production
+setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
+
+**Production's floor is `1.5.1`** (read from `GET /api/version` on 2026-10-31). An older figure on this
+page is the floor at the date its entry names.
+
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
@@ -86,7 +97,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor is now `1.2.9` on production) |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -99,6 +110,8 @@ REST: those rows need a count, then a migration.
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
+| `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
+| `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -155,6 +168,24 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 **Condition:** production has run the release carrying the check for longer than one access-token
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+### No date yet - the Lydia key paste field of a build older than enrolment lot 1
+
+**Site:** `retiredLydiaBusinessKeyPaste` (`PUT :id/lydia-business-key`) and `lydiaBusinessKeyStatus`
+(`GET` on the same path) in `apps/social-service/src/associations/associations.controller.ts`, with
+`AssociationsService.isLydiaBusinessKeySet`.
+**What it humours:** since enrolment lot 1 the Business private token is captured at `business/create`
+([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) and the
+paste field is gone from the app. An APK or IPA older than that release EMBEDS the old field: it reads the
+`GET` status (kept, so the panel still shows "set" or "not set") and may `PUT` a key. The `PUT` writes
+nothing and answers `410` with the code `LYDIA_KEY_PASTE_RETIRED`; the old field shows its own "could not
+save" line for any refusal (it never reads the body), so a bare status is enough there. Each hit is
+logged at WARN, naming the association and never a value: the count of old clients still using it. The
+shim keeps the old route's throttle and `MANAGE_PAYOUT_ACCOUNT` check, so a non-manager gets the `403`
+it always got and only a manager's hit is counted.
+**The cost while it stands:** none - nothing is written; an old screen shows a save error.
+**Removal condition:** `minClientVersion` past the first build without the field, on BOTH stores. Then
+delete both routes, `isLydiaBusinessKeySet`, their spec block, and this entry.
 
 ### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
 
@@ -237,7 +268,7 @@ id is not a post keeps a DEAD tap on every client.
 `repost_proposed` (and the agenda's types before their own rows) show the comment sentence on a client
 older than the release carrying their rows.
 **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** - the release
-carrying PR #1911, both stores serving it, then `minClientVersion` raised to it. A new type shipped
+carrying PR #1911 (`v1.2.9`), the floor moving by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). A new type shipped
 earlier reaches the floor clients as a wrong sentence and a dead link, which no server change can undo.
 **Checklist - a NEW notification type** (no other checklist existed; this is it):
 1. The floor above covers PR #1911 first.
@@ -253,8 +284,8 @@ far above the floor, so the raise cannot lock out a shipped client (compare the 
 notification type, bookings included, may now ship once its own flag flips. Dev's floor is a separate row
 ([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
-version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
-knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
+version that CARRIES #2228 (`v1.4.0`, not merely `1.2.9`: that build also declares the `form-responses` host and
+knows the type), on BOTH estates, by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
@@ -269,6 +300,57 @@ the version CARRYING this pull request draws all of it. That degraded display be
 the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
 stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
+
+**Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
+notices telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active or were
+paused (Lydia enrolment lot 2). They ship behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/associations/lydia-payments-notifier.service.ts`); while it is off nothing is
+written and the caller's ERROR/WARN line plus the payments screen state carry the fact. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 2 (PR to be numbered), on BOTH
+estates, once Play and the App Store serve it - then a one-line pull request sets the constant to `true` and
+changes the spec that pins it. A client older than that release draws them as the neutral unknown-type row.
+Steps 2-4 are done: the push keys and French legacy sentence, the `forms` push category, the native
+tables (Android, the iOS app and its notification extension), the client row, `KNOWN_NOTIFICATION_TYPES` and the
+`payments` section of the association edit page. The push opens the notifications list (`notifications`
+host): no deep-link host exists for an association's edit section. The type names are shared through
+`libs/contracts/lydia-refusal-codes.json`.
+
+**Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
+they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
+while it is off nothing is written and Lydia's own SMS reaches the person. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 3, on BOTH estates, once
+Play and the App Store serve it - then a one-line pull request sets the constant to `true` and changes the
+spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
+row only, no push (so no push key, category or native string is owed); the client row, the type in
+`KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
+
+**What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**
+While the number change is switched off (`LYDIA_CASHIER_ADD_ENABLED = false`), core answers another
+number with `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code those clients already word ("the Responsable's
+number cannot be changed yet"); a lot 3 client reads the same code as "not possible yet" through the
+same flag. **After the flip**, those clients can reach a number change and meet codes they do not
+know, each drawn as their generic "Could not save the Responsable." with nothing lost:
+`LYDIA_CASHIER_PHONE_IN_USE` (the number is already a cashier's - nothing claimed, nothing asked of
+Lydia), and `LYDIA_CASHIER_REMOVAL_PRECONDITION` or `LYDIA_CASHIER_REVOKE_UNCONFIRMED` (the new number
+is recorded; the old one is still listed in the cashiers, with its "Retirer cet autre numéro" button,
+on any up-to-date client). `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN` is a 403, which they word as
+"not allowed to manage the payout account". Nothing to remove: these are wordings, and the floor
+rule above (`minClientVersion` at or above lot 3) retires them.
+
+**Built and waiting on its floor (2026-10-31): `lydia_refund_issued`**, the notice telling a payer that an
+association refunded one of their payments (Lydia enrolment lot 4). It ships behind
+`LYDIA_REFUND_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/refunds/lydia-refund-notifier.service.ts`);
+while it is off nothing is written, Lydia's own e-mail to the payer (`notify_payer`) tells them and the
+refund's row is the record. **Flip condition:** `minClientVersion` at or above the first release carrying
+Lydia enrolment lot 4 (PR to be numbered), on BOTH estates, once Play and the App Store serve it - then a
+one-line pull request sets the constant to `true` and changes the spec that pins it. A client older than
+that release draws it as the neutral unknown-type row. Done in the same pull request: the push key and
+French legacy sentence, the `forms` push category, the native tables (Android, the iOS app and its
+notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the destination (the payer's
+`/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
+contract file (`refund.notificationTypes`).
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
@@ -462,16 +544,18 @@ and, on the receiving side, on that receiver's own windows. It is a FALLBACK and
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
 
-### No date yet - history answers and asks from clients older than step A
+### Floor met 2026-10-31 - history answers and asks from clients older than step A
 
-**Sites:** none to delete on the new client: an older client still asks without a `requestId` and
-answers by broadcast. A new answerer sends nothing addressed to an ask with no id
-(`sendBundleChunks`), and a new receiver drops from a broadcast bundle what falls in its own windows
-(`dropOwnExcludedMessages`).
-**What it costs:** a product choice: an older client is answered only by older peers, until
-`minClientVersion` carries step A.
-**Removal condition:** `minClientVersion` is a release carrying step A; then the broadcast branch of
-the `history_bundle` receiver and the no-id refusal line can go.
+**The condition is MET:** step A (#2270) is first in the stable `v1.5.0` (`v1.4.1` was never cut as
+a stable), and production's `minClientVersion` reads `1.5.1` (`GET /api/version`, 2026-10-31). No
+client below step A can unlock MLS, so none asks without a `requestId` or answers a newcomer by
+broadcast any more.
+**What can go, and what cannot:** the no-id refusal line (a new answerer sends nothing addressed to
+an ask with no id, `sendBundleChunks`) is now dead and goes in its own client pull request. The
+broadcast branch of the `history_bundle` receiver STAYS: it is not only a shim - a current build still
+broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)` in
+`groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the same
+`dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 

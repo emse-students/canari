@@ -45,6 +45,9 @@ export type PushContentKey =
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
+  | 'lydia_payments_active'
+  | 'lydia_payments_paused'
+  | 'lydia_refund_issued'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
@@ -125,6 +128,7 @@ export type PushContent = {
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
+   * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
    * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
    *   several), or for `social_booking_cancelled` the organiser's own word when one was sent (Q-R3);
@@ -385,6 +389,48 @@ export function formPaidOverCapacityContent(formTitle: string): PushContent {
     arg: formTitle,
     legacyTitle: 'Paiement sur un formulaire complet',
     legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.`,
+  };
+}
+
+/**
+ * An association's Lydia payments became ACTIVE, told to its `MANAGE_PAYOUT_ACCOUNT` holders.
+ * The association's name is the only data and there is no actor: the system answered.
+ */
+export function lydiaPaymentsActiveContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_payments_active',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Paiements Lydia actifs',
+    legacyBody: `Les paiements Lydia de ${associationName} sont actifs.`,
+  };
+}
+
+/**
+ * An association's Lydia payments were PAUSED: Lydia refused a payment request (the Business is
+ * not validated or is blocked). Same recipients, same single datum as the active notice.
+ */
+export function lydiaPaymentsPausedContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_payments_paused',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Paiements Lydia suspendus',
+    legacyBody: `Les paiements Lydia de ${associationName} sont suspendus : Lydia a refusé une demande de paiement.`,
+  };
+}
+
+/**
+ * A payer was REFUNDED through Canari (lot 4): the association's name is the one datum, the amount
+ * stays in the app (the payer opens the notifications list).
+ */
+export function lydiaRefundIssuedContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_refund_issued',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Remboursement',
+    legacyBody: `${associationName} vous a remboursé un paiement.`,
   };
 }
 

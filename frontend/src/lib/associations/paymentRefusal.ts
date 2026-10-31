@@ -56,6 +56,15 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === FORM_TIER_NOT_SOLD) {
     return m.form_tier_not_sold();
   }
+  if (err instanceof SocialApiError && err.code === FORM_COTISATION_HELD) {
+    return m.form_cotisation_held();
+  }
+  if (err instanceof SocialApiError && err.code === FORM_NOT_OPEN_TO_YOU) {
+    return m.form_view_not_open_to_you_title();
+  }
+  if (err instanceof SocialApiError && err.code === AUDIENCE_COTISATION_BOTH_MODES) {
+    return m.form_condition_cotisation_both_modes();
+  }
   if (err instanceof SocialApiError && err.code === PAYMENT_ROUTING_CHANGED) {
     return m.shop_payment_routing_changed();
   }
@@ -65,8 +74,23 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
     return m.shop_checkout_in_progress();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENTS_NOT_ACTIVATED) {
+    return m.shop_payments_not_activated();
+  }
+  if (err instanceof SocialApiError && err.code === PAYMENTS_BLOCKED) {
+    return m.shop_payments_blocked();
+  }
   return null;
 }
+
+/**
+ * The body `code` of social-service's 409 when the association's Lydia Business is not validated
+ * yet (payments not active): nothing is opened, the payer is told it is not available yet.
+ */
+export const PAYMENTS_NOT_ACTIVATED = 'PAYMENTS_NOT_ACTIVATED';
+
+/** The body `code` of social-service's 409 when Lydia blocked the association's Business. */
+export const PAYMENTS_BLOCKED = 'PAYMENTS_BLOCKED';
 
 /**
  * The body `code` of a refusal because the amount is outside what can be paid (the provider's
@@ -125,6 +149,23 @@ export const FORM_TIER_ALREADY_HELD = 'FORM_TIER_ALREADY_HELD';
  * sentence speaks of the form, not of the submitter's membership.
  */
 export const FORM_TIER_NOT_SOLD = 'FORM_TIER_NOT_SOLD';
+
+/**
+ * The body `code` of social-service's 403 when the form is reserved to people who do NOT hold a
+ * cotisation and the submitter holds it (`forms/submit-refusal.ts`). Also `refusalCode` of the
+ * form's check, which is how the page says so before anyone clicks.
+ */
+export const FORM_COTISATION_HELD = 'FORM_COTISATION_HELD';
+
+/** The body `code` of the same 403 for any other criterion of the form's `submitCondition`. */
+export const FORM_NOT_OPEN_TO_YOU = 'FORM_NOT_OPEN_TO_YOU';
+
+/**
+ * The body `code` of social-service's 400 when a saved condition names a cotisation both as held
+ * and as not held (`pricing/validate.ts`) - what an older editor sends after ticking a held tier on
+ * a "ne detient pas" condition; this editor moves the tiers instead.
+ */
+export const AUDIENCE_COTISATION_BOTH_MODES = 'AUDIENCE_COTISATION_BOTH_MODES';
 
 /**
  * The body `code` of social-service's 409 when the association's payment account changed while

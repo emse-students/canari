@@ -103,6 +103,9 @@ class MainActivity : TauriActivity() {
         if (savedInstanceState == null && !fromHistory && IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
+        // An Answer on the native ring: written for the page to drain at mount, BEFORE onResume
+        // ends the rings (and their records) - see CallRingAnswer.
+        if (savedInstanceState == null && !fromHistory) CallRingAnswer.takeAnswer(this, intent)
 
         // Request the notification permission natively on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -362,6 +365,28 @@ class MainActivity : TauriActivity() {
         if (IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
+        // Taken here, before onResume. The page is TOLD as well: an activity already visible (a warm
+        // app at the PIN gate) sees no visibility change, so no resume drain would follow.
+        if (CallRingAnswer.takeAnswer(this, intent)) pushCallAccept()
+    }
+
+    /**
+     * Tells a page that is already alive that an answer waits in `pending_call_accept.json`
+     * (`canari:call-accept`, drained by `ChatBackgroundService`). A page not loaded yet drains the
+     * file at mount instead. The iOS twin is `CanariTellPageOfPendingCallAccept`.
+     */
+    private fun pushCallAccept() {
+        val webView = liveWebView ?: run {
+            Log.d("MainActivity", "call answer before the WebView: the page drains it at mount")
+            return
+        }
+        try {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:call-accept'));") {
+                Log.d("MainActivity", "call answer waits - the page was told")
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}")
+        }
     }
 
     /**
@@ -394,6 +419,8 @@ class MainActivity : TauriActivity() {
         // A call service start refused while the activity was not resumed may be asked again now.
         // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
         CallBridge.onActivityResumed()
+        // The call's proximity lock darkens only the call's own screen (AFTER the flag above).
+        CallForegroundService.appOnScreenChanged(true)
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after
         // FCM registration (store_push_secret writes the file during the live session;
@@ -409,6 +436,7 @@ class MainActivity : TauriActivity() {
         super.onPause()
         isInForeground = false
         pushForeground(false)
+        CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")
         CookieManager.getInstance().flush()
     }

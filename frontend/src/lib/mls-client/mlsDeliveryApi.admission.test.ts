@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MemberNotAdmittedError, MlsDeliveryApi, UserBlockedError } from './mlsDeliveryApi';
+import {
+  MemberNotAdmittedError,
+  MlsDeliveryApi,
+  ReviewCohortBoundaryError,
+  UserBlockedError,
+} from './mlsDeliveryApi';
 
 /**
  * WHO ADMITS A NEW PERSON, AS THE CLIENT READS IT (ADM-3). The member-add call enrols nobody any
@@ -30,6 +35,17 @@ describe('registerMember - the refusals a caller acts on', () => {
       .registerMember('g1', 'joe')
       .catch((x: unknown) => x);
     expect(e).toBeInstanceOf(UserBlockedError);
+  });
+
+  it('throws ReviewCohortBoundaryError on REVIEW_COHORT_BOUNDARY, and logs nothing', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const e = await api(answer(403, { code: 'REVIEW_COHORT_BOUNDARY' }))
+      .registerMember('g1', 'joe')
+      .catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ReviewCohortBoundaryError);
+    expect((e as ReviewCohortBoundaryError).userId).toBe('joe');
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 
   it('keeps its tolerance for any other refusal, and says so', async () => {

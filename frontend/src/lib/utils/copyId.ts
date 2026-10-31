@@ -17,5 +17,5 @@ import { copyText } from '$lib/utils/clipboard';
  * id-shaped contract above: these call sites show a cut value and copy the whole one.
  */
 export async function copyId(id: string): Promise<void> {
-  await copyText(id, 'id');
+  await copyText(id, { what: 'id' });
 }

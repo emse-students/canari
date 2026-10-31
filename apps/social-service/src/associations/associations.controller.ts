@@ -14,6 +14,7 @@ import {
   Patch,
   Post,
   Put,
+  GoneException,
   Query,
   Res,
   SetMetadata,
@@ -25,6 +26,7 @@ import type { Response } from 'express';
 import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { isInReviewCohort, profileOpenAcrossCohort } from '../review-cohort';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
 import {
@@ -85,11 +87,16 @@ import { isInternalSecret } from '../internal/is-internal-secret.util';
 const LOGO_UPLOAD_MB = 2;
 
 /**
- * Writes of a Lydia Business key per user AND association per minute. A wrong key is only found
- * by the first callback it fails to verify, so the route must not become a loop; a manager
- * correcting a paste needs a handful.
+ * The `code` of the 410 the retired key-paste route answers to the old store builds that still
+ * show the field (docs/wiki/legacy-compatibility.md).
  */
-export const LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE = 5;
+export const LYDIA_KEY_PASTE_RETIRED = 'LYDIA_KEY_PASTE_RETIRED';
+
+/**
+ * Per user and association, the retired paste route's throttle - the one the live route had, so a
+ * stuck old screen retrying cannot flood the WARN its hits are counted by.
+ */
+export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
@@ -248,15 +255,26 @@ export class AssociationsController {
     return this.pushMutes.listMuted(userId);
   }
 
-  /** Public - current association memberships for a user profile. */
+  /**
+   * Public - current association memberships for a user profile. Empty across the review cohort's
+   * boundary, and for a review account read with no session (`profileOpenAcrossCohort`).
+   */
   @Get('users/:userId/memberships')
-  listUserMemberships(@Param('userId') userId: string) {
+  async listUserMemberships(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId?: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public - past/honorary association roles for a user profile. */
+  /** Public - past/honorary association roles for a user profile, gated like the memberships. */
   @Get('users/:userId/role-history')
-  listUserRoleHistory(@Param('userId') userId: string) {
+  async listUserRoleHistory(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId?: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listRoleHistory(userId);
   }
 
@@ -439,13 +457,18 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
+    // A review account reads only the rosters it belongs to; nobody else but an admin reads a
+    // review account on one (review-cohort-reach.ts, review-cohort.ts).
+    await this.service.assertReviewerMayReadRoster(userId, id);
     const includePermissions = await this.service.mayAct(
       userId,
       id,
       AssociationPermissionFlag.MANAGE_MEMBERS,
       { isGlobalAdmin: ga === 'true' }
     );
-    return this.service.listMembers(id, { includePermissions, callerId: userId });
+    const members = await this.service.listMembers(id, { includePermissions, callerId: userId });
+    if (ga === 'true' || isInReviewCohort(userId)) return members;
+    return members.filter((m) => !isInReviewCohort(m.userId));
   }
 
   /** Updates the display order of members. Requires MANAGE_MEMBERS. */
@@ -549,6 +572,8 @@ export class AssociationsController {
   /**
    * Whether the association's Lydia Business private token is stored - `{ set }` and NOTHING else,
    * ever: the key is write-only. MANAGE_PAYOUT_ACCOUNT only, like the payout account it belongs to.
+   * Read by the paste field of the old store builds alone since enrolment lot 1; it goes with the
+   * paste shim below (legacy-compatibility.md).
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/lydia-business-key')
@@ -562,24 +587,30 @@ export class AssociationsController {
   }
 
   /**
-   * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
-   * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
-   * value, which no route returns to a browser. Replaces any key already stored. Throttled per
-   * user and association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`): nothing checks the key against
-   * Lydia here, the first callback it verifies is what proves it.
+   * RETIRED (enrolment lot 1): the key is captured at `business/create` and a pasted one is no
+   * longer stored. A SHIM kept for the store builds that still show the paste field
+   * (legacy-compatibility.md): it reads no body, writes nothing and answers the typed 410
+   * `LYDIA_KEY_PASTE_RETIRED`, which those screens show as their own "could not save" line. The
+   * hit is logged at WARN - an old client in use - with the association and never a value. It keeps
+   * the old route's throttle and MANAGE_PAYOUT_ACCOUNT check, so the WARN counts the managers still on
+   * an old build and not anonymous noise: anyone else gets the 403 they always got.
    */
   @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
-  @Throttle({ default: { limit: LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE, ttl: 60_000 } })
+  @Throttle({ default: { limit: LYDIA_KEY_PASTE_SHIM_PER_MINUTE, ttl: 60_000 } })
   @Put(':id/lydia-business-key')
-  async setLydiaBusinessKey(
+  async retiredLydiaBusinessKeyPaste(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { businessPrivateToken?: unknown }
-  ): Promise<{ set: true }> {
-    await this.assertPayoutAccountManager(userId, ga, id, 'Business key write');
-    await this.service.setLydiaBusinessKey(id, body?.businessPrivateToken, userId);
-    return { set: true };
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<never> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'retired Business key paste');
+    this.logger.warn(
+      `[LYDIA] retired key paste refused on association ${sanitizeLog(id)} by ${sanitizeLog(userId)} - an old client in use`
+    );
+    throw new GoneException({
+      code: LYDIA_KEY_PASTE_RETIRED,
+      message: 'The Lydia Business key is captured at enrolment; pasting one is retired',
+    });
   }
 
   /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
@@ -1805,38 +1836,47 @@ export class AssociationsController {
   // only accepts genuine server-to-server calls from core-service.
 
   /**
-   * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
-   * internally by core-service.
+   * Links the Business core-service's onboarding just created: its vendor_token, dashboard URL and
+   * private token (confirmed by Lydia, stored encrypted); called internally by core-service.
+   * Refused with the typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED` while a Business is linked.
    *
    * Answers `{ ok: true }` and nothing of the row: it returned the raw entity, vault key included,
    * and its one caller (core-service `createOnboarding`) never read the body.
    */
   @Post(':id/lydia-account')
   async setLydiaAccount(
-    @Param('id') id: string,
-    @Body() body: { lydiaAccountId: string; lydiaDashboardUrl?: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: { lydiaAccountId?: unknown; lydiaDashboardUrl?: unknown; businessPrivateToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
+    await this.service.setLydiaAccountId(
+      id,
+      body?.lydiaAccountId,
+      body?.lydiaDashboardUrl,
+      body?.businessPrivateToken
+    );
     return { ok: true as const };
   }
 
   /**
-   * Marks Lydia onboarding as complete for an association; called internally by core-service.
-   *
-   * Releases withheld products exactly like the removed `stripe-complete` did: which provider is active decides
-   * which pair of columns `resolvePaymentTarget` reads, never whether a product waiting on an
-   * account should be released.
+   * The global admin's "Valider l'onboarding", called internally by core-service: the SAME path as
+   * Lydia's `BUSINESS_VALIDATED` (`ProductsService.markLydiaReady`, cause `admin`) - one writer of
+   * the readiness, the transition logged and the managers told once, withheld products released on
+   * every call. Refused when no Business is linked (nothing to validate).
    */
   @Post(':id/lydia-complete')
   async markLydiaComplete(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.markLydiaOnboardingComplete(id);
-    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
+    const vendorToken = await this.service.lydiaVendorTokenOf(id);
+    if (!vendorToken) {
+      throw new BadRequestException('No Lydia account is linked to this association');
+    }
+    await this.productsService.markLydiaReady(vendorToken, 'admin', { path: 'admin', id });
   }
 
   /** Unlinks the association's Lydia Business; called internally by core-service. */

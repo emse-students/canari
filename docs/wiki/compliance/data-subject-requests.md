@@ -89,7 +89,7 @@ through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-o
 `perm_bartenders`, `sessions` (`uuid_user`). Erasure anonymises the account and keeps the ledger
 (accounting).
 
-### Audio calls (register C21)
+### Audio and video calls (register C21)
 
 **An export will not contain call metadata**: it exists only in Redis (room binding 60 s ring + 4 h, presence 2 h, deleted at hang-up) and in the technical logs (90 days at most, C13), never in a database table. Tell the person so in the answer, and search the logs for their user id only if the request names calls specifically. The call lines in a conversation (time, duration) are end-to-end encrypted messages and follow C3.
 

@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="29/10/2026"
+  updated="31/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -158,9 +158,38 @@
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
-          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
-          donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
-          formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
+          association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
+          paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
+          responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
+          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
+          une personne, et il figure tel quel dans le relevé que les responsables du compte de
+          paiement de l'association peuvent télécharger. Un remboursement total retire ce que le
+          paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
+          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
+          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
+          l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Caissiers du compte de paiement Lydia d'une association</dt>
+        <dd>
+          Quand un responsable des paiements de son association désigne un membre comme caissier du
+          compte Lydia de cette association (Responsable, trésorier ou vendeur), Canari transmet à
+          Lydia le numéro de téléphone de ce membre, qui reçoit un SMS de Lydia et peut alors
+          utiliser l'application Lydia Pro pour l'association. Le numéro est saisi par le
+          responsable : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle ; Canari peut aussi l'en avertir par une notification. Canari garde
+          l'identifiant du membre, celui de la personne qui l'a ajouté, son rôle, les dates, et le
+          numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers chiffres sont
+          affichés. Quand le Responsable change de numéro, l'autre numéro (l'ancien, ou le nouveau
+          tant que Lydia ne l'a pas confirmé) est gardé chiffré de la même façon, jusqu'à ce que
+          Lydia confirme qu'il a été retiré. Quand un caissier est retiré, Canari demande à Lydia de
+          lui ôter ses droits et vérifie auprès de Lydia qu'il n'en a plus ; ses numéros sont alors
+          effacés. Ils le sont aussi quand le compte Lydia est délié de l'association. Les deux
+          identifiants restent jusqu'à la suppression de votre compte Canari : avant de supprimer la
+          ligne, Canari demande à Lydia de retirer vos numéros de caissier. Lydia conserve ses
+          propres données selon sa politique.
         </dd>
       </div>
       <div>
@@ -198,9 +227,12 @@
           délai de rappel que chacun choisit, et l'heure à laquelle ce rappel est parti. Le message
           qu'un organisateur joint à une annulation n'est pas conservé avec la réservation : il ne
           figure que dans la notification. Sur un espace accessible par son seul lien, la
-          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Ces
-          notifications, message compris, sont supprimées au bout de 90 jours, comme toute
-          notification dans l'application.
+          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Dans
+          l'application, la notification nomme le lieu (l'espace et la ressource, qui peut porter le
+          nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
+          créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
+          bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
+          a été supprimé entre-temps.
         </dd>
       </div>
       <div>
@@ -221,28 +253,33 @@
         </dd>
       </div>
       <div>
-        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dt>Appels audio et vidéo (quand la fonction est ouverte)</dt>
         <dd>
-          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
-          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
-          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
-          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
-          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
-          6. Une fois l'appel décroché,
+          Le son et l'image d'un appel sont chiffrés de bout en bout entre les deux appareils : ni
+          notre serveur ni Cloudflare ne peuvent les écouter ou les voir, et aucun appel n'est
+          enregistré, ni le son ni l'image. La caméra ne s'allume que pendant un appel : quand vous
+          passez ou acceptez un appel vidéo, ou quand vous l'allumez pendant l'appel. Elle s'éteint
+          quand vous la coupez, quand l'appel se termine et tant que l'application est en
+          arrière-plan (elle se rallume à votre retour si elle était allumée). Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, si l'appel est demandé en
+          vidéo (sans le conserver), qui décroche et depuis quel appareil, l'heure et la durée. Il
+          garde l'état d'un appel 4 heures au plus après son début, et ses journaux techniques en
+          gardent la trace pendant la durée indiquée en section 6. Une fois l'appel décroché,
           <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
           serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
           IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
           de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
-          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
-          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
-          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
-          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
-          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
-          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
-          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
-          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
-          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
-          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son et l'image, toujours
+          chiffrés, passent par le relais de Cloudflare (section 4), qui en voit le volume. Un appel que
+          vous ne décrochez pas ne transmet votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez
+          refuser les appels dans chaque conversation, et aucun appel n'est possible entre deux membres
+          dont l'un a bloqué l'autre. La conversation garde une ligne « appel » (heure, durée), chiffrée
+          comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
+          appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
+          fermée : il contient en clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un
+          groupe, et les identifiants techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée
+          est générique, « Appel entrant », sans nom), et sur les deux s'il s'agit d'un appel vidéo. Dans
+          cette version, un appel ne sonne que dans l'application ouverte.
         </dd>
       </div>
       <div>
@@ -432,7 +469,11 @@
         <p>
           Prestataire de paiement français. Il reçoit le montant, le nom des produits et l'adresse
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
-          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia.
+          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
+          le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
+          afin de l'ajouter comme caissier de ce compte. Pour un remboursement, il reçoit la
+          référence du paiement et le montant remboursé, et rend l'argent sur le moyen de paiement
+          utilisé.
         </p>
       </li>
       <li>
@@ -681,10 +722,11 @@
             <td>90 jours après leur traitement</td>
           </tr>
           <tr>
-            <td>Achats et paiements</td>
+            <td>Achats, paiements et remboursements</td>
             <td>
               Conservés pour la comptabilité des associations ; détachés de votre compte à sa
-              suppression. Lydia conserve ses propres données selon sa politique.
+              suppression (un remboursement est conservé aussi longtemps que le paiement qu'il
+              rembourse). Lydia conserve ses propres données selon sa politique.
             </td>
           </tr>
           <tr>

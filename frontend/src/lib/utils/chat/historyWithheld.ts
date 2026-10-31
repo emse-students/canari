@@ -1,10 +1,4 @@
-import {
-  canonicalIdentity,
-  deviceIdOfLeaf,
-  sameDeviceIdentity,
-  userIdOfLeaf,
-} from '$lib/mls-client/leafIdentity';
-import { memberDeviceAnswer } from './memberDeviceAnswers';
+import { canonicalIdentity, sameDeviceIdentity } from '$lib/mls-client/leafIdentity';
 
 /**
  * HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (2026-10-27).
@@ -22,13 +16,10 @@ import { memberDeviceAnswer } from './memberDeviceAnswers';
  * withheld too, and that commit lifts nothing ({@link committerIsWithheld}) - otherwise one Add by
  * the unverified device would hand its whole past to a second one.
  *
- * Lifted when a member vouches for it:
- *
- * - a commit by a device that is NOT withheld in that conversation adds that very device - a member's
- *   Add, the door a further device was owed in the first place ({@link noteDeviceAddedByAMember});
- * - or this member approved that device under the same key it entered with (`approveMemberDevice`,
- *   account-wide and for the session), read at the moment an answer would leave
- *   ({@link historyWithheldFrom}).
+ * Lifted when a member vouches for it: a commit by a device that is NOT withheld in that
+ * conversation adds that very device - a member's Add, the door a further device is owed
+ * ({@link noteDeviceAddedByAMember}). There is no tap that lifts it since 2026-10-31: a member's
+ * device is never asked about (the gate is on the user), so nothing approves one by hand.
  *
  * PER MEMBER: each device withholds on its own verdict, and another member who did not decide the
  * entry the same way may still answer. Held in memory for the session, and persisted with the device
@@ -48,7 +39,7 @@ export interface WithheldDevice {
   groupId: string;
   /** The device's leaf identity, canonical. */
   identity: string;
-  /** The fingerprint of the key it entered with - the key an approval must name to lift it. */
+  /** The fingerprint of the key it entered with. */
   fingerprint: string;
 }
 
@@ -263,7 +254,7 @@ export function adoptHistoryRecords(stored: readonly WithheldDevice[]): void {
     const key = recordKey(e);
     if (withdrawn.has(key) || withheld.some((h) => recordKey(h) === key)) continue;
     // ONE RECORD PER DEVICE: the same device under another key here was replaced in another tab -
-    // the stored one is the newer fact, and two would let an approval of either leave the other.
+    // the stored one is the newer fact, and two would let a lift of either leave the other.
     withheld = [...withheld.filter((h) => !matches(h, e.groupId, e.identity)), e];
     adopted++;
   }
@@ -314,29 +305,14 @@ export function noteDeviceAddedByAMember(
   lift(groupId, identity, `a member's commit added it (${addedBy})`);
 }
 
-/**
- * Whether a history answer to `to` in `groupId` is withheld. Lifted here when this member has
- * approved that device under the key it entered with - the approval is session-scoped and may come
- * after the record.
- */
+/** Whether a history answer to `to` in `groupId` is withheld. */
 export function historyWithheldFrom(groupId: string, to: string): boolean {
   return sealed.has(groupId) || recordWithholds(groupId, to);
 }
 
-/** Whether a record withholds `to` in `groupId`, lifted on this member's matching approval. */
+/** Whether a record withholds `to` in `groupId` - the record alone, never the seal. */
 function recordWithholds(groupId: string, to: string): boolean {
-  const entry = withheld.find((e) => matches(e, groupId, to));
-  if (!entry) return false;
-  const answer = memberDeviceAnswer(
-    groupId,
-    userIdOfLeaf(entry.identity),
-    deviceIdOfLeaf(entry.identity)
-  );
-  if (answer?.kind === 'approved' && answer.fingerprint === entry.fingerprint) {
-    lift(groupId, entry.identity, 'this member approved it under the key it entered with');
-    return false;
-  }
-  return true;
+  return withheld.some((e) => matches(e, groupId, to));
 }
 
 /**

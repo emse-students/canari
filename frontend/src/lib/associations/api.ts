@@ -2125,6 +2125,139 @@ export async function listProductPurchases(
   );
 }
 
+// ── Lydia refunds (MANAGE_PAYOUT_ACCOUNT, enrolment chantier lot 4) ──────────
+
+/**
+ * What a TOTAL refund of a payment withdraws, so the confirmation names it (`refund-codes.ts`
+ * server side): a boutique membership's tier, a form answer's seat (and the tier it granted), a shop
+ * purchase, a Cercle top-up (the money only, never the balance), or nothing when the product is gone.
+ */
+export type RefundWithdrawal =
+  | 'membership'
+  | 'form'
+  | 'form-membership'
+  | 'shop'
+  | 'topup'
+  | 'unidentified';
+
+/** Why a payment cannot be refunded from Canari (`NotRefundableReason` server side). */
+export type RefundRefusalReason = 'not-online' | 'not-received' | 'untraceable' | 'other-business';
+
+/**
+ * Where a refund stands: `refunded`; `refused` (nothing refunded); `in-progress` (Lydia is being
+ * asked right now); `unconfirmed` (Lydia never answered - a manager checks it); `unrecorded` (Lydia
+ * confirmed, Canari failed to save it - a manager saves it).
+ */
+export type RefundState = 'refunded' | 'refused' | 'in-progress' | 'unconfirmed' | 'unrecorded';
+
+/** A refund as the purchases screen reads it. */
+export interface AssociationRefund {
+  id: string;
+  purchaseRecordId: string;
+  kind: 'total' | 'partial';
+  amountCents: number;
+  reason: string;
+  /** Where it stands (`RefundState`). */
+  state: RefundState;
+  /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
+  refusal: string | null;
+  /**
+   * Lydia's answer when it came AFTER the refund was settled and contradicts it (`refunded` on one
+   * settled as not refunded, `refused` on one settled as refunded); null otherwise.
+   */
+  lateAnswer: 'refunded' | 'refused' | null;
+  sideEffect: string | null;
+  requestedAt: string;
+  answeredAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Per payment of the purchases list: whether a refund is offered, and where it stands. */
+export interface RefundStanding {
+  purchaseRecordId: string;
+  refundable: boolean;
+  reason: RefundRefusalReason | null;
+  withdrawal: RefundWithdrawal | null;
+  paidCents: number;
+  refundedCents: number;
+  /** The refund not settled yet, which blocks any new one, and where it stands; null when none. */
+  openRefund: { id: string; state: 'in-progress' | 'unconfirmed' | 'unrecorded' } | null;
+}
+
+/** What a refund asks: the dialog draws `idempotencyKey` once, so a resent click refunds nothing twice. */
+export interface RefundRequest {
+  kind: 'total' | 'partial';
+  amountCents?: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/** The refund standing of every listed payment, and the refunds made (MANAGE_PAYOUT_ACCOUNT). */
+export async function listAssociationRefunds(
+  associationId: string
+): Promise<{ standings: RefundStanding[]; refunds: AssociationRefund[] }> {
+  return request(`/api/associations/${encodeURIComponent(associationId)}/refunds`);
+}
+
+/**
+ * Refunds a payment through Lydia. Answers the refund - read its `state`: a resent request answers
+ * the first one whatever came of it, and a refund Lydia confirmed but Canari failed to save is
+ * `unrecorded`. Throws a {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when
+ * Lydia did not answer.
+ */
+export async function refundAssociationPurchase(
+  associationId: string,
+  purchaseId: string,
+  body: RefundRequest
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/refunds`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/**
+ * Settles a refund Lydia never confirmed, from what the manager read in Lydia's own history:
+ * `refunded` true when the refund shows there.
+ */
+export async function resolveAssociationRefund(
+  associationId: string,
+  refundId: string,
+  refunded: boolean
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/refunds/${encodeURIComponent(refundId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ refunded }) }
+  );
+}
+
+/** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
+export interface StatementLine {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  operation: 'payment' | 'refund-total' | 'refund-partial';
+  item: string;
+  method: 'cash' | 'online';
+  amountCents: number;
+  reason: string | null;
+}
+
+/** The association's statement, as data: the client writes the file in its own words. */
+export interface AssociationStatement {
+  lines: StatementLine[];
+  receivedCents: number;
+  refundedCents: number;
+}
+
+/** The association's payments and confirmed refunds, with the totals (MANAGE_PAYOUT_ACCOUNT). */
+export async function getAssociationStatement(
+  associationId: string
+): Promise<AssociationStatement> {
+  return request<AssociationStatement>(
+    `/api/associations/${encodeURIComponent(associationId)}/statement`
+  );
+}
+
 // ── Payment delegation (MANAGE_PRODUCTS) ─────────────────────────────────────
 
 /**
@@ -2453,6 +2586,66 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
+  responsable?: LydiaResponsable | null;
+  /** The last readiness change and its cause; null when none was ever recorded. */
+  readiness?: { cause: LydiaReadinessCause; at: string } | null;
+  /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
+  enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
+  /**
+   * The live cashiers of the CURRENT Business (enrolment lot 3), the Responsable first. Absent on a
+   * server older than lot 3: read as none.
+   */
+  cashiers?: LydiaCashier[];
+}
+
+/** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
+export type LydiaCashierRole = 'responsable' | 'tresorier' | 'vendeur';
+
+/** The two roles a payout manager may add or switch between (lot 3). */
+export type LydiaAddableCashierRole = Exclude<LydiaCashierRole, 'responsable'>;
+
+/**
+ * Where a cashier stands at Lydia: `confirmed` (Lydia showed exactly the role's rights),
+ * `unconfirmed` (Lydia answered the add but did not show them), `revoke-unconfirmed` (a removal
+ * was asked and Lydia did not show it done: the person may still hold rights).
+ */
+export type LydiaCashierState = 'confirmed' | 'unconfirmed' | 'revoke-unconfirmed';
+
+/** One live Lydia cashier of an association, as its payout managers see it: 2 phone digits only. */
+export interface LydiaCashier {
+  id: string;
+  userId: string;
+  name: string;
+  role: LydiaCashierRole;
+  phoneEnd: string;
+  state: LydiaCashierState;
+  /** An older number of this person (a Responsable number change) whose removal is not confirmed. */
+  previousPhoneEnd: string | null;
+  /** ISO instant the cashier was added. */
+  addedAt: string;
+  addedByName: string;
+}
+
+/** The cause of the last readiness change of a Lydia Business. */
+export type LydiaReadinessCause =
+  | 'webhook-validated'
+  | 'admin'
+  | 'request-refused'
+  | 'request-blocked';
+
+/** The person recorded as the Lydia cashier of an association: the last 2 phone digits only. */
+export interface LydiaResponsable {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -2464,31 +2657,6 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
-  );
-}
-
-/**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 
@@ -2528,6 +2696,98 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
+/**
+ * Adds (`add`, also "resend the SMS") or records (`record`: an already-linked Business, read-only at
+ * Lydia, no SMS) the Responsable of the association's Lydia Business. A refusal is a
+ * {@link SocialApiError} typed at the throw: its `code` (`lydiaResponsableRefusal.ts`) is what a
+ * screen reads. `phone` is E.164.
+ */
+export async function setLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string; mode: 'add' | 'record' }
+): Promise<LydiaResponsable> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-responsable/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-responsable')) as {
+    responsable: LydiaResponsable;
+  };
+  return body.responsable;
+}
+
+/**
+ * Adds a member as a Lydia cashier with a role (lot 3, MANAGE_PAYOUT_ACCOUNT; Lydia sends its SMS).
+ * `phone` is E.164. A refusal is a {@link SocialApiError} typed at the throw
+ * (`lydiaCashierRefusal.ts`); the server refuses every add while its gate is off.
+ */
+export async function addLydiaCashier(
+  associationId: string,
+  input: { userId: string; phone: string; role: LydiaAddableCashierRole }
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/** Switches a cashier between Tresorier and Vendeur (lot 3, gated like the add). */
+export async function changeLydiaCashierRole(
+  associationId: string,
+  cashierId: string,
+  role: LydiaAddableCashierRole
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/role`,
+    { method: 'POST', body: JSON.stringify({ role }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers/:id/role')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/**
+ * Removes a cashier's number at Lydia (lot 3): `current`, or `previous` for the older number a
+ * Responsable number change left behind. Resolves only when Lydia showed the number holds no right;
+ * otherwise a typed {@link SocialApiError} (`LYDIA_CASHIER_REVOKE_UNCONFIRMED`: the row stays).
+ */
+export async function revokeLydiaCashier(
+  associationId: string,
+  cashierId: string,
+  number: 'current' | 'previous'
+): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/revoke`,
+    { method: 'POST', body: JSON.stringify({ number }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
+/**
+ * Clears the in-flight enrolment marker (global admin only), after an admin checked with Lydia that
+ * no Business was created - or linked the one that was.
+ */
+export async function clearLydiaEnrolmentInFlight(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-enrolment-clear/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
@@ -2556,7 +2816,18 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
+/**
+ * How long the onboarding waits for its answer. core bounds its whole chain at 55 s and nginx gives
+ * up at 60 s (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`, core `lydia-payment-provider.ts`), so 75 s is above
+ * both: the screen always receives core's TYPED answer, or nginx's own, before giving up itself.
+ */
+export const LYDIA_ONBOARDING_DEADLINE_MS = 75_000;
+
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2565,15 +2836,15 @@ export async function startLydiaOnboarding(
   const res = await apiFetch(`${base}/api/payments/onboarding`, {
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
+    deadlineMs: LYDIA_ONBOARDING_DEADLINE_MS,
   });
+  if (!res.ok) throw await socialRefusal(res);
   // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
-  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
-  const body = res.ok
-    ? await readApiJson(res, 'POST /api/payments/onboarding')
-    : await res.json().catch(() => ({}));
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };

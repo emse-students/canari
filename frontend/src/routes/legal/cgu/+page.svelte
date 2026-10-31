@@ -240,9 +240,9 @@
       <div>
         <dt>Limites</dt>
         <dd>
-          Un direct dure une heure au plus et s'arrête après 60 secondes sans image reçue. Vous ne
-          pouvez avoir qu'un direct ouvert à la fois, et en lancer six par heure au plus. Le nombre
-          de spectateurs simultanés est limité : au-delà, l'accès est refusé.
+          Un direct s'arrête après 60 secondes sans image reçue. Vous ne pouvez avoir qu'un direct
+          ouvert à la fois, et en lancer six par heure au plus. Le nombre de spectateurs simultanés
+          est limité : au-delà, l'accès est refusé.
         </dd>
       </div>
       <div>

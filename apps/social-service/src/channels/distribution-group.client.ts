@@ -82,7 +82,19 @@ export interface DistributionGroupRef {
    * that user, whatever their client believes about having joined.
    */
   memberDevices?: string[];
+  /**
+   * The ASKING DEVICE's own seat, read by chat-delivery AFTER the base above, so a base an Add stored
+   * always comes with that Add's seat (channel-encryption section 20, one door at a time). Present
+   * only when the read named a device. `addInFlight` is absent when the add lock could not be read:
+   * unknown, never `false`.
+   */
+  seat?: DistributionSeat;
 }
+
+/** One device's seat in a key group, as chat-delivery serves it with the base. */
+export type DistributionSeat =
+  | { status: 'none' | 'active' }
+  | { status: 'pending'; welcomeQueued: boolean; addInFlight?: boolean };
 
 /** Shape chat-delivery answers with on the distribution-group routes. */
 interface DeliveryGroupPayload {
@@ -91,6 +103,23 @@ interface DeliveryGroupPayload {
   baseEpoch?: unknown;
   activeEpoch?: unknown;
   memberDevices?: unknown;
+  seat?: unknown;
+}
+
+/**
+ * Passes a served seat through only in a shape the client can read; anything else is dropped, and
+ * the client then reads "no seat answer", which opens no door (it never reads as "nothing owed").
+ */
+function parseSeat(raw: unknown): DistributionSeat | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as { status?: unknown; welcomeQueued?: unknown; addInFlight?: unknown };
+  if (s.status === 'none' || s.status === 'active') return { status: s.status };
+  if (s.status !== 'pending' || typeof s.welcomeQueued !== 'boolean') return undefined;
+  return {
+    status: 'pending',
+    welcomeQueued: s.welcomeQueued,
+    ...(typeof s.addInFlight === 'boolean' ? { addInFlight: s.addInFlight } : {}),
+  };
 }
 
 /**
@@ -131,14 +160,20 @@ export async function createDistributionGroup(
 export async function readDistributionGroup(
   secret: string,
   scope: DistributionScope,
-  forUserId?: string
+  forUserId?: string,
+  forDeviceId?: string
 ): Promise<DistributionGroupRef | null> {
   // Named ON THE READ rather than inferred later: only the delivery side holds the membership rows,
   // and a caller that did not ask gets `memberDevices: undefined` instead of a misleading empty list.
   const reader = String(forUserId ?? '')
     .trim()
     .toLowerCase();
-  const query = reader ? `?userId=${encodeURIComponent(reader)}` : '';
+  // The device is self-asserted and only ever reads its OWN seat among the reader's rows.
+  const device = reader ? String(forDeviceId ?? '').trim() : '';
+  const query = reader
+    ? `?userId=${encodeURIComponent(reader)}` +
+      (device ? `&deviceId=${encodeURIComponent(device)}` : '')
+    : '';
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
@@ -154,6 +189,7 @@ export async function readDistributionGroup(
     : undefined;
 
   const baseEpoch = typeof payload?.baseEpoch === 'number' ? payload.baseEpoch : null;
+  const seat = device ? parseSeat(payload?.seat) : undefined;
   return {
     groupId,
     groupInfo: typeof payload?.groupInfo === 'string' ? payload.groupInfo : null,
@@ -162,6 +198,7 @@ export async function readDistributionGroup(
     // must read as "nothing known to be stale", never as "every base is ahead of the group".
     activeEpoch: typeof payload?.activeEpoch === 'number' ? payload.activeEpoch : (baseEpoch ?? 0),
     ...(devices ? { memberDevices: devices } : {}),
+    ...(seat ? { seat } : {}),
   };
 }
 

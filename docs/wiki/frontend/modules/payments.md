@@ -505,8 +505,8 @@ the guessed field set.)
 seven fields - `currency`, `request_id`, `amount`, `signed`, `vendor_token`, `order_ref`, `sig` - and
 `sig` is `signLydiaParams` (MD5 of the `key=value` pairs sorted by key, joined by `&`, then `&` and the
 key) over EVERY received field but `sig`, `signed` included, with the **Business** private token of the
-Business that issued the request. The Provider private token never verified one, so nothing reads
-`LYDIA_PROVIDER_PRIVATE_TOKEN` any more (its secret and manifest row are a follow-up). The cancel and
+Business that issued the request. The Provider private token never verified one; since enrolment lot
+2 it signs `business/addcashier` only (the Responsable, below), and is required in production. The cancel and
 expire callbacks were measured; a CONFIRM is not (no payment completes in the sandbox) and is assumed
 to come from the same mechanism.
 
@@ -515,8 +515,8 @@ arrived minus `sig` - not a list the code chooses - and every value must be a st
 characters each at most). The key is the one of the association whose `lydiaAccountId` is the body's
 `vendor_token`, asked of social-service over `POST /api/internal/associations/lydia-callback-key`
 (`X-Internal-Secret`, `Cache-Control: no-store`, under `/api/internal/`, which no nginx `location`
-routes). Resolving the key FROM the body is sound because the signature is the proof: anyone may name
-a public vendor token, nobody but the Business can sign for it. **Every failure is ONE 400 `Invalid
+routes). Resolving the key FROM the body is sound because the signature is the proof: naming a vendor
+token is not signing for it. **Every failure is ONE 400 `Invalid
 signature`** - unknown association, no key, wrong key, wrong field set, a non-string value - so the
 route says nothing about which associations hold a key; the reason (`unsignable-body`,
 `no-vendor-token`, `no-key`, `mismatch`) goes to the server log only. Failing to READ the key (social
@@ -588,7 +588,8 @@ back to `disabled`.
 - **While live**, anything unexpected is reported at once: a payment request nobody launched, an
   association other than the test one holding a Business, any callback arriving.
 
-**Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
+**Where the key came from until enrolment lot 1: the payout manager typed it** (now captured at
+`business/create`, [below](#the-key-is-captured-at-businesscreate-enrolment-lot-1)). `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
 `associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
 under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
@@ -599,21 +600,367 @@ and the column is mapped `select`/`insert`/`update: false` so no entity read can
 the Business clears it. The copies of production strip it (`copy-strips.sh`) and a local estate
 regenerates the secret (`env-from-prod.sh`), so a laptop with a dump cannot open one.
 
-**Why not capture it at `business/create`.** `business/create` answers `api_token`, `api_token_id` and
-`dashboard_url`; Lydia says each validated Business has a `private_token` in its console, "Mes
-informations". That `api_token_id` IS that private token is a hypothesis nobody has measured (it needs a
-validated Business's key to compare), and storing an unidentified secret is worse than storing none -
-so `api_token_id` stays unpersisted and redacted from logs.
+### The key is captured at `business/create` (enrolment lot 1)
 
-**No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
-verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
-when the payer comes back (`confirm-payment`). Nothing checks a key when it is saved - a wrong one shows
-only at the first refused callback - so the panel says so, and the PUT is throttled per user and
-association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard`).
+`api_token_id` IS the Business private token (`auth/vendortoken`, homologation 2026-10-30,
+[lydia-api](../../lydia-api.md#1-the-four-credentials-and-what-each-is-for)), and Lydia answers it once.
+So the onboarding (`POST /api/payments/onboarding`, core-service) now:
+
+1. **Refuses a re-run** while the association has a `lydiaAccountId`: a typed 409
+   `LYDIA_ACCOUNT_ALREADY_LINKED`, read BEFORE `business/create`; social-service's link is one
+   `UPDATE ... WHERE "lydiaAccountId" IS NULL`, so two concurrent onboardings cannot both link. The
+   screen maps the code (`lydiaOnboardingRefusal.ts`) and re-reads the payout account.
+2. **Proves the key** with `auth/vendortoken` (`vendor_token` + `vendor_id`). Only `status: "ok"` goes on.
+3. **Links the Business WITH its key** (`POST associations/:id/lydia-account`, internal secret): the
+   same column, encryption and binding as a pasted key, in the same statement as the vendor token. The
+   browser receives the public pair only.
+
+The payout account is read first, before anything is created: a 404 is an unknown association (refused,
+nothing created) and a 5xx or a transport failure is the typed 503 `PAYOUT_ACCOUNT_UNREADABLE` - never
+read as "not linked", which would invite a second `business/create`. A link refused with the body code
+`LYDIA_ACCOUNT_ALREADY_LINKED` (a concurrent run won) is the same 409, classified on the code and not
+on the status.
+
+**What may be logged:** the `vendor_token` (`api_token`) - an ERROR line may carry it, and the
+orphan's must. The Business private key (`api_token_id`, `vendor_id`) and every signature are secret and never
+logged (`LYDIA_LOG_REDACT_KEYS` in `lydia-payment-provider.ts`).
+
+#### An orphan Business: ONE typed outcome, and what an admin does
+
+Every failure AFTER a successful `business/create` - `auth/vendortoken` unreachable or 5xx, error 103 or
+any other Lydia code, a missing `api_token_id` or `dashboard_url`, a link that fails for any reason but a
+concurrent run -
+is ONE answer: the typed 502 `LYDIA_BUSINESS_CREATED_UNLINKED`. The Business exists at Lydia, Canari
+links nothing, and the line logged at ERROR is
+
+```
+[LYDIA-ORPHAN] association <id>: Business vendor_token=<token> was created at Lydia and is NOT linked (<why>) ...
+```
+
+(a concurrent run that lost the link logs the same line before its 409: its Business is an orphan too).
+The screen branches on the code and says not to retry and to contact a platform administrator.
+**A retry can still create a second Business** - the association is not linked, so the 409 guard does
+not stop it; the no-retry message and the admin path below are the mitigation, not a lock.
+
+What the admin does, in this order:
+
+1. **Find the line**: `[LYDIA-ORPHAN]` and the association in core-service's log; take its `vendor_token`.
+2. **Confirm that NO association holds that token** - the link may have committed after its answer was
+   lost, and deleting a linked Business would cut a working association off. Ask social-service's own
+   lookup (the one the webhook uses), from inside the core-service container, which carries both
+   variables (core reaches social-service through `FORM_URL`, and social-service serves every route
+   under `/api` - the sibling internal routes `lydia-callback-key` and `lydia-disconnect` answered at
+   that shape in production on 2026-10-30). Run it on an estate where enrolment lot 1 is deployed:
+   before that the route does not exist and answers 404 (dev, measured 2026-10-31):
+
+   ```sh
+   bun -e 'const r = await fetch(`${process.env.FORM_URL || "http://social-service:3014"}/api/internal/associations/lydia-business-of-vendor-token`, {method: "POST", headers: {"Content-Type": "application/json", "X-Internal-Secret": process.env.INTERNAL_SECRET}, body: JSON.stringify({vendorToken: process.argv[1]})}); console.log(r.status, await r.text())' '<vendor_token>'
+   ```
+
+   Only `200 {"associationId":null,"onboardingComplete":null}` lets step 3 go on. An `associationId` means
+   the Business IS linked: nothing to delete, the association is enrolled. Any other status means the
+   check did not run: repeat it, never skip it.
+3. **Give the `vendor_token` to Lydia's support** and ask them to delete that Business (the API has no
+   delete call); then let the association enrol again from its settings. Nothing is stored in Canari for
+   an orphan, so there is nothing to clean here.
+
+**No report scans these lines today** (the hourly reports read databases, not core-service's log); a
+report that should would grep the tags `[LYDIA-ORPHAN]` and `[LYDIA-ORPHAN-SUSPECT]`.
+
+#### A `business/create` with no answer: the outcome is UNKNOWN, and the screen says so
+
+The onboarding is five calls in a row - the permission and payout-account reads, `business/create`,
+`auth/vendortoken`, the link - behind nginx's `/api/payments` location, whose `proxy_read_timeout` is
+nginx's 60 s default. Each step has its own bound (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`: 5 + 5 + 25 + 10 +
+10 = **55 s**, a spec asserts the sum stays under 60 s), so core always answers TYPED before nginx answers
+a bare 504; the client waits **75 s** (`LYDIA_ONBOARDING_DEADLINE_MS`), above both.
+
+A `business/create` that times out, answers a 5xx, a 4xx that does not say refused, or a 200 with no
+`api_token` is AMBIGUOUS - Lydia may have created the Business. core answers the typed 504
+`LYDIA_BUSINESS_CREATE_UNCONFIRMED` and logs at ERROR `[LYDIA-ORPHAN-SUSPECT] association <id>: ...`
+(no `vendor_token` to name: the admin asks Lydia's support which Businesses the Provider created for that
+association, then runs the check of step 2 on each). The screen treats that code, its own deadline, a
+transport failure and a code-less 5xx the same way (`lydiaOnboardingOutcomeUnknown`): it re-reads the
+payout account - linked after all, it shows the linked state - and otherwise says "check before
+retrying", never the generic save error.
+
+**A lock since lot 2.** The read of the payout account is now a CLAIM: social-service's
+`internal/associations/:id/lydia-enrolment-claim` sets `associations."lydiaEnrolmentStartedAt"`
+(migration 118) in ONE statement, only where it is NULL and no Business is linked, BEFORE
+`business/create`. A second attempt meanwhile is the typed 409 `LYDIA_ENROLMENT_IN_FLIGHT`. The link
+clears the marker; a TYPED refusal of `business/create` (nothing was created) releases it at once;
+an UNCONFIRMED create keeps it, so no second Business can be made until a global admin who checked
+with Lydia clears it (`POST /api/payments/lydia-enrolment-clear/:associationId`, an `[AUDIT]` line).
+
+**The webhook marks a Business ready, and nothing else (owner, 2026-10-30, lot 2).**
+`business/create` carries `webhook` = `/api/payments/lydia-business-webhook` (public, multer-bounded,
+nginx zone `lydia_callback`). Its body is unsigned, so anyone can send it. The owner ACCEPTED
+the risk of a forged `BUSINESS_VALIDATED`: it cannot make anyone pay into nothing, because a Business
+Lydia has not validated answers the first `request/do` with error 5 BEFORE any request exists, and
+that answer reverts the readiness at once (below). So `BUSINESS_VALIDATED` asks social-service's
+`internal/associations/lydia-readiness` for `{ ready: true, cause: 'webhook-validated' }` and nothing
+else; a failure to apply it answers 503 to ask for a retry, and so does a VALIDATED naming the
+PENDING token of an enrolment: `business/create` answered it and the link has not run yet. Core
+records that token on the association (`lydiaEnrolmentVendorToken`, migration 118) through
+`lydia-enrolment-vendor-token` BEFORE the key check and the link; the link, a typed refusal and the
+admin's clear erase it. That 503 carries the typed code `LYDIA_ENROLMENT_PENDING` (shared contract),
+so core logs the expected retry at WARN; every other failure to apply carries none and stays an
+ERROR, also answered 503. Any OTHER unknown token is a 200 that writes nothing, at WARN, so one stuck
+enrolment never turns every unknown token into a retry; failing to record the pending token is an
+ERROR and the enrolment goes on. **That Lydia retries a 503 is UNMEASURED.** An unsigned VALIDATED never clears a holder whose cause is Lydia's own answer
+(`request-refused`, `request-blocked`): 200, nothing written, a WARN - only the global admin's
+"Valider l'onboarding" clears those. `BUSINESS_UNVALIDATED` NEVER changes state and NOTIFIES NOBODY: its
+WARN line in core-service's log is the only record. Anything malformed or unknown writes nothing. So no
+body can make an association NOT ready. A spec drives every event, a forged field set and an oversized body
+through the real route and asserts exactly that. A global admin keeps "Valider l'onboarding", now the
+same writer.
+
+### Readiness: one writer, and Lydia's own refusal reverts it (enrolment lot 2)
+
+`lydiaOnboardingComplete` has ONE writer, `AssociationsService.setLydiaReadiness` (social-service):
+one transaction that locks the holder of the vendor token, and an
+`UPDATE ... WHERE "lydiaOnboardingComplete" <> $ready RETURNING` that IS the transition - a replay
+updates nothing, logs a debug line and notifies nobody. Every write records why and when
+(`lydiaReadinessCause` = `webhook-validated` | `admin` | `request-refused` | `request-blocked`,
+`lydiaReadinessAt`). No holder, or two, writes nothing. A second refusal naming ANOTHER cause (2701
+after error 5) updates the cause and its date, with no transition and no second notice.
+
+- **Ready** (`ProductsService.markLydiaReady`, the webhook and the admin route): then the withheld
+  products of the holder and of its APPROVED delegates are released - on EVERY call, replays included,
+  so a crash between the commit and the release heals at the next one (`activationWithheld` is the
+  allowlist, so a second release finds nothing). The release RE-READS readiness in its own
+  transaction, the association and its delegation parent share-locked, the revert locking that holder
+  FOR UPDATE: a release running after a revert undid the "ready" releases nothing (an integration
+  spec races the two).
+- **Reverted** when `request/do` answers **error 5** (not validated; core's typed
+  `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
+  from a form (member or guest): the unissued attempt is released, then the HOLDER of the vendor token
+  the request went to (an approved parent's, when delegating) is set not ready, its on-sale products
+  and its approved delegates' withheld in the same transaction - through `approvedDelegateIds`, the
+  SAME predicate the release reads, a spec spying on both. Logged at ERROR, `[LYDIA-READINESS] holder
+  <id> reverted: request/do answered error 5 (...); it had been marked ready by <cause> at <date>`.
+  **Error 5 pauses the WHOLE holder** (the owner's decision). Its meaning - "the Business is not
+  validated" - comes from ONE homologation measurement and is believed to be a property of the
+  Business, not of the payer's input; nothing yet rules out a payer-side cause, which is why the
+  revert is a report a person sees (next bullet).
+- **The global admins** (`users.admin`) get a bell row `lydia_payments_paused` (no push) written in
+  the REVERT'S OWN transaction, so the state and its report commit together, whatever the managers'
+  switch says. No alerting mechanism exists in this estate, so the existing bell is what was reused;
+  an older native build draws it as the neutral unknown-type row, which still names the association.
+  The managers' payments screen shows the pause with its cause and date, and says payments stay
+  paused until a platform administrator re-checks the account with Lydia.
+- **The payer** reads the typed 409 `PAYMENTS_NOT_ACTIVATED` (or `PAYMENTS_BLOCKED` after a 2701),
+  from `assertPaymentsReady`, `preparePurchase`, and `decidePurchase`, which re-reads the routing
+  under the buyer's lock BEFORE the product's own flag: a revert committed while the purchase was
+  being prepared answers the code, never "product not found", and issues no request (an integration
+  spec on PostgreSQL commits the revert between the two reads).
+- **The managers** (`MANAGE_PAYOUT_ACCOUNT`) get a bell row and a push on a transition
+  (`lydia_payments_active` / `lydia_payments_paused`), behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`
+  (`lydia-payments-notifier.service.ts`), OFF until the stores serve the floor version that renders
+  the two types ([legacy-compatibility](../../legacy-compatibility.md)); while off, the transition line
+  says the managers were not notified.
+
+### The Responsable (enrolment lot 2)
+
+The second step of the enrolment screen names the member Lydia adds as a cashier of the Business, so
+they can run it in the Lydia Pro app (the one measured route,
+[lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+`POST /api/payments/lydia-responsable/:associationId` (core-service, a payout manager), with the chosen
+member and their phone in E.164:
+
+1. **Checks and claim through social-service** (`lydia-responsable-claim`): the Business linked now
+   (`LYDIA_NO_BUSINESS` otherwise), whether the person is a MEMBER (`LYDIA_RESPONSABLE_NOT_A_MEMBER`),
+   whether another person is already the live Responsable (`LYDIA_RESPONSABLE_ALREADY_SET`), and - the
+   same person asked again - whether the phone is the number already sealed: the same number is a
+   resend, ANOTHER number a number change since lot 3 ([below](#the-cashiers-enrolment-lot-3)). Only when every check passes is the step CLAIMED, in ONE statement on
+   the association row (`lydiaResponsableStartedAt`, migration 118): a second manager meanwhile reads
+   the typed 409 `LYDIA_RESPONSABLE_IN_FLIGHT` (or `LYDIA_BUSINESS_CHANGED`), so Lydia is asked ONCE
+   (an integration spec races two steps). A typed outcome releases the claim
+   (`lydia-responsable-release`); the store clears it in its own transaction; an add with no usable
+   answer, or a store that failed after the add, keeps it until a global admin clears it with the
+   enrolment marker (`lydia-enrolment-clear`). The payout read answers `responsableInFlightSince`, and
+   the admin's clear button is drawn whenever EITHER marker is set, linked or not.
+2. **`business/addcashier`** (`LydiaPaymentProvider.addBusinessHolder`): the 13 rights as a JSON array
+   of names, `notify=yes` (Lydia sends the SMS), the signature over the URL-ENCODED values with
+   `LYDIA_PROVIDER_PRIVATE_TOKEN` (REQUIRED in production since this lot). Then the rights are READ
+   BACK (`business/getpermission`): anything short of all 13 is `LYDIA_CASHIER_RIGHTS_INCOMPLETE`,
+   never counted as confirmed. **Once the add has answered, every later failure is "added,
+   unconfirmed"** (`LydiaCashierAddedUnconfirmedException`, the original status kept): Lydia holds a
+   cashier, so core stores the row UNCONFIRMED (`confirmedAt` NULL) at ERROR (association and
+   `phoneEnd` only) and the record releases the claim; if that store fails, the claim stays. An
+   unconfirmed live row guards `ALREADY_SET` like a confirmed one, the same-number
+   resend confirms it, and the screen shows it as added at Lydia and not confirmed (the admin reads
+   that a revocation may be owed). Typed: 444 `LYDIA_SIGNATURE_REFUSED`, 3 `LYDIA_CASHIER_PERMISSIONS_INVALID`,
+   102/103 `LYDIA_BUSINESS_TOKEN_REJECTED` (502); no answer or an HTML page `LYDIA_UNREACHABLE` (503;
+   the claim is kept, and a later add is safe once cleared: a second add replaces the rights). **Record mode**, for a Business whose holder is
+   already a cashier: no add, the read-back alone, and `access_cashier` is required
+   (`LYDIA_RESPONSABLE_NOT_A_CASHIER`).
+3. **Stored** (`lydia-responsable`, social-service): `lydia_cashiers` (migration 118), the phone
+   SEALED (`secret-box.ts`, purpose `lydia-cashier-phone/v1`, the association id as context) and only
+   its last two digits (`phoneEnd`) ever read back or logged. In ONE transaction, the association row
+   locked: the Business must still be the one claimed (`LYDIA_BUSINESS_CHANGED`), one live Responsable
+   per association (a partial unique index, whose violation answers the typed
+   `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number a number
+   change (lot 3, the other number kept sealed, and the old one removed once the new one is
+   confirmed - [below](#the-cashiers-enrolment-lot-3)); the same person and number confirms an unconfirmed row; a row of an
+   EARLIER Business is closed, its phone and `phoneEnd` cleared; the unlink closes every row the same
+   way. Nothing ties the phone to the member: the member is not asked, and the manager types it.
+   **A live row deleted** - by the account's erasure, or by the association's delete (`ON DELETE
+   CASCADE`) - is an `[AUDIT] [LYDIA]` ERROR naming the association and the Business, never the phone:
+   Lydia still lists that cashier. Personal data: register entry C23 and
+   the privacy policy, changed together ([register](../../compliance/register-of-processing.md)).
+
+The codes are one file, `libs/contracts/lydia-refusal-codes.json`, asserted by core, social and the
+frontend. Core redacts `cashier_phone`, `phone`, `firstname`, `lastname` and `name` (with the private
+token fields) at ANY depth of a Lydia answer before logging it. The screen never shows the `vendor_token`, and the "Ouvrir le tableau de bord Lydia" button
+is gone (its link answered 404 to anyone not signed in to Lydia's console).
+
+**The paste field is gone** (production has no linked Business without a stored key, counted
+2026-10-30). Old store builds still embed it, so `PUT lydia-business-key` stays as a shim: a typed
+`410 LYDIA_KEY_PASTE_RETIRED`, nothing written, a WARN per hit - behind the old route's throttle and
+`MANAGE_PAYOUT_ACCOUNT` check, so the WARN counts managers on an old build and not anonymous noise; the `GET` status those builds read stays
+too ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)).
+
+**No key: no longer a reachable state** for a Business linked by the onboarding (lot 1 links it with
+its key or not at all). Were one keyless anyway, every callback of that association is refused (400)
+and a FORM payment is still confirmed when the payer comes back (`confirm-payment`).
 
 **The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
 characters, fails its render naming the secret rather than starting a service that cannot store a key.
+
+### The cashiers (enrolment lot 3)
+
+The owner's decisions of 2026-10-30 ([backlog](../../backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)):
+Canari keeps its own list of the people Lydia lists as cashiers of an association's Business
+(`lydia_cashiers`, migrations 118 and 119), managed by `MANAGE_PAYOUT_ACCOUNT` holders; a cashier is a
+MEMBER of the association, and the manager types their number (E.164). Lydia's SMS stays on.
+
+**The roles and their rights - ONE mapping, `LYDIA_CASHIER_ROLE_PERMISSIONS`
+(`apps/core-service/src/payment/lydia-payment-provider.ts`).** Lydia's documentation lists the 13 right
+names and describes none of them, so each set is read from the names and kept NARROW:
+
+| Role | What the owner asked | Rights sent to `business/addcashier` |
+| --- | --- | --- |
+| Responsable | everything | all 13 (`LYDIA_CASHIER_PERMISSIONS`) |
+| Tresorier | statements, refunds, cancels | `access_statement`, `access_canceltransaction` (the right Lydia's refund call names), `access_cancelrequest` |
+| Vendeur | collect | `access_collect` |
+
+Left out, their meaning unknown: `access_allreceipt` and `access_fee` (not given to a Tresorier) and
+`access_checkout` (not given to a Vendeur). A role whose real use needs one of them is a one-line change
+of the constant, with this table.
+
+**Adding** (`POST /api/payments/lydia-cashiers/:associationId`, body `{ userId, phone, role }`, core's
+`LydiaCashiersController`): social-service checks and CLAIMS (`lydia-cashier-add-claim`) - a Business is
+linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`) and not already a live
+cashier (`LYDIA_CASHIER_ALREADY_SET`), a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_RESPONSABLE`), and the
+number is not one a live row holds, its own or a Responsable's other number (`LYDIA_CASHIER_PHONE_IN_USE`).
+Then `addCashier` sends the role's set signed, `notify=yes`, and READS IT BACK. Once the
+add answered, any failure is `LydiaCashierAddedUnconfirmedException` and the row is recorded UNCONFIRMED,
+as for the Responsable. A confirmed NEW cashier gets a bell row (`lydia_cashier_added`, behind
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, OFF until the floor version -
+[legacy-compatibility](../../legacy-compatibility.md)) that opens the Lydia Pro help page
+(`/help/lydia-pro`); no push.
+
+**The read-back fails CLOSED** (`parseCashierReading` / `cashierRightsDifference`, core's
+`lydia-payment-provider.ts`). `business/getpermission` lists 18 `access_*` names on homologation, the 13
+documented and 5 undocumented ([lydia-api](../../lydia-api.md)). A reading counts only when `error` is
+`"0"`, `data` is a non-null object, EVERY `access_*` value present is exactly `"0"` or `"1"`, and all 13
+documented names are present; anything else is the typed 502 `LYDIA_CASHIER_READBACK_INVALID`, never a
+success. Then: a Tresorier or Vendeur must hold EXACTLY its set - any `access_*` at `"1"` outside it, the
+undocumented five included, is a mismatch; the Responsable must hold the 13 documented names (the owner
+grants the 13 and not the five, so the five are not required of it).
+
+**Changing a role** (`.../:cashierId/role`, body `{ role }`): the same number re-added with the new set
+(a repeat add replaces the rights), read back exactly, recorded on the same row - only while that row
+still holds the number Lydia was asked about (`LYDIA_CASHIER_NUMBER_CHANGED`), and the record clears a
+removal flag (`revokeUnconfirmedAt`): the number holds the new role's rights again. Never the
+Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`), and never a row whose number is one of the
+Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`).
+
+**The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
+the frontend constant of the same name, and `switches.cashierAddEnabled` in
+`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec; refused with the
+typed 409 `LYDIA_CASHIER_ADD_DISABLED`, nothing sent to Lydia). **They flip, together, only after ONE
+removal has been observed in production.** Removing is live: it only takes rights away. Changing the
+Responsable's number is behind the same gate (below).
+
+**Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
+and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.
+A removal runs only when its preconditions read back as expected at Lydia; otherwise, or unreadable,
+it is the typed 409 `LYDIA_CASHIER_REMOVAL_PRECONDITION`, the claim released and nothing removed. Lydia's cashier-removal call (its shape is in the private operations
+notes) is followed by a `business/getpermission` RE-READ, and only **no `access_*` at `"1"`** - the
+undocumented five included - is a removal: the row is closed (`removedAt`, every number and number ending
+cleared, as the unlink does) or the other number cleared. Anything else - rights still read, the re-read
+unanswered or untrusted - is recorded as NOT confirmed (`revokeUnconfirmedAt` /
+`previousRevokeUnconfirmedAt`, the row stays live), logged at ERROR and answered 502
+`LYDIA_CASHIER_REVOKE_UNCONFIRMED`; repeating a removal is safe. The record applies only while the row
+still holds the number removed, compared sealed-to-opened inside the locking transaction
+(`LYDIA_CASHIER_NUMBER_CHANGED`). **The Responsable's current number is never removed**
+(`LYDIA_CASHIER_RESPONSABLE_NUMBER`, also when the number to remove IS that number): it is managed by
+its own step, below.
+
+**Changing the Responsable's number** (the lot 2 route, the same person with another number). OFF while
+`LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
+than lot 3 already word as "cannot be changed yet"; the claim released, Lydia never asked; the screen
+then offers only "Renvoyer le SMS"). Once on, only the
+Responsable themselves (the caller IS the row's `userId`) or a global admin may change it - a
+`MANAGE_PAYOUT_ACCOUNT` holder alone gets the typed 403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`.
+The claim answers `numberChange` (only when core asks for it, `allowNumberChange`, so an older core keeps
+lot 2's refusal). The row's `previousPhoneSealed` / `previousPhoneEnd` (migration 119) is the
+Responsable's OTHER number: the old one awaiting removal, or a new one Lydia has not confirmed. The
+record, the row locked and the numbers compared there:
+
+| Number asked | Lydia confirmed the 13 | Outcome |
+| --- | --- | --- |
+| the current one | either | a resend; confirms an unconfirmed row |
+| a new one | yes | it becomes current, the old one the other number; core removes the other next (`removeOther`) |
+| a new one | no | the OLD number stays current; the new one is only tracked as the other number |
+| the other one | yes | the two swap (going BACK to the old number, or completing a retried new one); core removes the other next |
+| the other one | no | nothing changes |
+| a third one while another is tracked | - | `LYDIA_RESPONSABLE_PHONE_LOCKED` |
+| a number another live cashier holds (its current or other number) | - | `LYDIA_CASHIER_PHONE_IN_USE`, claim and record alike - also for a new Responsable after an erasure |
+
+So the old number is removed once the new one is confirmed: a new number that fails its confirmation never displaces the live Responsable, and "Retirer cet autre numéro" then
+removes the unproven new one. Changing the Responsable to another PERSON is not offered.
+
+**One claim for every cashier operation of an association**: `associations."lydiaResponsableStartedAt"`
+(migration 118) plus a random token, `"lydiaCashierClaimToken"` (migration 119;
+`apps/social-service/src/associations/lydia-cashier-claim.ts`). It is taken by the Responsable's step and
+by every add, role change, removal and erasure, IN the transaction that locks the association row
+(`FOR UPDATE`) and the cashier rows its checks read and open - so what was checked is what is acted on
+(`LYDIA_CASHIER_IN_FLIGHT` / `LYDIA_RESPONSABLE_IN_FLIGHT` while held). The token travels with core's
+request; ONLY a release or a record carrying it clears the claim (`LYDIA_CASHIER_CLAIM_LOST` otherwise,
+nothing written), so a late answer can never clear a claim another operation took after a global admin
+cleared the first (`lydia-enrolment-clear`, which clears both columns). A record takes `confirmed` only as
+an explicit boolean (`LYDIA_CASHIER_CONFIRMED_REQUIRED`, 400); that 400, like any malformed record
+carrying its token, releases the claim. One live row per member
+(`lydia_cashiers_one_live_member`, migration 119) refuses two records of the same member, typed
+(`LYDIA_CASHIER_ALREADY_SET`). Integration specs on PostgreSQL race two adds, two records under one
+claim, and an add with a removal, and walk the number change, the unconfirmed new number and the way back.
+
+**core-service and social-service DEPLOY TOGETHER for lot 3.** The claim token is written by social
+and carried by core: a core older than this lot never sends it back, so its releases and records are
+refused and the claim stays held (every cashier step of that association answers `IN_FLIGHT`). The
+global admin's clear (`lydia-enrolment-clear`) lifts such a stuck claim.
+
+**The account's erasure** first asks Lydia to remove the account's cashier numbers, best effort
+([account-erasure](../../account-erasure.md)), through core's INTERNAL route
+`POST /api/internal/lydia-cashiers/revoke` (not routed by nginx, `X-Internal-Secret` guarded): per
+association it takes the claim WITHOUT waiting (an operation in flight: that association is skipped, at
+ERROR), never targets the Responsable's current number nor a number another live row holds, and
+releases the claim after.
+
+**Migration 119's rollback is guarded**: it drops the columns only when no row still tracks another number
+or an unconfirmed removal (`previousPhoneSealed`, `revokeUnconfirmedAt` and `previousRevokeUnconfirmedAt`
+all null) - otherwise it RAISEs, since dropping them would lose a number Lydia may still list.
+
+**The screen**: a "Caissiers" section of the payments area, drawn once the Business is linked and the
+Responsable confirmed (`LydiaCashiersSection.svelte`, its view model `lydiaCashiersView` in
+`lydiaCashiers.ts`): each live cashier with role, number ending, state (confirmed / not yet confirmed by
+Lydia / removal not confirmed), date added and by whom; Ajouter and Changer le rôle behind the gate,
+Retirer with a confirm dialog, never on the Responsable's current number. Every string is Paraglide, in
+plain words. The help page `/help/lydia-pro` explains Lydia Pro and what each role allows.
 
 ## Enrolment goes through Canari, and only through it (2026-10-23)
 
@@ -629,17 +976,17 @@ the minimum amount through an association's older Business, linked by hand for t
 afterwards. The `confirm` callback reached Canari's route and verified with the pasted Business key. The
 same day, two Businesses were created through the onboarding in production; neither is validated yet.
 
-**What the enrolment screen does not say yet, and owes** (found by that run; the work package is in
-[backlog](../../backlog.md#enrolment-through-canari---the-screen-owes-the-path-to-validation-2026-10-23)):
+**What that run found, and where each stands** (the work package is in
+[backlog](../../backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)):
 
-- After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
-  link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
-- The path to validation is Lydia's activation e-mail (sign in to the console with the Lydia Pro app,
-  upload documents, wait for Lydia); how a NEW Business's holder signs in is not known yet
-  ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
-- "Pending" cannot tell "waiting for Lydia" from "validated by Lydia, not yet marked here": the global
-  admin's "Valider l'onboarding" is a declaration. Lydia's error 5 on `request/do` is the one measured
-  signal of a Business not yet validated.
+- The card said "En attente" and offered a console link that answered 404: since lot 2 it is a step
+  screen, and the link is gone.
+- A NEW Business's holder reaches Lydia's activation once added by the Provider-signed
+  `business/addcashier`: Canari calls it since lot 2 (the Responsable, above).
+- "Pending" could not tell "waiting for Lydia" from "validated, not yet marked": since lot 2 the
+  `BUSINESS_VALIDATED` webhook marks the Business ready, and error 5 / 2701 on a real `request/do`
+  reverts it (above). The Tresorier and Vendeur roles, changing and removing a cashier: lot 3
+  ([above](#the-cashiers-enrolment-lot-3)).
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 
@@ -790,3 +1137,142 @@ of `paid`. Proven on PostgreSQL by `form-order-ref.integration.spec.ts`.
 sandbox Business answers error 5 first ([lydia-api](../../lydia-api.md#requestdo---ask-a-payer-for-money)) -
 so the 50-character form order_ref and the second request of one submission are owed a run with a
 validated sandbox Business.
+
+## Refunds from Canari (enrolment lot 4)
+
+**Who.** A `MANAGE_PAYOUT_ACCOUNT` holder of the association whose Lydia Business took the payment
+(`RefundsService.assertPayoutManager`), through Canari and never through the Lydia console - and
+only of a payment that is the association's OWN or one of an association whose payments it serves by
+an APPROVED delegation (`approvedDelegateIds`); any other payment is `404`, whatever its Business. The
+purchases screen (`EditAchatsTab`, itself a `MANAGE_PRODUCTS` screen) asks `GET
+/associations/:id/refunds`; a 403 hides every refund control and the statement, never the list.
+
+**Which payments.** Only a payment Lydia CONFIRMED (`paid` or `paid_not_granted`, method `online`)
+whose Lydia transaction Canari can name, on the Business the association holds NOW:
+
+| Reason a payment shows no "Rembourser" | What it means |
+| --- | --- |
+| `not-online` | cash, or before Lydia: nothing at Lydia to refund |
+| `not-received` | not money kept (already refunded in full, cancelled, waiting for cash) |
+| `untraceable` | Canari never kept the transaction: a form answer paid before migration 120 (its `order_ref` was never stored), a boutique purchase before migration 101 |
+| `other-business` | the payment went to a Business this association does not hold now (a delegated child's payment, or a Business replaced since) |
+
+A boutique purchase is traced through its paid `product_checkouts` row (`order_ref`
+`product:<productId>:<checkoutId>`, the checkout's `vendorToken`); a form payment through
+`purchase_records.submissionId` to `submissions.lydiaOrderRef` / `lydiaVendorToken`, written by the
+issuing call from migration 120 on. An answer keeps ONE `order_ref`, the last request's, and that is
+the one the money came through: a retry first settles the request before it at Lydia (cancelled, or
+found paid and nothing new issued) and is refused while it cannot, so an answer never holds two
+payable requests.
+
+**Idempotence from durable state.** A refund is a `lydia_refunds` row written `pending` BEFORE core
+asks Lydia, in one transaction holding the payment record's row lock, unique per (payment, client
+key): the dialog draws the key once, so a resent request finds its own row and calls nothing. At most
+ONE `pending` row per payment (a partial unique index): another refund is `LYDIA_REFUND_IN_FLIGHT`.
+The sum of `pending` and `confirmed` refunds is checked under the same lock and never exceeds the
+amount paid (`LYDIA_REFUND_EXCEEDS_PAID`, with `remainingCents`); a TOTAL refund is the whole payment
+with nothing refunded before. Proven on PostgreSQL with eight racing refunds
+(`refunds.integration.spec.ts`).
+
+**An unknown outcome is never retried blind.** Lydia's `transaction/refund` takes no idempotency
+key, and Lydia offers Canari NO read of a refund ([lydia-api](../../lydia-api.md#refunds---transactionrefund-measured-on-homologation-2026-10-31)).
+So core's answer is classified on its STATUS and typed code: a 409 is a refusal Lydia answered (the
+row `refused`, its code recorded); a 400, 403 or 503 `PAYMENT_SERVICE_NOT_READY` means nothing was
+sent (`refused`, `not-sent`); anything else - a 504, another 5xx, no response - may have refunded, and
+the row STAYS `pending` with `outcome = 'no-answer'`: the route answers 504
+`LYDIA_REFUND_UNCONFIRMED`. A 2xx counts as a refund only when its body says so - core's `{ ok: true
+}`, itself given only for Lydia's `error: "0"` - and any other 2xx body is `no-answer` too, logged at
+ERROR. **The re-check is the manager's**: the row offers "Vérifier", the manager reads the
+association's own history in the Lydia Pro app and declares what they see (`POST
+/associations/:id/refunds/:refundId/resolve`, `{ refunded }` - a boolean or `400
+LYDIA_REFUND_INVALID`, never read as "no"), audited as `declared-refunded` / `declared-not-refunded`
+with who and when. Only then can a new refund of the payment be asked.
+
+**In progress is not unconfirmed.** While the call runs the row is `pending` with NO outcome: the
+screen says "Remboursement en cours", offers no check, and `resolve` answers `LYDIA_REFUND_IN_FLIGHT`
+- declaring a refund still being asked "not refunded" would free the payment for a second refund that
+could overtake the first. Only `no-answer` is checkable.
+
+**One refund, one connection.** The claim, the call stamp, the outcome and its fallback mark all run
+on the refund's own query runner (`runner.manager` is passed down to `settle` and `markUnrecorded`):
+a refund that held one pool connection while asking for a second (pool max 10, 10 s connect timeout,
+`app.module.ts`) starved the service at about ten concurrent refunds, and a confirmed refund could
+then not even be marked unrecorded. Proven by an integration spec that refunds on a pool of ONE.
+
+**A running call is told from a dead one by a lock AND a termination bound.** The refund takes a
+session-level advisory lock on its row (`REFUND_CALL_LOCK_KEY`) INSIDE the transaction that writes
+the row, holds it on the same connection until the outcome is written, and stamps `calledAt` (the
+DATABASE clock) on that connection just before core is asked - nothing is sent if the stamp fails.
+`sweepAbandoned` marks a `pending` row with no outcome `no-answer` (an ERROR line each) only when its
+lock is FREE **and** its call never started or started more than `REFUND_CALL_BOUND_MS` ago, read
+with the database's `now()`. The bound is a termination proof, not a guess: it is the timeout
+`askLydia` puts on core (`CORE_REFUND_TIMEOUT_MS`, 90 s, axios `timeout`), itself over core's own
+bound on Lydia (`LYDIA_CALL_TIMEOUT_MS`, 60 s). The lock alone was not enough: a connection lost
+while its process lives frees it with the call still running. Such a call can no longer write its
+answer either - its connection is the one that died - so once the bound has passed it is over, and
+the row is checked against Lydia like any unanswered one. The sweep runs at boot, and before the
+refunds are read or checked. **Replicas:** social-service is `overlap` (a deploy runs the old and the
+new replica side by side, [cicd](../../cicd.md)); the lock is held by whichever replica makes the
+call and the bound counts on the database clock, so the sweep is right on either. A connection whose
+lock cannot be released is DESTROYED (`releasePostgresConnection(err)`), never returned to the pool
+still holding it.
+
+**A late answer is kept and shown, never dropped.** When Lydia's own answer reaches a row already
+settled, it is logged at ERROR naming both outcomes and stored in `lateOutcome` beside the first.
+When it CONTRADICTS the settlement (`lateAnswerOf` / `CONTRADICTED_SQL`), the managers' view says so
+in plain words ("Lydia a répondu plus tard : remboursement effectué, à vérifier") and the hourly
+report counts it: `[LYDIA_REFUND_CONTRADICTED] count=N` at ERROR in `PaidNotGrantedScheduler`, the
+job that already reports payments not delivered. Nothing closes such a row: it stays counted.
+
+**Lydia refunded and Canari failed to record it** (the transaction writing the outcome threw): the
+row is marked `outcome = 'refunded-unrecorded'` in a transaction of its own, still `pending` - it
+blocks every new refund of the payment and counts in the sum cap - and the route answers its view,
+`state: 'unrecorded'`. The screen says "Remboursé par Lydia, à enregistrer" and offers "Enregistrer",
+which may only record it (`resolve` with `refunded: true`; `false` is `LYDIA_REFUND_NOT_PENDING`),
+keeping Lydia's own `refunded` as the outcome beside the manager's name. If that mark fails too, the
+row keeps no outcome and the sweep makes it `no-answer`.
+
+**A replay answers 200 with the first refund as it stands** - refused, in progress, unconfirmed or
+unrecorded included - so the dialog reads the refund's `state`, never the HTTP status.
+
+**What a TOTAL refund withdraws**, in the same transaction that records Lydia's confirmation (the
+buyer's tier lock first, then the rows), recorded in `sideEffect`:
+
+| Payment | Withdrawn |
+| --- | --- |
+| a boutique membership | the tier THIS payment delivered (`metadata.paymentIntentId`); one renewed by another payment since is kept (`cotisation-not-held`) |
+| a form answer | its seat (`paymentStatus` `refunded`, under `lockFormSeats`; `refunded` is a settled status, so a late confirmation is a replay), and the tier it granted (`metadata.submissionId`) |
+| another boutique product | the purchase is marked `refunded` |
+| a Cercle top-up (`association_products.type = 'balance_topup'`, the test the top-up dispatch uses) | **the money only**: the balance at the Cercle and every tier are untouched (`topup-balance-unchanged`), and the confirmation tells the manager to correct the balance at the Cercle |
+| a product deleted since | no tier and no seat: what it was cannot be told (`not-applied-unidentified`); the record still becomes `refunded` |
+
+Every payment refunded in TOTAL has its record become `refunded` (`LISTED_PURCHASE_STATUSES`: still
+listed, never counted as received). A PARTIAL refund withdraws nothing, and **partial refunds that
+add up to the whole payment withdraw nothing either**: the record stays `paid`, the tier and the
+seat stay - only a TOTAL refund, asked on a payment nothing was refunded from, withdraws. A manager
+who wants both refunds the whole at once.
+
+**The audit** is the row itself - who asked, when, the payment, total or partial, the amount, the
+reason, Lydia's answer and when, what it withdrew, and who checked an unconfirmed one - plus an
+`[AUDIT]` line when it settles. Register entry C24
+([register](../../compliance/register-of-processing.md)); the managers' ids are anonymised at their
+erasure.
+
+**The payer's notice** (`lydia_refund_issued`) ships behind `LYDIA_REFUND_NOTIFICATIONS_ENABLED =
+false` ([legacy-compatibility](../../legacy-compatibility.md)); Lydia's own e-mail to the payer
+(`notify_payer`, on by default) tells them meanwhile.
+
+**The statement** (`GET /associations/:id/statement`) is Canari's own records only: every payment
+listed and every confirmed refund (a negative amount), with the totals, as DATA. A refund sits on the
+statement of the association whose PAYMENT it gives back, beside that payment - a parent refunding a
+delegate's payment does not see it on its own statement, which lists none of the delegate's payments
+(the line would name nothing and the balance would go negative). The refund's reason, typed by the
+manager, is exported as written and may name a person (register C24). The client writes
+the file (`statementCsv`, `refundWording.ts`): `;`-separated UTF-8 with a BOM, every word in its own
+language, a text cell a spreadsheet would run as a formula prefixed with `'`. It names no payer.
+**Why not a server-built file like the forms' and bookings' exports:** those take their words in the
+request, and a CSV - text, unlike their xlsx - built from request words is request text echoed back
+(CodeQL `js/reflected-xss` on this pull request); data in, words on the client, removes that path.
+
+**Not built:** a refund screen for a delegated child's payments in the parent's delegation tab (the
+route works for the parent, which holds the Business); refunding a booking (bookings take no payment).

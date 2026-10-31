@@ -10,6 +10,8 @@ import { InternalDistributionEntitlementController } from './internal-distributi
 import { InternalPaymentsController } from './internal-payments.controller';
 import { InternalPresenceController } from './internal-presence.controller';
 import { InternalLydiaKeyController } from './internal-lydia-key.controller';
+import { InternalLydiaEnrolmentController } from './internal-lydia-enrolment.controller';
+import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import { PostsModule } from '../posts/posts.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
@@ -61,6 +63,8 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalDistributionEntitlementController,
     InternalPresenceController,
     InternalLydiaKeyController,
+    InternalLydiaEnrolmentController,
+    InternalLydiaCashiersController,
     InternalPaymentsController,
   ],
 })

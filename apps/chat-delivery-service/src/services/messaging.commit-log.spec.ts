@@ -21,7 +21,13 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import {
+  OPENMLS_BASE,
+  OPENMLS_FOREIGN_REMOVE,
+  OPENMLS_RESYNC,
+} from '../testing/openmlsExternalRemoveFixture';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -84,8 +90,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       query: jest.fn(async (sql: string) =>
         sql.includes('FROM dm_seat_evictions') && txEvictionRow ? [txEvictionRow] : []
       ),
+      createQueryBuilder: () => arrivalUpdateBuilder,
       getRepository: (entity: unknown) => {
         if (entity === Group) return { update: groupUpdate, find: txGroupFind };
+        if (entity === GroupMembershipInterval) return txIntervalRepo;
         // A Welcome carried by the commit is written in the same callback as the advance.
         if (entity === QueuedMessage) return txQueuedRepo;
         // The carried Welcome's target seat, re-read under a lock in the advance's transaction.
@@ -119,6 +127,15 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     values: jest.fn().mockReturnThis(),
     orIgnore: jest.fn().mockReturnThis(),
     execute: jest.fn().mockResolvedValue({}),
+  };
+  /** The arrival a lifted ask is re-dated to (`dateArrivalAtAdmission`): its interval... */
+  const txIntervalRepo = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
+  /** ...and its device rows, through the manager's own update builder. */
+  const arrivalUpdateBuilder = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({ affected: 2 }),
   };
   const txMembershipRepo = {
     createQueryBuilder: jest.fn(() => membershipInsertBuilder),
@@ -2078,6 +2095,93 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       }
     );
 
+    /**
+     * RFC 9420 12.4.3.2: an external commit removes only the joiner's own prior leaf. The commit
+     * names the leaf by index; the gate reads whose it is from the tree of the stored base.
+     */
+    describe('an external commit carrying a Remove', () => {
+      const storedBase = (row: Record<string, unknown> | null) =>
+        (
+          service as unknown as { groupInfoRepo: { findOne: jest.Mock } }
+        ).groupInfoRepo.findOne.mockResolvedValue(row);
+      const roster = { groupId: 'group-1', userId: 'user-1' };
+      const atEpoch1 = (proto: string) => commit({ proto, baseEpoch: 1 }, 'user-1');
+
+      it("accepts the resync that removes the joiner's own prior leaf", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).resolves.toMatchObject({ accepted: true });
+      });
+
+      it("refuses one that removes another member's leaf, before the membership gate", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        const sent = fanOut();
+
+        await expect(atEpoch1(OPENMLS_FOREIGN_REMOVE)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['no stored base', null, 1],
+        ['a base behind the commit', { groupId: 'group-1', baseEpoch: 0 }, 1],
+        ['a base ahead of a group still at the commit', { groupId: 'group-1', baseEpoch: 2 }, 1],
+      ])('refuses one whose removed leaf cannot be named: %s', async (_name, row, activeEpoch) => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch } });
+        storedBase(row && { ...row, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+
+      /**
+       * THE RACE A LEGITIMATE RESYNC LOSES: built on base 1, submitted after another commit moved
+       * the group and its base to 2. It is the epoch gate's to answer - `epoch_mismatch`, which the
+       * joiner retries on a fresh base - never a 403 that would end its retry.
+       */
+      it.each([
+        ['the resync', OPENMLS_RESYNC],
+        ['a Remove of another leaf', OPENMLS_FOREIGN_REMOVE],
+      ])(
+        'leaves %s built on a superseded base to the epoch gate, and nothing moves',
+        async (_name, proto) => {
+          tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 2 } });
+          storedBase({ groupId: 'group-1', baseEpoch: 2, groupInfo: OPENMLS_BASE });
+          const sent = fanOut();
+
+          await expect(atEpoch1(proto)).resolves.toMatchObject({
+            accepted: false,
+            reason: 'epoch_mismatch',
+            currentEpoch: 2,
+          });
+          expect(sent).not.toHaveBeenCalled();
+        }
+      );
+
+      it('refuses one carrying more than one Remove', async () => {
+        tables({ keyPackages: [ownKey], roster: [roster] });
+        storedBase({ groupId: 'group-1', baseEpoch: 5, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(
+          commit(
+            { proto: externalCommitFrame('group-1', 5n, 'user-1:device-1', 1, [1, 1]) },
+            'user-1'
+          )
+        ).rejects.toMatchObject({ response: { error: 'commit_identity_mismatch' } });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+    });
+
     it("holds a key group's external commit to the same header: its own group and epoch", async () => {
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
 
@@ -2518,10 +2622,39 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(set).toEqual({ awaitingAdmission: false });
     });
 
+    /**
+     * ADDED = ARRIVED (user, 2026-10-21): the link dated the person's interval and device rows when
+     * they ASKED; the Add that answers re-dates both, in the same transaction, so no history answer
+     * and no stream read hands them what was sent while they waited outside.
+     */
+    it("dates the arrival of every person whose ask it lifts at this Add, and nobody else's", async () => {
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      txAsks = [{ id: 'seat-2', userId: 'user-2' }];
+
+      await accept([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      expect(txIntervalRepo.update).toHaveBeenCalledTimes(1);
+      const [where, set] = txIntervalRepo.update.mock.calls[0] as [
+        { groupId: string; userId: FindOperator<string[]>; leftAt: unknown },
+        { joinedAt: Date; admittedAt: null },
+      ];
+      expect(where.groupId).toBe('group-1');
+      expect(where.userId.value).toEqual(['user-2']);
+      expect(where.leftAt).toEqual(IsNull());
+      expect(set.admittedAt).toBeNull();
+      expect(set.joinedAt).toBeInstanceOf(Date);
+      expect(arrivalUpdateBuilder.update).toHaveBeenCalledWith(DeviceGroupMembership);
+      expect(arrivalUpdateBuilder.where).toHaveBeenCalledWith(expect.any(String), {
+        groupId: 'group-1',
+        people: ['user-2'],
+      });
+    });
+
     it('lifts no ask when it admits nobody', async () => {
       await accept();
 
       expect(txSeatRepo.update).not.toHaveBeenCalled();
+      expect(txIntervalRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses the committer itself and a device with no KeyPackage, recording neither', async () => {

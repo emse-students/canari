@@ -1,6 +1,6 @@
-# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19; compiled into every build since the production flip of 2026-10-30)
 
-> **Turning lives on in production** - the gates, the order, the viewer-cap ladder and the owner's points on the lives terms and privacy text: [live-production](live-production.md) (2026-10-21), the only copy.
+> **Turning lives on in production** - the flip (2026-10-30: both deploy-time locks open, `lives_mode` the runtime switch), the gates, the readings still owed, the viewer-cap ladder and the owner's points on the lives terms and privacy text: [live-production](live-production.md), the only copy.
 >
 > **Note 2026-10-19:** lives now come BEFORE the calls revival ([decisions](#decisions-of-2026-10-19)). **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
@@ -28,7 +28,7 @@ reached by API, and is unaffected.
 | L1 | Who may start a live? | **Any member.** |
 | L2 | Who may watch? | **The whole Canari network** - C9: the live's key travels in the row, as a post CEK does. **Narrowed 2026-10-19 by the lead on review (a safe default, reversible): a live RESPECTS SPACES LIKE A POST** - a member's live is watched by, and pushed to, readers sharing a space with the broadcaster; an association's live by the readers the association reaches (its members, its rules, a read grant for watching only). One predicate, `liveVisibleToUserSql` in `spaces/reader-spaces.ts`, gates the list, the key, the manifest and the push ([lives](../../services/lives.md#who-may-watch-the-rule-of-a-post)). |
 | L3 | Is a live kept afterwards? | **No replay: a live disappears when it ends.** The broadcaster may save it locally on their own device. |
-| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). |
+| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). **NO DURATION CAP (owner, 2026-10-31):** a live lasts as long as its broadcaster sends; the 60-minute cap and the byte budget derived from it are removed (server, client, sheet), and the server TRIMS the segments behind the newest 20 while the live runs, so what a live stores is at most 20 x 4 MiB whatever its duration ([lives](../../services/lives.md#what-one-broadcaster-may-store)). "30 to 60 minutes" above is a planning figure, no longer a limit. |
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
@@ -489,9 +489,9 @@ not end-to-end encryption against the server, and no page may call it that.
 
 ## The viewer (as built, 2026-10-19)
 
-WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
-by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
-`/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
+WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on in every build
+since the production flip of 2026-10-30** (dev builds only before it, by the `deployEnvironment()`
+test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
 ### The server's kill switch hides the live surfaces (2026-10-21)
@@ -707,9 +707,9 @@ with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known ga
 ## The broadcaster (as built)
 
 WP-L5's broadcaster half, built 2026-10-19 on the client foundation and the seal above, **behind
-the viewer's switch, the ONE `LIVE_ENABLED`: on for dev builds only**. It turns on for production with WP-L8 (moderation, a release
-blocker since any member may broadcast, D3), the device readings, and the server's switch, in one
-release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
+the viewer's switch, the ONE `LIVE_ENABLED`: on in every build since the production flip of
+2026-10-30**, with the server's switch in the same commit ([live-production](live-production.md)).
+Chat and reactions (WP-L6) and moderation (WP-L8, WP-L8b) were built after this section was written.
 
 | File | What it holds |
 | --- | --- |
@@ -727,8 +727,8 @@ goes out under the identity chosen in the composer: the member, or an associatio
 "anonymous" is chosen, nor while the chosen association is missing from the list read.
 
 **The pre-live screen is the rules, shown before EVERY live (L11)**: visible like a post by the same
-identity and only while on air; reportable and cuttable by moderation; at most `maxDurationMs`; the
-camera may be away at most `reconnectWindowMs` - both read from `GET /api/lives/limits`. A warning
+identity and only while on air; reportable and cuttable by moderation; with no longest duration (L4, 2026-10-31); the
+camera may be away at most `reconnectWindowMs`, read from `GET /api/lives/limits`. A warning
 under 60 % battery where the engine has the Battery API (Android; WebKit has none), charging or not
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
@@ -808,7 +808,7 @@ disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the
 while the End drains labels the end screen as the server's (or as a cut, below), never as
 the member's. On air, a `410` from the uploader ends the screen with no end call - the cause is
 `cut` when its `endReason` says so (title `live_broadcast_cut_title`, no sentence under it:
-"Votre live a été interrompu par la modération"), `server` otherwise (the hour; the sentence no
+"Votre live a été interrompu par la modération"), `server` otherwise (the sentence no
 longer mentions moderation); a cut read on return from the background (`fetchLive` answering `410`
 `cut`) and one answering the End are the same cause; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
@@ -822,7 +822,7 @@ generic sentence.
 
 ### The moderation client (WP-L8's client half, 2026-10-19)
 
-Dev builds only (`LIVE_ENABLED`). The `live_cut` bell row (type `live_cut`, `postId` = the live,
+Behind `LIVE_ENABLED` (every build since 2026-10-30). The `live_cut` bell row (type `live_cut`, `postId` = the live,
 `actorId`/`actorName` empty, `text` = the reason CODE): `NotificationRow` builds the sentence
 (`notif_live_cut_text`) and appends the `moderation_reason_*` label, draws a neutral disc instead of
 an avatar of nobody, and is NOT activatable (`notificationHref` answers `null`: the live is deleted).
@@ -866,9 +866,12 @@ over", closes), anything else (a retry, the dialog stays open). Only a report th
 "block the person who is broadcasting" through `showConfirm` (danger) and `blockUser(broadcasterId)`;
 a block leaves the live through the viewer's own dismissal. The offer says "the person", not the
 name: on an association's live the displayed name is the association's, the block lands on the member
-who broadcasts. **Not built, by the server's contract:** reporting ONE chat line - `content_reports`
-accepts `contentType: 'live'` only ([lives](../../services/lives.md#an-erased-account-and-a-single-message-reported)),
-so a viewer reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
+who broadcasts. **Reporting ONE chat line is built (WP-L8b client half, 2026-10-21):** a `Flag` button
+(`data-live-chat-report`) on every numbered line that is not the reader's own in `LiveChatPanel`, wired
+by `LiveViewer` (`report={(line) => (reportedLine = line)}`) to `LiveChatReportDialog`
+([decisions of 2026-10-21](#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half),
+[lives](../../services/lives.md#a-reported-chat-line-wp-l8b)). The viewer's TOP-BAR control still
+reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
 `LiveViewer.svelte.test.ts`.
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
@@ -1019,7 +1022,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
-| **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
+| **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED` (dev builds only until the production flip of 2026-10-30), [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** (**server half MERGED (#2131), client half in review (#2136), 2026-10-19 - the client is [here](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19, the viewer's report control included** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
@@ -1037,7 +1040,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 
 ## Decisions of 2026-10-21: reactions, rules and the chat-line report (client half)
 
-Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)); dev builds only, behind `LIVE_ENABLED`.
+Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)); behind `LIVE_ENABLED` (every build since 2026-10-30).
 
 - **Reactions.** `LIVE_REACTION_KINDS` (`lib/live/liveChat.ts`) is `like` (heart), `laugh`, `clap` (bravo), `fire`, `canari`; `love` and `happy` are gone from the type, the bar, the layer and the tests. The emoji and names sit in one table there (`LIVE_REACTION_ART`): the three shared kinds reuse the posts' `post_reaction_name_*` labels, `clap` and `fire` have `live_reaction_name_clap` / `_fire`. Pictures are the Noto SVGs already in the set ([emoji](../emoji.md)); nothing was added. **The server's `LIVE_REACTION_KINDS` must become the same five, or a burst of `clap`/`fire` is refused `400 LIVE_REACTION_INVALID`.**
 - **First-live rules.** The sheet shows the posts' rules, i.e. section 5 of the terms of use (`/legal/cgu#regles`): illegal/hateful/privacy, sexual content, harassment, malware and fraud, the sanction line, and a link to the terms. The four live-specific clauses (`live_rules_cut`, `live_rules_responsible`, the old wording) are deleted. **`LIVE_RULES_VERSION` lives on the server only** (the client reads `rulesVersion` from `/api/lives/limits` and `/rules`), so it must be raised there for everyone to re-accept.
@@ -1051,8 +1054,8 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 broadcaster - a count, never a name or a list, to anybody.** The number is **EXACT, not rounded -
 confirmed by the owner 2026-10-21**. The server side (what a viewer is, blocked accounts counted, the reasoning on
 exactness, what happens when Redis does not answer) is
-[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
-`LIVE_ENABLED`, like the rest of the live.
+[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Behind
+`LIVE_ENABLED` (every build since 2026-10-30), like the rest of the live.
 
 - **No new request.** The manifest carries `viewers` (`number | null`). The viewer's `LivePlayer`
   hands it to `onViewers` at the same two places it reads the clock (the join and each poll); the
@@ -1075,3 +1078,140 @@ exactness, what happens when Redis does not answer) is
   and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
   end screen, and reset for a new live).
 - **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).
+
+## The viewer header and the rules sheet (2026-10-30, `1.5.2-alpha.1` readings)
+
+- The LIVE pill and the elapsed time sit on a second line under the broadcaster's name, so the name
+  takes the header's width and truncates only against the action buttons (`LiveViewer.svelte`).
+- The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
+- The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
+  never draws under the iOS status bar (`LiveBroadcaster.svelte`).
+
+## Broadcasting the screen on a desktop browser (2026-10-31, owner)
+
+Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+
+- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
+  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
+  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
+  `LiveBroadcast.chooseSource`, preview only.
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
+  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
+  `start()`.
+- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
+- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
+  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
+  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
+  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
+  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
+  stops both sources and closes the context.
+- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
+  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
+  recorder takes the display's video track like a camera's, and the viewer's string is the same.
+- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
+  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
+  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
+  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
+  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
+- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
+  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
+  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
+  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Review fixes (2026-10-31)**:
+  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
+    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
+  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
+    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
+    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
+    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
+    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
+  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
+    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
+  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
+    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
+    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
+    Retry message promises "go back to the camera" only in the preview, where the source buttons are
+    enabled; on air or away it says the share stopped and nothing else.
+  - **The source buttons are locked while the picker is open** (`choosingSource`).
+  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
+    windows included.
+- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
+  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
+  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
+  until the bump, so it is refused. There is no override and none is to be added: set `version` in
+  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
+  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
+- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
+  switch-camera button is hidden while the source is the screen.
+
+## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
+
+"Cet appareil ne peut pas diffuser en direct" had ONE cause in the code: `liveRecordingSupported()`
+(`liveRecorder.ts`) is `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)` and nothing else. The camera
+facing (L-F5) is fixed (ideal facing first, `cameraFacing.ts`) and a camera that cannot open has its OWN
+text (`CAMERA_FAULT_TEXT`), so neither can produce it. **The owner's browser is Firefox**, whose
+`MediaRecorder` records WebM (VP8/VP9 + Opus), never MP4/H.264.
+
+| Browser | Records `video/mp4;codecs=avc1.42E01F,mp4a.40.2` | Source |
+| --- | --- | --- |
+| Chrome 156, Windows | **yes** (also `avc1.42E01E`, bare `avc1`, `video/mp4`, WebM) | MEASURED 2026-10-31, `isTypeSupported` in the rig's Chrome |
+| Edge (Chromium) | yes from 126, same engine as Chrome | not run here; Chromium shares the recorder |
+| Chrome / Edge before 126 | **no** (no MP4 in `MediaRecorder`) | documented behaviour, not run here |
+| Firefox (any) | **no** (WebM and Ogg only) | documented behaviour and the owner's report; not run here |
+| Safari 14.1+ (macOS, iOS) | yes - the iPhone 12 bench used exactly this string | iPhone bench (WP-L1) |
+| Chromium on Linux without H.264 | depends on the build | not run here |
+
+**The format is not too strict where MP4 is recorded at all**: Chrome accepts any `avc1.*`, so a looser
+recorder string would not admit one more browser. The VIEWER is the strict side: MSE needs the codec
+string quoted in full (`avc1.42E01F,mp4a.40.2` plays, bare `avc1` and `video/mp4` do NOT, measured the
+same day), and iOS plays through `ManagedMediaSource` on the same string. So the recorder string stays.
+
+**Where the 126 comes from**: Chromium added MP4 containers to `MediaRecorder` in release 126 (Chrome
+Platform Status, "MediaRecorder: MP4 support"; the same engine in Edge). It is the one number
+`LIVE_CHROMIUM_MP4_FROM` in `liveRecorder.ts` holds, and it only chooses WHICH words the sheet shows - the
+capability itself is always `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)`, never the user agent.
+
+The sheet now says why, by cause (`classifyRecordingGap`, a user-agent read, tested): Firefox is named,
+a Chromium before 126 is told to update, anything else gets the generic text; all three point at Chrome,
+Edge or the app.
+
+### Supporting Firefox - options, costs, recommendation (NOT BUILT)
+
+1. **A WebM recording path** (Firefox's MediaRecorder records WebM natively). Costs: the segment shape
+   (every segment self-contained: init + one fragment, "The segment seal format") is built on fMP4;
+   WebM segments cut by MediaRecorder are not independently decodable (only the first has the header,
+   later chunks are clusters), so the "join on the newest two segments" playback breaks. And iOS Safari
+   plays WebM through MSE only from 17.4 on some devices, not reliably through `ManagedMediaSource`.
+   A server-side remux means media-service touches the media path it does not touch today. **Costly and
+   risky: not recommended.**
+2. **WebCodecs in the broadcaster** (`VideoEncoder` H.264 + `AudioEncoder` AAC, then a small fMP4 muxer in
+   JS). It would give every browser the SAME container the viewers already play, and would also remove
+   the dependence on `MediaRecorder`'s chunking quirks (L-F1). Costs: a muxer to write and test, a
+   keyframe/segment cutter of our own, CPU on the main thread or a worker, and a new class of bug on a
+   path now proven on phones. **Support in Firefox is NOT verified here**: its WebCodecs shipped on desktop
+   in 130, but H.264 ENCODE depends on the platform codecs and **AAC encode is, to my knowledge, not
+   offered by Firefox** (Opus is) - which would leave Firefox with H.264 video and no AAC audio, so the
+   MP4 would need Opus-in-MP4, which iOS cannot play. Owed before any design: a probe of
+   `VideoEncoder.isConfigSupported({codec:'avc1.42E01F'})` and `AudioEncoder.isConfigSupported({codec:'mp4a.40.2'})`
+   in a real Firefox.
+3. **Do nothing for Firefox** (the shipped answer): name it, point at Chrome, Edge and the app. Desktop
+   broadcasting is a minority path; the phones (the audience of lives) are unaffected.
+
+**Recommendation: option 3 now, and run the two `isConfigSupported` probes in Firefox before spending
+anything on option 2.** If AAC encode is absent, option 2 is dead for Firefox and the answer stays 3.
+
+## The switch-camera button needs two cameras (2026-10-31)
+
+`CameraSession.canSwitch` gates the button of the live sheet and of the CanaReels camera (`CameraScreen`,
+which also stands the double-tap flip down). **It fails open (review, 2026-10-31): the button and the
+double-tap are hidden ONLY on a measured count of exactly 1.** An unknown count (list unreadable, or a
+browser that listed no camera) keeps them: a phone that wrongly lost the front/back flip would lose it for
+good, whereas a desktop with one webcam and a visible button merely does nothing on a tap. The count is
+`countVideoInputs()` (`enumerateDevices()` filtered on `videoinput`, the ONE implementation - the call
+screen's `CallService.refreshCameraCount` uses it too), read AFTER the camera is open (labels and devices
+can be hidden before the grant) and again on `devicechange`; the listener is removed on `stop()`, and a
+read that lands after `stop()` writes nothing (`#watchEpoch`).
+
+**The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
+`[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`videoinput=1`, the rule is wrong for that browser and the line is the evidence.

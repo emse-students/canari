@@ -1,11 +1,11 @@
 /**
  * THE DASHBOARD'S COUNTERS (WP-R5, Q-R16) are read from the week's slots: every column, the days of
- * the week shown only (the day before the read is not the week), each booking and block once
- * whatever its number of units.
+ * the week shown only (the day before the read is not the week), each booking once whatever
+ * its number of units.
  */
 import { describe, expect, it } from 'vitest';
 import type { ResourceSlots, SlotUnit } from './api';
-import { hoursOf, upcomingDays, weekCounters } from './dashboard';
+import { upcomingDays, weekBookingCount } from './dashboard';
 
 const STEP = 30 * 60_000;
 const at = (iso: string) => Date.parse(iso);
@@ -30,8 +30,8 @@ const WEEK = [
   '2026-11-08',
 ];
 
-describe('weekCounters', () => {
-  it('counts each booking and block once, over every column, the week only', () => {
+describe('weekBookingCount', () => {
+  it('counts each booking once, over every column, the week only, never a block', () => {
     const slots: ResourceSlots[] = [
       {
         resourceId: 'r1',
@@ -50,12 +50,7 @@ describe('weekCounters', () => {
         units: [booked('2026-11-04T09:00:00Z', 'b2'), free('2026-11-04T09:30:00Z')],
       },
     ];
-    expect(weekCounters(slots, WEEK, 'UTC')).toEqual({
-      bookings: 2,
-      bookedMinutes: 90,
-      offeredMinutes: 210,
-      blocks: 1,
-    });
+    expect(weekBookingCount(slots, WEEK, 'UTC')).toBe(2);
   });
 
   it('reads a unit on the day it starts in the space zone', () => {
@@ -63,24 +58,12 @@ describe('weekCounters', () => {
     const slots: ResourceSlots[] = [
       { resourceId: 'r1', units: [booked('2026-11-01T23:30:00Z', 'b')] },
     ];
-    expect(weekCounters(slots, WEEK, 'Europe/Paris').bookings).toBe(1);
-    expect(weekCounters(slots, WEEK, 'UTC').bookings).toBe(0);
+    expect(weekBookingCount(slots, WEEK, 'Europe/Paris')).toBe(1);
+    expect(weekBookingCount(slots, WEEK, 'UTC')).toBe(0);
   });
 
-  it('is all zeros for an empty week', () => {
-    expect(weekCounters([], WEEK, 'UTC')).toEqual({
-      bookings: 0,
-      bookedMinutes: 0,
-      offeredMinutes: 0,
-      blocks: 0,
-    });
-  });
-});
-
-describe('hoursOf', () => {
-  it('says whole hours whole, and a half hour with one decimal', () => {
-    expect(hoursOf(21 * 60)).toBe('21');
-    expect(['1,5', '1.5']).toContain(hoursOf(90));
+  it('is zero for an empty week', () => {
+    expect(weekBookingCount([], WEEK, 'UTC')).toBe(0);
   });
 });
 

@@ -55,6 +55,54 @@ export function noticePlace(facts: PlaceFacts): string {
   return bookingPlace(facts.spaceName, facts.resourceName);
 }
 
+/**
+ * THE STRUCTURED FACTS OF A BOOKING NOTICE, stored in `post_notifications.meta` (migration 117) so
+ * the client names WHERE and WHEN in the reader's language without parsing `text`: the place
+ * (empty on a space reached by its link only, Q-R5), the slot's START as a UTC instant, the space's
+ * IANA zone the client draws it in (D25), and the organiser's word ('' when none). `text` KEEPS
+ * what it always was (the word, else the place), because every client older than this column - the
+ * native apps embed old frontends - draws it and nothing else. The push never carries `meta`.
+ * Kept 90 days with the row, after the space is deleted too (C17).
+ */
+export interface BookingNoticeMeta extends Record<string, unknown> {
+  place: string;
+  startsAt: string;
+  timeZone: string;
+  word: string;
+}
+
+export function bookingNoticeMeta(
+  place: string,
+  startsAt: Date,
+  timeZone: string,
+  word = ''
+): BookingNoticeMeta {
+  return { place, startsAt: startsAt.toISOString(), timeZone, word };
+}
+
+/** The association a reminder row draws the logo of; null draws the platform's neutral avatar. */
+export type ReminderAssociation = { id: string; name: string; logoUrl: string | null } | null;
+
+/**
+ * THE ASSOCIATION A REMINDER SHOWS (owner, 2026-10-30): the owner of the booked space, so the bell
+ * row carries its logo. Nobody on a space reached by its LINK ONLY (Q-R5): the association's name
+ * or logo would say what the space is, exactly as `present` refuses for the other notices. A
+ * personal space has none either.
+ */
+export function reminderAssociation(facts: {
+  discoverability: string;
+  associationId?: string | null;
+  associationName?: string | null;
+  associationLogoUrl?: string | null;
+}): ReminderAssociation {
+  if (facts.discoverability === 'link' || !facts.associationId) return null;
+  return {
+    id: facts.associationId,
+    name: facts.associationName ?? '',
+    logoUrl: facts.associationLogoUrl ?? null,
+  };
+}
+
 /** The reminder's line: the place and the start time on the space's clock, or the time alone. */
 export function reminderLine(facts: PlaceFacts, startsAt: Date, timeZone: string): string {
   const time = localTime(startsAt.getTime(), timeZone).slice(0, 5);
@@ -78,6 +126,7 @@ type PresentingSpace = Pick<BookingSpace, 'associationId' | 'discoverability'>;
 /** One booking a deleted space took with it, as read BEFORE the deletion (Q-R4). */
 export interface DeletedBookingNotice {
   bookingId: string;
+  startsAt: Date;
   /** The holder and every participant still in. */
   people: string[];
   resourceName: string;
@@ -137,7 +186,8 @@ export class BookingNotificationsService {
         people,
         actorId,
         { row: word || ctx.place, push: linkOnly ? '' : word || ctx.place },
-        await this.present(ctx.space, actorId, people)
+        await this.present(ctx.space, actorId, people),
+        { ...ctx.meta, word }
       );
     });
   }
@@ -153,7 +203,8 @@ export class BookingNotificationsService {
         [ctx.booking.holderId],
         participantId,
         { row: ctx.place, push: ctx.place },
-        {}
+        {},
+        ctx.meta
       );
     });
   }
@@ -170,7 +221,8 @@ export class BookingNotificationsService {
         people,
         actorId,
         { row: ctx.place, push: ctx.place },
-        await this.present(ctx.space, actorId, people)
+        await this.present(ctx.space, actorId, people),
+        ctx.meta
       );
     });
   }
@@ -182,7 +234,7 @@ export class BookingNotificationsService {
    * who the notice names is decided ONCE (`present` with nobody among the people).
    */
   async spaceDeleted(
-    space: Pick<BookingSpace, 'name' | 'discoverability' | 'associationId'>,
+    space: Pick<BookingSpace, 'name' | 'discoverability' | 'associationId' | 'timeZone'>,
     notices: DeletedBookingNotice[],
     actorId: string
   ): Promise<void> {
@@ -203,7 +255,8 @@ export class BookingNotificationsService {
             notice.people,
             actorId,
             { row: place, push: place },
-            notice.people.includes(actorId) ? {} : presented
+            notice.people.includes(actorId) ? {} : presented,
+            bookingNoticeMeta(place, notice.startsAt, space.timeZone)
           );
         } catch (e) {
           this.logger.error(
@@ -215,13 +268,22 @@ export class BookingNotificationsService {
   }
 
   /** The reminder of ONE person, once the scheduler has CLAIMED it (`BookingReminderScheduler`). */
-  async remind(recipientId: string, bookingId: string, line: string): Promise<void> {
+  async remind(
+    recipientId: string,
+    bookingId: string,
+    line: string,
+    association: ReminderAssociation = null
+  ): Promise<void> {
     await this.notifications.createNotification({
       recipientId,
       type: 'booking_reminder',
       postId: bookingId,
       actorId: SYSTEM_ACTOR_ID,
-      actorName: SYSTEM_ACTOR_NAME,
+      actorName: association?.name || SYSTEM_ACTOR_NAME,
+      ...(association && {
+        associationId: association.id,
+        associationLogoUrl: association.logoUrl,
+      }),
       text: line,
       pushData: { target: BOOKINGS_TARGET },
     });
@@ -262,7 +324,8 @@ export class BookingNotificationsService {
       discoverability: space.discoverability,
       resourceName: resource.name,
     });
-    return { booking, space, people, place };
+    const meta = bookingNoticeMeta(place, booking.startsAt, space.timeZone);
+    return { booking, space, people, place, meta };
   }
 
   /**
@@ -300,9 +363,10 @@ export class BookingNotificationsService {
 
   /**
    * One bell row and one push per recipient, the one who acted and a tombstoned account excepted.
-   * `text.row` is what the bell keeps, `text.push` what a lock screen shows: they differ only for an
-   * organiser's word on a link-only space (Q-R3 with Q-R5), and then the row is written without its
-   * push and the push sent on its own, through the same pipeline.
+   * `text.row` is what the bell keeps (the word, else the place - what every older client draws),
+   * `text.push` what a lock screen shows: they differ only for an organiser's word on a link-only
+   * space (Q-R3 with Q-R5), and then the row is written without its push and the push sent on its own,
+   * through the same pipeline. `meta` rides every bell row (never the push): place, slot, zone, word.
    */
   private async send(
     type: BookingNoticeType,
@@ -310,7 +374,8 @@ export class BookingNotificationsService {
     recipients: string[],
     actorId: string,
     text: { row: string; push: string },
-    presented: Presented
+    presented: Presented,
+    meta: BookingNoticeMeta
   ): Promise<void> {
     const to = [...new Set(recipients)].filter((id) => id !== actorId && id !== DELETED_ACCOUNT);
     if (to.length === 0) {
@@ -324,6 +389,7 @@ export class BookingNotificationsService {
       type,
       actorId: rowActorId ?? actorId,
       ...shown,
+      meta,
       pushData: { target: BOOKINGS_TARGET },
     };
     let written: number;
@@ -366,17 +432,24 @@ export async function deletedBookingNotices(
   nowMs: number
 ): Promise<DeletedBookingNotice[]> {
   const rows = (await query(
-    `SELECT b.id AS "bookingId", b."holderId", r.name AS "resourceName",
+    `SELECT b.id AS "bookingId", b."startsAt", b."holderId", r.name AS "resourceName",
             COALESCE(array_agg(p."userId") FILTER (WHERE p."userId" IS NOT NULL), '{}') AS participants
        FROM bookings b
        JOIN booking_resources r ON r.id = b."resourceId"
        LEFT JOIN booking_participants p ON p."bookingId" = b.id AND p."withdrawnAt" IS NULL
       WHERE r."spaceId" = $1 AND b."cancelledAt" IS NULL AND b."startsAt" > $2
-      GROUP BY b.id, b."holderId", r.name`,
+      GROUP BY b.id, b."startsAt", b."holderId", r.name`,
     [spaceId, new Date(nowMs)]
-  )) as { bookingId: string; holderId: string; resourceName: string; participants: string[] }[];
+  )) as {
+    bookingId: string;
+    startsAt: Date;
+    holderId: string;
+    resourceName: string;
+    participants: string[];
+  }[];
   return rows.map((r) => ({
     bookingId: r.bookingId,
+    startsAt: r.startsAt,
     people: [r.holderId, ...r.participants],
     resourceName: r.resourceName,
   }));

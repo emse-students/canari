@@ -11,6 +11,7 @@ import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import { signAgendaSelection } from './agenda-signature';
+import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 
 describe('AssociationsController cotisation config gating (D5)', () => {
@@ -224,12 +225,22 @@ describe('AssociationsController response shape', () => {
       service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
       const result = await controller.setLydiaAccount(
         'asso1',
-        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        {
+          lydiaAccountId: VENDOR_TOKEN,
+          lydiaDashboardUrl: DASHBOARD_URL,
+          businessPrivateToken: 'throwaway-business-key',
+        },
         'internal-secret-for-tests'
       );
       expect(result).toEqual({ ok: true });
       const body = JSON.stringify(result);
-      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+      for (const secret of [
+        VENDOR_TOKEN,
+        DASHBOARD_URL,
+        VAULT_KEY,
+        NOTES,
+        'throwaway-business-key',
+      ]) {
         expect(body).not.toContain(secret);
       }
     } finally {
@@ -953,5 +964,63 @@ describe('AssociationsController POST products/:productId/checkout - the free am
       undefined
     );
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A ROSTER NEVER CROSSES THE REVIEW COHORT (review-cohort.ts, review-cohort-reach.ts): a review
+ * account reads only the roster of an association it belongs to, and nobody but an admin reads a
+ * review account on any roster.
+ */
+describe('AssociationsController.listMembers and the review cohort', () => {
+  const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+    else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+  });
+
+  function makeController(reviewerMemberships: string[]) {
+    const manager = {
+      query: <T>() =>
+        Promise.resolve(reviewerMemberships.map((associationId) => ({ associationId })) as T),
+    };
+    const service = {
+      assertReviewerMayReadRoster: (userId: string, id: string) =>
+        assertReviewerReachesAssociation(manager, userId, id, 'member list'),
+      mayAct: jest.fn(() => Promise.resolve(false)),
+      listMembers: jest.fn(() => Promise.resolve([{ userId: 'member' }, { userId: 'reviewer' }])),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService,
+      {} as never
+    );
+    return { controller, service };
+  }
+
+  it("refuses a review account a real association's roster, typed, and reads nothing", async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller, service } = makeController([]);
+    await expect(controller.listMembers('asso1', 'reviewer')).rejects.toMatchObject({
+      response: { code: 'REVIEW_COHORT_BOUNDARY' },
+    });
+    expect(service.listMembers).not.toHaveBeenCalled();
+  });
+
+  it('gives a review account the whole roster of an association it belongs to', async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller } = makeController(['asso-demo']);
+    expect(await controller.listMembers('asso-demo', 'reviewer')).toHaveLength(2);
+  });
+
+  it('never shows a review account on a roster to a member, and does to an admin', async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller } = makeController([]);
+    expect(await controller.listMembers('asso1', 'member')).toEqual([{ userId: 'member' }]);
+    expect(await controller.listMembers('asso1', 'admin', 'true')).toHaveLength(2);
   });
 });

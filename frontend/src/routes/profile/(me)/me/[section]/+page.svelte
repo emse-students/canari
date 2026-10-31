@@ -28,7 +28,7 @@
   $effect(() => {
     if (model.parrainageLoading) return;
     const facts = {
-      membershipCount: null,
+      memberships: null,
       careerCount: null,
       hasSponsorship: model.hasSponsorship,
     };

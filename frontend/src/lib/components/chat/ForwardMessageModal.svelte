@@ -145,9 +145,9 @@
               </div>
             {:else}
               <GroupAvatar
+                id={cand.conversation.id}
                 imageMediaId={cand.conversation.imageMediaId}
                 name={cand.label}
-                variant="group"
                 size="md"
               />
             {/if}

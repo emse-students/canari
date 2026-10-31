@@ -1,3 +1,4 @@
+import { LydiaCashiersService } from '../associations/lydia-cashiers.service';
 import {
   Controller,
   Delete,
@@ -12,6 +13,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FOLLOW_REQUEST_NOTIFICATION } from '../follows/follow-requests.service';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
+import { sanitizeLog } from '../common/log.utils';
 import { Post as PostEntity } from '../posts/entities/post.entity';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
@@ -24,6 +26,24 @@ import { invalidatePostListCache } from '../posts/post-list-cache';
 import { PostMediaRetentionService } from '../posts/post-media-retention.service';
 import { type ErasureDb, eraseSocialRows, keptPostMediaIds } from './account-erasure';
 import type { EntityManager } from 'typeorm';
+
+/** A membership row of the external profile projection (`GET users/:userId/associations`). */
+export interface ProfileAssociationRow {
+  type: Association['type'];
+  /** Campaign year of a list, null for the other kinds. */
+  promo: number | null;
+  name: string;
+  slug: string;
+  role: string;
+  logoUrl: string | null;
+}
+
+/** A former row: an archived membership (no years) or a role-history entry (years; no slug when the association is gone). */
+export interface ProfileFormerAssociationRow extends Omit<ProfileAssociationRow, 'slug'> {
+  slug: string | null;
+  startYear: number | null;
+  endYear: number | null;
+}
 
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
@@ -47,7 +67,8 @@ export class InternalController {
     private readonly userFollowRepo: Repository<UserFollow>,
     private readonly channelService: ChannelService,
     private readonly redis: RedisService,
-    private readonly postMediaRetention: PostMediaRetentionService
+    private readonly postMediaRetention: PostMediaRetentionService,
+    private readonly lydiaCashiers: LydiaCashiersService
   ) {}
 
   /**
@@ -185,40 +206,39 @@ export class InternalController {
     const assocs = ids.length ? await this.assocRepo.find({ where: { id: In(ids) } }) : [];
     const byId = new Map(assocs.map((a) => [a.id, a]));
 
-    const current: {
-      name: string;
-      slug: string;
-      role: string;
-      logoUrl: string | null;
-    }[] = [];
-    const former: {
-      name: string;
-      role: string;
-      logoUrl: string | null;
-      startYear: number | null;
-      endYear: number | null;
-    }[] = [];
+    const current: ProfileAssociationRow[] = [];
+    const former: ProfileFormerAssociationRow[] = [];
 
     for (const m of members) {
       const a = byId.get(m.associationId);
       if (!a) continue;
       if (a.archived) {
         former.push({
+          ...kindOf(a),
           name: a.name,
+          slug: a.slug,
           role: m.role,
           logoUrl: a.logoUrl,
           startYear: null,
           endYear: null,
         });
       } else {
-        current.push({ name: a.name, slug: a.slug, role: m.role, logoUrl: a.logoUrl });
+        current.push({
+          ...kindOf(a),
+          name: a.name,
+          slug: a.slug,
+          role: m.role,
+          logoUrl: a.logoUrl,
+        });
       }
     }
 
     for (const h of history) {
       const a = byId.get(h.associationId);
       former.push({
+        ...(a ? kindOf(a) : { type: 'association' as const, promo: null }),
         name: a?.name ?? 'Association',
+        slug: a?.slug ?? null,
         role: h.roleTitle,
         logoUrl: a?.logoUrl ?? null,
         startYear: h.startYear,
@@ -266,10 +286,30 @@ export class InternalController {
     const keptMedia = await keptPostMediaIds(erasureDb(this.postRepo.manager), userId);
     await this.postMediaRetention.keepForAssociation(keptMedia);
 
+    // Lot 3: every number the account's live cashier rows hold is removed at Lydia FIRST, best
+    // effort - never a throw, never a wait on a claim; what Lydia did not confirm keeps its ERROR
+    // audit line below.
+    const removedAtLydia = await this.lydiaCashiers.revokeBeforeErasure(userId);
+
     const result = await this.postRepo.manager.transaction((manager) =>
       eraseSocialRows(erasureDb(manager), userId)
     );
 
+    for (const cashier of result.liveCashiersErased) {
+      if (removedAtLydia.has(`${cashier.associationId}:${cashier.vendorToken}`)) {
+        this.logger.log(
+          `[AUDIT] [LYDIA] account erasure of user=${who} deleted a cashier row of association ` +
+            `${sanitizeLog(cashier.associationId)} whose numbers Lydia confirmed removed`
+        );
+        continue;
+      }
+      // Lydia still holds this person as a cashier of that Business; Canari no longer tracks it.
+      this.logger.error(
+        `[AUDIT] [LYDIA] account erasure of user=${who} deleted a LIVE cashier row: association ` +
+          `${sanitizeLog(cashier.associationId)}, Business ${sanitizeLog(cashier.vendorToken)} - ` +
+          `Lydia still lists that cashier`
+      );
+    }
     const pins = await this.channelService.announceErasedPins(result.pinsRemoved);
     const dropped = await invalidatePostListCache(this.redis);
 
@@ -281,6 +321,14 @@ export class InternalController {
     );
     return { ok: true };
   }
+}
+
+/**
+ * The kind of an entity and, for a list, its campaign year. ADDITIVE fields of the external profile
+ * projection (Sky tells associations, campaign lists and institutions apart with them).
+ */
+function kindOf(a: Association): Pick<ProfileAssociationRow, 'type' | 'promo'> {
+  return { type: a.type, promo: a.promo ?? null };
 }
 
 /** The erasure's database port over a TypeORM manager, whose raw `query` answers a write `[rows, count]`. */

@@ -11,6 +11,8 @@
     <string name="notif_channel_calls_desc">Incoming calls (ringtone)</string>
     <string name="notif_channel_call_ongoing_name">Ongoing call</string>
     <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>
+    <string name="notif_action_call_mute">Mute</string>
+    <string name="notif_action_call_unmute">Unmute</string>
     <string name="notif_channel_mentions_name">Canari mentions</string>
     <string name="notif_channel_mentions_desc">Messages that mention you (@)</string>
     <string name="notif_channel_reactions_name">Reactions to your messages</string>
@@ -40,6 +42,7 @@
     <string name="notif_action_mark_read">Mark as read</string>
     <!-- See the French table for why this exists. %1$s is the text the user typed. -->
     <string name="notif_reply_pending">%1$s · not sent, retrying</string>
+    <string name="notif_call_unknown_caller">Canari call</string>
     <string name="notif_incoming_call">Incoming call</string>
     <string name="notif_incoming_video_call">Incoming video call</string>
     <string name="notif_action_answer_call">Answer</string>
@@ -94,6 +97,12 @@
     <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
     <string name="notif_form_paid_over_capacity_title">Payment on a full form</string>
     <string name="notif_form_paid_over_capacity_body">“%1$s”: a payment arrived after the form was full. A refund is owed.</string>
+    <string name="notif_lydia_payments_active_title">Lydia payments active</string>
+    <string name="notif_lydia_payments_active_body">Lydia payments for %1$s are active.</string>
+    <string name="notif_lydia_payments_paused_title">Lydia payments paused</string>
+    <string name="notif_lydia_payments_paused_body">Lydia payments for %1$s are paused: Lydia refused a payment request.</string>
+    <string name="notif_lydia_refund_issued_title">Refund</string>
+    <string name="notif_lydia_refund_issued_body">%1$s refunded one of your payments.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>

@@ -6,12 +6,16 @@
     grantProductPurchase,
     quoteCashSale,
     closePaidNotGranted,
+    listAssociationRefunds,
+    getAssociationStatement,
     SocialApiError,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
     type CashSaleQuote,
     type PurchaseClosingOutcome,
+    type AssociationRefund,
+    type RefundStanding,
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -27,6 +31,16 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import RefundDialog from './RefundDialog.svelte';
+  import RefundCheckDialog from './RefundCheckDialog.svelte';
+  import {
+    lateAnswerNotice,
+    notRefundableHint,
+    refundStateLabel,
+    refundAwaitingManager,
+    statementCsv,
+  } from '$lib/associations/refundWording';
 
   interface Props {
     asso: Association;
@@ -82,7 +96,68 @@
     grantableProducts.map((p) => ({ value: p.id, label: productLabel(p) }))
   );
 
-  onMount(loadPurchases);
+  onMount(() => {
+    void loadPurchases();
+    void loadRefunds();
+  });
+
+  /**
+   * LYDIA REFUNDS (lot 4) - for a MANAGE_PAYOUT_ACCOUNT holder only. Null while not loaded, and for
+   * a member without that permission: the server answers 403 and the refund buttons, states and
+   * statement simply do not show (this tab itself asks MANAGE_PRODUCTS).
+   */
+  let refundView = $state<{ standings: RefundStanding[]; refunds: AssociationRefund[] } | null>(
+    null
+  );
+  /** The payment the refund dialog is open on, and the unconfirmed refund the check is open on. */
+  let refundTarget = $state<AssociationPurchase | null>(null);
+  let checkTarget = $state<{
+    refund: AssociationRefund;
+    buyer: string;
+    action: 'check' | 'record';
+  } | null>(null);
+  let statementBusy = $state(false);
+  let statementError = $state('');
+  const standingsById = $derived(
+    new Map((refundView?.standings ?? []).map((s) => [s.purchaseRecordId, s]))
+  );
+
+  /** Reads every payment's refund standing; a 403 hides the refund controls, never the list. */
+  async function loadRefunds() {
+    try {
+      refundView = await listAssociationRefunds(asso.id);
+    } catch (e) {
+      refundView = null;
+      if (refusalStatus(e) === 403) {
+        Log.d('ASSO', 'refunds hidden: not a payout manager of this association');
+      } else {
+        console.error('[ASSO] loading the refunds failed:', e);
+      }
+    }
+  }
+
+  /** After a refund or a check: the payments and their refund states are read again. */
+  async function reloadAfterRefund() {
+    await Promise.all([loadPurchases(), loadRefunds()]);
+  }
+
+  /** Downloads the association's statement (payments, refunds, totals) as a spreadsheet file. */
+  async function downloadStatement() {
+    statementBusy = true;
+    statementError = '';
+    try {
+      const statement = await getAssociationStatement(asso.id);
+      const blob = new Blob([statementCsv(statement)], { type: 'text/csv;charset=utf-8' });
+      const name = `${m.asso_statement_file()}-${asso.name}`.replace(/[\\/:*?"<>|]+/g, '_');
+      await downloadDecryptedFile(blob, `${name}.csv`);
+      Log.i('ASSO', `statement downloaded for ${asso.id.slice(0, 8)}`);
+    } catch (e) {
+      console.error('[ASSO] downloading the statement failed:', e);
+      statementError = m.asso_statement_error();
+    } finally {
+      statementBusy = false;
+    }
+  }
 
   $effect(() => {
     const userId = grantUserId.trim();
@@ -460,6 +535,51 @@
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
                 {amountLabel(purchase)}
+                {#if refundView}
+                  {@const standing = standingsById.get(purchase.id)}
+                  {@const stateLabel = refundStateLabel(standing)}
+                  {@const waiting = refundAwaitingManager(standing, refundView.refunds)}
+                  {@const hint = notRefundableHint(standing)}
+                  {@const late = lateAnswerNotice(purchase.id, refundView.refunds)}
+                  {#if stateLabel}
+                    <span
+                      class="text-text-muted mt-1 block text-xs font-semibold"
+                      data-testid="refund-state">{stateLabel}</span
+                    >
+                  {/if}
+                  {#if late}
+                    <span
+                      class="text-red-err mt-1 block text-xs font-semibold"
+                      data-testid="refund-late">{late}</span
+                    >
+                  {/if}
+                  {#if waiting}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        (checkTarget = { ...waiting, buyer: purchaseBuyerName(purchase) })}
+                      data-testid="refund-{waiting.action}-open"
+                      class="border-cn-border text-text-main hover:bg-cn-bg mt-1 rounded-full border px-2 py-0.5 text-xs font-semibold"
+                    >
+                      {waiting.action === 'record'
+                        ? m.asso_refund_record_button()
+                        : m.asso_refund_check_button()}
+                    </button>
+                  {:else if standing?.openRefund}
+                    <!-- A refund in progress: its result is coming, nothing to do and no new refund. -->
+                  {:else if standing?.refundable && standing.refundedCents < standing.paidCents}
+                    <button
+                      type="button"
+                      onclick={() => (refundTarget = purchase)}
+                      data-testid="refund-open"
+                      class="border-cn-border text-text-main hover:bg-cn-bg mt-1 rounded-full border px-2 py-0.5 text-xs font-semibold"
+                    >
+                      {m.asso_refund_button()}
+                    </button>
+                  {:else if hint}
+                    <span class="text-text-muted mt-1 block text-xs font-normal">{hint}</span>
+                  {/if}
+                {/if}
               </td>
             </tr>
           {/each}
@@ -470,4 +590,48 @@
       {m.asso_achats_count_label({ count: filteredPurchases.length })}
     </p>
   {/if}
+
+  {#if refundView}
+    <div class="border-cn-border flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-center">
+      <p class="text-text-muted flex-1 text-xs">{m.asso_statement_hint()}</p>
+      <button
+        type="button"
+        disabled={statementBusy}
+        onclick={downloadStatement}
+        class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+      >
+        {m.asso_statement_button()}
+      </button>
+    </div>
+    {#if statementError}
+      <p class="text-red-err text-xs" role="alert">{statementError}</p>
+    {/if}
+  {/if}
 </div>
+
+{#if refundTarget}
+  {@const target = refundTarget}
+  {@const standing = standingsById.get(target.id)}
+  {#if standing}
+    <RefundDialog
+      associationId={asso.id}
+      purchase={target}
+      {standing}
+      buyer={purchaseBuyerName(target)}
+      item={purchaseItemLabel(target, productsById)}
+      onClose={() => (refundTarget = null)}
+      onSettled={reloadAfterRefund}
+    />
+  {/if}
+{/if}
+
+{#if checkTarget}
+  <RefundCheckDialog
+    associationId={asso.id}
+    refund={checkTarget.refund}
+    buyer={checkTarget.buyer}
+    action={checkTarget.action}
+    onClose={() => (checkTarget = null)}
+    onSettled={reloadAfterRefund}
+  />
+{/if}

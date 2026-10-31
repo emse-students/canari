@@ -1712,7 +1712,9 @@ A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) start
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
 system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
 camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
-exclude the left edge over the feed, with the mechanism of the right edge above.
+exclude the left edge over the feed, with the mechanism of the right edge above. Re-confirmed by the
+owner 2026-10-30 (the two backlog rows asking for that decision are closed; the mechanism was
+already built, #2184, and only the Mi 9T reading below is owed).
 
 - **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
   `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to
@@ -3842,7 +3844,7 @@ both halves run only on hardware.
 
 ## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
 
-The open line is in [backlog](../backlog.md#p3---the-pull-and-the-socket-hand-the-same-row-in-and-the-queue-notices-afterwards-instead-of-the-overlap-not-existing-measured-2026-09-08).
+The open line is in [backlog](../backlog.d/closed-without-a-fix-not-planned-2026-10-24.md).
 
 **On the phone, the overlap reaches openmls.** NOTIF-7 (backgrounded, push, tap, foreground), 2026-09-08, left six `severe` lines on A1: two frames at one epoch (group 2bd5add9, `msg_epoch=196 group_epoch=196`, generations 7 and 8), each refused with `Ciphertext generation out of bounds` / `SecretReuseError` and `MLS decryption failed at exactly its own epoch, so no redelivery can help`. A same-epoch `SecretReuseError` means the generation was already consumed, so these are duplicates, not losses (the row displayed exactly one message). On the web the same overlap is caught by the queue and files `[QUEUE] delivery ... arrived twice`, a notice; on the phone nothing catches it first, so the same defect costs a `PASS-DIRTY` on the web and severe lines on a handset. Re-measured on `00a86a1a8` (2026-09-23, NOTIF-7b killed): two severe lines instead of six, same shape, 21 ms apart - the count moved, the mechanism did not.
 
