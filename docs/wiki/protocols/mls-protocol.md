@@ -1384,9 +1384,9 @@ only - and the fingerprint of the signature key its KeyPackage carries, in group
 (`keyPackageSignatureKey`, a parse of the RFC 9420 layout held to the real WASM build by
 `deviceTrust.keyPackage.realWasm.test.ts`) and kept, so a waiting ask spends no package per sweep. It
 is raised in ANY conversation row, a 1:1 included, because neither answer touches a seat.
-The waiting device itself shows its own fingerprint (`chat_waiting_own_device_key`) and says what its
+The waiting device says in plain words, with no key on screen (`chat_waiting_own_device`), what its
 owner does: open the conversation on another device already in it, or ask another member to open
-it, compare the key, tap Add (`join_request_accept`).
+it, tap Add (`join_request_accept`).
 
 - **Add** records the approval of THAT device under THAT fingerprint, across conversations, and
   starts the pending sweep without waiting for it (`setMemberDeviceSweep`; a sweep already running is
@@ -1424,9 +1424,8 @@ read off the same tree and without the departure half, so it is the stricter of 
 device can no longer produce an entry its members flag** (`mls-core/tests/further_device_door.rs`
 builds both and checks them against each other). A new PERSON still joins by link and waits for a
 member's Add (`awaiting-admission`); a community key group is entered as before, never asking. While
-it waits, a further device shows its owner its own key (`chat_waiting_own_device_key`,
-`ownSignatureKey`), the one the member's ask names - never on a person's link ask, whose member is
-shown a person.
+it waits, a further device tells its owner so in plain words (`chat_waiting_own_device`) - never on a
+person's link ask, whose member is shown a person.
 
 **And one that does is said.** A commit signed by the device it admits, whose user already held a
 leaf, for a device that was never in THIS group (`firstInGroup`: no leaf of it in the tree the commit
