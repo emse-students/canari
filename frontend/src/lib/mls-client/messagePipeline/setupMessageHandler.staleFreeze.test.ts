@@ -127,6 +127,21 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
     expect(deps.addMessageToChat).toHaveBeenCalled();
   });
 
+  it('removes the stale list at session setup, and says so once', () => {
+    storeLegacyFreeze();
+    const deps = baseDeps();
+    setupMessageHandler(deps as any);
+
+    expect(localStorage.getItem('canari_admission_frozen')).toBeNull();
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('a freeze list left by an earlier build was removed')
+    );
+
+    (deps.log as any).mockClear();
+    setupMessageHandler(deps as any);
+    expect((deps.log as any).mock.calls.flat().join(' ')).not.toContain('freeze list');
+  });
+
   it('climbs the epoch-gap ladder instead of acknowledging the frame away', async () => {
     storeLegacyFreeze();
     const deps = baseDeps();
@@ -136,6 +151,8 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
       .fn()
       .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=5, group_epoch=4]'));
     setupMessageHandler(deps as any);
+    // The setup's own removal line is the test above; what is read here is the frame's handling.
+    (deps.log as any).mockClear();
     const cb = mls.onMessage.mock.calls[0][0];
 
     await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
