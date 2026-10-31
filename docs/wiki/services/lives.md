@@ -92,7 +92,7 @@ they close. What must be true before lives open in production, and in what order
 | Reconnect window (Q5) | 60 s without a segment ends the live | `LIVE_RECONNECT_WINDOW_MS`, same file | same route |
 | Longest live (L4) | **NONE (owner, 2026-10-31).** A live ends by its broadcaster, by 60 s without a segment, by staff or by an erasure - never by a clock | `maxDurationMs` is still served, as `LIVE_LEGACY_MAX_DURATION_MS` (a safe integer) for builds up to 1.5.x that print it ([legacy-compatibility](../legacy-compatibility.md)); nothing enforces it | same route, ignored by current clients |
 | Manifest window | 10 segments | `LIVE_MANIFEST_WINDOW`, same file | same route |
-| Byte budget per live | **NONE (owner, 2026-10-31).** `storedBytes` is still counted on the row, as an observation of what a live holds, never a limit; the 4 MiB segment cap and the segment rate bound what an abusive client can send | `lives."storedBytes"` | `byteBudget` is no longer served |
+| Stored bytes per live | **No total budget (owner, 2026-10-31); a running live keeps its newest `LIVE_RETAINED_SEGMENTS` = 20 segments only** (trim, [below](#what-one-broadcaster-may-store)): at most 20 x 4 MiB = 80 MiB whatever its duration. `lives."storedBytes"` counts the retained bytes | `LIVE_RETAINED_SEGMENTS`, `LIVE_TRIM_BATCH`, same file | `byteBudget` is no longer served |
 | Segment rate | segment `index` accepted only while `index < 15 + floor(age / 1 s)` | `LIVE_SEGMENT_BURST`, `LIVE_SEGMENT_MIN_DURATION_MS` | same route |
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
@@ -571,16 +571,33 @@ purge; a purge waits for a live reservation and ignores an abandoned one.
 
 Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a typed refusal:
 
-- **NO total byte budget and NO longest duration (owner, 2026-10-31, reversing the 2026-10-18 budget).**
-  The budget was 2.5 Mb/s x 60 min x 1.5, a duration cap in disguise. **What a live really stores**
-  (read from the code, not assumed): EVERY sealed segment, for the whole live, in the media store under
-  `live/<id>/` and as one `live_segments` row each - **nothing is trimmed while the live runs**; the
-  manifest LISTS only the newest window (`LIVE_MANIFEST_WINDOW`) but the older segments stay until the
-  end's purge. A live keeps about 1.1 GB an hour at the planning 2.5 Mb/s. Nothing is stored AFTER the
-  live, but a long live holds its whole length in storage until it ends. Every segment is
-  self-contained, so trimming the ones behind the window would be safe (a bound that is a function of
-  the retained window, not of the duration) - NOT BUILT, reported to the owner. `storedBytes` stays
-  counted as the observation.
+- **NO total byte budget and NO longest duration (owner, 2026-10-31, reversing the 2026-10-18 budget) -
+  and a TRIM that makes "nothing is stored" true.** The budget was 2.5 Mb/s x 60 min x 1.5, a duration
+  cap in disguise. Before the trim a live stored EVERY sealed segment for its whole length (the manifest
+  only LISTED the newest ten): about 1.1 GB an hour at 2.5 Mb/s, all of it until the end's purge. Now a
+  running live keeps only its newest `LIVE_RETAINED_SEGMENTS` = 2 x `LIVE_MANIFEST_WINDOW` = 20
+  segments, so **what one live stores is at most 20 x 4 MiB (`LIVE_SEGMENT_MAX_BYTES`) = 80 MiB, whatever
+  its duration** (about 20-40 MB at the planning bitrate). `storedBytes` is the retained bytes.
+  - **Why 20**: a manifest names the newest 10; the other 10 are the margin for a viewer that fetched
+    its manifest just before a trim and is still downloading. A viewer polls every second and a
+    segment is ~2 s, so ten more segments are ~20 s against the download of ~1 MB; a viewer further
+    behind than its buffer policy jumps to the newest (`livePlayer` backlog) instead of walking the
+    past, and every segment is self-contained (no init to keep).
+  - **Mechanism** (`LivesService.trim`, after each confirmed segment): the segments to trim are the
+    `live_segments` rows with `index < nextIndex - 20` (at most `LIVE_TRIM_BATCH` = 50 a pass);
+    media-service deletes the named objects (`POST media/internal/live-segments-delete`, idempotent -
+    an absent object is not a failure); THEN, in one transaction, the rows are deleted and
+    `storedBytes` falls by exactly their bytes. **Idempotence is durable state, not a clock**: a
+    crash between the media delete and the row delete, a refused delete or a media outage leave the
+    row, which the next segment's pass finds again. Each pass logs `[LIVE_TRIM] ... trimmed n
+    segment(s) (a..b), B`; a refusal or an unreachable store is a `warn` and never fails the segment
+    just stored. The end's purge is unchanged (it deletes the whole prefix, trimmed or not), so
+    correctness never rests on the trim; only the bound does.
+  - **Two edges**: a retry of a segment more than 20 behind the newest meets a trimmed row (409
+    `LIVE_SEGMENT_CONFLICT`; the uploader only ever retries the last one); a manifest asked `from` an
+    index older than the oldest kept row answers from the oldest kept.
+  - **Deploy order**: media-service carries the new route; a social-service deployed before it logs
+    the trim's `warn` on each segment until media catches up (nothing breaks), then converges.
 - **A segment rate held as a COUNT in durable state**: `nextIndex` is the number of segments taken,
   compared with the live's age read from the database clock (`index < 15 + floor(age / 1 s)`), so
   one segment a second on average, whatever retries do, with a burst that covers a reconnect's

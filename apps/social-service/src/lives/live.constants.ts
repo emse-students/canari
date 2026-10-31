@@ -36,6 +36,24 @@ export const LIVE_LEGACY_MAX_DURATION_MS = Number.MAX_SAFE_INTEGER;
 export const LIVE_MANIFEST_WINDOW = 10;
 
 /**
+ * HOW MANY OF THE NEWEST SEGMENTS A RUNNING LIVE KEEPS in the store: twice the manifest window
+ * (owner, 2026-10-31: nothing outlives what viewers can still ask for). A manifest names at most
+ * {@link LIVE_MANIFEST_WINDOW} segments ending at the newest, so the newest ten are all a viewer is ever
+ * TOLD about; the other ten are the margin for a viewer that fetched its manifest just before a trim
+ * and is still downloading. A viewer polls every second and a segment is ~2 s, so ten more segments
+ * are ~20 s of margin against a download of a segment of about 1 MB; and a viewer further behind than
+ * its buffer policy allows jumps to the newest (`livePlayer`, backlog) instead of walking the past.
+ * Every segment is self-contained, so a viewer never needs an older one for its init.
+ *
+ * Stored bytes per live are therefore bounded by this many segments of at most
+ * {@link LIVE_SEGMENT_MAX_BYTES} (plus the few still waiting for a retried delete), whatever its duration.
+ */
+export const LIVE_RETAINED_SEGMENTS = 2 * LIVE_MANIFEST_WINDOW;
+
+/** The most segments one trim pass deletes: bounds a pass that catches up after a media-service outage. */
+export const LIVE_TRIM_BATCH = 50;
+
+/**
  * The shortest segment the server expects, in ms. The plan cuts segments of a few seconds (about
  * 1 MB for 3 s); one a second is a third of that, so a client that catches up after a reconnect is
  * never refused for it.

@@ -34,6 +34,8 @@ import {
   LIVE_MANIFEST_WINDOW,
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
+  LIVE_RETAINED_SEGMENTS,
+  LIVE_TRIM_BATCH,
   LIVE_RULES_VERSION,
   LIVE_SEAT_LEASE_MS,
   LIVE_SEGMENT_BURST,
@@ -542,7 +544,69 @@ export class LivesService implements OnModuleDestroy {
     // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
     // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
     if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
+    await this.trim(liveId);
     return outcome.result;
+  }
+
+  /**
+   * THE TRIM: a running live keeps only its newest {@link LIVE_RETAINED_SEGMENTS} segments, so what
+   * it stores never depends on how long it lasts (owner, 2026-10-31). Run after each confirmed
+   * segment.
+   *
+   * IDEMPOTENT FROM DURABLE STATE, NOT FROM A CLOCK: the segments to trim are the `live_segments`
+   * rows with `index < nextIndex - retained`, and a row is deleted only AFTER the store proved its
+   * object gone. A crash between the store's delete and the row's, a refused delete or a media
+   * outage leave the row, so the next pass finds it again (an absent object deletes without error).
+   * `storedBytes` falls by exactly the bytes of the rows deleted, inside the same transaction.
+   *
+   * BEST EFFORT FOR THE INGEST: a failure is logged at `warn` and never fails the segment that was
+   * just stored - the end's purge deletes the whole prefix whatever this left, so correctness never
+   * rests on this pass; only the bound does, and it is re-asked by every segment.
+   */
+  private async trim(liveId: string): Promise<void> {
+    try {
+      const rows: { index: number; name: string }[] = await this.db.query(
+        `SELECT s."index", s.name
+           FROM live_segments s JOIN lives l ON l.id = s."liveId"
+          WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2
+          ORDER BY s."index" ASC LIMIT $3`,
+        [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH]
+      );
+      if (rows.length === 0) return;
+      const answer = await this.store.deleteSegments(
+        liveId,
+        rows.map((r) => r.name)
+      );
+      const gone = new Set(answer.deleted);
+      const indexes = rows.filter((r) => gone.has(r.name)).map((r) => r.index);
+      if (answer.failed.length > 0) {
+        this.logger.warn(
+          `[LIVE_TRIM] ${liveId}: the store refused ${answer.failed.length} of ${rows.length} segment(s) - asked again by the next segment`
+        );
+      }
+      if (indexes.length === 0) return;
+      const freed = await this.db.transaction(async (tx): Promise<number> => {
+        const [deleted] = (await tx.query(
+          `DELETE FROM live_segments WHERE "liveId" = $1 AND "index" = ANY($2::int[]) RETURNING bytes`,
+          [liveId, indexes]
+        )) as [{ bytes: number }[], number];
+        const bytes = deleted.reduce((sum, r) => sum + Number(r.bytes), 0);
+        if (bytes > 0) {
+          await tx.query(
+            `UPDATE lives SET "storedBytes" = GREATEST(0, "storedBytes" - $2::bigint) WHERE id = $1`,
+            [liveId, bytes]
+          );
+        }
+        return bytes;
+      });
+      this.logger.log(
+        `[LIVE_TRIM] ${liveId}: trimmed ${indexes.length} segment(s) behind the window (${indexes[0]}..${indexes[indexes.length - 1]}), ${freed} B`
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_TRIM] ${liveId}: the trim failed, asked again by the next segment: ${causeOf(e)}`
+      );
+    }
   }
 
   /**
