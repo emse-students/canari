@@ -356,7 +356,7 @@ describe('the native answer is a private intent carrying every fact the join nee
     );
     // Queued behind the AnsweredElsewhere ends: once active, no CallKit End can cancel the answer.
     expect(handover).toMatch(
-      /CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{\s*CanariTellPageOfPendingCallAccept\(\);/
+      /CanariEndCallKitCallFor\(callId, CXCallEndedReasonAnsweredElsewhere, YES\);[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{\s*CanariTellPageOfPendingCallAccept\(\);/
     );
     const answer = between(
       pushMm,
@@ -375,23 +375,91 @@ describe('the native answer is a private intent carrying every fact the join nee
     expect(answer).toContain('CanariAnsweredUntilTold()[action.callUUID.UUIDString] = answered;');
   });
 
-  it('iOS: the handover never ends an unanswered ring the page cannot ring (review of #2785)', () => {
+  it('iOS: the handover ends an unanswered ring only when the page rings THAT call (review of #2785)', () => {
     // A Control Center pull over an app ringing at the PIN gate re-activates it: ending every
-    // CallKit call there ended the call's only ring.
+    // CallKit call there ended the call's only ring. Holding the socket does not say the page rings
+    // the call either - the unlock opens it after the invite was skipped. The fact itself is
+    // exercised in page_ring.rs and CallService.pageRing.test.ts.
     const handover = between(
       pushMm,
       'static void CanariHandOverCallsToPage(NSString *why) {',
       '\n}\n',
       'CanariHandOverCallsToPage'
     );
-    expect(handover).toContain('BOOL pageRings = canari_ios_page_rings_in_app();');
+    expect(handover).not.toContain('canari_ios_page_rings_in_app');
     expect(handover).toMatch(
-      /if \(answered\) \{[\s\S]*?\} else if \(!pageRings\) \{[\s\S]*?continue;\s*\}\s*CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);/
+      /if \(answered\) \{[\s\S]*?\} else if \(!canari_ios_page_rings_call\(callId\.UTF8String\)\) \{[\s\S]*?continue;[\s\S]*?CanariEndCallKitCallFor\(callId, CXCallEndedReasonAnsweredElsewhere, YES\);/
     );
-    // The answered records are dropped only once the page was told.
+    // The handover is the ONE end that keeps the answer's record until the tell; every other end
+    // drops it, so a call ended remotely or at its deadline leaves no record behind.
+    expect([...pushMm.matchAll(/CanariEndCallKitCallFor\([^)]*, YES\)/g)]).toHaveLength(1);
+    const endFor = between(
+      pushMm,
+      'static void CanariEndCallKitCallFor(NSString *callId, CXCallEndedReason reason, BOOL forHandover) {',
+      '\n}\n',
+      'CanariEndCallKitCallFor'
+    );
+    // The answered records of the handover are dropped only once the page was told.
     expect(handover).toMatch(
       /CanariTellPageOfPendingCallAccept\(\);[\s\S]*?\[CanariAnsweredUntilTold\(\) removeObjectsForKeys:toldUUIDs\];/
     );
+    expect(endFor).toMatch(
+      /if \(!forHandover && CanariAnsweredUntilTold\(\)\[uuid\.UUIDString\] != nil\) \{\s*\[CanariAnsweredUntilTold\(\) removeObjectForKey:uuid\.UUIDString\];/
+    );
+    expect(
+      readFileSync(resolve(here, '../../../src-tauri/src/mobile/ios_ffi.rs'), 'utf8')
+    ).toContain(
+      'pub unsafe extern "C" fn canari_ios_page_rings_call(call_id: *const c_char) -> bool'
+    );
+  });
+
+  it('iOS: a call the ACTIVE page starts ringing ends its unanswered CallKit ring (review of #2794)', () => {
+    // No activation follows in an app already active, so the handover never runs: the page's own
+    // start of a ring is the trigger, registered with Rust (never linked: the NSE links the crate).
+    const setup = between(
+      pushMm,
+      'static void CanariCallKitSetup(void) {',
+      '\n}\n',
+      'CanariCallKitSetup'
+    );
+    expect(setup).toContain('canari_ios_set_page_ringing_listener(CanariPageStartedRinging);');
+    const started = between(
+      pushMm,
+      'static void CanariPageStartedRinging(const char *callIdC) {',
+      '\n}\n',
+      'CanariPageStartedRinging'
+    );
+    // The id is copied on the caller's thread, everything else judged on the main queue.
+    expect(started).toMatch(
+      /NSString \*callId = \[NSString stringWithUTF8String:callIdC\];[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{/
+    );
+    expect(started).toMatch(
+      /applicationState != UIApplicationStateActive\) \{[\s\S]*?return;[\s\S]*?\[@"answered"\] boolValue\]\) \{\s*return;[\s\S]*?CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);/
+    );
+    expect(
+      readFileSync(resolve(here, '../../../src-tauri/src/mobile/ios_ffi.rs'), 'utf8')
+    ).toContain('pub extern "C" fn canari_ios_set_page_ringing_listener(');
+    expect(read('apple/Sources/canari/canari_rust_bridge.h')).toContain(
+      'void canari_ios_set_page_ringing_listener(void (*listener)(const char *call_id));'
+    );
+  });
+
+  it('iOS: the ring deadline never ends an ANSWERED call as unanswered (review of #2785)', () => {
+    const deadline = between(
+      pushMm,
+      'static void CanariEndCallKitCallAtRingDeadline(NSString *callId, NSUUID *uuid) {',
+      '\n}\n',
+      'CanariEndCallKitCallAtRingDeadline'
+    );
+    expect(deadline).toMatch(
+      /if \(\[g_ringingCallInfo\[uuid\.UUIDString\]\[@"answered"\] boolValue\]\) \{[\s\S]*?CanariEndCallKitCall\(callId, CXCallEndedReasonFailed\);\s*return;\s*\}[\s\S]*?CanariEndCallKitCall\(callId, CXCallEndedReasonUnanswered\);/
+    );
+    // Both rings (FCM and VoIP) end at their deadline through it, and nothing else ends a call
+    // `Unanswered`.
+    expect([
+      ...pushMm.matchAll(/CanariEndCallKitCallAtRingDeadline\(callId, uuid\);/g),
+    ]).toHaveLength(2);
+    expect([...pushMm.matchAll(/CXCallEndedReasonUnanswered/g)]).toHaveLength(1);
   });
 
   it('iOS: an End between the handover end and the tell still cancels the answer (review of #2785)', () => {

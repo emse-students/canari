@@ -41,6 +41,7 @@ vi.mock('$lib/mlsService', () => ({
 vi.mock('$lib/services/CallService', () => ({
   CallService: class {
     readonly callState = { subscribe: () => () => {} };
+    readonly retireFromPageRing = vi.fn();
     constructor(readonly mls: IMlsService) {}
     setChatNotifier() {}
   },
@@ -152,7 +153,10 @@ describe("A signs out with its final write held, B signs in, A's write lands lat
     expect(a.flushEncrypted).toHaveBeenCalledTimes(1);
 
     // B arrives: the shell runs `initServices` before the login flow, during A's write.
+    const callServiceA = session.callService;
     session.initServices(() => {});
+    // A's call service withdraws what it told the native ring before it is replaced.
+    expect(callServiceA.retireFromPageRing).toHaveBeenCalledTimes(1);
     const clientB = made[1];
     expect(clientB).toBeDefined();
     expect(session.ensureMls()).toBe(clientB);
