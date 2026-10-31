@@ -191,6 +191,7 @@ describe('LiveBroadcaster', () => {
     );
     await settle();
     const sheet = q('[data-live-rules]')!;
+    expect(sheet.parentElement!.className).toContain('--safe-area-inset-top');
     for (const line of [
       m.live_rules_no_illegal(),
       m.live_rules_no_sexual(),

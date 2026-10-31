@@ -4317,7 +4317,7 @@ A community key group whose community this session has not loaded used to fall t
 
 ### Fixed - every PIN form names its account to the password manager
 
-The unlock gate and the PIN change and recovery forms carry a hidden `autocomplete="username"` field, so Chrome stops flagging a password form with no username and a manager can file the PIN under the account ([PinAccountField](frontend/src/lib/components/auth/PinAccountField.svelte)).
+The unlock gate and the PIN change and recovery forms carry a hidden `autocomplete="username"` field, so Chrome stops flagging a password form with no username and a manager can file the PIN under the account (`PinAccountField`, removed on 2026-10-30: Chrome then offered to save the PIN under the account id).
 
 ### A post you publish now appears in the feed you are looking at
 
