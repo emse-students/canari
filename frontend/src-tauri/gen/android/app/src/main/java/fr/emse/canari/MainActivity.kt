@@ -365,8 +365,28 @@ class MainActivity : TauriActivity() {
         if (IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
-        // Taken here, before onResume: the page drains it on that resume (ChatBackgroundService).
-        CallRingAnswer.takeAnswer(this, intent)
+        // Taken here, before onResume. The page is TOLD as well: an activity already visible (a warm
+        // app at the PIN gate) sees no visibility change, so no resume drain would follow.
+        if (CallRingAnswer.takeAnswer(this, intent)) pushCallAccept()
+    }
+
+    /**
+     * Tells a page that is already alive that an answer waits in `pending_call_accept.json`
+     * (`canari:call-accept`, drained by `ChatBackgroundService`). A page not loaded yet drains the
+     * file at mount instead. The iOS twin is `CanariTellPageOfPendingCallAccept`.
+     */
+    private fun pushCallAccept() {
+        val webView = liveWebView ?: run {
+            Log.d("MainActivity", "call answer before the WebView: the page drains it at mount")
+            return
+        }
+        try {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:call-accept'));") {
+                Log.d("MainActivity", "call answer waits - the page was told")
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}")
+        }
     }
 
     /**

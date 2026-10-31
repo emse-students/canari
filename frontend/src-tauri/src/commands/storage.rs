@@ -283,11 +283,12 @@ fn reload_into(
     Ok(ReloadOutcome::Reloaded)
 }
 
-/// Foreground heartbeat: refreshes the guard while the WebView is visible. As long as it stays
-/// fresh, background JNI engines give up their `mls.bin` writes (C1/FCM3).
+/// Foreground heartbeat: refreshes the guard while the WebView is visible AND a foreground manager
+/// is loaded (`heartbeat_foreground_guard`: at the PIN gate there is nothing to protect). As long as
+/// it stays fresh, background JNI engines give up their `mls.bin` writes (C1/FCM3).
 #[tauri::command]
 pub(crate) fn mls_foreground_heartbeat() {
-    mark_foreground_active();
+    crate::concurrency::heartbeat_foreground_guard();
 }
 
 /// Releases the foreground guard (moving to the background): immediately allows JNI engines to

@@ -174,6 +174,44 @@ pub(crate) fn mark_foreground_active() {
     foreground_active_until().store(now_ms() + FOREGROUND_GRACE_MS, Ordering::SeqCst);
 }
 
+/// The last answer [`heartbeat_foreground_guard`] gave, so it logs a change and never a tick:
+/// 0 = not asked yet, 1 = refreshed, 2 = nothing loaded.
+fn heartbeat_last_outcome() -> &'static std::sync::atomic::AtomicU8 {
+    static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    &LAST
+}
+
+/// The WebView's heartbeat: refreshes the guard ONLY WHILE A FOREGROUND MANAGER IS LOADED in this
+/// process, and says whether it did.
+///
+/// **THE GUARD PROTECTS A LOADED MANAGER'S MEMORY, AND AT THE PIN GATE THERE IS NONE.** The
+/// background gives way because the foreground holds state newer than `mls.bin` and would write
+/// over it. Before a login nothing is loaded - the login reads the file under the lock and marks
+/// the guard itself first ([`foreground_load_mls_bin`]) - so a guard held there protects nothing
+/// and only refuses every background write. That is what the CallKit Decline met on the iPhone
+/// (1.5.2-alpha.2): PushKit launches a killed app in the background, WKWebView loads the page as
+/// `visible` and keeps it so through the whole background run, the page's heartbeat ticked every
+/// 10 s at the PIN gate, and the hangup's write was refused (`ok=false`, the caller rang out). A
+/// `visibilityState` is the WebView's opinion; whether a manager is loaded is a fact this process
+/// holds ([`live_manager_flag`], set before the login's read, cleared with the manager).
+pub(crate) fn heartbeat_foreground_guard() -> bool {
+    let loaded = live_manager_flag().load(Ordering::SeqCst);
+    if loaded {
+        mark_foreground_active();
+    }
+    let outcome = if loaded { 1 } else { 2 };
+    if heartbeat_last_outcome().swap(outcome, Ordering::SeqCst) != outcome {
+        if loaded {
+            log::debug!("[MLS] foreground heartbeat: a manager is loaded - the guard is held");
+        } else {
+            log::debug!(
+                "[MLS] foreground heartbeat: no foreground manager is loaded - the guard is not refreshed, background writes may land"
+            );
+        }
+    }
+    loaded
+}
+
 /// Releases the foreground guard (moving to the background).
 pub(crate) fn mark_foreground_inactive() {
     foreground_active_until().store(0, Ordering::SeqCst);
@@ -560,6 +598,33 @@ mod tests {
     use super::test_support::{joined_pair, serialise};
     use super::*;
     use mls_core::MlsManager;
+
+    /// The CallKit Decline of a killed iPhone (1.5.2-alpha.2): the page sat at the PIN gate and its
+    /// heartbeat held the guard, so the hangup's background write was refused. With no manager
+    /// loaded the heartbeat holds nothing; once the login loads one, it holds the guard again.
+    #[test]
+    fn the_heartbeat_holds_the_guard_only_over_a_loaded_manager() {
+        let _s = serialise();
+        forget_live_manager_for_test();
+        mark_foreground_inactive();
+
+        assert!(!heartbeat_foreground_guard(), "the PIN gate has no manager");
+        assert!(
+            !foreground_is_active(),
+            "a heartbeat at the PIN gate must leave background writes free"
+        );
+
+        mark_foreground_manager_loading();
+        mark_foreground_inactive();
+        assert!(heartbeat_foreground_guard(), "the login loaded a manager");
+        assert!(
+            foreground_is_active(),
+            "over a loaded manager the heartbeat holds the guard, as before"
+        );
+
+        forget_live_manager_for_test();
+        mark_foreground_inactive();
+    }
 
     /// The defect this file was changed for: the deadline has lapsed (the app is backgrounded and
     /// the heartbeat stopped) while the checkpoint it was supposed to cover is still running.

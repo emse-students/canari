@@ -260,6 +260,50 @@ describe('the native answer is a private intent carrying every fact the join nee
     // Both rings record the caller for it.
     expect([...pushMm.matchAll(/@"callerId" : callerId \?: @"",/g)]).toHaveLength(2);
   });
+
+  it('iOS: the page is told the answer waits at the handover, never at the answer', () => {
+    // K7/K8 on 1.5.2-alpha.2: a page PushKit launched in the background is already `visible`, so no
+    // visibilitychange drains the file when the answer brings the app to the front.
+    const setup = between(
+      pushMm,
+      'static void CanariCallKitSetup(void) {',
+      '\n}\n',
+      'CanariCallKitSetup'
+    );
+    // Queued behind the AnsweredElsewhere ends: once active, no CallKit End can cancel the answer.
+    expect(setup).toMatch(
+      /CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{\s*CanariTellPageOfPendingCallAccept\(\);/
+    );
+    const answer = between(
+      pushMm,
+      'performAnswerCallAction:(CXAnswerCallAction *)action {',
+      '\n}\n',
+      'performAnswerCallAction'
+    );
+    expect(answer).not.toContain('CanariTellPageOfPendingCallAccept');
+    const tell = between(
+      pushMm,
+      'static void CanariTellPageOfPendingCallAccept(void) {',
+      '\n}\n',
+      'CanariTellPageOfPendingCallAccept'
+    );
+    expect(tell).toContain('fileExistsAtPath:');
+    expect(tell).toContain("new CustomEvent('canari:call-accept')");
+    // The page subscribes for its whole life (the drain itself: pendingCallAccept.test.ts).
+    const service = readFileSync(
+      resolve(here, '../components/layout/ChatBackgroundService.svelte'),
+      'utf8'
+    );
+    expect(service).toContain('const stopNativeCallAccept = listenForNativeCallAccept();');
+    expect(service).toContain('stopNativeCallAccept();');
+  });
+
+  it('Android: an answer intent taken by MainActivity tells a live page', () => {
+    const main = read('android/app/src/main/java/fr/emse/canari/MainActivity.kt');
+    expect(main).toContain('if (CallRingAnswer.takeAnswer(this, intent)) pushCallAccept()');
+    const push = between(main, 'private fun pushCallAccept() {', '\n    }\n', 'pushCallAccept');
+    expect(push).toContain("new CustomEvent('canari:call-accept')");
+  });
 });
 
 describe('a decline on the ring reaches the caller', () => {

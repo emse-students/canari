@@ -133,7 +133,10 @@
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
-  import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import {
+    drainNativePendingCallAccept,
+    listenForNativeCallAccept,
+  } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
@@ -1782,7 +1785,9 @@
     // background writers on BOTH platforms, but iOS only refreshes it once (canari_ios_on_resume);
     // without this 10s heartbeat the guard would expire ~30s into a genuinely-foregrounded iOS
     // session and an in-process FCM data push could clobber the warm engine's in-memory state. The
-    // native mls_foreground_heartbeat command is platform-agnostic (mark_foreground_active).
+    // native mls_foreground_heartbeat command is platform-agnostic, and holds the guard only while a
+    // foreground manager is loaded (`heartbeat_foreground_guard`): at the PIN gate there is nothing
+    // to protect, and a page iOS launched in the background believes itself visible.
     // createPausableInterval auto-pauses on hidden, so the guard expires shortly after backgrounding
     // even without a clean `hidden` event.
     const stopForegroundHeartbeat = isMobileTauriRuntime()
@@ -1919,6 +1924,10 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnlineResume);
+    // The native side says an answer waits (`canari:call-accept`): a page that sees no
+    // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
+    // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
+    const stopNativeCallAccept = listenForNativeCallAccept();
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1957,6 +1966,7 @@
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
+      stopNativeCallAccept();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);

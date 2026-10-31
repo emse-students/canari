@@ -163,3 +163,25 @@ export async function drainNativePendingCallAccept(): Promise<void> {
   const intent = parsePendingCallAccept(raw);
   if (intent) setPendingCallAccept(intent);
 }
+
+/** The event the native side dispatches when an answer waits in the file. */
+export const NATIVE_CALL_ACCEPT_EVENT = 'canari:call-accept';
+
+/**
+ * Drains the native accept file whenever the native side says an answer waits
+ * ({@link NATIVE_CALL_ACCEPT_EVENT}: iOS `CanariTellPageOfPendingCallAccept` at the CallKit
+ * handover, Android `MainActivity.pushCallAccept` on an answer intent). Returns the unsubscribe.
+ *
+ * WHY AN EVENT: a page iOS launched in the background is already `visible`, and a warm Android
+ * activity at the PIN gate stays visible - neither sees the `visibilitychange` the resume drains
+ * wait for (calls.md, "The iPhone's answer never joined"). A repeated event is harmless: the drain
+ * empties the file, so a second one reads nothing.
+ */
+export function listenForNativeCallAccept(): () => void {
+  const onAccept = () => {
+    appendLog('[CallAccept] the native side says an answer waits - draining it');
+    void drainNativePendingCallAccept();
+  };
+  window.addEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+  return () => window.removeEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+}

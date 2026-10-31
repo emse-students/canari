@@ -71,6 +71,27 @@ These are the lines of the same log that fix does NOT cover, each with its count
   [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
   **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
 
+## P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)
+
+#2782 stops the heartbeat holding the foreground guard at the PIN gate. A launch that signs in
+WITHOUT the PIN still loads a manager in the background, and that page holds the guard, correctly:
+biometrics with no prompt due (`ChatBackgroundService.svelte`, `biometricLogin(..., { unattended:
+!promptDue })`), or "stay signed in" on a hardware-held key (`sessionAuth.ts`, `[PIN] Stay signed in on
+a hardware-held key`). Its Decline is then refused (`encryptQueuedMessages: ok=false (... foreground
+active ...)`) and the caller rings out. The fix is to send the decline THROUGH the page's loaded
+manager when one exists, not a second background writer. Named in
+[calls](frontend/modules/calls.md#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31).
+
+## P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)
+
+The recovery reads `mls.bin` early (`sessionAuth.ts`, `loadMlsState(userId)`), checks the PIN, then
+hands those bytes to the native login, which installs them via `mark_foreground_manager_loading`
+(`commands/mls.rs`, the `(supplied, _)` arm) - never re-reading the file under `mls_bin_write_lock`.
+With #2782 the guard is no longer held at the PIN gate, so an in-process background write (a CallKit
+Decline, a quick reply) landing during the PIN check can be erased by the recovery's next blind
+write. Mitigated by `reconcileSendRatchets`. Fix: pass `stateOnDisk` so the native side reads under
+the lock, or compare a digest of the supplied bytes under the lock and refuse on a difference.
+
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
 
 **Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
