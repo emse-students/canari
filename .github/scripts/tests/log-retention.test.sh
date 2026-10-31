@@ -76,7 +76,7 @@ if run "fresh"; then ok "a log with nothing past $LOG_LIVE_MAX_DAYS days passes"
 if grep -q -- "--until $((LOG_LIVE_MAX_DAYS * 24))h" "$TMP/calls"; then
   ok "the log is asked for lines older than $((LOG_LIVE_MAX_DAYS * 24))h"
 else
-  fail "docker logs was not asked --until $((LOG_LIVE_MAX_DAYS * 24))h: $(grep logs "$TMP/calls" | head -1)"
+  fail "docker logs was not asked --until $((LOG_LIVE_MAX_DAYS * 24))h: $(grep logs "$TMP/calls" | sed -n 1p)"
 fi
 
 run "fresh old"

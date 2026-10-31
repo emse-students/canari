@@ -65,13 +65,13 @@ else
   fail "DEV_PROJECT must be 'readonly DEV_PROJECT=\"canari-dev\"' (found '${dev_project}')"
 fi
 
-if code_lines "$SCRIPT" | grep -qE 'canari-prod|PROD_|infrastructure-postgres'; then
+if code_lines "$SCRIPT" | grep -E 'canari-prod|PROD_|infrastructure-postgres' >/dev/null; then
   fail "the reset names a production project or container - it has no business knowing one"
 else
   ok "no production project, container or variable appears in the code"
 fi
 
-if code_lines "$SCRIPT" | grep -qE '(^|[^-[:alnum:]_])(pg_dump|pg_restore|ssh|scp)([[:space:]]|$)'; then
+if code_lines "$SCRIPT" | grep -E '(^|[^-[:alnum:]_])(pg_dump|pg_restore|ssh|scp)([[:space:]]|$)' >/dev/null; then
   fail "the reset INVOKES pg_dump, pg_restore, ssh or scp - it must read nothing from anywhere"
 else
   ok "it invokes no dump, restore or remote copy"
@@ -89,19 +89,19 @@ else
   fail "a docker exec outside the guarded routes: $outside"
 fi
 for route in dev_psql dev_psql_ro dev_redis dev_redis_ro; do
-  if fn_body "$SCRIPT" "$route" | grep -q 'require_dev'; then
+  if fn_body "$SCRIPT" "$route" | grep 'require_dev' >/dev/null; then
     ok "$route() re-checks the target's project label per call"
   else
     fail "$route() does not call require_dev"
   fi
 done
-if fn_body "$SCRIPT" require_dev | grep -q 'project_of'; then
+if fn_body "$SCRIPT" require_dev | grep 'project_of' >/dev/null; then
   ok "require_dev() reads the label Docker reports, not a name"
 else
   fail "require_dev() does not read the compose project label"
 fi
 for route in dev_psql dev_redis; do
-  if fn_body "$SCRIPT" "$route" | grep -q 'DRY_RUN'; then
+  if fn_body "$SCRIPT" "$route" | grep 'DRY_RUN' >/dev/null; then
     ok "$route() honours --dry-run"
   else
     fail "$route() ignores --dry-run, so the dry run is not dry"
@@ -113,12 +113,12 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 printf '\nthe truncate reaches every table but the ledger, by derivation:\n'
 
-if code_lines "$SCRIPT" | grep -q 'FROM pg_tables WHERE schemaname = .public.'; then
+if code_lines "$SCRIPT" | grep 'FROM pg_tables WHERE schemaname = .public.' >/dev/null; then
   ok "the table list is read from the catalogue, never typed"
 else
   fail "the truncate does not derive its table list from pg_tables"
 fi
-if code_lines "$SCRIPT" | grep -q 'schema_migrations'; then
+if code_lines "$SCRIPT" | grep 'schema_migrations' >/dev/null; then
   fail "the ledger's name is typed in the reset - it must come from infrastructure/lib/migrations.sh"
 else
   ok "the ledger's name is read from infrastructure/lib/migrations.sh"
@@ -149,7 +149,7 @@ else
 fi
 # A dev job that dumps production would be the copy rebuilt under another name.
 if awk '/^  dev-reset:/,/^  [a-z-]+:$/ { if ($0 !~ /^  dev-reset:/ && $0 ~ /^  [a-z-]+:$/) exit; print }' "$SCHEDULED" |
-  grep -vE '^[[:space:]]*#' | grep -qE 'pg_dump|canari-prod'; then
+  grep -vE '^[[:space:]]*#' | grep -E 'pg_dump|canari-prod' >/dev/null; then
   fail "the dev-reset job reads production"
 else
   ok "the dev-reset job reads nothing from production"
@@ -234,7 +234,7 @@ fi
 # shape, any stop or start, any Redis write, or any stream at all is the dry run writing.
 writes='^(stop|start) |FLUSHALL|BGREWRITEAOF|^exec -i stub-pg psql -v '
 if grep -qE "$writes" "$TMP/dry.log" || [ -s "$TMP/dry.stream" ]; then
-  fail "the dry run stopped a service or wrote to a datastore: $(grep -E "$writes" "$TMP/dry.log" | head -3 | tr '\n' ' ')"
+  fail "the dry run stopped a service or wrote to a datastore: $(grep -E "$writes" "$TMP/dry.log" | sed -n 1,3p | tr '\n' ' ')"
 else
   ok "the dry run stops nothing, flushes nothing and streams nothing"
 fi
@@ -259,10 +259,10 @@ if run_stubbed real canari-dev; then
 else
   fail "a real run failed: $(tail -3 "$TMP/real.out")"
 fi
-line_of() { grep -nE "$1" "$TMP/real.log" | head -1 | cut -d: -f1; }
+line_of() { grep -nE "$1" "$TMP/real.log" | sed -n 1p | cut -d: -f1; }
 stop_at=$(line_of '^stop ')
 ledger_at=$(grep -nE 'INSERT INTO schema_migrations' "$TMP/real.log" | tail -1 | cut -d: -f1)
-reset_at=$(grep -nF -e '--single-transaction' "$TMP/real.log" | head -1 | cut -d: -f1)
+reset_at=$(grep -nF -e '--single-transaction' "$TMP/real.log" | sed -n 1p | cut -d: -f1)
 flush_at=$(line_of 'FLUSHALL')
 start_at=$(grep -nE '^start ' "$TMP/real.log" | tail -1 | cut -d: -f1)
 if [ -n "$stop_at" ] && [ -n "$ledger_at" ] && [ -n "$reset_at" ] && [ -n "$flush_at" ] && [ -n "$start_at" ] &&

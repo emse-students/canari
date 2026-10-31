@@ -307,7 +307,7 @@ check_that "the filter fires for the Gradle wrapper (the #2564 case)" filter_fir
 check_that "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" filter_fires "frontend/src-tauri/src/lib.rs"
 check_not "the filter stays quiet for an unrelated change" filter_fires "apps/core-service/src/main.ts"
 # ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
-ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep -q 'compile-android-app'; }
+ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep 'compile-android-app' >/dev/null; }
 check_that "ci-passed needs compile-android-app" ci_passed_needs
 
 # -------------------------------------------------------------------------------------------------

@@ -111,7 +111,7 @@ read_plist_key() {
 
 read_pbxproj_setting() {
   sed -n "s/^${1} = \([^;]*\);/\1/p" \
-    "$SANDBOX/run/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" | head -n 1
+    "$SANDBOX/run/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" | sed -n 1p
 }
 
 assert_eq() {
