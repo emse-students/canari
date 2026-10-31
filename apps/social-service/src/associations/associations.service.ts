@@ -8,6 +8,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { assertKindMaySell } from './selling-kinds';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -3166,6 +3167,9 @@ ${rejectionReason}`
       );
       throw new ServiceUnavailableException('Business key storage is not configured');
     }
+    // A list or an institution collects nothing. An absent row is left to the UPDATE below (404).
+    const target = await this.assoRepo.findOne({ where: { id }, select: { id: true, type: true } });
+    if (target) assertKindMaySell(this.logger, id, target.type, 'Lydia account link');
     const sealed = sealSecret(
       LYDIA_BUSINESS_KEY_PURPOSE,
       lydiaBusinessKeyContext(id, vendorToken),
@@ -4057,6 +4061,15 @@ ${rejectionReason}`
    * before accepting paid forms/purchases.
    * @throws BadRequestException when neither the association nor its approved parent can receive payments
    */
+  /** The kind of an association (`null` when it does not exist) - what the forms' price guard reads. */
+  async kindOf(associationId: string): Promise<Association['type'] | null> {
+    const row = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: { id: true, type: true },
+    });
+    return row?.type ?? null;
+  }
+
   async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {

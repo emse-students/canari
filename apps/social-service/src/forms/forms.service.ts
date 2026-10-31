@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { assertKindMaySell } from '../associations/selling-kinds';
 import {
   BadRequestException,
   ConflictException,
@@ -193,6 +194,31 @@ export class FormsService {
     private readonly formFiles: FormFilesService,
     private readonly organiserAlert: FormOrganiserAlertService
   ) {}
+
+  /**
+   * A form of a list or an institution may not be given a price (owner, 2026-10-31): those kinds
+   * collect nothing. Judged on what the write CHANGES - `stored` is the form being edited, so one
+   * that already carries a price stays editable as long as its price fields are left as they are,
+   * and nothing here ever rewrites a stored price.
+   */
+  private async assertKindMayPrice(
+    input: CreateFormDto,
+    associationId: string | null | undefined,
+    stored?: Form
+  ): Promise<void> {
+    if (!associationId || !chargesMoney(input)) return;
+    if (
+      stored &&
+      input.basePrice === stored.basePrice &&
+      (input.requiresPayment ?? stored.requiresPayment) === stored.requiresPayment &&
+      JSON.stringify(input.priceMatrix ?? stored.priceMatrix ?? null) ===
+        JSON.stringify(stored.priceMatrix ?? null)
+    ) {
+      return;
+    }
+    const kind = await this.associationsService.kindOf(associationId);
+    if (kind) assertKindMaySell(this.logger, associationId, kind, 'form price');
+  }
 
   /**
    * Paid forms linked to an association require its payment onboarding to be complete.
@@ -507,6 +533,7 @@ export class FormsService {
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
+    await this.assertKindMayPrice(input, input.associationId?.trim());
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -745,6 +772,7 @@ export class FormsService {
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
     });
 
+    await this.assertKindMayPrice(input, form.associationId, form);
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
       { ...input, associationId: form.associationId },

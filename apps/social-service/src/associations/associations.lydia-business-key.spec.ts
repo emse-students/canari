@@ -29,6 +29,7 @@ type Row = {
   sealed: string | null;
   dashboardUrl?: string | null;
   complete?: boolean;
+  type?: 'association' | 'list' | 'institution';
 };
 
 /** The association table as the raw SQL of `setLydiaAccountId` & co. reads and writes it. */
@@ -38,7 +39,9 @@ function makeService(rows: Row[]) {
   const assoRepo = {
     findOne: jest.fn(async ({ where }: { where: { id: string } }) => {
       const row = byId(where.id);
-      return row ? { id: row.id, lydiaAccountId: row.lydiaAccountId } : null;
+      return row
+        ? { id: row.id, lydiaAccountId: row.lydiaAccountId, type: row.type ?? 'association' }
+        : null;
     }),
     query: jest.fn(async (sql: string, params: string[]) => {
       if (sql.startsWith('UPDATE associations') && sql.includes('SET "lydiaAccountId" = $2')) {
@@ -148,6 +151,22 @@ describe('AssociationsService - the Lydia Business key', () => {
     expect(table.every((r) => r.sealed)).toBe(true);
     await loggedDuring(async () => expect(await service.lydiaCallbackKey('vendor-x')).toBeNull());
   });
+});
+
+describe('AssociationsService.setLydiaAccountId - a list or an institution collects nothing (owner, 2026-10-31)', () => {
+  it.each(['list', 'institution'] as const)(
+    'refuses to link a Business to a %s, typed 403, nothing written',
+    async (type) => {
+      const { service, table } = makeService([
+        { id: ASSO_A, lydiaAccountId: null, sealed: null, type },
+      ]);
+      const attempt = service.setLydiaAccountId(ASSO_A, 'vendor-a', null, KEY_A);
+      await expect(attempt).rejects.toMatchObject({
+        response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+      });
+      expect(table[0]).toMatchObject({ lydiaAccountId: null, sealed: null });
+    }
+  );
 });
 
 describe('AssociationsService.setLydiaAccountId - the key captured at business/create', () => {

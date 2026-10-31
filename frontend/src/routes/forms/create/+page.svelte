@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
@@ -332,6 +333,7 @@
     {items}
     associationName={selectedAssociation?.name ?? ''}
     {associationCanBePaid}
+    associationSells={!selectedAssociation || kindHasSection(selectedAssociation.type, 'payments')}
   />
 
   <!-- 3. Questions -->

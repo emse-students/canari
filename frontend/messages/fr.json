@@ -2404,6 +2404,7 @@
   "form_edit_heading": "Modifier le formulaire",
   "form_edit_load_error": "Impossible de charger le formulaire.",
   "form_section_general": "Informations générales",
+  "form_payment_kind_no_sale": "Une liste ou une institution n'encaisse rien : le prix de ce formulaire ne peut plus être modifié.",
   "form_section_payment": "Paiement",
   "form_section_questions": "Questions",
   "form_section_advanced": "Paramètres avancés",

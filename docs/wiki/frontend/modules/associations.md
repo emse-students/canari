@@ -160,9 +160,16 @@ and the server ignores a shop right on these kinds. The admin preset a new membe
 `adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
 endpoints carry no type check, so they already accepted a list; the republication allowlist
 (`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
-(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. Nothing server-side stops an
-institution or a list from holding products or a payment account (no type guard on the product or
-Lydia endpoints): the UI now hides the sections, it does not delete rows.
+(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. **The server holds the same rule** (`associations/selling-kinds.ts`, an allowlist: only `association`
+sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on
+`POST` and `PATCH :id/products`, on the Lydia account link (`setLydiaAccountId`, the one writer of the
+payout account) and on a form price (`POST` and `PUT` of a form: base price, a grid cell, the payment
+switch). It judges NEW WRITES only: no existing product, account or priced form is deleted or
+rewritten, and a priced form of such a kind stays editable while its price fields are left as they
+are. Not guarded, because no UI offers them to these kinds and each needs a right they cannot hold in
+the editor: payment delegation, cotisation tiers (products), the Lydia disconnect (it removes). The
+form editor draws no price section for them, and a priced one is shown frozen
+(`FormPaymentSection`, `associationSells`).
 
 ### The half that could only ever be turned off
 
