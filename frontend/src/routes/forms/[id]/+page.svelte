@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
-  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
@@ -70,6 +70,13 @@
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(safeInternalPath(page.url.searchParams.get('redirect'), '/posts'));
+
+  /** Leaves the form for `redirectTo`; a navigation that rejects is logged, never dropped. */
+  function leaveForm(): void {
+    gotoAppPath(redirectTo).catch((err: unknown) =>
+      console.error('[forms] leaving the form for its redirect target failed:', err)
+    );
+  }
 
   let form = $state<Form | null>(null);
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
@@ -407,7 +414,7 @@
         successMessage = res.alreadyPaid
           ? m.form_view_submission_already_paid()
           : m.form_view_submission_success();
-        setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
+        setTimeout(leaveForm, 1500);
       }
     } catch (e: any) {
       error = providerRefusalMessage(e) ?? (e.message || m.form_view_error_payment_failed());
@@ -492,7 +499,7 @@
   <div class="mb-6 flex items-center justify-between">
     <button
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
-      onclick={() => goto(resolve(internalPath(redirectTo)))}
+      onclick={leaveForm}
     >
       <ArrowLeft size={15} />
       {m.common_back()}
@@ -526,9 +533,8 @@
   {:else if error && !form}
     <div class="border-cn-border space-y-3 rounded-3xl border bg-(--cn-surface) p-10 text-center">
       <p class="text-red-err font-semibold">{error}</p>
-      <button
-        class="text-text-muted text-sm hover:underline"
-        onclick={() => goto(resolve(internalPath(redirectTo)))}>{m.common_back()}</button
+      <button class="text-text-muted text-sm hover:underline" onclick={leaveForm}
+        >{m.common_back()}</button
       >
     </div>
   {:else if form}

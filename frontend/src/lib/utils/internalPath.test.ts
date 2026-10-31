@@ -61,7 +61,7 @@ describe('safeInternalPath', () => {
       '/%09/x.example',
       '/%2F%2Fx.example',
       '/%5Cx.example',
-      '/forms/été',
+      `/forms/${String.fromCharCode(0xe9)}t${String.fromCharCode(0xe9)}`,
     ]) {
       expect(safeInternalPath(good, '/posts')).toBe(good);
     }
@@ -100,8 +100,38 @@ describe('safeInternalPath', () => {
       `/forms${TAB}/3`,
       `/forms${BS}3`,
       `/posts${String.fromCharCode(0)}`,
+      `/posts${String.fromCharCode(0x7f)}`,
+      `/posts${String.fromCharCode(0x85)}`,
+      `/posts${String.fromCharCode(0x9f)}`,
+      `/posts${String.fromCharCode(0x2028)}`,
+      `/posts${String.fromCharCode(0x2029)}`,
     ]) {
       expect(safeInternalPath(bad, '/posts')).toBe('/posts');
+    }
+  });
+
+  it('falls back on a value that is not a string', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const bad of [42, {}, ['/posts'], true]) {
+      expect(safeInternalPath(bad as unknown as string, '/posts')).toBe('/posts');
+    }
+  });
+
+  it('returns only values a browser resolves on the page they are read on', () => {
+    const page = 'https://canari.test/forms/create';
+    for (const value of [
+      '/.//x.example',
+      '/..//x.example',
+      '/./..//x.example/p',
+      '/%2e%2e//x.example',
+      '/@x.example',
+      '/x.example@y.example',
+      ' javascript:void(0)',
+      `${TAB}javascript:void(0)`,
+      '/javascript:void(0)',
+    ]) {
+      const kept = safeInternalPath(value, '/posts');
+      expect(new URL(kept, page).origin).toBe('https://canari.test');
     }
   });
 });
