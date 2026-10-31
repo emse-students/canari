@@ -388,6 +388,33 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(await awaiting(JOINER)).toBe(true);
   });
 
+  it("a push's Add never answers the ask: refused awaiting_admission under the seat lock, nothing advanced", async () => {
+    // The background Welcome a member's shut phone answers (`push/send-welcome-and-commit`) is no
+    // member's gesture, whatever the phone's tree says (a removed member's leaf can outlive them).
+    await acceptLink();
+
+    await expect(
+      service.validateCommit(
+        {
+          groupId: GROUP,
+          deviceId: MEMBER.deviceId,
+          baseEpoch: 3,
+          proto: memberCommitFrame(GROUP, 3n),
+          senderId: MEMBER.userId,
+          admits: [JOINER],
+        },
+        MEMBER.userId,
+        { mayAnswerAsk: false }
+      )
+    ).resolves.toMatchObject({ accepted: false, reason: 'awaiting_admission' });
+
+    expect(await epochOf()).toBe(3);
+    expect(await awaiting(JOINER)).toBe(true);
+    // And the same Add from a member's own gesture still answers it.
+    await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+    expect(await awaiting(JOINER)).toBe(false);
+  });
+
   it("a member's Add admits the joiner: the ask is lifted with the advance, and the joiner may rejoin by themselves", async () => {
     await acceptLink();
 

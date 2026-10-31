@@ -1425,10 +1425,14 @@ while a foreground or warm process owns the state, stages over the exact bytes i
 (compare-and-swap), refuses a second staged commit and an `already-member`, and records a refused
 answer so the same bytes are not offered twice. **A seat that is still an invitation link's ask is
 never admitted from a push**: the tree cannot show the seat's flag, and a removed member's leaf can
-outlive the removal, so the server's push route refuses such a target (`awaiting_admission`,
-`push.controller.ts`) - the gate would otherwise read the commit as a member's Accept - and the
-phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the foreground's
-`admissionOfSeat` refuses the same seat. The per-device rule it had
+outlive the removal. Three layers, each the server's: no phone is woken for an ask at all
+(`notifyWelcomeRequest` sends no `welcome_request_pending` for an awaiting seat - the stored frames
+still reach every member's app); the push route refuses such a target before the lock as its cheap
+first refusal (`awaiting_admission`, `push.controller.ts`); and the GATE refuses it under the seat
+lock (`validateCommit(..., { mayAnswerAsk: false })`, `enrolAdmittedPeople`), which no ask written
+after the route's read can overtake - it would otherwise read the commit as a member's Accept and
+lift the ask. The phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the
+foreground's `admissionOfSeat` refuses the same seat. The per-device rule it had
 (`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
 path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
 still waits for a member's app.

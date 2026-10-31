@@ -512,8 +512,14 @@ pub fn welcome_request_known_refused(
 }
 
 /// A refusal of [`prepare_welcome_background_with_key`], as the token the native callers branch on.
+///
+/// THE NATIVE CALLER OWNS THE LINE THAT SAYS IT, at the level the token deserves
+/// (`BackgroundWelcomeAnswer.prepareRefusalLevel`: the ordinary refusals - `newcomer`,
+/// `foreground-active`, `warm-process`, `commit-pending` - at debug, any other at warn). This
+/// crate's log reaches no logger in a killed Android app, where the push runs, so a level decided
+/// here would decide nothing; and saying it from both sides printed every refusal twice. Debug here.
 fn welcome_refused(reason: &str) -> serde_json::Value {
-    log::warn!("[BG_WELCOME] prepare refused reason={reason}");
+    log::debug!("[BG_WELCOME] prepare refused reason={reason}");
     refused(reason)
 }
 
@@ -618,7 +624,8 @@ pub fn prepare_welcome_background_with_key(
         }
     };
     if matches!(manager.has_pending_commit(group_id), Ok(true)) {
-        log::warn!(
+        // Ordinary while a stage awaits its settlement: said quietly (`welcome_refused`).
+        log::debug!(
             "[BG_WELCOME] group={short} holds a staged commit not yet settled - no second one is staged over it"
         );
         return welcome_refused("commit-pending");
@@ -632,7 +639,7 @@ pub fn prepare_welcome_background_with_key(
     match manager.user_holds_leaf(group_id, requester) {
         Ok(true) => {}
         Ok(false) => {
-            log::info!(
+            log::debug!(
                 "[BG_WELCOME] device {requester} belongs to a user with no leaf in group={short} - a new person is not added from a push, a member's approval is owed"
             );
             return welcome_refused("newcomer");

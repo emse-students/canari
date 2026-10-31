@@ -198,6 +198,9 @@ object BackgroundWelcomeAnswer {
      * The level a refusal of the native prepare is logged at: [Level.DEBUG] for an
      * [EXPECTED_PREPARE_REFUSALS] token, [Level.WARN] for any other - a refused key package, an
      * unreadable state, a token this build was not taught.
+     *
+     * THE ONE OWNER OF THAT LINE AND OF THIS SET: the Rust prepare says its refusal at debug only
+     * (`welcome_refused`, `background.rs`), since its log reaches no logger in a killed app.
      */
     fun prepareRefusalLevel(token: String?): Level =
         if (token in EXPECTED_PREPARE_REFUSALS) Level.DEBUG else Level.WARN
