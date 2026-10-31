@@ -3,16 +3,18 @@ import { publicAppUrl } from '$lib/utils/publicAppUrl';
 import { canShareOut, runShareOut, shareTextOut } from '$lib/sharing/shareOut';
 
 /**
- * WHAT A LIVE'S SHARE LINK IS: a live has no page of its own (docs/wiki/frontend/modules/live.md,
- * "no deep link to one live"), it is a card at the top of the feed, so the link is the feed's -
- * `/posts` on the public origin. A reader who may see the live finds its card there; nobody else
- * learns anything from the link.
+ * WHAT A LIVE'S SHARE LINK IS: `/lives/<id>` on the public origin, the live's own page
+ * (`routes/lives/[liveId]`). It carries the id and nothing else: the page opens the viewer for a
+ * reader the server lets in (`assertMayWatch`) and says "this live has ended" to everyone else, so
+ * the link grants nothing. The same route is the target of the "X est en live" push.
  */
-export const LIVE_SHARE_PATH = '/posts';
+export function liveSharePath(liveId: string): string {
+  return `/lives/${encodeURIComponent(liveId)}`;
+}
 
 /** The one link both surfaces share. */
-export function liveShareUrl(): string {
-  return publicAppUrl(LIVE_SHARE_PATH);
+export function liveShareUrl(liveId: string): string {
+  return publicAppUrl(liveSharePath(liveId));
 }
 
 /**
@@ -20,10 +22,10 @@ export function liveShareUrl(): string {
  * system share sheet where the build has one (`canShareOut`, the phone apps), otherwise a copy to
  * the clipboard with the helper's toast. Nothing here touches the camera or the recorder.
  */
-export function shareLiveLink(): void {
+export function shareLiveLink(liveId: string): void {
   if (canShareOut()) {
-    void runShareOut('the live link', () => shareTextOut(liveShareUrl()));
+    void runShareOut('the live link', () => shareTextOut(liveShareUrl(liveId)));
     return;
   }
-  void copyPublicShareLink(LIVE_SHARE_PATH);
+  void copyPublicShareLink(liveSharePath(liveId));
 }

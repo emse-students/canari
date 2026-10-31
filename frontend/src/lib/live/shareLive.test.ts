@@ -19,19 +19,19 @@ import { liveShareUrl, shareLiveLink } from './shareLive';
 beforeEach(() => vi.clearAllMocks());
 
 describe('shareLiveLink', () => {
-  it('names the feed on the public origin', () => {
-    expect(liveShareUrl()).toBe('https://c.test/posts');
+  it('names the page of the live on the public origin', () => {
+    expect(liveShareUrl('l1')).toBe('https://c.test/lives/l1');
   });
   it('opens the system sheet in a phone app', () => {
     h.native = true;
-    shareLiveLink();
-    expect(h.shareTextOut).toHaveBeenCalledWith('https://c.test/posts');
+    shareLiveLink('l1');
+    expect(h.shareTextOut).toHaveBeenCalledWith('https://c.test/lives/l1');
     expect(h.copy).not.toHaveBeenCalled();
   });
   it('copies the link elsewhere', () => {
     h.native = false;
-    shareLiveLink();
-    expect(h.copy).toHaveBeenCalledWith('/posts');
+    shareLiveLink('l1');
+    expect(h.copy).toHaveBeenCalledWith('/lives/l1');
     expect(h.runShareOut).not.toHaveBeenCalled();
   });
 });

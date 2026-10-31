@@ -364,7 +364,7 @@
           class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
           aria-label={m.live_share_label()}
           title={m.live_share_label()}
-          onclick={shareLiveLink}
+          onclick={() => shareLiveLink(live.id)}
           data-live-share
         >
           <Share2 size={22} />

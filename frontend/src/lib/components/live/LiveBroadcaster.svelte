@@ -348,16 +348,19 @@
         <!-- The on-air controls, together at the top right: share the link, show or hide the chat
              (the old eye-off icon hid ONE LINE and is now in that line's tap menu), and the small
              End - destructive, so it asks (`confirmEnd`). -->
-        <button
-          type="button"
-          class={iconButton}
-          aria-label={m.live_share_label()}
-          title={m.live_share_label()}
-          onclick={shareLiveLink}
-          data-live-share
-        >
-          <Share2 size={20} strokeWidth={2.25} />
-        </button>
+        {#if broadcast.liveId}
+          {@const sharedId = broadcast.liveId}
+          <button
+            type="button"
+            class={iconButton}
+            aria-label={m.live_share_label()}
+            title={m.live_share_label()}
+            onclick={() => shareLiveLink(sharedId)}
+            data-live-share
+          >
+            <Share2 size={20} strokeWidth={2.25} />
+          </button>
+        {/if}
         <button
           type="button"
           class={iconButton}
@@ -373,14 +376,17 @@
             <MessageCircleOff size={20} strokeWidth={2.25} />
           {/if}
         </button>
+        <!-- A compact X like the other controls, tinted red because it is destructive; its name is
+             "Terminer" and the confirmation stays. -->
         <button
           type="button"
-          class="inline-flex min-h-9 items-center gap-1 rounded-full bg-red-600 px-3 text-xs font-bold outline-none hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-white"
+          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
+          aria-label={m.live_end_button()}
+          title={m.live_end_button()}
           onclick={() => void confirmEnd()}
           data-live-end
         >
-          <X size={14} strokeWidth={3} />
-          {m.live_end_button()}
+          <X size={20} strokeWidth={2.75} />
         </button>
       {/if}
     </div>

@@ -283,7 +283,7 @@
   {#if unseen > 0}
     <button
       type="button"
-      class="glass-chrome text-cn-dark absolute start-1/2 bottom-14 inline-flex min-h-9 -translate-x-1/2 items-center gap-1.5 rounded-full px-3 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
+      class="live-chat-glass absolute start-1/2 bottom-14 inline-flex min-h-9 -translate-x-1/2 items-center gap-1.5 rounded-full px-3 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
       onclick={jumpToNewest}
       data-live-chat-new
     >
@@ -293,15 +293,15 @@
   {/if}
 
   {#if canWrite}
-    <!-- The shared glass material (`.glass-chrome`, app.css): a thin pill, the send inside it. -->
+    <!-- Over a live the glass is ALWAYS light-on-dark, whatever the theme: dark text on a dark picture is unreadable (`.live-chat-glass` below, the glass of app.css on dark tokens). -->
     <form
-      class="glass-chrome flex min-h-11 items-center gap-1 rounded-full ps-4 pe-1"
+      class="live-chat-glass flex min-h-11 items-center gap-1 rounded-full ps-4 pe-1"
       onsubmit={submit}
       data-live-chat-composer
     >
       <input
         type="text"
-        class="text-cn-dark placeholder:text-cn-dark/60 min-h-10 min-w-0 flex-1 bg-transparent text-sm outline-none"
+        class="min-h-10 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/70"
         placeholder={m.live_chat_placeholder()}
         aria-label={m.live_chat_input_label()}
         aria-invalid={composerError !== null}
@@ -339,6 +339,15 @@
   /* White on a moving picture: the shadow, not a box, keeps a line legible. */
   .live-chat-line {
     text-shadow: 0 0.0625rem 0.25rem color-mix(in srgb, var(--color-cn-scrim) 85%, transparent);
+  }
+  /* The shared glass recipe (`.glass-chrome`: blur, saturate, a hairline edge) on DARK tokens, fixed
+     for the live whatever the theme: the picture behind is the video, never the theme's surface. */
+  .live-chat-glass {
+    background: color-mix(in srgb, var(--color-cn-scrim) 45%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid color-mix(in srgb, white 22%, transparent);
+    color: white;
   }
   .live-chat-action {
     display: inline-flex;

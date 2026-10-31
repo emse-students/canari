@@ -47,11 +47,10 @@ export function appRouteForDeepLink(u: URL): AppPath | null {
       return '/calendar';
     case 'admin-agenda':
       return '/admin/agenda';
-    // "X est en live" (WP-L7): the FEED, where the LIVE card is to be (L5). The live's own viewer
-    // page is WP-L5, still owed, so the id is not read yet; the host is owned here so the tap lands
-    // on the feed instead of the unknown-host branch of the hook.
+    // "X est en live" (WP-L7): the live's own page, `/lives/<id>` - the same route its share link
+    // opens. A payload naming no id lands on the feed, where the LIVE card is.
     case 'live':
-      return '/posts';
+      return id ? `/lives/${encodeURIComponent(id)}` : '/posts';
     // D38b: a request to let an association carry a personal post - the author's inbox.
     case 'republication-requests':
       return REPUBLICATION_REQUESTS_ROUTE;
