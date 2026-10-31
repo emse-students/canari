@@ -65,6 +65,8 @@
 "notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
 "notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";
 "notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
+"notif.lydia_refund_issued.title" = "Remboursement";
+"notif.lydia_refund_issued.body" = "%1$@ vous a remboursé un paiement.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";

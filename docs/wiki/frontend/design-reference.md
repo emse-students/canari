@@ -3309,6 +3309,10 @@ Every avatar without a photo or logo (a person, a group or community, an associa
 - **Shapes** are unchanged: the caller passes `circle` or `squircle`. A real photo or logo is untouched.
 - Not converted: the Carte poster canvas (`trombinoscope.ts`) still draws its own `generateAvatarColor` tiles.
 
+## User-visible text shows outcomes, never internals (owner, 2026-10-31)
+
+No key fingerprint or technical id on a normal screen: the waiting device's own notice (`chat_waiting_own_device`) no longer prints its key, and the devices list shows a device's name, browser and last use but not its id. The rule and the screens still listed are in [durable-rules](../durable-rules.md) (UI and i18n).
+
 ## The brand lockup is centred on its icon by trimming the line boxes (2026-10-31)
 
 `CanariBrand` (the only place the lockup is drawn: `Navbar`, and `MobileHeader` without the tagline) sat 1.5-2 px low because each line box carries space above the cap height and below the baseline. Each line is now `leading-none` with `em` margins from the font's real metrics (Fredoka 700: cap top 0.166em, baseline 0.131em from the box edges; Nunito 500: 0.110em and 0.171em), and the block is `min-h-10` + `justify-between`, so the cap top of "Canari" and the baseline of the tagline sit on the icon's edges (measured: within 0.5 px, was +2.0 / +1.6 px). `em` and not `text-box: trim-both cap alphabetic`, which Firefox has not shipped. Re-measure these constants if the brand or body font changes.

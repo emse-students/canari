@@ -4,6 +4,7 @@ import { LydiaCashiersController } from './lydia-cashiers.controller';
 import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import { PaymentService } from './payment.service';
 import { PaymentWebhookController } from './webhook.controller';
+import { RefundController } from './refund.controller';
 import { PlatformModule } from '../platform/platform.module';
 
 @Module({
@@ -11,6 +12,7 @@ import { PlatformModule } from '../platform/platform.module';
   controllers: [
     PaymentController,
     PaymentWebhookController,
+    RefundController,
     LydiaCashiersController,
     InternalLydiaCashiersController,
   ],

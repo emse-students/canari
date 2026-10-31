@@ -44,6 +44,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   bumpSeatGeneration,
   readSeatGeneration,
@@ -63,6 +64,7 @@ import {
   callerSeatStanding,
   refuseAwaitingSeat,
   withheldWindows,
+  withholdsArrivalSpan,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
@@ -611,6 +613,15 @@ export class MembersController {
         message: 'This person cannot be added.',
       });
     }
+
+    // Nor across the review cohort's boundary (review-cohort-groups.ts), by the same reasoning.
+    await assertGroupStaysOnOneSide(
+      this.dataSource.manager,
+      safeGroupId,
+      safeUserId,
+      caller,
+      `[ADD_MEMBER][${traceId}]`
+    );
 
     this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 
@@ -1437,8 +1448,7 @@ export class MembersController {
         `[EXCLUSIONS] group=${safeGroupId} has members but NO group row - answered as a 1:1`
       );
     }
-    const beforeFirstArrival =
-      group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
+    const beforeFirstArrival = withholdsArrivalSpan(group);
 
     const exclusions: Record<string, ExclusionWindow[]> = {};
     for (const userId of counted) {

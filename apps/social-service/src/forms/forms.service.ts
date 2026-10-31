@@ -47,6 +47,8 @@ import {
   hasFileQuestion,
   type AnswerFileState,
 } from './form-files.service';
+import { assertReviewerReachesAssociation } from '../associations/review-cohort-reach';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -994,6 +996,7 @@ export class FormsService {
           userId: submission.userId,
           source: 'form',
           formId: submission.formId,
+          submissionId: submission.id,
           amountCents: submission.totalPaid,
           paymentMethod: how.paymentMethod,
           status: receivedStatus(delivered),
@@ -1239,6 +1242,24 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
+    // Across the review cohort's boundary nothing is submitted or bought: a review account answers
+    // only its own associations' forms, and nobody answers a review account's personal form
+    // (review-cohort-reach.ts, review-cohort.ts).
+    if (!guest && input.userId) {
+      if (form.associationId) {
+        await assertReviewerReachesAssociation(
+          this.formRepo.manager,
+          input.userId,
+          form.associationId,
+          'form submission'
+        );
+      } else if (!sameSideOfReviewCohort(input.userId, form.ownerId)) {
+        this.logger.log(
+          `[REVIEW_COHORT] form submission refused: form=${id.slice(0, 8)} across the boundary`
+        );
+        throw new ReviewCohortBoundaryException();
+      }
+    }
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
       throw new BadRequestException('The form is not open yet.');
@@ -1695,9 +1716,17 @@ export class FormsService {
           savedSubmission.stripeSessionId = sessionId;
           savedSubmission.paymentRequestId = requestId;
           // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+          // The order_ref and the Business beside the ids: what a refund of this payment is sent
+          // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
+          // OVERWRITTEN by each new request, and the LAST one is the only one that can be paid: a
+          // retry first settles the request before it at Lydia (D2, `settleOpenRequest`) - cancelled,
+          // or found paid and no new request issued - and refuses while it cannot. So no answer ever
+          // holds two payable requests, and the order_ref kept is the one the money came through.
           await this.submissionRepo.update(savedSubmission.id, {
             stripeSessionId: sessionId,
             paymentRequestId: requestId,
+            lydiaOrderRef: idempotencyKey,
+            lydiaVendorToken: connectAccountId ?? null,
           });
         }
 

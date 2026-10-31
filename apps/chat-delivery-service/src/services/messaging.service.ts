@@ -69,16 +69,20 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
+  withheldWindows,
   withholdExcludedHistoryRows,
+  withholdsArrivalSpan,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
   type PayloadGroupFacts,
@@ -393,6 +397,19 @@ class WelcomeSeatGone extends Error {
   constructor() {
     super('welcome target seat gone');
     this.name = 'WelcomeSeatGone';
+  }
+}
+
+/**
+ * Thrown inside `validateCommit`'s transaction when a commit from a door that is no member's gesture
+ * (`mayAnswerAsk: false`, the background Welcome) would admit a person whose seat still awaits a
+ * member's admission: rolls the commit back and is answered `awaiting_admission`. A type, so the
+ * catch never reads a message.
+ */
+class AskNotAnswerable extends Error {
+  constructor() {
+    super('an ask is answered only by a member');
+    this.name = 'AskNotAnswerable';
   }
 }
 
@@ -2148,11 +2165,18 @@ export class MessagingService {
    *
    * Returns accepted=true with newEpoch on success, or accepted=false with
    * currentEpoch and a reason string when the commit is rejected.
+   *
+   * @param opts.mayAnswerAsk `false` from a door that is never a member's gesture - the background
+   *   Welcome a push answers: a seat still awaiting a member's admission (an invitation link's ask)
+   *   is then refused UNDER THE SEAT LOCK, answered `awaiting_admission`, never lifted
+   *   ({@link enrolAdmittedPeople}). Not a body field, so no client can set it. Default `true`.
    */
   async validateCommit(
     body: ValidateCommitBody,
-    authUserIdRaw: string
+    authUserIdRaw: string,
+    opts: { mayAnswerAsk?: boolean } = {}
   ): Promise<ValidateCommitResult> {
+    const mayAnswerAsk = opts.mayAnswerAsk ?? true;
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -2644,7 +2668,7 @@ export class MessagingService {
           // its roster, when it carries one, else the base epoch's (`invitationSeatGeneration`).
           // The inline Welcome's target is a person this commit admits too, held to the same bar.
           if (!distributionScopeOf(group)) {
-            const { refused, committerNotOnRoster } = await this.enrolAdmittedPeople(
+            const { refused, committerNotOnRoster, awaitingAsk } = await this.enrolAdmittedPeople(
               m,
               groupId,
               committer,
@@ -2653,8 +2677,12 @@ export class MessagingService {
                 : admitted,
               invitationSeatGeneration ?? seatGenerations.base,
               invitationSeatGeneration === undefined ? 'base_epoch' : 'invitation',
-              traceId
+              traceId,
+              mayAnswerAsk
             );
+            // A DOOR THAT IS NO MEMBER'S GESTURE NEVER ANSWERS AN ASK, typed apart from every other
+            // admission refusal so the push that tried is told why, and records the target.
+            if (awaitingAsk) throw new AskNotAnswerable();
             // A Welcome stored with this advance would hand a refused person the epoch's secrets:
             // refused as for a Welcome whose seat went, the answer that commit's sender reads.
             if (welcome && refused.has(welcome.userId)) {
@@ -2783,6 +2811,7 @@ export class MessagingService {
           e instanceof SeatClaimOvertaken ||
           e instanceof AdmitRefused ||
           e instanceof WelcomeSeatGone ||
+          e instanceof AskNotAnswerable ||
           (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
         ) {
           const duplicate = await this.answerIfAlreadyAccepted(
@@ -2820,6 +2849,14 @@ export class MessagingService {
                 reason: 'admit_refused',
                 userIds: e.userIds,
               };
+        }
+        // A push tried to answer an invitation link's ask: nothing was written.
+        if (e instanceof AskNotAnswerable) {
+          return {
+            accepted: false,
+            currentEpoch: group.activeEpoch,
+            reason: 'awaiting_admission',
+          };
         }
         // The seat went between the target check and this transaction: nothing was written.
         if (e instanceof WelcomeSeatGone) {
@@ -4045,6 +4082,8 @@ export class MessagingService {
    *   Add. Ordered by a COUNTER every removal and Decline moves under the seat lock, never by a clock.
    *   An AWAITING seat is asked the same question: a person declined who asked AGAIN holds a new
    *   awaiting seat, and an Add built before the Decline must not lift that second ask either;
+   * - ANY AWAITING SEAT, from a door that is no member's gesture (`mayAnswerAsk: false`, the
+   *   background Welcome): answered `awaiting_admission` by the caller ({@link AskNotAnswerable});
    * - AN AWAITING SEAT WHOSE PERSON EVER DEPARTED OR WAS EVER DECLINED, when the commit carries no
    *   invitation generation (`departed_and_undated`): the base epoch alone cannot order it against
    *   that departure.
@@ -4073,10 +4112,11 @@ export class MessagingService {
     admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
     decidedAt: number,
     decidedBy: 'invitation' | 'base_epoch',
-    traceId: string
-  ): Promise<{ refused: Set<string>; committerNotOnRoster: boolean }> {
+    traceId: string,
+    mayAnswerAsk = true
+  ): Promise<{ refused: Set<string>; committerNotOnRoster: boolean; awaitingAsk: boolean }> {
     const refused = new Set<string>();
-    const none = { refused, committerNotOnRoster: false };
+    const none = { refused, committerNotOnRoster: false, awaitingAsk: false };
     const people = [...new Set(admitted.map((a) => a.userId))].filter((u) => u !== committer);
     if (people.length === 0) return none;
     const seats = m.getRepository(GroupMember);
@@ -4105,7 +4145,16 @@ export class MessagingService {
     });
     if (!committerSeat) {
       for (const userId of candidates) refuse(userId, 'committer_not_on_roster');
-      return { refused, committerNotOnRoster: true };
+      return { refused, committerNotOnRoster: true, awaitingAsk: false };
+    }
+    // A DOOR THAT IS NO MEMBER'S GESTURE (`mayAnswerAsk: false`, the background Welcome a push
+    // answers) NEVER ANSWERS AN ASK: the seat's flag was read above in this transaction, under the
+    // seat lock a Decline takes, so no route check before it can be overtaken. The phone's verdict
+    // reads only its tree, where a removed member's leaf can outlive the removal.
+    const asks = mayAnswerAsk ? [] : candidates.filter((u) => held.get(u) === true);
+    if (asks.length > 0) {
+      for (const userId of asks) refuse(userId, 'awaiting_admission door=push');
+      return { refused, committerNotOnRoster: false, awaitingAsk: true };
     }
     // A removal or a self-leave closes a stretch; a Decline deletes the ask's stretch and records
     // its generation on the person's eviction row instead (`withdrawAwaitingSeat`).
@@ -4165,6 +4214,10 @@ export class MessagingService {
         refuse(userId, 'blocked');
         continue;
       }
+      if (!sameSideOfReviewCohort(committer, userId)) {
+        refuse(userId, 'review_cohort_boundary');
+        continue;
+      }
       // An awaiting seat is lifted by the caller, never re-enrolled.
       if (held.has(userId)) {
         if (decidedBy === 'base_epoch') undated.push(userId);
@@ -4172,7 +4225,7 @@ export class MessagingService {
       }
       toEnrol.push(userId);
     }
-    if (refused.size > 0) return { refused, committerNotOnRoster: false };
+    if (refused.size > 0) return { refused, committerNotOnRoster: false, awaitingAsk: false };
     // Admitted on the base epoch's order alone, an awaiting seat is said at WARN, so how often an
     // undated Add answers an ask is counted.
     for (const userId of undated) {
@@ -4255,8 +4308,16 @@ export class MessagingService {
       { groupId, id: In(flagged.map((s) => s.id)), awaitingAdmission: true },
       { awaitingAdmission: false }
     );
+    // THE ARRIVAL IS THIS ADD, NOT THE ASK (user, 2026-10-21: "added = arrived"): the link dated the
+    // person's interval and device rows when they asked, and every history answer and the stream
+    // would hand them what was sent while they waited outside.
+    const dated = await dateArrivalAtAdmission(
+      m,
+      groupId,
+      flagged.map((s) => s.userId)
+    );
     this.logger.log(
-      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask`
+      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask; arrival dated at this Add (intervals=${dated.intervals} devices=${dated.devices})`
     );
     return flagged.map((s) => ({ userId: s.userId, askId: s.id }));
   }
@@ -5829,10 +5890,24 @@ export class MessagingService {
 
     // Wake up offline peers via FCM so they reconnect and drain the pending request
     // without waiting for an organic reconnection.
-    await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+    //
+    // NOT FOR AN ASK OF A SEAT AWAITING A MEMBER (2026-10-31): the only thing that wake does is let
+    // a shut Android phone answer the request by itself (`welcome_request_pending`, the background
+    // Welcome), and a push never answers an ask - the route and the gate refuse it
+    // (`awaiting_admission`). Sending it would only spend a lock, a key package and a refusal per
+    // member's phone on every re-ask, to learn by failing what this seat already says. The stored
+    // frames above still reach every member's app when it opens, where the ask is a member's gesture.
+    if (awaitingAsk) {
+      say(
+        `[WELCOME_REQ][${traceId}] no background wake for group=${groupId} requester=${senderKey} - an ask is answered only by a member's app`
+      );
+    } else {
+      await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+    }
 
     say(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis` +
+        (awaitingAsk ? ', no FCM wake (an ask awaits a member)' : ', FCM sent to peers')
     );
     return { status: 'no_peer_online' };
   }
@@ -6429,7 +6504,11 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownExclusionWindows(headerUserId, groupId);
+      const windows = await this.ownWithheldWindows(
+        headerUserId,
+        groupId,
+        headerGlobalAdmin === 'true'
+      );
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -6450,9 +6529,17 @@ export class MessagingService {
   }
 
   /**
-   * The caller's OWN exclusion windows in `groupId` - the spans they were out of the group (user,
-   * 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left, and for
-   * an internal caller with no user header, which reads on nobody's behalf.
+   * Everything the CALLER may not be handed from `groupId`'s history stream: the spans they were out
+   * of the group (user, 2026-10-14: a Remove holds against a later re-add) and, in a GROUP
+   * conversation, everything before their first arrival (user, 2026-10-21: a newcomer reads nothing
+   * from before they were added). The same {@link withheldWindows} the exclusions route answers the
+   * caller with, which every history answer is filtered on - so the server's own stream never hands
+   * a newcomer the ciphertexts an answering member withholds, whatever the reader's build does with
+   * them. Empty for an internal caller with no user header, which reads on nobody's behalf.
+   *
+   * A 1:1 and a key group withhold no arrival span ({@link withholdsArrivalSpan}), so for them this is
+   * the gaps alone, as it always was. A member's NEW device reads everything since its PERSON's
+   * arrival: intervals are per user, never per device.
    *
    * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
    * Postgres hiccup answers that group empty, never the whole batch.
@@ -6462,20 +6549,34 @@ export class MessagingService {
    * since their removal would be dropped although they are a member again. The repair is the one
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
+   *
+   * **A GLOBAL ADMIN IS NAMED BY ITS HEADER, NEVER INFERRED FROM A MISSING INTERVAL** (review of
+   * #2800). An admin holding no interval reads a group it is not in, and this filter has never
+   * narrowed that read. Anyone else reached here through the roster (`authorizeHistoryGroups`), so a
+   * caller holding NO interval at all is a member the enrolment failed to record - repaired like the
+   * one with no open interval, above. Should the repair open nothing (the roster row went
+   * meanwhile), the read FAILS CLOSED: one window over everything, said at ERROR - an absent record
+   * never reads as "withhold nothing".
+   *
+   * @param globalAdmin the caller's `x-global-admin` header said `true`.
    */
-  private async ownExclusionWindows(
+  private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string
+    groupId: string,
+    globalAdmin: boolean
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
     const read = () =>
       this.groupRepo.manager.find(GroupMembershipInterval, {
         where: { userId, groupId },
-        select: { groupId: true, joinedAt: true, leftAt: true },
+        select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
-    if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
+    // An admin's read of a group it never joined has nothing to repair; every other caller is on the
+    // roster, and a member outside every open interval - none at all included - is a record to repair.
+    const unrecorded = intervals.length === 0 && !globalAdmin;
+    if ((intervals.length > 0 || unrecorded) && !intervals.some((r) => r.leftAt === null)) {
       // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
       const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
       if (opened.length > 0) {
@@ -6487,7 +6588,38 @@ export class MessagingService {
       // removal may have closed it since - the table is the only answer to both.
       intervals = await read();
     }
-    return exclusionWindows(intervals);
+    if (intervals.length === 0) {
+      if (globalAdmin) return [];
+      this.logger.error(
+        `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} holds no membership interval and none could be opened - the stream is withheld whole rather than served unfiltered`
+      );
+      return [{ from: 0, until: null }];
+    }
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: {
+        id: true,
+        isGroup: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+        createdAt: true,
+      },
+    });
+    if (!withholdsArrivalSpan(group)) return exclusionWindows(intervals);
+    // The person's earliest device row in the group, the second record of their arrival - read as
+    // the exclusions route reads it, so the two answers are one.
+    const earliest = await this.deviceGroupRepo
+      .createQueryBuilder('d')
+      .select('MIN(d.createdAt)', 'firstDeviceAt')
+      .where('d.groupId = :groupId', { groupId })
+      .andWhere('d.userId = :userId', { userId })
+      .getRawOne<{ firstDeviceAt: Date | string | null }>();
+    return withheldWindows(
+      intervals,
+      true,
+      earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null,
+      group?.createdAt ?? null
+    );
   }
 
   /**
@@ -6541,7 +6673,11 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownExclusionWindows(headerUserId, groupId);
+          const windows = await this.ownWithheldWindows(
+            headerUserId,
+            groupId,
+            headerGlobalAdmin === 'true'
+          );
           const page = await this.readHistoryStreamPage(
             groupId,
             after,

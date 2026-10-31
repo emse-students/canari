@@ -59,7 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
-import { nextGatewaySocketHolder, reportPageGatewaySocket } from './pageGatewaySocket';
+import { nextPageRingHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -102,7 +102,7 @@ export class TauriMlsService extends BaseMlsService {
   /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
   private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
   /** This instance's name in the native ring's holder set (`page_ring.rs`). */
-  private readonly socketHolder = nextGatewaySocketHolder();
+  private readonly socketHolder = nextPageRingHolder('mls-service');
   private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
     return this._ws;
   }
@@ -1793,11 +1793,6 @@ export class TauriMlsService extends BaseMlsService {
   /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
   async graineRun(groupId: string): Promise<GraineRunReading> {
     return invoke<GraineRunReading>('graine_run', { groupId });
-  }
-
-  /** This device's own credential signature key (`mls_own_signature_key`). */
-  async ownSignatureKey(): Promise<Uint8Array> {
-    return new Uint8Array(await invoke<number[]>('mls_own_signature_key'));
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */

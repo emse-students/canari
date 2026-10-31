@@ -2125,6 +2125,139 @@ export async function listProductPurchases(
   );
 }
 
+// ── Lydia refunds (MANAGE_PAYOUT_ACCOUNT, enrolment chantier lot 4) ──────────
+
+/**
+ * What a TOTAL refund of a payment withdraws, so the confirmation names it (`refund-codes.ts`
+ * server side): a boutique membership's tier, a form answer's seat (and the tier it granted), a shop
+ * purchase, a Cercle top-up (the money only, never the balance), or nothing when the product is gone.
+ */
+export type RefundWithdrawal =
+  | 'membership'
+  | 'form'
+  | 'form-membership'
+  | 'shop'
+  | 'topup'
+  | 'unidentified';
+
+/** Why a payment cannot be refunded from Canari (`NotRefundableReason` server side). */
+export type RefundRefusalReason = 'not-online' | 'not-received' | 'untraceable' | 'other-business';
+
+/**
+ * Where a refund stands: `refunded`; `refused` (nothing refunded); `in-progress` (Lydia is being
+ * asked right now); `unconfirmed` (Lydia never answered - a manager checks it); `unrecorded` (Lydia
+ * confirmed, Canari failed to save it - a manager saves it).
+ */
+export type RefundState = 'refunded' | 'refused' | 'in-progress' | 'unconfirmed' | 'unrecorded';
+
+/** A refund as the purchases screen reads it. */
+export interface AssociationRefund {
+  id: string;
+  purchaseRecordId: string;
+  kind: 'total' | 'partial';
+  amountCents: number;
+  reason: string;
+  /** Where it stands (`RefundState`). */
+  state: RefundState;
+  /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
+  refusal: string | null;
+  /**
+   * Lydia's answer when it came AFTER the refund was settled and contradicts it (`refunded` on one
+   * settled as not refunded, `refused` on one settled as refunded); null otherwise.
+   */
+  lateAnswer: 'refunded' | 'refused' | null;
+  sideEffect: string | null;
+  requestedAt: string;
+  answeredAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Per payment of the purchases list: whether a refund is offered, and where it stands. */
+export interface RefundStanding {
+  purchaseRecordId: string;
+  refundable: boolean;
+  reason: RefundRefusalReason | null;
+  withdrawal: RefundWithdrawal | null;
+  paidCents: number;
+  refundedCents: number;
+  /** The refund not settled yet, which blocks any new one, and where it stands; null when none. */
+  openRefund: { id: string; state: 'in-progress' | 'unconfirmed' | 'unrecorded' } | null;
+}
+
+/** What a refund asks: the dialog draws `idempotencyKey` once, so a resent click refunds nothing twice. */
+export interface RefundRequest {
+  kind: 'total' | 'partial';
+  amountCents?: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/** The refund standing of every listed payment, and the refunds made (MANAGE_PAYOUT_ACCOUNT). */
+export async function listAssociationRefunds(
+  associationId: string
+): Promise<{ standings: RefundStanding[]; refunds: AssociationRefund[] }> {
+  return request(`/api/associations/${encodeURIComponent(associationId)}/refunds`);
+}
+
+/**
+ * Refunds a payment through Lydia. Answers the refund - read its `state`: a resent request answers
+ * the first one whatever came of it, and a refund Lydia confirmed but Canari failed to save is
+ * `unrecorded`. Throws a {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when
+ * Lydia did not answer.
+ */
+export async function refundAssociationPurchase(
+  associationId: string,
+  purchaseId: string,
+  body: RefundRequest
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/refunds`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/**
+ * Settles a refund Lydia never confirmed, from what the manager read in Lydia's own history:
+ * `refunded` true when the refund shows there.
+ */
+export async function resolveAssociationRefund(
+  associationId: string,
+  refundId: string,
+  refunded: boolean
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/refunds/${encodeURIComponent(refundId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ refunded }) }
+  );
+}
+
+/** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
+export interface StatementLine {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  operation: 'payment' | 'refund-total' | 'refund-partial';
+  item: string;
+  method: 'cash' | 'online';
+  amountCents: number;
+  reason: string | null;
+}
+
+/** The association's statement, as data: the client writes the file in its own words. */
+export interface AssociationStatement {
+  lines: StatementLine[];
+  receivedCents: number;
+  refundedCents: number;
+}
+
+/** The association's payments and confirmed refunds, with the totals (MANAGE_PAYOUT_ACCOUNT). */
+export async function getAssociationStatement(
+  associationId: string
+): Promise<AssociationStatement> {
+  return request<AssociationStatement>(
+    `/api/associations/${encodeURIComponent(associationId)}/statement`
+  );
+}
+
 // ── Payment delegation (MANAGE_PRODUCTS) ─────────────────────────────────────
 
 /**

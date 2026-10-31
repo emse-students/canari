@@ -127,6 +127,13 @@ describe('resolveNotificationHref', () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
+  it('a refund opens the purchases of the payer, where the payment reads as refunded', () => {
+    // `postId` is the ASSOCIATION's id, which that page does not need.
+    expect(notificationHref({ type: 'lydia_refund_issued', postId: 'assoc-9' })).toBe(
+      '/account/purchases'
+    );
+  });
+
   it.each(['lydia_payments_active', 'lydia_payments_paused'])(
     '%s opens the association payments section, by slug',
     async (type) => {

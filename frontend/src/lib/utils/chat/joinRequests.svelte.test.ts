@@ -61,7 +61,7 @@ describe('joinRequests - a sweep settles what it no longer raises', () => {
   });
 
   it('keeps the asks of a group the sweep did not read through - its add lock was busy', () => {
-    raiseJoinRequest({ ...ask('carol', 'c1', 'g1'), kind: 'device', keyFingerprint: 'f1' });
+    raiseJoinRequest(ask('carol', 'c1', 'g1'));
     raiseJoinRequest(ask('dave', 'd1', 'g2'));
 
     settleSweptJoinRequests(beginJoinRequestSweep(), [], new Set(['g1']));

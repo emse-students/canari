@@ -4,7 +4,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { listRefusedDevices, setRefusedDeviceListener } from '$lib/mls-client/refusedDevices';
-import { isNewToItsOwner, keyFingerprintOf } from '$lib/mls-client/deviceTrust';
+import { isNewToItsOwner, keyFingerprintOf, type KeyFirstSight } from '$lib/mls-client/deviceTrust';
 import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 import {
   deliverDeviceEvents,
@@ -18,25 +18,6 @@ import {
 let registeredMls: IMlsService | null = null;
 /** The signed-in account and this device, read live, while the notices are registered. */
 let registeredSession: Pick<DeviceNoticeSession, 'getUserId' | 'getMyDeviceId'> | null = null;
-
-/**
- * THIS DEVICE'S OWN KEY FINGERPRINT (`keyFingerprintOf` over its credential signature key), in the
- * form a member's device ask shows it - what the owner compares while this device waits to be added.
- *
- * @returns `null` before an account is registered or the engine is ready (logged).
- */
-export async function ownKeyFingerprint(): Promise<string | null> {
-  const mls = registeredMls;
-  if (!mls) return null;
-  try {
-    return await keyFingerprintOf(await mls.ownSignatureKey());
-  } catch (e) {
-    console.warn(
-      `[DEVICE_NOTICE] this device's own key could not be read: ${String(e).slice(0, 120)}`
-    );
-    return null;
-  }
-}
 
 /**
  * "NOT ME": the owner says a device the alert names is not theirs, and it is REVOKED - the same
@@ -134,15 +115,18 @@ async function deviceLabelOf(
   }
 }
 
-/** One device's published keys by fingerprint, and the first sight of those the history dated. */
+/**
+ * One device's published keys by fingerprint, and the first sight of those the history dated -
+ * `dated` is `null` when the server sent no ages at all.
+ */
 interface KeyFacts {
   fingerprints: string[];
-  dated: Array<{ fingerprint: string; at: number }>;
+  dated: Array<{ fingerprint: string; at: number }> | null;
 }
 
 /**
  * The server's keys of one device with their fingerprints and ages, or `unanswered` - a server that
- * could not be reached, or one that sends no ages (it predates them), establishes nothing.
+ * could not be reached establishes nothing, and the event is decided at the next delivery.
  */
 async function keyFactsOf(
   mls: IMlsService,
@@ -150,29 +134,46 @@ async function keyFactsOf(
   deviceId: string
 ): Promise<KeyFacts | 'unanswered'> {
   const answer = await mls.fetchDeviceSignatureKeys(userId, deviceId);
-  if (answer.kind === 'unanswered' || answer.firstSeen === undefined) {
+  if (answer.kind === 'unanswered') {
     console.warn(
-      `[DEVICE_NOTICE] key ages of ${deviceId.slice(0, 12)}... unanswered: ${
-        answer.kind === 'unanswered' ? answer.detail : 'the server sends none'
-      }`
+      `[DEVICE_NOTICE] key ages of ${deviceId.slice(0, 12)}... unanswered: ${answer.detail}`
     );
     return 'unanswered';
   }
+  const firstSeen = answer.firstSeen;
+  if (firstSeen === undefined) {
+    console.warn(
+      `[DEVICE_NOTICE] the server sends no key ages for ${deviceId.slice(0, 12)}... - its keys are unknown, so announced`
+    );
+  }
   const [fingerprints, dated] = await Promise.all([
     Promise.all(answer.keys.map((k) => keyFingerprintOf(k))),
-    Promise.all(
-      answer.firstSeen.map(async (f) => ({
-        fingerprint: await keyFingerprintOf(f.key),
-        at: f.firstSeenAt,
-      }))
-    ),
+    firstSeen === undefined
+      ? null
+      : Promise.all(
+          firstSeen.map(async (f) => ({
+            fingerprint: await keyFingerprintOf(f.key),
+            at: f.firstSeenAt,
+          }))
+        ),
   ]);
   return { fingerprints, dated };
 }
 
+/** What `facts` say about the key with `fingerprint` ({@link KeyFirstSight}). */
+function firstSightIn(facts: KeyFacts, fingerprint: string): KeyFirstSight {
+  const match = facts.dated?.find((k) => k.fingerprint === fingerprint);
+  if (match) return { kind: 'dated', at: match.at };
+  if (facts.dated !== null && facts.fingerprints.includes(fingerprint)) {
+    return { kind: 'before-history' };
+  }
+  return { kind: 'unknown' };
+}
+
 /**
  * When the server first saw the key with `fingerprint` of `userId:deviceId` - the evidence
- * `isNewToItsOwner` weighs. A key with no date predates the server's history.
+ * `isNewToItsOwner` weighs ({@link KeyFirstSight}): a key the server lists undated predates its
+ * history; one it does not list at all is `unknown`, which a notice reads as new.
  */
 export async function keyAgeOf(
   mls: IMlsService,
@@ -182,13 +183,13 @@ export async function keyAgeOf(
 ): Promise<KeyAge> {
   const facts = await keyFactsOf(mls, userId, deviceId);
   if (facts === 'unanswered') return { kind: 'unanswered' };
-  const match = facts.dated.find((k) => k.fingerprint === fingerprint);
-  return match ? { kind: 'dated', at: match.at } : { kind: 'undated' };
+  return firstSightIn(facts, fingerprint);
 }
 
 /**
  * When THIS device enrolled, as the server saw it: the first sight of its oldest dated key. `null`
- * when none is dated.
+ * when none is dated - unknown, so `isNewToItsOwner` skips the comparison rather than announcing
+ * nothing.
  */
 export async function ownEnrolledAtOf(
   mls: IMlsService,
@@ -197,7 +198,8 @@ export async function ownEnrolledAtOf(
 ): Promise<number | null | 'unanswered'> {
   const facts = await keyFactsOf(mls, userId, deviceId);
   if (facts === 'unanswered') return 'unanswered';
-  return facts.dated.length === 0 ? null : Math.min(...facts.dated.map((k) => k.at));
+  const dated = facts.dated ?? [];
+  return dated.length === 0 ? null : Math.min(...dated.map((k) => k.at));
 }
 
 /**
@@ -219,11 +221,10 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
       const facts = await keyFactsOf(mls, userId, d.deviceId);
       if (facts === 'unanswered') continue;
       for (const fingerprint of facts.fingerprints) {
-        const at = facts.dated.find((k) => k.fingerprint === fingerprint)?.at ?? null;
-        const isNew = isNewToItsOwner(at, {
+        const isNew = isNewToItsOwner(firstSightIn(facts, fingerprint), {
           learnedAt: Date.now(),
           ownEnrolledAt: enrolledAt,
-          isOwnAccount: true,
+          ownersAlert: true,
         });
         if (!isNew) old.push(`${identity}|${fingerprint}`);
       }

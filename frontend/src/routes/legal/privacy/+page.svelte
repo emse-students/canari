@@ -158,9 +158,17 @@
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
-          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
-          donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
-          formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
+          association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
+          paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
+          responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
+          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
+          une personne, et il figure tel quel dans le relevé que les responsables du compte de
+          paiement de l'association peuvent télécharger. Un remboursement total retire ce que le
+          paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
+          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
+          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
+          l'association qui l'a créé.
         </dd>
       </div>
       <div>
@@ -463,7 +471,9 @@
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
           conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
           le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
-          afin de l'ajouter comme caissier de ce compte.
+          afin de l'ajouter comme caissier de ce compte. Pour un remboursement, il reçoit la
+          référence du paiement et le montant remboursé, et rend l'argent sur le moyen de paiement
+          utilisé.
         </p>
       </li>
       <li>
@@ -712,10 +722,11 @@
             <td>90 jours après leur traitement</td>
           </tr>
           <tr>
-            <td>Achats et paiements</td>
+            <td>Achats, paiements et remboursements</td>
             <td>
               Conservés pour la comptabilité des associations ; détachés de votre compte à sa
-              suppression. Lydia conserve ses propres données selon sa politique.
+              suppression (un remboursement est conservé aussi longtemps que le paiement qu'il
+              rembourse). Lydia conserve ses propres données selon sa politique.
             </td>
           </tr>
           <tr>

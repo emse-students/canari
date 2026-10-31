@@ -227,6 +227,13 @@ export interface RecoveryDeps {
   saveConversation: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
+  /**
+   * The group just became sendable through an external join: the SAME seam a processed Welcome
+   * raises (`sessionAuth`'s `announceGroupReady`), so the messages held for the group are resumed at
+   * once. REQUIRED, so the compiler names every caller: the session's bags pass
+   * `announceGroupReady`, the two built outside it pass `announceGroupReadyToSession`.
+   */
+  onGroupReady: (groupId: string) => void;
 }
 
 /**
@@ -848,6 +855,10 @@ export async function requestReAdd(
       // event that announces it.
       deps.mlsService.notifyConversationAvailable(groupId);
     }
+    // THE GROUP IS SENDABLE NOW, AND THIS PATH NEVER SAID SO: the row went `active` and nothing
+    // resumed what the outbox held for it, so a message written while the device was out waited for
+    // its own backoff timer (review, 2026-10-31). Raised whether or not the row moved - the group did.
+    deps.onGroupReady(groupId);
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
     // very path also runs for a device that merely rotated its MLS identity and whose store, keyed
@@ -939,9 +950,9 @@ export async function requestReAdd(
   // ASKED ON THE CADENCE, NOT ONCE: no answer the server gives makes the ask durable. A `forwarded`
   // ask lives on one member's screen, a `stored` one is drained to a member's screen at its next
   // connection, and a screen that reloads before deciding loses it; nothing on this device can see
-  // that happen, so a record of "already asked" would strand the device in a quiet group. The member
-  // says its decision once and counts repeats (`askAboutUnseenDevice`). The durable shape - the ask as
-  // a server row, re-raised by every member's sweep - is on the backlog.
+  // that happen, so a record of "already asked" would strand the device in a quiet group. The member's
+  // device adds it with no one asked (`automaticAdmission`: the gate is on the user). The durable
+  // shape - the request as a server row, re-read by every member's sweep - is on the backlog.
   if (outcome.reason === 'further_device') {
     await askAMemberToReAddUs(
       groupId,

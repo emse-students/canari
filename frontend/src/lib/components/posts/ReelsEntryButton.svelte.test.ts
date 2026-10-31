@@ -99,6 +99,16 @@ it('at a narrow width the TABS scroll and the icon stays: the row never wraps', 
   expect(icon.classList).toContain('ui-icon-button');
 });
 
+it('the tabs sit in ONE glass pill and the reels entry is a matching glass button, no band', () => {
+  const { row, icon } = renderRow();
+  const pill = row.querySelector<HTMLElement>('[data-feed-pill]')!;
+  expect(pill.classList).toContain('glass-chrome');
+  expect(pill.classList).toContain('rounded-full');
+  expect(pill.querySelectorAll('[data-feed-tab]')).toHaveLength(3);
+  expect(icon.classList).toContain('glass-chrome');
+  expect(row.className).not.toMatch(/\bbg-/);
+});
+
 it('a tab tap is handed to the page', () => {
   const { row, onFeed } = renderRow();
   row.querySelector<HTMLButtonElement>('[data-feed-tabs] button')!.click();

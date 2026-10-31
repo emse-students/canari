@@ -61,6 +61,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'profile_correction_applied':
     case 'profile_correction_refused':
       return '/profile';
+    // An association refunded the reader (Lydia refunds, lot 4): their purchases, where the payment
+    // now reads as refunded. `postId` is the association's id, which that page does not need.
+    case 'lydia_refund_issued':
+      return '/account/purchases';
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
     // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
@@ -154,6 +158,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'lydia_payments_active',
   'lydia_payments_paused',
   'lydia_cashier_added',
+  'lydia_refund_issued',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

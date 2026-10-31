@@ -48,5 +48,25 @@
   },
   "switches": {
     "cashierAddEnabled": false
+  },
+  "refund": {
+    "description": "Lydia refunds (lot 4, docs/wiki/frontend/modules/payments.md \"Refunds\"). `core` codes are answered by core-service's internal refund route, `social` codes by social-service's refund routes; the frontend words each one. `notificationTypes` is the payer's bell row.",
+    "core": {
+      "noKey": "LYDIA_REFUND_NO_KEY",
+      "notRefundableAtLydia": "LYDIA_REFUND_TRANSACTION_NOT_REFUNDABLE",
+      "notAllowed": "LYDIA_REFUND_NOT_ALLOWED",
+      "rejected": "LYDIA_REFUND_REJECTED",
+      "unconfirmed": "LYDIA_REFUND_UNCONFIRMED"
+    },
+    "social": {
+      "notRefundable": "LYDIA_REFUND_NOT_REFUNDABLE",
+      "exceedsPaid": "LYDIA_REFUND_EXCEEDS_PAID",
+      "inFlight": "LYDIA_REFUND_IN_FLIGHT",
+      "invalid": "LYDIA_REFUND_INVALID",
+      "notPending": "LYDIA_REFUND_NOT_PENDING"
+    },
+    "notificationTypes": {
+      "issued": "lydia_refund_issued"
+    }
   }
 }

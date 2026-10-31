@@ -558,19 +558,19 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
   same device), and make the request depend on a durable "already asked for this device and key",
   not on the read.
-- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
-  closes with the server row below. Delete this entry when both have shipped.
+- MEMBER SIDE GONE (2026-10-31): the member's device no longer asks anything about a member's
+  device, it adds it, so there is no decision left to say twice. The requester's re-ask closes with
+  the server row below. Delete this entry when that has shipped.
   - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
     once. Only a reset of every group's throttle does that, and its one caller is the session setup
     (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
     is read from the code, not proven.
-  - The member says its decision once per (group, device, key, epoch) while the ask is shown
-    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
-    about once a minute per group, and logs what the server did with each ask.
+  - The requester still asks on its cadence, about once a minute per group, and logs what the
+    server did with each ask; the next one after the Add finds its leaf in the tree.
   - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
     REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
     device until a reload. Stopping the re-ask waits for the server row below.
-    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-request-is-answered-by-an-automatic-add).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -1475,9 +1475,10 @@ Owed:
 
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
 
-MERGED as #2358 (2026-10-24), the ask drawn as a card in the conversation by #2373, in no release yet: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
-background answer alike; a member is asked "X asks to join this group. Only a member can add them." (Add / Decline), which replaces the
-group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
+MERGED as #2358 (2026-10-24), the ask drawn as a card in the conversation by #2373: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
+background answer alike; a member is asked, as a line in that conversation, "X veut rejoindre la
+conversation - Accepter / Refuser" (a PERSON, never a device: a member's device is added with no
+ask since 2026-10-31), which replaces the group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
@@ -1486,64 +1487,6 @@ than the rule still auto-Adds a link joiner and "only by a member" holds only fr
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
 production once the build serves both stores; the four review findings below; and a second step on the receiving side (private
 operations notes).
-
-## An unseen device of a member is asked about before it is added (2026-10-27): interim built
-
-Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
-group's tree or a member approved it, one device at a time, under the key it showed; a pin never
-counts. A further device of a member asks a member rather than joining itself, decided on the tree
-of the GroupInfo its commit would be built on (a device whose own leaf is there, and a user's first
-device in a group, keep their own door); one that does join itself is reported and written in the
-conversation, decided per group, with "Not me" on the owner's alert, and is answered no history
-until a member vouches for it; and a waiting device shows its owner its own key
-([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
-confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
-
-- the production rate of device enrolments per week (and how many are a second device of an
-  account), which is the number of taps it costs - and how often a device enrols while none of its
-  conversations has a member online, which now waits instead of joining itself;
-- **the hourly stranded report cannot tell a device waiting for a member's tap from a stranded
-  one**: both are a `pending` seat with no Welcome, no add in flight and no admission. The device
-  knows which it is (its join answers `further_device`); the report needs that fact on the seat - e.g. the
-  `welcome_request` the waiting device sends, recorded per seat - before its count can be read as
-  defects again;
-- a hardware reading of the owner's own new phone approved from the old one, the two keys compared;
-- **who can still be flagged honestly**: a device on a client older than this change still joins
-  by itself beside its user's other devices, and is flagged wherever it was never in the group - the
-  rollout's cost, until `minClientVersion` carries the tree-based door. A current client cannot be:
-  its door is the observer's predicate without the departure half. The departure record's cap
-  (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
-  device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
-- **an honest device flagged during the rollout** (an older client joining by itself) that then adds
-  a new person makes that person's device withheld too, by this member, until another member's Add
-  or an approval lifts it;
-- the native background engine keeps no record of withheld devices, so it never marks a device added
-  by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
-  this costs a notice, not a message;
-- **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
-  to check them against (details in the private operations notes) close with the real fix;
-- the Android background welcome now stages nothing (only a device already in the tree passes its
-  rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
-  native callers if the real fix is not built;
-- **a seal is for good, and an honest user can reach one**: a conversation is sealed (no history
-  answered there by this member) when the native queue of device events overflowed for it. The
-  queue holds 512 events and is emptied only by the app, so a phone whose background engine merges
-  for a long time while the app stays closed, in busy communities, can pass it. No path unseals.
-  Owed: the seals counted (each is an ERROR line naming its cause; a report of their rate per week);
-  and, as a design option NOT built, a lift once every leaf added at or after the overflow's epoch
-  has left the tree or been vouched for. **An ordinary sign-out or account switch can seal too**:
-  device events taken from an account's state while it is being unbound seal their conversations in
-  that account's record, for good, by the same rule - the option above would lift those as well;
-- **two tabs of one account merge their records and err towards withholding**: a tab that loaded
-  before another tab lifted a device can write that device back, and after a restart it is withheld
-  again until a member's approval lifts it once more - a cost in availability only, never an answer
-  to a device that should not have one;
-- **the departed bound costs detection**: past it, a conversation is sealed and the records of its
-  departed withheld devices dropped, so one of them that later comes back by itself is no longer
-  known as withheld there - what it then adds gets no line. History stays closed (the seal); only
-  the notice is lost;
-- the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
-  after which this ask remains only as a shim for users without one.
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 
@@ -1618,7 +1561,12 @@ years), which no decision ever chose. 6 of 15 live group conversations had admit
 and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds the invitee's span,
 the receiver drops its own) is on `main`. **Step A is MERGED (#2270), in no release yet: every history answer, the
 push included, is addressed to the asking device and filtered on its own windows; migration `035`
-is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; `minClientVersion` past A by
+is applied by the deploy, so the user's yes is the release.** **Two server holes closed by a draft
+pull request (2026-10-31, to ship with #2791):** a link joiner's arrival was dated at their ASK, so
+every answer handed them what was sent while they waited for a member - now dated at the member's
+Add; and the history stream served a newcomer the ciphertexts of the whole past (it dropped gaps
+only) - it now drops the span before arrival too
+([history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)). Owed, in order: the rig row GRP-ADDR-1, with a link joiner who waited before the Add; `minClientVersion` past A by
 [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24); option B, sealing the answer to the asker (X25519 in `mls-core`, an
 ephemeral key carried inside the MLS-signed request). **DECIDED by
 the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;

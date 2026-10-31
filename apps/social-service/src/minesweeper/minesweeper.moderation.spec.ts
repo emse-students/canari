@@ -204,4 +204,38 @@ describe('MinesweeperService moderation', () => {
       expect(queries[0]).toMatch(/s\.id AS "scoreId"/);
     });
   });
+
+  /**
+   * THE REVIEW COHORT (review-cohort.ts): the board and a rank are each side's own - a review account
+   * ranks among the cohort only, a member never sees a review account - and a standing across the
+   * boundary reads as no standing. The SQL's truth needs a database; this pins the clause and its side.
+   */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    beforeEach(() => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it('keeps a review account off a member board, and a member off the cohort board', async () => {
+      const member = build();
+      await member.service.leaderboard(10, 'member');
+      expect(member.queries[0]).toMatch(/AND NOT \(s\."userId" = ANY \(string_to_array/);
+      const reviewer = build();
+      await reviewer.service.leaderboard(10, 'reviewer');
+      expect(reviewer.queries[0]).toMatch(/AND \(s\."userId" = ANY \(string_to_array/);
+    });
+
+    it('answers no standing across the boundary, both ways, and a standing on the same side', async () => {
+      const { service, scoreRows } = build();
+      scoreRows.set('s1', score('s1', 'reviewer', 9_000));
+      scoreRows.set('s2', score('s2', 'member', 8_000));
+      expect(await service.userStanding('reviewer', 'member')).toBeNull();
+      expect(await service.userStanding('member', 'reviewer')).toBeNull();
+      expect((await service.userStanding('member', 'other'))?.personalBestMs).toBe(8_000);
+    });
+  });
 });

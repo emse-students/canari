@@ -581,7 +581,7 @@ async function handleWelcome({
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
-    onGroupReady?.(terminalId);
+    onGroupReady(terminalId);
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… already held - redelivered Welcome ignored (idempotent)`
     );
@@ -809,7 +809,7 @@ async function handleWelcome({
 
       // History: delegated to onWelcomeProcessed (after reinject) to avoid blocking
       // the queue under the MLS lock (createDecryptSession re-acquires the same mutex).
-      onGroupReady?.(joinedGroupId);
+      onGroupReady(joinedGroupId);
       log(`[WELCOME] Group ${joinedGroupId.slice(0, 8)}… ready`);
       return null;
     } catch (e) {

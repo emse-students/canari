@@ -39,6 +39,7 @@ import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-memb
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { announceJoinAsk } from '../utils/join-ask-announce';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   assertCallerActsOnGroup,
   isKeyDistributionGroup,
@@ -188,6 +189,14 @@ export class InvitationsController {
       where: { groupId: group.id, userId: callerId },
     });
     if (existing) return { groupId: group.id, alreadyMember: true };
+    // A link never seats a review account among members, nor a member among review accounts.
+    await assertGroupStaysOnOneSide(
+      this.groupMemberRepo.manager,
+      group.id,
+      callerId,
+      undefined,
+      '[GROUP_INVITE]'
+    );
 
     // The invitee needs at least one non-revoked KeyPackage so a member can add them.
     const keyPackages = await this.keyPackageRepo.find({

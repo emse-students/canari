@@ -3549,7 +3549,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             if (!result.optBoolean("ok", false)) {
                 // A TOKEN, never prose: `stale-epoch-known`, `already-member`, `foreground-active`, ...
-                Log.w(TAG, "processWelcomeRequestBackground: not prepared reason=${result.optString("reason", "unspecified")} group=$groupId -> nothing sent")
+                // The ordinary ones are said quietly, only an unexpected one accuses
+                // ([BackgroundWelcomeAnswer.prepareRefusalLevel]).
+                val reason = result.optString("reason", "unspecified")
+                val line = "processWelcomeRequestBackground: not prepared reason=$reason group=$groupId -> nothing sent"
+                when (BackgroundWelcomeAnswer.prepareRefusalLevel(reason)) {
+                    BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, line)
+                    BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, line)
+                    BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, line)
+                }
                 return
             }
             val welcomePayload  = result.getString("welcome")
@@ -5056,6 +5064,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "lydia_payments_paused" -> Pair(
                 res.getString(R.string.notif_lydia_payments_paused_title),
                 res.getString(R.string.notif_lydia_payments_paused_body, arg)
+            )
+            // A payer refunded by an association: `arg` is the association's name, the only data
+            // the server sends (no amount on a lock screen).
+            "lydia_refund_issued" -> Pair(
+                res.getString(R.string.notif_lydia_refund_issued_title),
+                res.getString(R.string.notif_lydia_refund_issued_body, arg)
             )
             // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
             // also uses the actor, because it is the only one where WHO acted is the useful half.

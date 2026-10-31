@@ -270,6 +270,12 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.lydia_payments_paused.title", locale: locale),
         Self.localizedFormat("notif.lydia_payments_paused.body", arg, locale: locale)
       )
+    // A payer refunded by an association: `arg` is the association's name only.
+    case "lydia_refund_issued":
+      composed = (
+        Self.localized("notif.lydia_refund_issued.title", locale: locale),
+        Self.localizedFormat("notif.lydia_refund_issued.body", arg, locale: locale)
+      )
     // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
     case "event_proposed":
       composed = (

@@ -15,15 +15,6 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
   }),
 }));
 
-// A device whose own leaf is not in the tree is added only on a member's approval under its key
-// (`memberDeviceAnswers.ts`, 2026-10-27). The packages here are opaque bytes, so the key they carry is
-// read through this seam, and the devices these tests add are approved under it.
-vi.mock('$lib/mls-client/deviceTrust', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/mls-client/deviceTrust')>()),
-  keyPackageFingerprintOf: vi.fn().mockResolvedValue('fp-approved'),
-}));
-
-import { approveMemberDevice, resetMemberDeviceAnswers } from './memberDeviceAnswers';
 import { processPendingInvitations } from './actions';
 
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
@@ -31,19 +22,6 @@ import {
   DeviceTrustRefusedError,
   resetReportedDeviceTrustRefusals,
 } from '$lib/mls-client/deviceTrust';
-
-beforeEach(() => {
-  for (const [userId, deviceId] of [
-    ['peer', 'peer-dev'],
-    ['peer', 'peer-dev-1'],
-    ['peer', 'peer-dev-2'],
-    ['peer', 'dev-a'],
-    ['peer', 'dev-b'],
-  ]) {
-    approveMemberDevice(userId, deviceId, 'fp-approved');
-  }
-});
-afterEach(() => resetMemberDeviceAnswers());
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {

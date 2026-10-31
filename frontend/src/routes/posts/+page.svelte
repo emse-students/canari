@@ -922,11 +922,12 @@
        because a sticky box only sticks inside its parent. `inert` while hidden keeps it out of the
        tab order, and it never hides while focus is inside it (`tabsFocused`). `motion-reduce` drops
        the slide. While a search replaces the feed its content is hidden, so it is neither sticky
-       nor padded: an empty opaque band would sit over the results. -->
+       nor padded. THE WRAPPER HAS NO BACKGROUND (owner, 2026-10-31): the row is a floating glass
+       pill over the cards, and the gaps between its pieces are the feed's, so touches pass through. -->
   <div
-    class="-mx-1 mb-2 px-1 transition-transform duration-200 ease-out motion-reduce:transition-none {searchQuery
+    class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'bg-cn-bg sticky top-0 z-10 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {
