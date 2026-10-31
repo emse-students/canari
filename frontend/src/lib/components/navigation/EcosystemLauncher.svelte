@@ -76,7 +76,7 @@
       role="menu"
       tabindex="-1"
       aria-label={m.ecosystem_launcher_label()}
-      class="bg-surface-elevated border-cn-border fixed z-(--z-popover) grid w-64 grid-cols-2 gap-1 rounded-xl border p-2 shadow-lg"
+      class="glass-chrome border-cn-border fixed z-(--z-popover) grid w-64 grid-cols-2 gap-1 rounded-xl p-2"
       transition:slide={{ duration: 150 }}
       onkeydown={(e) => {
         if (e.key === 'Escape') {
