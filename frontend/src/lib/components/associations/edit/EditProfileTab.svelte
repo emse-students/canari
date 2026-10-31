@@ -198,7 +198,7 @@
         <p class="text-text-main ml-1 text-sm font-bold">{label}</p>
       {/if}
       <div class="flex flex-wrap items-start gap-4">
-        <AssociationAvatar name={asso.name} logoUrl={currentLogo} size="lg" />
+        <AssociationAvatar id={asso.id} name={asso.name} logoUrl={currentLogo} size="lg" />
         {#if canEdit}
           <div class="flex flex-wrap gap-2">
             <button

@@ -1,5 +1,42 @@
 import { createHash } from 'crypto';
-import { signLydiaParams, verifyLydiaSignature } from './lydia-signature';
+import {
+  phpUrlencode,
+  signLydiaParams,
+  signLydiaRequest,
+  verifyLydiaSignature,
+} from './lydia-signature';
+
+const md5 = (text: string) => createHash('md5').update(text).digest('hex');
+
+describe('signLydiaRequest - what Canari SENDS is signed over URL-encoded values (2026-10-30)', () => {
+  it('signs a phone number and a JSON array exactly as PHP urlencode writes them', () => {
+    const fields = {
+      permissions: '["access_collect","access_cashier"]',
+      cashier_phone: '+33612345678',
+    };
+    // Written by hand, as Lydia's PHP side reads it: `+` -> %2B, `[` `"` `,` `]` -> %XX upper case.
+    const literal =
+      'cashier_phone=%2B33612345678&' +
+      'permissions=%5B%22access_collect%22%2C%22access_cashier%22%5D&throwaway-provider-key';
+    expect(signLydiaRequest(fields, 'throwaway-provider-key')).toBe(md5(literal));
+    // Control: the raw signature of the same fields is a DIFFERENT digest - the one Lydia refused (444).
+    expect(signLydiaParams(fields, 'throwaway-provider-key')).not.toBe(md5(literal));
+  });
+
+  it('writes a space as + and leaves only [A-Za-z0-9_.-] unescaped', () => {
+    expect(phpUrlencode('a b')).toBe('a+b');
+    expect(phpUrlencode("!'()*~")).toBe('%21%27%28%29%2A%7E');
+    expect(phpUrlencode('Az09_.-')).toBe('Az09_.-');
+    expect(phpUrlencode('é@:')).toBe('%C3%A9%40%3A');
+  });
+
+  it('equals the raw signature when nothing needs escaping', () => {
+    const fields = { amount: '12', transaction_identifier: '123' };
+    expect(signLydiaRequest(fields, 'YOUR_PRIVATE_TOKEN')).toBe(
+      signLydiaParams(fields, 'YOUR_PRIVATE_TOKEN')
+    );
+  });
+});
 
 describe('signLydiaParams', () => {
   it('matches the reference signature from the Lydia API doc example', () => {
