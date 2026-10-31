@@ -2827,7 +2827,7 @@ the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_EN
 **the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
 carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
 allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
-[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12).
+[backlog](../backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md).
 
 **Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
 (`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open

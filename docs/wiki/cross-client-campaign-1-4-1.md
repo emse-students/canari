@@ -153,6 +153,11 @@ verdict. The old board holds 52 draws on one build; a race measured once is a co
 | `O` | **owner at a device**: a physical gesture no tool here performs - a reboot left unopened, the lock screen, Face ID, an iPhone passcode the bench cannot type (Q4) |
 | `PIN` | the row CHANGES, resets or re-enters a PIN as its subject, or mints a device that must be enrolled with one. Not an owner gesture, but it can strand a device: a PIN reset on one device leaves the others' stores sealed under the old PIN ([cross-client-harness-findings](cross-client-harness-findings.md)). These rows run LAST in their session |
 
+**Owner decisions, 2026-10-24.** Both bench phones (A1, I1) are the lead's and available at any
+time; the iPhone is driven remotely, so a `B` row never waits for someone to be at the bench. An
+admin action the rig needs on dev is done with a **rig account** granted that right on dev, never with
+a person's account.
+
 ### 4.2 MLS core - THIS BLOCKS THE `1.4.1` STABLE
 
 Each row: the question, what `PASS` entails (written so a row whose condition makes the good outcome
@@ -281,7 +286,7 @@ from panels read at the same revision answer one 200 and one 409.
 | DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | both admitted, one tree, no add-lock deadlock | W1 W2 + W3 W6 new | U, PIN | 30 min |
 | DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | `DeviceTrustRefusedError` before staging; nothing added; the owner is told | W1 + W3 copy | U | attached to CORRUPT-8 (lead, 2026-10-25), not on this build |
 | DEV-6 | A revoked device does not erase its owner's arrival (#2254) | after revoking one device, a new device of the same owner gets the history floor of the ORIGINAL arrival | W1 W3 W6 | U, PIN | 30 min |
-| DEV-7 | **The background Welcome reading owed on the Mi 9T**, its three variants: cold process, app opened inside the round trip, phone stale | exactly the lines [backlog](backlog.md#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22) names for each variant, and none of the forbidden ones. The trigger needs the newcomer's external join to FAIL for a reason other than not being a member: on dev, the R3 `status 503` fault on the newcomer's `group-info` read, not a database delete | +A1 killed, W1 W3 | B | 90 min |
+| DEV-7 | **The background Welcome reading owed on the Mi 9T**, its three variants: cold process, app opened inside the round trip, phone stale | exactly the lines [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md) names for each variant, and none of the forbidden ones. The trigger needs the newcomer's external join to FAIL for a reason other than not being a member: on dev, the R3 `status 503` fault on the newcomer's `group-info` read, not a database delete | +A1 killed, W1 W3 | B | 90 min |
 
 #### BIG - a large group
 
@@ -344,7 +349,9 @@ assumes what the one before proved.
 
 **A product FAIL in a blocking row is fixed in the same campaign** (delegation point 8 - fix the
 product, never weaken the row), then a NEW pre-release, then the whole of step 3 and the affected
-group again: a verdict about one build does not carry to the next.
+group again: a verdict about one build does not carry to the next. **What the campaign finds on the
+way (owner, 2026-10-24):** a P1 is fixed in the SAME session, with an adversarial review and a new
+alpha; a P2 or P3 goes to [backlog](backlog.md) and does not stop the session.
 
 ---
 
