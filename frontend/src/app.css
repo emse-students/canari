@@ -2726,12 +2726,14 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root:root {
     --glass-chrome-bg: var(--cn-surface);
+    --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
   }
 }
 @media (prefers-reduced-transparency: reduce) {
   :root:root {
     --glass-chrome-bg: var(--cn-surface);
+    --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
   }
 }

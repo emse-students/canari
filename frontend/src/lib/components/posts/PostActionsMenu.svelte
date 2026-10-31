@@ -221,7 +221,7 @@
         use:portal
         role="menu"
         tabindex="-1"
-        class="glass-chrome fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
+        class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
         transition:slide={{ duration: 150 }}
         onkeydown={(e) => {
           if (e.key === 'Escape') open = false;
