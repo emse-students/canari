@@ -892,6 +892,19 @@
   ],
   "post_poll_ended_full_label": "Poll ended",
   "post_poll_voters_label": "Voters",
+  "post_poll_voters_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "+ {count} more person",
+        "countPlural=other": "+ {count} more people"
+      }
+    }
+  ],
+  "post_poll_voters_none": "No votes yet.",
+  "post_poll_voters_info_label": "See who voted for {option}",
+  "post_poll_voters_options_label": "Options",
   "post_form_fallback_title": "Form",
   "post_form_response_sent": "Response sent",
   "post_form_opens_on_label": "Opens on {date}",
