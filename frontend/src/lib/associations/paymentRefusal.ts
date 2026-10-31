@@ -74,8 +74,23 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === CHECKOUT_IN_PROGRESS) {
     return m.shop_checkout_in_progress();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENTS_NOT_ACTIVATED) {
+    return m.shop_payments_not_activated();
+  }
+  if (err instanceof SocialApiError && err.code === PAYMENTS_BLOCKED) {
+    return m.shop_payments_blocked();
+  }
   return null;
 }
+
+/**
+ * The body `code` of social-service's 409 when the association's Lydia Business is not validated
+ * yet (payments not active): nothing is opened, the payer is told it is not available yet.
+ */
+export const PAYMENTS_NOT_ACTIVATED = 'PAYMENTS_NOT_ACTIVATED';
+
+/** The body `code` of social-service's 409 when Lydia blocked the association's Business. */
+export const PAYMENTS_BLOCKED = 'PAYMENTS_BLOCKED';
 
 /**
  * The body `code` of a refusal because the amount is outside what can be paid (the provider's

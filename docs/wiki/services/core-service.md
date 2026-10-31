@@ -439,9 +439,8 @@ fulfillment as a trigger, via an `order_ref` Canari encodes itself
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
 [backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
 since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
-requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
-`lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
-`vendor_token` is PUBLIC.
+requires. The `business/create` webhook is described in
+[payments](../frontend/modules/payments.md).
 
 **How core-service reads an association's payment account (2026-10-05).** the Lydia manual
 validation reads social-service's INTERNAL route

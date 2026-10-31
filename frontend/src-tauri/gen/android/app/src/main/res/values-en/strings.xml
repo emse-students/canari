@@ -97,6 +97,10 @@
     <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
     <string name="notif_form_paid_over_capacity_title">Payment on a full form</string>
     <string name="notif_form_paid_over_capacity_body">“%1$s”: a payment arrived after the form was full. A refund is owed.</string>
+    <string name="notif_lydia_payments_active_title">Lydia payments active</string>
+    <string name="notif_lydia_payments_active_body">Lydia payments for %1$s are active.</string>
+    <string name="notif_lydia_payments_paused_title">Lydia payments paused</string>
+    <string name="notif_lydia_payments_paused_body">Lydia payments for %1$s are paused: Lydia refused a payment request.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>

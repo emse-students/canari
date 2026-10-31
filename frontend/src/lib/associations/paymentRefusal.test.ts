@@ -22,6 +22,14 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_previous_payment_open());
   });
 
+  it('words an association whose payments are not active, and one Lydia blocked, apart', () => {
+    const notActive = new SocialApiError('Payments off', 'PAYMENTS_NOT_ACTIVATED', 409);
+    const blocked = new SocialApiError('Blocked', 'PAYMENTS_BLOCKED', 409);
+    expect(providerRefusalMessage(notActive)).toBe(m.shop_payments_not_activated());
+    expect(providerRefusalMessage(blocked)).toBe(m.shop_payments_blocked());
+    expect(m.shop_payments_not_activated()).not.toBe(m.shop_payments_blocked());
+  });
+
   it('words an out-of-range amount from the typed bounds, not from the server prose', () => {
     const err = new SocialApiError('Lydia accepts ...', 'AMOUNT_OUT_OF_RANGE', 400, {
       minCents: 50,

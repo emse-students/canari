@@ -30,6 +30,8 @@ describe('categoryOfDataPush', () => {
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
     ['form_paid_over_capacity', 'forms'],
+    ['lydia_payments_active', 'forms'],
+    ['lydia_payments_paused', 'forms'],
     ['event_proposed', 'events'],
     ['event_validated', 'events'],
     ['event_rejected', 'events'],

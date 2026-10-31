@@ -50,7 +50,11 @@ import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
-import { AssociationsService } from './associations.service';
+import {
+  AssociationsService,
+  type LydiaReadinessOutcome,
+  type LydiaReadinessRef,
+} from './associations.service';
 import {
   issuedTagKey,
   TagHeldByAnotherIssuerError,
@@ -105,13 +109,16 @@ import {
   type TierRelation,
 } from './tier-pricing';
 import {
+  approvedDelegateIds,
   isDelegating,
+  PAYMENTS_DISABLED_MESSAGE,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
   type PaymentProviderId,
   type PaymentTarget,
 } from './payment-delegation.util';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { paymentsNotReady } from './lydia-readiness';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -121,6 +128,7 @@ import {
   LYDIA_REFUSALS_FINAL,
   type LydiaRefusalsFinal,
   mapCorePaymentError,
+  lydiaReadinessRefusal,
 } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
@@ -756,10 +764,45 @@ export class ProductsService {
     return this.releaseWithheldFor(asso);
   }
 
-  /** The release itself, for an association already loaded (see `releaseWithheldProducts`). */
+  /**
+   * The release itself, for an association already loaded (see `releaseWithheldProducts`).
+   *
+   * Readiness is RE-READ inside the release's own transaction, the association row (and its
+   * delegation parent, the holder whose readiness counts) share-locked: a revert
+   * (`AssociationsService.setLydiaReadiness`) locks that holder FOR UPDATE before it withholds, so
+   * a release running after a "ready" that a revert has since undone sees the revert and releases
+   * nothing - no withheld product goes back on sale while its holder is not ready. Only the
+   * provider (a core-service call) is read outside the lock.
+   */
   private async releaseWithheldFor(asso: Association): Promise<number> {
     const associationId = asso.id;
-    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    const provider = await this.activePaymentProvider();
+    const { count, paymentTarget } = await this.assoRepo.manager.transaction(async (manager) => {
+      const fresh = await manager.findOne(Association, {
+        where: { id: associationId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!fresh) return { count: 0, paymentTarget: null };
+      if (isDelegating(fresh)) {
+        await manager.query(`SELECT id FROM associations WHERE id = $1 FOR SHARE`, [
+          fresh.paymentParentAssociationId,
+        ]);
+      }
+      const target = await this.routeWith(fresh, provider, manager);
+      if (!target.ready) return { count: 0, paymentTarget: target };
+      const { affected } = await manager.update(
+        AssociationProduct,
+        { associationId, activationWithheld: true },
+        { isActive: true, activationWithheld: false }
+      );
+      return { count: affected ?? 0, paymentTarget: target };
+    });
+    if (!paymentTarget) {
+      this.logger.warn(
+        `[SHOP] nothing released for association=${associationId.slice(0, 8)}: it no longer exists`
+      );
+      return 0;
+    }
     if (!paymentTarget.ready) {
       this.logger.debug(
         `[SHOP] nothing released for association=${associationId.slice(0, 8)}: payment target not ready ` +
@@ -767,12 +810,6 @@ export class ProductsService {
       );
       return 0;
     }
-
-    const { affected } = await this.productRepo.update(
-      { associationId, activationWithheld: true },
-      { isActive: true, activationWithheld: false }
-    );
-    const count = affected ?? 0;
     if (count > 0) {
       this.logger.log(
         `[SHOP] released ${count} withheld product(s) for association=${associationId.slice(0, 8)}: ` +
@@ -847,24 +884,46 @@ export class ProductsService {
    * already happened - the same day-late, found-by-hand failure this mechanism exists to end.
    */
   async releaseWithheldForAssociationAndDelegates(associationId: string): Promise<number> {
-    const children = await this.assoRepo.find({
-      where: { paymentParentAssociationId: associationId, paymentDelegationStatus: 'approved' },
-      select: { id: true },
-    });
+    // The SAME predicate the readiness revert withholds with (`approvedDelegateIds`), so the
+    // release is the exact inverse of the withhold.
+    const children = await approvedDelegateIds(this.assoRepo.manager, associationId);
     let total = await this.releaseWithheldProducts(associationId);
-    for (const child of children) {
+    for (const childId of children) {
       // One failing club must not stop the others: this runs after a state change that is already
       // committed, so a throw here would lose every release queued behind it.
       try {
-        total += await this.releaseWithheldProducts(child.id);
+        total += await this.releaseWithheldProducts(childId);
       } catch (e) {
         this.logger.error(
-          `[SHOP] release FAILED for delegating child=${child.id.slice(0, 8)} of ` +
+          `[SHOP] release FAILED for delegating child=${childId.slice(0, 8)} of ` +
             `parent=${associationId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }
     return total;
+  }
+
+  /**
+   * Marks the HOLDER of `vendorToken` ready (`AssociationsService.setLydiaReadiness`, the one
+   * writer), then releases its withheld products and its approved delegates' - on EVERY call,
+   * replays included: a crash between the commit and the release is healed by the next replay, and
+   * `activationWithheld` is the release's allowlist, so a second release finds nothing. The ONE path
+   * the webhook's `BUSINESS_VALIDATED` and the global admin's "Valider l'onboarding" take.
+   */
+  async markLydiaReady(
+    vendorToken: string,
+    cause: 'webhook-validated' | 'admin',
+    ref: LydiaReadinessRef
+  ): Promise<LydiaReadinessOutcome> {
+    const outcome = await this.associationsService.setLydiaReadiness(vendorToken, true, cause, ref);
+    // Nothing became (or already was) ready: nothing to release.
+    if (outcome.kind !== 'transitioned' && outcome.kind !== 'replay') return outcome;
+    const released = await this.releaseWithheldForAssociationAndDelegates(outcome.associationId);
+    this.logger.debug(
+      `[SHOP] readiness ${outcome.kind} for association=${outcome.associationId.slice(0, 8)}: ` +
+        `${released} withheld product(s) released`
+    );
+    return outcome;
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -2107,6 +2166,15 @@ export class ProductsService {
       if (coreRefusedRequest(err)) {
         // An ANSWER: core refused the request, so nothing was issued and nothing is payable.
         await this.releaseUnissuedCheckout(checkout.id);
+        // Lydia's error 5 / 2701: the Business is not validated or blocked. The holder of the
+        // vendor token stops being ready, whatever had marked it ready (lydia-readiness.ts).
+        const cause = lydiaReadinessRefusal(err);
+        if (cause) {
+          await this.associationsService.revertLydiaReadinessAfterRefusal(vendorToken, cause, {
+            path: 'shop',
+            id: checkout.id,
+          });
+        }
       } else {
         // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
         // attempt stays open and is read by its order_ref - at the buyer's next attempt, return or
@@ -2843,11 +2911,15 @@ export class ProductsService {
     const paymentTarget = await this.routeWith(asso, provider);
     const vendorToken = paymentTarget.connectAccountId;
     if (!paymentTarget.ready || !vendorToken) {
-      throw new BadRequestException(
-        paymentTarget.delegated
-          ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
-          : 'Association has not completed onboarding to receive payments'
+      this.logger.warn(
+        `[SHOP] refused: product=${product.id.slice(0, 8)} - payments not ready ` +
+          `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated} ` +
+          `cause=${paymentTarget.readinessCause ?? 'none'})`
       );
+      if (paymentTarget.provider === 'disabled') {
+        throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+      }
+      throw paymentsNotReady(paymentTarget.readinessCause, paymentTarget.delegated);
     }
     const profileFetched = product.priceMatrix
       ? dimensionsNeedProfile(product.priceMatrix.dimensions)
@@ -2888,11 +2960,21 @@ export class ProductsService {
     });
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
+    const now = await this.routeWith(asso, prepared.provider, manager);
+    // Read BEFORE the product's own flag: a readiness revert committed while the purchase was being
+    // prepared both clears the target's readiness and withholds the product, and the payer is owed
+    // the reason (payments not active), not "product not found" nor a routing change.
+    if (!now.ready) {
+      this.logger.warn(
+        `[SHOP] refused under the lock: product=${product.id.slice(0, 8)} - payments stopped being ` +
+          `ready while the purchase was being prepared (cause=${now.readinessCause ?? 'none'})`
+      );
+      throw paymentsNotReady(now.readinessCause, now.delegated);
+    }
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
-    const now = await this.routeWith(asso, prepared.provider, manager);
-    if (!now.ready || !sameRouting(now, paymentTarget)) {
+    if (!sameRouting(now, paymentTarget)) {
       this.logger.warn(
         `[SHOP] refused (${PAYMENT_ROUTING_CHANGED}): product=${product.id.slice(0, 8)} - the payment ` +
           'routing changed while the purchase was being prepared'

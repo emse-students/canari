@@ -77,7 +77,7 @@ function makeService(seed: Partial<Association>) {
       return Promise.resolve({ affected: 1 });
     }),
   };
-  // POSITIONAL, AND THIRTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
+  // POSITIONAL, AND FOURTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
   const service = new AssociationsService(
     assoRepo as never,
     undefined as never,
@@ -91,7 +91,8 @@ function makeService(seed: Partial<Association>) {
     { deleteByPattern: jest.fn(() => Promise.resolve()) } as never,
     undefined as never,
     undefined as never,
-    undefined as never
+    undefined as never,
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   (service as never as Record<string, unknown>).findById = jest.fn(() => Promise.resolve(row));
   (service as never as Record<string, unknown>).invalidatePostListCaches = jest.fn(() =>

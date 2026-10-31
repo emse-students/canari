@@ -1844,20 +1844,22 @@ export class AssociationsController {
   }
 
   /**
-   * Marks Lydia onboarding as complete for an association; called internally by core-service.
-   *
-   * Releases withheld products exactly like the removed `stripe-complete` did: which provider is active decides
-   * which pair of columns `resolvePaymentTarget` reads, never whether a product waiting on an
-   * account should be released.
+   * The global admin's "Valider l'onboarding", called internally by core-service: the SAME path as
+   * Lydia's `BUSINESS_VALIDATED` (`ProductsService.markLydiaReady`, cause `admin`) - one writer of
+   * the readiness, the transition logged and the managers told once, withheld products released on
+   * every call. Refused when no Business is linked (nothing to validate).
    */
   @Post(':id/lydia-complete')
   async markLydiaComplete(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.markLydiaOnboardingComplete(id);
-    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
+    const vendorToken = await this.service.lydiaVendorTokenOf(id);
+    if (!vendorToken) {
+      throw new BadRequestException('No Lydia account is linked to this association');
+    }
+    await this.productsService.markLydiaReady(vendorToken, 'admin', { path: 'admin', id });
   }
 
   /** Unlinks the association's Lydia Business; called internally by core-service. */

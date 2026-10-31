@@ -22,9 +22,10 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
   getAssociationPayoutAccount: vi.fn(() => Promise.resolve(state.reads.shift())),
   startLydiaOnboarding: state.start,
+  listMembers: vi.fn(() => Promise.resolve([])),
 }));
 
-vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false }));
+vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false, getSavedUserId: () => 'u1' }));
 
 import LydiaBusinessOnboardingForm from './LydiaBusinessOnboardingForm.svelte';
 
@@ -87,7 +88,11 @@ describe('LydiaBusinessOnboardingForm - an unknown outcome is re-read, never a s
   it('re-reads a Business linked after all: the linked state, and no error line', async () => {
     const target = await submitWithUnknownOutcome(linked);
     expect(state.start).toHaveBeenCalledTimes(1);
-    expect(target.textContent).toContain('vendor-late');
+    // The linked state asks for the Responsable; the technical id and the dashboard never show.
+    expect(target.textContent).toContain(m.asso_lydia_resp_intro());
+    expect(target.textContent).not.toContain('vendor-late');
+    expect(target.textContent).not.toContain('lydia.example');
+    expect(target.textContent).not.toContain('Ouvrir le tableau de bord Lydia');
     expect(target.textContent).not.toContain(m.asso_lydia_onboarding_unconfirmed_error());
     expect(target.textContent).not.toContain(m.common_save_error());
   });
@@ -96,5 +101,54 @@ describe('LydiaBusinessOnboardingForm - an unknown outcome is re-read, never a s
     const target = await submitWithUnknownOutcome(unlinked);
     expect(target.textContent).toContain(m.asso_lydia_onboarding_unconfirmed_error());
     expect(target.textContent).not.toContain(m.common_save_error());
+  });
+});
+
+describe('LydiaBusinessOnboardingForm - the steps come from the server read', () => {
+  async function mountWith(account: AssociationPayoutAccount) {
+    state.reads = [account];
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(LydiaBusinessOnboardingForm, {
+      target,
+      props: { asso, onDisconnected: () => undefined, onValidated: () => undefined },
+    });
+    mounted.push(() => unmount(component));
+    await settleUntilStable(() => target.textContent);
+    return target;
+  }
+
+  it('a confirmed Responsable and an unready Business: the Lydia instructions, never the token', async () => {
+    const target = await mountWith({
+      ...linked,
+      responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' },
+    });
+    expect(target.textContent).toContain(m.asso_lydia_resp_done({ name: 'Ada', phoneEnd: '78' }));
+    expect(target.textContent).toContain(m.asso_lydia_activate_console());
+    expect(target.textContent).toContain(m.asso_lydia_validation_waiting());
+    expect(target.textContent).not.toContain('vendor-late');
+    expect(target.textContent).not.toContain('tableau de bord');
+  });
+
+  it('a ready Business without a Responsable folds to "active" and offers the record prompt', async () => {
+    const target = await mountWith({ ...linked, lydiaOnboardingComplete: true });
+    expect(target.textContent).toContain(m.asso_lydia_active_title());
+    expect(target.textContent).toContain(m.asso_lydia_resp_record_intro());
+  });
+
+  it('an in-flight enrolment says to check before retrying and offers no details form', async () => {
+    const target = await mountWith({ ...unlinked, enrolmentInFlightSince: '2026-10-30T10:00:00Z' });
+    expect(target.textContent).toContain(m.asso_lydia_in_flight_notice());
+    expect(target.querySelectorAll('input').length).toBe(0);
+  });
+
+  it('a paused Business shows the date and the cause', async () => {
+    const target = await mountWith({
+      ...linked,
+      responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' },
+      readiness: { cause: 'request-blocked', at: '2026-10-30T10:00:00Z' },
+    });
+    expect(target.textContent).toContain(m.asso_lydia_paused_blocked());
   });
 });

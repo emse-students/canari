@@ -49,6 +49,8 @@ const RAW_TABLES = [
   'channel_message_client_tombstones',
   // Migration 106's audit copy of the logo URLs it rewrote: association ids and URLs, no account.
   'association_logo_url_rewrites',
+  // Migration 118's Lydia cashiers: the person, who added them, a sealed phone.
+  'lydia_cashiers',
 ];
 
 const SRC = join(__dirname, '..');
