@@ -43,6 +43,7 @@
     type LiveStartProblem,
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
+  import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
 
@@ -190,6 +191,18 @@
     });
   }
 
+  /** Why THIS browser cannot broadcast, in plain words and with what to do (live.md, "Firefox"). */
+  const UNSUPPORTED_TEXT: Record<LiveRecordingGap, () => string> = {
+    firefox: m.live_unsupported_firefox,
+    outdated: m.live_unsupported_outdated,
+    other: m.live_unsupported,
+  };
+  /** Asked ONCE per sheet (it logs): an engine's recording support does not change while open. */
+  const recordingGap = liveRecordingGap();
+  function unsupportedText(): string {
+    return UNSUPPORTED_TEXT[recordingGap ?? 'other']();
+  }
+
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
@@ -200,7 +213,7 @@
     'rate-limited': m.live_start_rate_limited,
     disabled: m.live_limits_disabled,
     offline: m.live_start_offline,
-    unsupported: m.live_unsupported,
+    unsupported: unsupportedText,
     failed: m.live_start_failed,
   };
 
@@ -306,7 +319,7 @@
       </button>
     {/if}
 
-    {#if broadcast.phase === 'preview' && camera.phase === 'live' && broadcast.source === 'camera'}
+    {#if broadcast.phase === 'preview' && camera.phase === 'live' && camera.canSwitch && broadcast.source === 'camera'}
       <button
         type="button"
         class={iconButton}
@@ -422,7 +435,7 @@
       {/if}
 
       {#if !broadcast.supported}
-        <p class="text-sm font-semibold text-red-300" role="alert">{m.live_unsupported()}</p>
+        <p class="text-sm font-semibold text-red-300" role="alert">{unsupportedText()}</p>
       {:else if broadcast.limitsProblem}
         <div class="flex items-center justify-between gap-3" role="alert">
           <p class="text-sm font-semibold text-red-300">
