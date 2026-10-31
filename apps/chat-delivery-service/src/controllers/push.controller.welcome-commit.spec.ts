@@ -247,6 +247,25 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     expect(sendWelcome).not.toHaveBeenCalled();
   });
 
+  it("answers a target whose seat is a link's ask with 409 and a typed awaiting_admission, validating nothing", async () => {
+    // A removed member's leaf outlived the removal and they rejoined by link: a push must not be
+    // the member's Accept the gate would read it as.
+    groupMemberRepo.findOne.mockResolvedValue({
+      groupId: 'g1',
+      userId: 'u2',
+      awaitingAdmission: true,
+    });
+
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
+
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'awaiting_admission' },
+    });
+    expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
   it('refuses a wrong PushSecret and reaches nothing', async () => {
     await expect(
       controller.sendWelcomeAndCommitPush('PushSecret wrong-one', body)

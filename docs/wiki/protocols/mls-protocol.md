@@ -1020,6 +1020,15 @@ An unknown own enrolment skips that one comparison rather than announcing nothin
 LINE is bounded by the same 7 days as a contact's, so it is never written weeks late; the owner's
 alert keeps no bound.
 
+**A server that LIES about a key's age still suppresses the in-app notices.** The age is the
+server's word: a fresh key given a false old date, or listed with no date (`before-history`), reads
+as old, and neither the line nor the in-app owner alert (web, iOS, the Android foreground) is
+written. Listing it undated opens nothing a false date does not. What holds against that today is
+the **Android native owner alert**: the background engine raises it from the commit it merged, and
+only the devices it preclaimed as old at this phone's registration (`preclaimOldOwnDevices`) are
+kept quiet, so a device enrolled after that is announced whatever the server says. The hardening
+for the other platforms is on the [backlog](../backlog.md#p3---the-device-notices-trust-the-servers-word-on-a-keys-age-review-of-2791-2026-10-31).
+
 Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
 into a DM from a new one; the window trades a late line for no false one (the user: notices must not
 become noise). An age the server did not answer keeps the event for the next delivery
@@ -1414,7 +1423,12 @@ staged and sent, a new person is refused (`newcomer`), an unreadable tree adds n
 (`group-not-held`). It holds the same server add-lock as the foreground (`acquireAddLock`), refuses
 while a foreground or warm process owns the state, stages over the exact bytes it read
 (compare-and-swap), refuses a second staged commit and an `already-member`, and records a refused
-answer so the same bytes are not offered twice. The per-device rule it had
+answer so the same bytes are not offered twice. **A seat that is still an invitation link's ask is
+never admitted from a push**: the tree cannot show the seat's flag, and a removed member's leaf can
+outlive the removal, so the server's push route refuses such a target (`awaiting_admission`,
+`push.controller.ts`) - the gate would otherwise read the commit as a member's Accept - and the
+phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the foreground's
+`admissionOfSeat` refuses the same seat. The per-device rule it had
 (`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
 path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
 still waits for a member's app.

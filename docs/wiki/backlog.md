@@ -744,6 +744,22 @@ durable server row when the owner has no other device) - replaced by self-entry;
 revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK), which
 costs users an action.
 
+## P3 - The device notices trust the server's word on a key's age (review of #2791, 2026-10-31)
+
+Not built; two edges of one mechanism (`isNewToItsOwner`, `KeyFirstSight`,
+[mls-protocol](protocols/mls-protocol.md)).
+
+- **A lying server suppresses the in-app notices.** A false old date, or the key listed undated,
+  reads as old, so neither "X a ajouté un appareil" nor the in-app owner alert is written. Only the
+  Android native owner alert holds. Narrowest hardening for the owner's alert on every platform:
+  persist the own-account key fingerprints `preclaimOldOwnDevices` sees at this device's
+  registration, and alert on any later own key outside that snapshot whatever its age - heals of old
+  own devices stay quiet, since they are in it. Contact lines have no client-side proof: accepted.
+- **An erased account's leftover leaf reads as `unknown`, hence new.** Erasure deletes the key
+  history (`DeviceSignatureKey`, `internal.controller.ts`), so a fresh install meeting such a leaf
+  before it is collected writes a false "X a ajouté un appareil" - `unknown` has no date, so the
+  7-day window does not bound it either.
+
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
 - On the owner seat (W1), same console as the item above. Two lines repeat together at 12:14:44,
