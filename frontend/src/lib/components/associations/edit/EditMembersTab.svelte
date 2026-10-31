@@ -5,11 +5,11 @@
     removeMember,
     updateMemberRole,
     reorderMembers,
-    ASSOCIATION_ADMIN_PRESET,
     PUBLISHER_PRESET,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
+  import { adminPresetFor } from '$lib/associations/editSections';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { Download, GripVertical, UserPlus } from '@lucide/svelte';
@@ -40,11 +40,11 @@
   const defaultPermissions = () => (asso.type === 'institution' ? PUBLISHER_PRESET : 0);
   // svelte-ignore state_referenced_locally
   let newMemberPermissions = $state(defaultPermissions());
-  const permissionOptions: PickerOption[] = [
+  const permissionOptions = $derived<PickerOption[]>([
     { value: '0', label: m.asso_members_role_member() },
     { value: String(PUBLISHER_PRESET), label: m.asso_members_role_publisher() },
-    { value: String(ASSOCIATION_ADMIN_PRESET), label: m.asso_members_role_admin() },
-  ];
+    { value: String(adminPresetFor(asso.type)), label: m.asso_members_role_admin() },
+  ]);
   let addingMember = $state(false);
   let memberError = $state('');
 
@@ -217,6 +217,7 @@
             displayName={resolvedMemberNames[member.userId] ?? rosterDisplayName(member)}
             manage={true}
             isBDE={asso.isBDE}
+            kind={asso.type}
             onRoleChange={handleChangeRole}
             onRemove={handleRemoveMember}
           />

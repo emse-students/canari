@@ -141,6 +141,29 @@ association that runs it, surfaced on the read side as the denormalised `parentN
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
 are always optional and associations leave them NULL.
 
+### What a list and an institution manage (owner, 2026-10-31)
+
+ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
+the hub, the route guard and the permission editor all read it. An association has every section. A
+**list** and an **institution** sell nothing (no shop, cotisations, purchases, delegation or payments)
+and share eight: profile, members, documents, forms, bookings, partnerships, the republication /
+co-organisation queue and danger; an institution adds its audience (global admin only). The list
+route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components as the association
+page. `/associations/<slug>/edit` of a list forwards to the list route, so an old link or a
+notification lands on the same section.
+
+**The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
+is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`,
+`MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
+hidden bit a member already holds is **preserved, not stripped**: a checkbox edits its own bit only,
+and the server ignores a shop right on these kinds. The admin preset a new member receives is
+`adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
+endpoints carry no type check, so they already accepted a list; the republication allowlist
+(`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
+(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. Nothing server-side stops an
+institution or a list from holding products or a payment account (no type guard on the product or
+Lydia endpoints): the UI now hides the sections, it does not delete rows.
+
 ### The half that could only ever be turned off
 
 Until 2026-09-22 `logoMediaId2` was plumbed end to end - column, entity, `Create`/`Update` DTO,

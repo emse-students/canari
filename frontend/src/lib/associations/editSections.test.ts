@@ -6,10 +6,15 @@
  * route segment now, which makes the segment user input: `mayOpenEditSection` is what refuses it.
  */
 import { describe, it, expect } from 'vitest';
-import { AssociationPermissionFlag } from '$lib/associations/api';
+import { ASSOCIATION_ADMIN_PRESET, AssociationPermissionFlag } from '$lib/associations/api';
 import {
   EDIT_SECTIONS,
+  EDIT_SECTIONS_BY_KIND,
   LIST_EDIT_SECTIONS,
+  adminPresetFor,
+  kindHasSection,
+  kindOffersFlag,
+  permissionMaskFor,
   editRights,
   editSectionHref,
   editTrail,
@@ -99,17 +104,45 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
-  it('gives a list four sections, bookings included (D38), and refuses it the association-only ones', () => {
+  it('gives a list its eight selling-free sections, in hub order, and refuses it the shop ones', () => {
     const admin = editRights({ ...none, isGlobalAdmin: true }, 'list');
     expect(visibleEditSections(admin, LIST_EDIT_SECTIONS)).toEqual([
       'profile',
       'members',
+      'documents',
+      'formulaires',
       'reservations',
+      'partnerships',
+      'republications',
       'danger',
     ]);
     const plain = editRights(none, 'list');
     expect(visibleEditSections(plain, LIST_EDIT_SECTIONS)).toEqual(['profile']);
-    expect(LIST_EDIT_SECTIONS).not.toContain('payments');
+    for (const s of ['payments', 'achats', 'cotisations', 'delegation', 'audience'] as const) {
+      expect(LIST_EDIT_SECTIONS).not.toContain(s);
+    }
+  });
+
+  it('gives an institution the same plus its audience, and still nothing to sell', () => {
+    expect(EDIT_SECTIONS_BY_KIND.institution).toEqual([
+      ...EDIT_SECTIONS_BY_KIND.list.slice(0, -1),
+      'audience',
+      'danger',
+    ]);
+    for (const s of ['payments', 'achats', 'cotisations', 'delegation'] as const) {
+      expect(kindHasSection('institution', s)).toBe(false);
+    }
+    expect(EDIT_SECTIONS_BY_KIND.association).toEqual([...EDIT_SECTIONS]);
+  });
+
+  it('opens the proposal queue of a list on either of its flags', () => {
+    const list = (f: AssociationPermissionFlag) => editRights(withFlags(f), 'list');
+    expect(
+      visibleEditSections(list(AssociationPermissionFlag.PROPOSE_EVENT), LIST_EDIT_SECTIONS)
+    ).toContain('republications');
+    expect(
+      visibleEditSections(list(AssociationPermissionFlag.MANAGE_FORMS), LIST_EDIT_SECTIONS)
+    ).toContain('formulaires');
   });
 
   it('gives a global admin every section', () => {
@@ -177,5 +210,45 @@ describe('Back goes up exactly one level', () => {
   it('drops the entity crumb until its name is known', () => {
     const trail = editTrail('bde', null, { ...labels, asso: undefined });
     expect(trail.map((c) => c.label)).toEqual(['Associations', 'Gestion']);
+  });
+});
+
+describe('the permissions a kind offers are derived from its sections', () => {
+  const F = AssociationPermissionFlag;
+  const offered = (kind: 'association' | 'list' | 'institution') =>
+    Object.values(F)
+      .filter((v): v is AssociationPermissionFlag => typeof v === 'number')
+      .filter((f) => kindOffersFlag(kind, f));
+
+  it('offers a list exactly the seven rights its sections need', () => {
+    expect(offered('list').sort()).toEqual(
+      [
+        F.POST_AS_ASSO,
+        F.PROPOSE_EVENT,
+        F.MANAGE_MEMBERS,
+        F.MANAGE_DOCUMENTS,
+        F.MANAGE_FORMS,
+        F.MANAGE_PARTNERSHIPS,
+        F.MANAGE_BOOKINGS,
+      ].sort()
+    );
+  });
+
+  it('offers an institution the same set, and never a shop or bank right', () => {
+    expect(permissionMaskFor('institution')).toBe(permissionMaskFor('list'));
+    expect(kindOffersFlag('institution', F.MANAGE_PRODUCTS)).toBe(false);
+    expect(kindOffersFlag('institution', F.MANAGE_PAYOUT_ACCOUNT)).toBe(false);
+  });
+
+  it('keeps every right for an association', () => {
+    expect(kindOffersFlag('association', F.MANAGE_PRODUCTS)).toBe(true);
+    expect(kindOffersFlag('association', F.MANAGE_PAYOUT_ACCOUNT)).toBe(true);
+    expect(kindOffersFlag('association', F.MANAGE_PARTNERSHIPS)).toBe(true);
+  });
+
+  it('never presets a hidden right to a new list admin, but keeps the full preset elsewhere', () => {
+    expect(adminPresetFor('list') & (F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT)).toBe(0);
+    expect(adminPresetFor('list') & F.MANAGE_PARTNERSHIPS).toBe(F.MANAGE_PARTNERSHIPS);
+    expect(adminPresetFor('association')).toBe(ASSOCIATION_ADMIN_PRESET);
   });
 });
