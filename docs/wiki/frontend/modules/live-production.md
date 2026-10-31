@@ -216,6 +216,25 @@ to the owner as it is.
 | D-6 | **Whether viewers see a viewer count**, and whether the policy says the broadcaster gets no viewer list | **decided 2026-10-21: the exact count to everyone watching**; the policy says no feature shows the list (section 5) |
 | D-7 | **`minClientVersion` for lives** | **No raise** - an old build never draws a live |
 
+## Lives come back with `1.5.4`, and what an older client would do (owner, 2026-10-31)
+
+Lives are switched OFF in production (`lives_mode` `off`) by the owner and return only with `1.5.4`,
+which carries the removal of the duration cap and the trim. **A per-client gate was built, on a
+header that did not exist** (review, 2026-10-31): no request to social-service carried the client's
+version (`?clientVersion=` rides only `/auth/refresh` and the announcement; `deviceAppVersion` is a
+device-registration body field), and `minClientVersion` is global - it would refuse a build for EVERY
+feature. So every lives call now sends `X-Canari-Client-Version` (`live/api.ts`), and
+`LiveEnabledGuard` answers the same 404 as `lives_mode` off to a request naming a build below
+`1.5.4`. **A request with NO header is refused too**: that is exactly what a `1.5.1`-`1.5.3` build
+sends, the only evidence there is - web is current and sends it. The rig and `tools/live-bench` name
+`1.5.4` explicitly. Removal condition: [legacy-compatibility](../../legacy-compatibility.md).
+
+What a `1.5.1`-`1.5.3` client therefore does once lives are switched back on: every lives route is a
+404, which those builds classify as `disabled` and handle cleanly (broadcaster `limitsProblem`,
+viewer `unavailable/disabled`, `openLives`) - no "NaN minutes" sheet, no half-working live. The
+order stays: ship `1.5.4`, let the stores take it, switch `lives_mode` on; an older build left on a
+phone shows no live surface at all.
+
 ## See also
 
 - [live](live.md) - the plan, the decisions, the uncapped-audience design
