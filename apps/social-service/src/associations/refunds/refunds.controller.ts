@@ -93,9 +93,15 @@ export class RefundsController {
     await this.refunds.assertPayoutManager(userId, id, ga === 'true');
     const labels = parseStatementLabels(rawLabels);
     const csv = await this.refunds.statementCsv(id, labels);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="statement.csv"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(csv);
+    const body = Buffer.from(csv, 'utf8');
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="statement.csv"',
+      'Content-Length': body.byteLength,
+      'Cache-Control': 'no-store, private',
+      // The words come from the request: a file to save, never a page a browser may render.
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.send(body);
   }
 }
