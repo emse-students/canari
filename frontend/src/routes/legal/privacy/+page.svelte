@@ -145,11 +145,16 @@
           votre nom, puis l'accepte ou la refuse ; un refus n'est signalé à personne. Si elle
           accepte, vous en êtes notifié. Sont conservées la demande et sa date, puis, si elle est
           acceptée, la date d'acceptation ; un refus supprime la demande. Vous pouvez consulter la
-          liste de vos abonnés et en retirer quelqu'un. Pour ne jamais notifier deux fois la même
-          personne et limiter le nombre de nouvelles demandes par jour, le serveur garde aussi le
-          fait qu'une demande (ou son acceptation) a déjà été notifiée entre deux comptes, et sa
-          date, même après un retrait, un refus ou un blocage. Suivre une association ne demande
-          rien à personne.
+          liste de vos abonnés et en retirer quelqu'un. Une personne dont vous avez accepté la
+          demande voit vos publications personnelles et vos directs, quels que soient son campus, sa
+          formation ou son espace, y compris un membre du personnel, et elle est notifiée quand vous
+          publiez ou lancez un direct ; elle les trouve dans son onglet « Suivis », pas dans « Tout
+          », qui reste limité aux espaces. Elle ne voit jamais ce que vous publiez de façon anonyme.
+          La retirer de vos abonnés, se désabonner ou un blocage, dans un sens ou dans l'autre, lui
+          retire aussitôt cet accès. Pour ne jamais notifier deux fois la même personne et limiter
+          le nombre de nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande
+          (ou son acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un
+          retrait, un refus ou un blocage. Suivre une association ne demande rien à personne.
         </dd>
       </div>
       <div>

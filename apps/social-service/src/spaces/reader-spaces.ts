@@ -237,6 +237,47 @@ function sharesSpaceWithAuthorSql(author: string, user: string): string {
 }
 
 /**
+ * User row `user` is an ACCEPTED follower of the person whose id is the expression `author`, with
+ * no block between them either way and both on the same side of the review cohort's boundary - what
+ * opens a PERSONAL item (a post, a live) across spaces (WP-F5, decisions 4 and 5 of the follow
+ * requests, user 2026-10-25, reconfirmed 2026-10-31).
+ *
+ * - ACCEPTED only (`acceptedFollowSql`): a pending request opens nothing - the author has not
+ *   answered, and the opening is exactly what they approved, one person at a time.
+ * - THE BLOCK IS CHECKED HERE, NOT TRUSTED TO THE SEVERING: a block deletes the follow, but by a
+ *   best-effort cross-service call, and a row it missed would otherwise re-open the author's posts
+ *   to the person they blocked. Both directions, as every block.
+ * - THE COHORT: a follow recorded across the review cohort's boundary before the rule existed opens
+ *   nothing (`review-cohort.ts`), as it is left out of every list.
+ * - NEVER A READ GRANT, which never reaches the personal branch (WP7), and never an anonymous post
+ *   - the caller excludes it: following someone must not unmask what they published anonymously.
+ *
+ * STATE, NEVER A STORED COPY: unfollowing, a removal ("Retirer") or a block deletes the row, and the
+ * next read no longer counts it - the revocation needs no mechanism of its own.
+ */
+function acceptedFollowerOfAuthorSql(author: string, user: string): string {
+  return `(EXISTS (SELECT 1 FROM user_follows vis_follow
+      WHERE vis_follow."followedUserId" = ${author} AND vis_follow."followerUserId" = ${user}.id
+        AND ${acceptedFollowSql('vis_follow')})
+    AND NOT EXISTS (SELECT 1 FROM user_blocks vis_block
+      WHERE (vis_block."blockerId" = ${user}.id AND vis_block."blockedId" = ${author})
+         OR (vis_block."blockerId" = ${author} AND vis_block."blockedId" = ${user}.id))
+    AND ${sameSideOfReviewCohortSql(author, `${user}.id`)})`;
+}
+
+/**
+ * Whether a post predicate counts the author's ACCEPTED FOLLOWERS (WP-F5). On by default - it is
+ * who may SEE a personal post: by id, its comments and reactions, the search, the Suivis feed, the
+ * announcement and the republication's newly-reached rule. OFF only where a feed is a feed of
+ * SPACES (`followers: false`): "Tout" and the promo/formation browse stay filtered by spaces for
+ * everyone (decision 5), so what a follower gains across spaces appears in Suivis and nowhere else
+ * in the lists.
+ */
+export interface FollowerOpts {
+  followers?: boolean;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -250,22 +291,32 @@ function sharesSpaceWithAuthorSql(author: string, user: string): string {
  *   sees an association that republished it - which exists only because the author ACCEPTED that
  *   association's request (D38b). NO read grant ever reaches this branch (WP7), the republication
  *   disjunct included (it is spliced without `readGrants`): a named reader sees what an ENTITY
- *   published and never what a student wrote.
+ *   published and never what a student wrote;
+ * - a NON-ANONYMOUS personal post, also: the author's ACCEPTED followers, whatever their space,
+ *   campus or formation (WP-F5, `acceptedFollowerOfAuthorSql`) - a personnel the student accepted
+ *   included, which D34-D36 otherwise exclude. Never an anonymous one: a follower reading it would
+ *   learn who wrote it. Left out with `followers: false` ({@link FollowerOpts}).
  *
  * MONOTONE IN REPUBLICATIONS, and `NEWLY_REACHED_BY_REPUBLICATION_SQL` relies on it: adding one
  * only ever adds a disjunct, so who sees a post after is who saw it before plus who the republisher
- * reaches.
+ * reaches. The follower disjunct changes nothing to that: it reads no republication.
  */
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean } & ReadOpts = {}
+  opts: { adminSeesAll?: boolean } & ReadOpts & FollowerOpts = {}
 ): string {
   const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
+  const followerClause =
+    opts.followers === false
+      ? ''
+      : `
+      OR (NOT COALESCE(${post}.anonymous, false)
+        AND ${acceptedFollowerOfAuthorSql(`${post}."authorId"`, user)})`;
   return `(${adminClause}${post}."authorId" = ${user}.id
     OR (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}
-      OR ${republicationReachesUserSql(post, user)}))
+      OR ${republicationReachesUserSql(post, user)}${followerClause}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
       OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })})))`;
@@ -292,7 +343,10 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
  *   once the republication commits they see it, so the sweep tells them - and telling them here
  *   too would tell them twice. After the announce, the sweep is spent and everyone newly reached is
  *   told here. A follower is an ACCEPTED one, exactly as the sweep counts them: someone whose
- *   request is still pending is not told by the sweep, so they are told here.
+ *   request is still pending is not told by the sweep, so they are told here. Since WP-F5 an
+ *   accepted follower already SEES a non-anonymous personal post (D38b never carries an anonymous
+ *   one), so `NOT postVisibleToUserSql` leaves them out first and this term only restates it - kept,
+ *   because it is what keeps the two paths apart whatever the predicate becomes.
  */
 export function newlyReachedByPersonalRepublicationSql(announced: boolean): string {
   const followers = announced
@@ -314,7 +368,7 @@ export function newlyReachedByPersonalRepublicationSql(announced: boolean): stri
 export function postVisibleToViewerSql(
   post: string,
   viewer: string,
-  opts: { adminSeesAll?: boolean; readGrants?: boolean } = {}
+  opts: { adminSeesAll?: boolean; readGrants?: boolean } & FollowerOpts = {}
 ): string {
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
@@ -351,7 +405,8 @@ export function reviewCohortAuthorFilterSql(
 /**
  * Live row `live` (a `lives` row) is visible to user row `user`: THE RULE OF A POST BY THE SAME
  * BROADCASTER (WP-L7, decided 2026-10-19) - its broadcaster; a member's live, a user sharing a space
- * with the broadcaster; an association's live, a user who sees the association (a member, or its
+ * with the broadcaster or one of their ACCEPTED followers (WP-F5, `acceptedFollowerOfAuthorSql`: no
+ * block, same side of the review cohort - a live is never anonymous); an association's live, a user who sees the association (a member, or its
  * rules reach one of their spaces, or - with `readGrants` - a nominative read grant). A live has no
  * republication, so that disjunct of the post rule has nothing to add. An admin is a reader like any
  * other, as when browsing posts.
@@ -371,7 +426,8 @@ export function liveVisibleToUserSql(
     OR (${isAdminSql(user)} AND ${inReviewCohortSql(`${live}."broadcasterId"`)})`
     : '';
   return `(${live}."broadcasterId" = ${user}.id${cohortClause}
-    OR (${live}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)})
+    OR (${live}."associationId" IS NULL AND (${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)}
+      OR ${acceptedFollowerOfAuthorSql(`${live}."broadcasterId"`, user)}))
     OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, { readGrants: opts.readGrants })}))`;
 }
 

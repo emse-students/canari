@@ -116,6 +116,7 @@ maybe('the review cohort against PostgreSQL', () => {
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
+      CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

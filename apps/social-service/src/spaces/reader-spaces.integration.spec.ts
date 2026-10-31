@@ -129,10 +129,13 @@ const POSTS: {
   },
   {
     id: '00000000-0000-4000-8000-000000000005',
-    label: 'a personal post (its author shares ICM x saint-etienne)',
+    label:
+      'a personal post (its author shares ICM x saint-etienne) - and its ACCEPTED followers anywhere (WP-F5)',
     authorId: 'icmSe',
     associationId: null,
-    seenBy: ['icmSe', 'icmSe2', 'adminIcm'],
+    // isminGa (Gardanne) and outsider (no space) see it only as icmSe's accepted followers; the
+    // matrix of that opening is `follower-visibility.integration.spec.ts`.
+    seenBy: ['icmSe', 'icmSe2', 'adminIcm', 'isminGa', 'outsider'],
   },
   {
     id: '00000000-0000-4000-8000-000000000006',
@@ -189,6 +192,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
+      CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -346,10 +350,10 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => r.id as string)).toEqual(
       POSTS.filter((p) => p.authorId === 'admin').map((p) => p.id)
     );
-    // A non-admin never gets the opening by id.
+    // A non-admin never gets the opening by id (staff shares no space with icmSe, nor follows them).
     const outsider = await client.query(
       `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
-      [POSTS[4].id, 'isminGa']
+      [POSTS[4].id, 'staff']
     );
     expect(outsider.rows[0].visible).toBe(false);
   });
@@ -422,10 +426,11 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
   });
 
   it("announces a personal post to its author's followers who can see it, and no other", async () => {
-    // Three follow icmSe; isminGa (Gardanne) and outsider (no space) cannot see the post, and
-    // adminIcm, who can, only ASKED (pending): a request is never announced to.
+    // Three follow icmSe, accepted: icmSe2 shares the space, isminGa (Gardanne) and outsider (no
+    // space) see the post as followers since WP-F5 - all three are told. adminIcm, who sees it by
+    // the space, only ASKED (pending): a request is never announced to.
     const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
-    expect(rows.map((r) => r.id as string)).toEqual(['icmSe2']);
+    expect(rows.map((r) => r.id as string).sort()).toEqual(['icmSe2', 'isminGa', 'outsider']);
   });
 
   it('a REMOVED follower is announced to no more (WP-F3): the removal is the row every reader reads', async () => {
@@ -448,7 +453,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       );
       expect(await requests.removeFollower('icmSe', 'icmSe2')).toEqual({ ok: true });
       const { rows } = await client.query(announceRecipientsSql(true), [POSTS[4].id]);
-      expect(rows).toEqual([]);
+      expect(rows.map((r) => r.id as string).sort()).toEqual(['isminGa', 'outsider']);
     } finally {
       await client.query('ROLLBACK');
     }
@@ -635,8 +640,10 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(`UPDATE users SET cursus = '{"formation": "ICM"}' WHERE id = 'outsider'`);
     const { rows } = await client.query(IN_FEED_AUDIENCE_SQL, ['outsider']);
     expect(rows[0].inAudience).toBe(false);
+    // The SPACE rule alone: outsider's accepted follow of icmSe opens one post by itself (WP-F5),
+    // which is not what a malformed cursus is about.
     const list = await client.query(
-      `SELECT count(*)::int AS n FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')}`,
+      `SELECT count(*)::int AS n FROM posts WHERE ${postVisibleToViewerSql('posts', '$1', { followers: false })}`,
       ['outsider']
     );
     expect(list.rows[0].n).toBe(0);
