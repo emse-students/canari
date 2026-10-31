@@ -1075,3 +1075,11 @@ exactness, what happens when Redis does not answer) is
   and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
   end screen, and reset for a new live).
 - **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).
+
+## The viewer header and the rules sheet (2026-10-30, `1.5.2-alpha.1` readings)
+
+- The LIVE pill and the elapsed time sit on a second line under the broadcaster's name, so the name
+  takes the header's width and truncates only against the action buttons (`LiveViewer.svelte`).
+- The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
+- The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
+  never draws under the iOS status bar (`LiveBroadcaster.svelte`).

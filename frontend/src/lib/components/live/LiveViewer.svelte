@@ -314,19 +314,23 @@
       >
         <X size={24} strokeWidth={2.5} />
       </button>
-      <span class="min-w-0 flex-1 text-sm">
+      <span class="flex min-w-0 flex-1 flex-col items-start gap-1 text-sm">
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
-      </span>
-      <LiveBadge />
-      {#if elapsedMs !== null}
-        <span
-          class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
-          aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
-          data-live-elapsed
-        >
-          {formatLiveElapsed(elapsedMs)}
+        <span class="flex items-center gap-1.5">
+          {#if viewerState.kind !== 'ended'}
+            <LiveBadge />
+          {/if}
+          {#if elapsedMs !== null}
+            <span
+              class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
+              aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
+              data-live-elapsed
+            >
+              {formatLiveElapsed(elapsedMs)}
+            </span>
+          {/if}
         </span>
-      {/if}
+      </span>
       {#if !terminal}
         <LiveViewerCount count={viewers} />
       {/if}

@@ -283,6 +283,16 @@ describe('LiveViewer', () => {
     expect(document.querySelector('[data-live-back]')).not.toBeNull();
   });
 
+  it('the LIVE pill leaves once the end is known', async () => {
+    await render();
+    expect(document.querySelector('[data-live-badge]')).not.toBeNull();
+    manifestErrors.push(refusal('ended', 410));
+    timers.shift()!();
+    await settle();
+    expect(stateOf()).toBe('ended');
+    expect(document.querySelector('[data-live-badge]')).toBeNull();
+  });
+
   it('a cut live gets its own screen, with the way back, and not the plain end', async () => {
     await render();
     manifestErrors.push(
