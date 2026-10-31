@@ -38,6 +38,7 @@ import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { parseVoipTokenField } from '../utils/voip-token';
 import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { parseSessionId } from '../utils/session-id';
+import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -1006,6 +1007,17 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     if (typeof body.proto !== 'string' || !body.proto) {
       throw new BadRequestException('proto required');
+    }
+    // The same rule as `POST /mls/send` (`clientSendRefusal`): the send routes relay only private
+    // (application) frames; a public handshake frame goes through the commit route.
+    if (isPublicMlsFrame(body.proto)) {
+      this.logger.error(
+        `[BG_SEND] REJECT public_frame_refused group=${groupId} sender=${userId}:${deviceId}`
+      );
+      throw new BadRequestException({
+        error: 'public_frame_refused',
+        message: 'this send is not accepted',
+      });
     }
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;
