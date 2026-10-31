@@ -2,6 +2,7 @@ import type { CallService, CallState } from '$lib/services/CallService';
 import type { CameraFacing } from '$lib/utils/callVideo';
 import { callStatusKind, type CallStatusKind } from '$lib/stores/callView.svelte';
 import { callElapsedMs, formatCallDuration } from '$lib/utils/callClock';
+import type { NoiseSuppressionView } from '$lib/utils/callNoiseSuppression';
 
 /**
  * The call as the two call surfaces read it (`CallOverlay`, `CallBanner`): the service's stores
@@ -28,6 +29,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let localMicSuspended = $state(false);
   let peerMicSuspended = $state(false);
   let videoSendReduced = $state(false);
+  let noiseSuppression = $state<NoiseSuppressionView>({ enabled: true, state: 'pending' });
   let localStream = $state<MediaStream | null>(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());
@@ -50,6 +52,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
       service.peerMicSuspended.subscribe((v) => (peerMicSuspended = v)),
       service.videoSendReduced.subscribe((v) => (videoSendReduced = v)),
+      service.noiseSuppression.subscribe((v) => (noiseSuppression = v)),
       service.localStreamStore.subscribe((v) => {
         localStream = v;
         localVideoTrack = v?.getVideoTracks().find((t) => t.readyState === 'live') ?? null;
@@ -141,6 +144,10 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     /** THIS side's picture is sent reduced by the quality ladder (`CallService.videoSendReduced`). */
     get videoSendReduced() {
       return videoSendReduced;
+    },
+    /** The microphone's noise suppression for this call (`CallService.noiseSuppression`). */
+    get noiseSuppression() {
+      return noiseSuppression;
     },
     /** `mm:ss` since the media path connected; frozen once the call ended. */
     get duration() {

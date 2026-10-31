@@ -569,6 +569,8 @@
   "call_camera_short_label": "Camera",
   "call_incoming_video_label": "Incoming video call",
   "call_switch_camera_label": "Switch camera",
+  "call_noise_suppression_disable_label": "Turn noise reduction off (for music, say)",
+  "call_noise_suppression_enable_label": "Turn noise reduction on",
   "call_video_reduced_notice": "Your video is sent at reduced quality (connection or device overloaded)",
   "call_camera_unavailable": "The camera could not open: the call goes on without video.",
   "call_camera_switch_failed": "The other camera could not open: the camera is off.",

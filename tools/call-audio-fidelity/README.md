@@ -28,7 +28,8 @@ longer see that fault), or when a row does not complete.
 | E2E frame transform                    | the app's `encryption.worker.ts`, IMPORTED, wrapped by `page/impair.worker.ts` only to drop/delay frames, tap them, or inject a fault                                                                                                                                                 |
 | Order of operations                    | `CallService.initPeerConnection`'s: `addTrack`, sender transform, the receiver transform of the same transceiver before negotiation, `configureCallAudioSenders`, implicit `setLocalDescription()`; a receiver without a transform gets one in `ontrack`, as `handleRemoteTrack` does |
 | Playback                               | an `<audio>` element on the remote stream, as `CallOverlay.svelte`; recorded through an `AudioWorklet` at 48 kHz                                                                                                                                                                      |
-| Stand-ins                              | a fixed test key (not an MLS export), the driver carrying SDP (not the relay socket), host candidates on loopback, no ring                                                                                                                                                            |
+| Noise suppression (`ns` rows)          | `frontend/src/lib/utils/callNoiseSuppression.ts` IMPORTED (`buildCallMicPipeline`, `CallMicSwitch`), the app's worklet `workers/rnnoise.worklet.ts` BUILT from source and the wasm served from `frontend/node_modules/simple-rnnoise-wasm` - the sender starts raw and `replaceTrack`s, as `CallService` does |
+| Stand-ins                              | fixed test keys, one per direction as `setKeys` takes them (not an MLS export), the driver carrying SDP (not the relay socket), host candidates on loopback, no ring                                                                                                                  |
 
 ## The reference (`signal.mjs`)
 
@@ -36,6 +37,11 @@ longer see that fault), or when a row does not complete.
 (voiced syllables with formants and fricatives, syllabic rhythm, pauses), eight tones 300 Hz-10 kHz,
 band-limited noise. The far-end file (`far.wav`) is speech-like only, so it shares nothing with the
 reference. Nothing is committed: the WAVs are rebuilt in `--out` on every run.
+
+`noisy.wav` (the `noisy` rows' microphone) is the reference under a STEADY background - band
+noise 80 Hz-5 kHz plus a 100 Hz hum, from start to end of the loop, 10 dB below the speech
+segment's RMS (`withBackground`). It is scored against the CLEAN reference, so what a suppressor
+removes shows as a lower `floor` and what it damages as the same metrics as any row.
 
 ## The metrics (`analyze.mjs`, self-tested by `analyze.test.mjs`)
 
@@ -69,6 +75,26 @@ audio on the transceiver the caller's offer created (`addTrack` reuses it; `ontr
 sender, as the app does) and must PASS; `fault-reuse-bare-sender` leaves that sender bare in
 `ontrack`, as the app did, and must fail
 ([calls](../../docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+## The noise-suppression rows (2026-10-31)
+
+`app-ns` (GATED: RNNoise is ON by default since owner decision D-B) runs the app with its RNNoise
+pipeline on the clean reference; `raw-ns` without the browser's voice processing in front of it;
+`app-browser-ns-off-ns` with the browser's own suppressor off (AEC and AGC kept); `app-noisy` and
+`app-ns-noisy` / `app-browser-ns-off-ns-noisy` on `noisy.wav`. `APP` alone is the in-call switch
+OFF, so every row measured before D-B keeps its meaning. A row whose sender runs it adds `ns-on`
+(`nsChecks`, self-tested): the sender carried the PROCESSED track to the end, the worklet counted
+frames, no fallback - otherwise the numbers are the raw path's under RNNoise's name. The driver
+starts measuring only once the page's switch says `on` (or `unavailable`). The run prints the
+worklet's cost per 10 ms frame and a noise-suppression table
+([calls](../../docs/wiki/frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails)).
+
+**The rig was broken from #2176 (2026-10-21) to 2026-10-31.** The app's worker moved to two keys
+(`setKeys`, one per direction) and the page still posted `setKey`, which the worker ignores: every
+row waited 60 s for a `keyReady` that never came and none completed. Nothing ran the rig in that
+window - only its metrics' self-test is in `make test-ci-scripts` - so nothing said so. The page
+now keys each side as `CallService` does (`role` from the driver), and `impair.worker.ts` reads
+the same two keys for its whole-frame experiment.
 
 ## The video rows (2026-10-20)
 

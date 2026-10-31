@@ -1,0 +1,3 @@
+### Added - noise suppression (RNNoise) on the call microphone, on by default, with an in-call switch
+
+The captured microphone goes through RNNoise in an AudioWorklet after the browser's echo canceller, and the call screen switches it off for the call (music); a pipeline that cannot load is logged at WARN and counted in `[CALL_REPORT] ns_fallbacks=`, and the call goes on with the raw track. The audio rig, broken since the per-direction keys, measures it again - and its clean-speech row FAILS the thresholds ([calls](docs/wiki/frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails)).

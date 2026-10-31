@@ -80,6 +80,8 @@ function fakeService(state: CallState) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable({ enabled: true, state: 'pending' as string }),
+    toggleNoiseSuppression: vi.fn(),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -224,6 +226,37 @@ describe('the reduced-picture notice (quality ladder, 2026-10-21)', () => {
     service.videoSendReduced.set(false);
     flushSync();
     expect(notice()).toBeNull();
+  });
+});
+
+describe('the noise-suppression switch (owner decision D-B, 2026-10-31)', () => {
+  const button = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="call-noise-suppression"]');
+
+  it('is pressed while suppression is on, and a tap asks the service to switch it', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    expect(button()?.getAttribute('aria-pressed')).toBe('true');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_disable_label());
+
+    button()!.click();
+    expect(service.toggleNoiseSuppression).toHaveBeenCalledTimes(1);
+
+    service.noiseSuppression.set({ enabled: false, state: 'off' });
+    flushSync();
+    expect(button()?.getAttribute('aria-pressed')).toBe('false');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_enable_label());
+  });
+
+  it('is not offered where the engine could not build the pipeline, nor on the ring', async () => {
+    const service = fakeService('incall');
+    service.noiseSuppression.set({ enabled: true, state: 'unavailable' });
+    await render(service);
+    expect(button()).toBeNull();
+    unmount(mounted.pop()!);
+
+    await render(fakeService('incoming'));
+    expect(button()).toBeNull();
   });
 });
 

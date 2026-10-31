@@ -86,6 +86,8 @@ function fakeService(state: CallState, hasVideo: boolean) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable({ enabled: true, state: 'pending' as string }),
+    toggleNoiseSuppression: vi.fn(),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),

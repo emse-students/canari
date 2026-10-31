@@ -275,6 +275,8 @@ const ctx = {
   engine: 'Chrome/155',
   ice: 'connected',
   e2e: workerReport(),
+  ns: 'on',
+  nsFallbacks: 0,
 };
 
 describe('buildCallReport', () => {
@@ -284,7 +286,8 @@ describe('buildCallReport', () => {
       '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 setup_ms=812 engine=Chrome/155 ice=connected ' +
         'pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
         'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
-        'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=-'
+        'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=- ' +
+        'ns=on ns_fallbacks=0'
     );
     expect(snapshot).toEqual({
       atMs: 1_000,
@@ -313,6 +316,13 @@ describe('buildCallReport', () => {
     // 10 s of voice at RMS 0.1 since: +0.1 energy over +10 s -> sqrt(0.01) = 0.100.
     const { line } = buildCallReport(at(11_000, 0.1, 11), ctx, first.snapshot);
     expect(line).toContain('audio_level_in=0.100');
+  });
+
+  it('says what the microphone sender carries, and counts the noise suppression fallbacks', () => {
+    const failed = buildCallReport(report([]), { ...ctx, ns: 'unavailable', nsFallbacks: 1 }, null);
+    expect(failed.line).toMatch(/ ns=unavailable ns_fallbacks=1$/);
+    const noMic = buildCallReport(report([]), { ...ctx, ns: null, nsFallbacks: null }, null);
+    expect(noMic.line).toMatch(/ ns=- ns_fallbacks=-$/);
   });
 
   it('writes - for an audio level the engine does not count', () => {
