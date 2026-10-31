@@ -9,6 +9,9 @@ import CommentsPreview from './CommentsPreview.svelte';
 import type { PostComment } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
 
+vi.mock('./PostMedia.svelte', async () => ({
+  default: (await import('./PostMediaOpenStub.test-helper.svelte')).default,
+}));
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `User ${id}`,
   resolveUserDisplayName: async (id: string) => `User ${id}`,
@@ -36,15 +39,16 @@ const comment = (id: string, minute: number, extra: Partial<PostComment> = {}): 
 
 function mountPreview(comments: PostComment[], commentCount = comments.length) {
   const onOpen = vi.fn();
+  const onLike = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(CommentsPreview, {
     target,
-    props: { comments, commentCount, currentUserId: 'u1', onOpen },
+    props: { comments, commentCount, currentUserId: 'u1', authToken: 'tok', onLike, onOpen },
   });
   mounted.push(() => void unmount(app));
   flushSync();
-  return { target, onOpen };
+  return { target, onOpen, onLike };
 }
 
 const buttonWith = (t: HTMLElement, text: string) =>
@@ -108,5 +112,45 @@ describe('CommentsPreview', () => {
     expect(served.target.textContent).toContain(m.post_create_anonymous_label());
     const line = served.target.querySelector('[data-revealed-author="u9"]')!;
     expect(line.textContent).toContain('User u9');
+  });
+
+  it('draws the picture of a comment that is only a GIF, as a compact thumbnail', () => {
+    const gif = {
+      type: 'image' as const,
+      mediaId: 'g1',
+      key: 'k',
+      iv: 'i',
+      mimeType: 'image/gif',
+      size: 10,
+      width: 200,
+      height: 150,
+    };
+    const { target } = mountPreview([comment('g', 1, { text: '', media: gif })]);
+    const thumb = target.querySelector('[data-comment-media]');
+    expect(thumb).not.toBeNull();
+    expect(thumb!.className).toContain('max-w-32');
+  });
+
+  it('draws no picture slot for a text-only comment', () => {
+    const { target } = mountPreview([comment('t', 1)]);
+    expect(target.querySelector('[data-comment-media]')).toBeNull();
+  });
+
+  it('likes from the heart without opening the sheet, and says who has liked', () => {
+    const { target, onOpen, onLike } = mountPreview([comment('a', 1, { likes: ['u1', 'u7'] })]);
+    const heart = target.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
+    expect(heart.getAttribute('aria-pressed')).toBe('true');
+    expect(heart.getAttribute('aria-label')).toBe(m.post_likes_count_label({ count: 2 }));
+    expect(heart.textContent).toContain('2');
+    heart.click();
+    expect(onLike).toHaveBeenCalledWith('a');
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('shows an unliked comment with no count and a pressed state of false', () => {
+    const { target } = mountPreview([comment('a', 1)]);
+    const heart = target.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
+    expect(heart.getAttribute('aria-pressed')).toBe('false');
+    expect(heart.getAttribute('aria-label')).toBe(m.post_like_label());
   });
 });
