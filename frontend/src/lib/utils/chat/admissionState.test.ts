@@ -116,6 +116,48 @@ describe('reconcileRestoredLifecycles', () => {
     expect(service.persistCheckpoint).toHaveBeenCalled();
   });
 
+  /**
+   * WHAT A KILL CAN LEAVE (review of #2808). The merged Remove reaches disk by checkpoints the commit
+   * path does not order, and the row by another store, so an `active` row over the evicted state
+   * survives a kill - with nothing left to say whether the Remove was an eviction or this device's
+   * own re-admission. The restore must not decide; it hands the row to the server's answer.
+   */
+  it('an ACTIVE row over a group this device is out of is not trusted: the state is dropped and the row waits on the server', async () => {
+    const conversations = new Map([['g1', named('g1', 'active')]]);
+    const service = mls(async () => false);
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set(['g1']),
+      mlsService: service,
+      log: () => {},
+    });
+    expect(out).toEqual({ demoted: [], promoted: [], awaiting: ['g1'] });
+    expect(conversations.get('g1')).toMatchObject({
+      lifecycle: 'pending',
+      awaitingAdmission: false,
+    });
+    expect(service.forgetGroup).toHaveBeenCalledWith('g1', 0);
+  });
+
+  it('leaves an active row this device is still a member of, and a removed row, untouched', async () => {
+    const conversations = new Map([
+      ['g1', named('g1', 'active')],
+      ['g2', named('g2', 'removed')],
+    ]);
+    const service = mls(async () => true);
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set(['g1', 'g2']),
+      mlsService: service,
+      log: () => {},
+    });
+    expect(out).toEqual({ demoted: [], promoted: [], awaiting: [] });
+    expect(conversations.get('g1')!.lifecycle).toBe('active');
+    expect(conversations.get('g2')!.lifecycle).toBe('removed');
+    expect(service.isGroupActive).toHaveBeenCalledTimes(1);
+    expect(service.forgetGroup).not.toHaveBeenCalled();
+  });
+
   it('promotes nothing when the membership cannot be read, and says so', async () => {
     const unreadable = mls(async () => {
       throw new Error('unreadable');

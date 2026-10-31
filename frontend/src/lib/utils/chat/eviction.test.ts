@@ -287,7 +287,8 @@ describe('the Remove half of our own re-admission drops the evicted state', () =
     expect(conversations.get('g1')!.lifecycle).toBe('pending');
   });
 
-  it('marks the row `pending` and issues its save BEFORE the state is forgotten, so no kill leaves an `active` row over the evicted state', async () => {
+  // What a KILL leaves is the restore's to end (`reconcileRestoredLifecycles`, admissionState.test).
+  it('marks the row `pending` and issues its save BEFORE the state is forgotten, so no reader sees `active` over no state', async () => {
     const conversations = new Map([['g1', convo('g1')]]);
     const d = { ...deps(async () => false, conversations), reAddInFlight: true };
     const order: string[] = [];
