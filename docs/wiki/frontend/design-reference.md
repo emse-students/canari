@@ -75,6 +75,8 @@ holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhe
 saturate(180%)`, a light edge and a soft shadow), the one place the app builds a surface from
 translucency. The layout and the reasons are in [chat](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30).
 
+**WIDENED BY THE OWNER, 2026-10-31: `.glass-chrome` IS THE MATERIAL OF EVERYTHING THAT FLOATS ABOVE CONTENT** - the feed bar, the header pieces, menus, popovers (post, community, ecosystem, emoji pickers) and sticky headers over a scrolling list; cards and lists stay opaque. One `--glass-chrome-blur` token carries the blur, and `@supports not (backdrop-filter)` or `prefers-reduced-transparency: reduce` sets it to `none` and the background to `--cn-surface` (opaque). Never glass a bar that no content scrolls under (the bottom nav, the desktop top bar): the blur would cost a low-end Android for nothing. Never stack two blurs.
+
 ## 4. The reference radii
 
 | value | count (MSG / FB) | what has it |
