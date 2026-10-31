@@ -19,8 +19,10 @@
     isBDE?: boolean;
     /**
      * The kind of entity the member belongs to: the editor offers only the rights its sections
-     * need (`kindOffersFlag`). A bit the kind does not offer is neither shown nor cleared - the
-     * server ignores it there, and a toggle edits its own bit alone, so a save never strips it.
+     * need (`kindOffersFlag`). A bit the kind does not offer is neither shown nor sent cleared by a
+     * toggle (a toggle edits its own bit alone); the SERVER strips the shop and payout rights from
+     * any bitmask it writes for a list or an institution (`writablePermissions`), so one already
+     * stored stays as it was until the next save of that member, and opens nothing meanwhile.
      */
     kind?: Association['type'];
     /** `permissions` is omitted for a role-only rename, which leaves the bitmask untouched. */

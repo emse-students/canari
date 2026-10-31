@@ -1463,7 +1463,13 @@ export class ProductsService {
       where: { id: associationId },
       select: { id: true, type: true },
     });
-    if (owner) assertKindMaySell(this.logger, associationId, owner.type, 'product update');
+    // A product of a kind that sells nothing may be taken OFF sale, never put on sale or repriced.
+    const deactivationOnly = Object.entries(dto).every(
+      ([key, value]) => value === undefined || (key === 'isActive' && value === false)
+    );
+    if (owner && !deactivationOnly) {
+      assertKindMaySell(this.logger, associationId, owner.type, 'product update');
+    }
 
     if (product.type === 'balance_topup' && !isGlobalAdmin) {
       this.logger.debug(
@@ -2008,6 +2014,7 @@ export class ProductsService {
       throw new BadRequestException('cotisationMode is required when cotisationEnabled is true');
     }
     const cotisationMode = asso.cotisationMode;
+    assertKindMaySell(this.logger, asso.id, asso.type, 'cotisation provisioning');
 
     const existing = await this.productRepo.find({
       where: { associationId: asso.id, type: 'membership' },

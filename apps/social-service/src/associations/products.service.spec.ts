@@ -379,6 +379,28 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       }
     );
 
+    it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product());
+      await expect(
+        service.update('asso1', 'prod1', { isActive: true } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false, amountCents: 1 } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false } as any, false)
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses to provision a cotisation product for a list', async () => {
+      const { service } = makeService();
+      await expect(
+        service.provisionCotisationProduct(asso({ type: 'list', cotisationMode: 'lifetime' }))
+      ).rejects.toMatchObject({ response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' } });
+    });
+
     it('refuses to update a product of a list, and writes nothing', async () => {
       const { service, assoRepo, productRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));

@@ -155,21 +155,26 @@ notification lands on the same section.
 **The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
 is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`,
 `MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
-hidden bit a member already holds is **preserved, not stripped**: a checkbox edits its own bit only,
-and the server ignores a shop right on these kinds. The admin preset a new member receives is
+checkbox edits its own bit only; the server strips the shop and payout rights on write (below). The admin preset a new member receives is
 `adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
 endpoints carry no type check, so they already accepted a list; the republication allowlist
 (`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
 (`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. **The server holds the same rule** (`associations/selling-kinds.ts`, an allowlist: only `association`
-sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on
-`POST` and `PATCH :id/products`, on the Lydia account link (`setLydiaAccountId`, the one writer of the
-payout account) and on a form price (`POST` and `PUT` of a form: base price, a grid cell, the payment
-switch). It judges NEW WRITES only: no existing product, account or priced form is deleted or
-rewritten, and a priced form of such a kind stays editable while its price fields are left as they
-are. Not guarded, because no UI offers them to these kinds and each needs a right they cannot hold in
-the editor: payment delegation, cotisation tiers (products), the Lydia disconnect (it removes). The
-form editor draws no price section for them, and a priced one is shown frozen
-(`FormPaymentSection`, `associationSells`).
+sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on:
+product create and update (`ProductsService`), the cotisation provisioning and `cotisationEnabled: true`
+on `PATCH :id`, the Lydia account link (`setLydiaAccountId`, the one writer of the payout account),
+`requestPaymentDelegation` / `approvePaymentDelegation`, and a form price (`POST` and `PUT` of a form).
+It judges NEW WRITES only: no existing product, account or priced form is deleted or rewritten. An
+existing product may be taken OFF sale (`isActive: false` alone), never put on sale or repriced. A form
+is judged MERGED (`assertKindMayPrice`): any price source counts - base price, payment switch, grid cell,
+a choice option's supplement - and a form that already charges stays editable while its
+`priceFingerprint` (key-order-insensitive: jsonb reorders a grid's keys) is unchanged, and may always be
+made free. The shop and payout rights are STRIPPED from any member bitmask written for such a kind
+(`writablePermissions`, on `addMember` and `updateMemberRole`); a bit stored before stays until that
+member is next saved and opens nothing meanwhile, since every route behind it refuses the kind. The
+role editor never shows them. The form editor draws no price section for these kinds; a priced one is
+shown frozen with a "make this form free" button (`FormPaymentSection`, `associationSells`), and the
+refusal reads from the typed code (`asso_kind_does_not_sell`), never the server's English.
 
 ### The half that could only ever be turned off
 

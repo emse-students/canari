@@ -98,6 +98,14 @@
     return null;
   });
 
+  /** Drops every price of the form at once: the switch, the base price, the grid and cash payment. */
+  function makeFree(): void {
+    requiresPayment = false;
+    basePrice = 0;
+    priceMatrix = null;
+    allowCashPayment = false;
+  }
+
   /** Whether the form carries a price today, whatever its kind - the only case a no-sale kind shows. */
   const hasPrice = $derived(requiresPayment || basePrice > 0 || priceMatrix != null);
 

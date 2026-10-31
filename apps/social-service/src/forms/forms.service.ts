@@ -145,6 +145,34 @@ function chargesMoney(input: CreateFormDto): boolean {
   return ((input.items ?? []) as PricedItem[]).some((item) => decidesPrice(item, new Set()));
 }
 
+/** JSON with every object's keys sorted: two documents that differ only in key order compare equal. */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Everything that sets what a form charges, as one comparable string: the base price, the payment
+ * switch, the grid (key-order-insensitive) and every choice option's supplement.
+ */
+export function priceFingerprint(form: CreateFormDto): string {
+  const supplements = ((form.items ?? []) as PricedItem[]).flatMap((item) =>
+    (item.options ?? []).map((o, i) => [item.id, o.id ?? i, o.priceModifier ?? 0])
+  );
+  return stableJson({
+    base: form.basePrice ?? 0,
+    pay: form.requiresPayment === true,
+    grid: form.priceMatrix ?? null,
+    supplements,
+  });
+}
+
 /**
  * Whether a form takes money or grants something. An anonymous form refuses both: a payment names
  * its payer to the processor and to the submission, the identity it promised not to keep.
@@ -197,24 +225,34 @@ export class FormsService {
 
   /**
    * A form of a list or an institution may not be given a price (owner, 2026-10-31): those kinds
-   * collect nothing. Judged on what the write CHANGES - `stored` is the form being edited, so one
-   * that already carries a price stays editable as long as its price fields are left as they are,
-   * and nothing here ever rewrites a stored price.
+   * collect nothing. Judged on the MERGED form - what the edit leaves, stored fields included - so
+   * every way to charge counts: the base price, the payment switch, a grid cell and a choice
+   * option's supplement (`chargesMoney`).
+   *
+   * A form that already charges stays editable while its PRICE is left as it is, and may always be
+   * made free; a write that makes a charging form out of a free one, or moves the price of one that
+   * charges, is refused. `priceFingerprint` is the comparison - key-order-insensitive, because the
+   * stored jsonb reorders a grid's keys and the client sends them in another order. Nothing here
+   * rewrites a stored price.
    */
   private async assertKindMayPrice(
     input: CreateFormDto,
     associationId: string | null | undefined,
     stored?: Form
   ): Promise<void> {
-    if (!associationId || !chargesMoney(input)) return;
-    if (
-      stored &&
-      input.basePrice === stored.basePrice &&
-      (input.requiresPayment ?? stored.requiresPayment) === stored.requiresPayment &&
-      JSON.stringify(input.priceMatrix ?? stored.priceMatrix ?? null) ===
-        JSON.stringify(stored.priceMatrix ?? null)
-    ) {
-      return;
+    if (!associationId) return;
+    const merged = stored
+      ? ({
+          ...input,
+          items: input.items ?? stored.items,
+          basePrice: input.basePrice ?? stored.basePrice,
+          requiresPayment: input.requiresPayment ?? stored.requiresPayment,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : stored.priceMatrix,
+        } as CreateFormDto)
+      : input;
+    if (!chargesMoney(merged)) return;
+    if (stored && chargesMoney(stored as unknown as CreateFormDto)) {
+      if (priceFingerprint(merged) === priceFingerprint(stored as unknown as CreateFormDto)) return;
     }
     const kind = await this.associationsService.kindOf(associationId);
     if (kind) assertKindMaySell(this.logger, associationId, kind, 'form price');

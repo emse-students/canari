@@ -110,6 +110,41 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
     expect(formRepo.save).toHaveBeenCalledTimes(1);
   });
 
+  it('treats a stored grid as unchanged whatever the order of its keys (jsonb reorders them)', async () => {
+    const grid = { cells: { a: 100, b: 200 }, dimensions: [{ kind: 'x', values: ['a', 'b'] }] };
+    const { service, formRepo } = makeService('list', stored({ priceMatrix: grid }));
+    // The client sends `{ dimensions, cells }`, the database hands back `{ cells, dimensions }`.
+    const sent = { dimensions: [{ values: ['a', 'b'], kind: 'x' }], cells: { b: 200, a: 100 } };
+    await service.update('f1', dto({ priceMatrix: sent, title: 'Nouveau titre' }), 'u1', false);
+    expect(formRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a form of a list that already charges be made FREE', async () => {
+    const { service, formRepo } = makeService(
+      'list',
+      stored({ basePrice: 500, requiresPayment: true })
+    );
+    await service.update('f1', dto({ basePrice: 0, requiresPayment: false }), 'u1', false);
+    expect(formRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a choice option supplement added to a free form of a list', async () => {
+    const { service, formRepo } = makeService('list');
+    const items = [
+      {
+        id: 'q1',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [{ id: 'o1', label: 'Grand', priceModifier: 500 }],
+      },
+    ];
+    await expect(service.update('f1', dto({ items }), 'u1', false)).rejects.toMatchObject({
+      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+    });
+    expect(formRepo.save).not.toHaveBeenCalled();
+  });
+
   it('refuses to CHANGE the price of a form of a list, even one that already had one', async () => {
     const { service } = makeService('list', stored({ basePrice: 500 }));
     await expect(service.update('f1', dto({ basePrice: 900 }), 'u1', false)).rejects.toBeInstanceOf(

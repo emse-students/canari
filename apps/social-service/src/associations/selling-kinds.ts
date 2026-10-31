@@ -1,4 +1,5 @@
 import { ForbiddenException, type Logger } from '@nestjs/common';
+import { AssociationPermissionFlag } from './entities/association-member.entity';
 
 /**
  * THE KINDS OF ASSOCIATION THAT MAY SELL OR COLLECT MONEY (owner, 2026-10-31).
@@ -37,4 +38,17 @@ export function assertKindMaySell(
     code: ASSOCIATION_KIND_DOES_NOT_SELL,
     message: `A ${type} does not sell or collect money`,
   });
+}
+
+/** The two rights that only mean something where money is taken: the shop and the payout account. */
+export const SELLING_ONLY_FLAGS =
+  AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
+
+/**
+ * A member's bitmask as it may be WRITTEN for an association of `type`: a kind that sells nothing
+ * never gets the shop or payout rights, whatever the client sent. Applied to writes only - a row
+ * written before keeps its bits (they open nothing: every route behind them refuses the kind).
+ */
+export function writablePermissions(type: string, permissions: number): number {
+  return kindMaySell(type) ? permissions : permissions & ~SELLING_ONLY_FLAGS;
 }
