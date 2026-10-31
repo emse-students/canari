@@ -162,7 +162,13 @@
               href="/associations/{encodeURIComponent(link.slug)}"
               class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold hover:underline"
             >
-              <AssociationAvatar name={link.name} logoUrl={link.logoUrl} size="sm" shape="circle" />
+              <AssociationAvatar
+                id={link.associationId}
+                name={link.name}
+                logoUrl={link.logoUrl}
+                size="sm"
+                shape="circle"
+              />
               <span class="truncate">{link.name}</span>
             </a>
           {/each}
