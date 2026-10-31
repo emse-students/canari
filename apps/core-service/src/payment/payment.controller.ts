@@ -93,6 +93,11 @@ export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
  * cashier Canari no longer tracks, so changing it comes with lot 3. Also social-service's.
  */
 export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
+/**
+ * social-service's `code` (409) when the association's Business changed between the claim and the
+ * store: the unlink closed its cashier rows, and the store released the claim.
+ */
+export const LYDIA_BUSINESS_CHANGED = 'LYDIA_BUSINESS_CHANGED';
 
 function alreadyLinked(): ConflictException {
   return new ConflictException({
@@ -616,7 +621,21 @@ export class PaymentController {
         `Lydia Responsable of ${associationId} (phone ending ${phoneEnd}) added at Lydia, ` +
           `UNCONFIRMED - recorded; the same-number resend confirms it`
       );
-    } catch {
+    } catch (err) {
+      // A 409 is social-service's typed refusal of the store, and its record releases the claim on
+      // every conflict: saying "stays claimed" there would be false.
+      if (err instanceof HttpException && err.getStatus() === 409) {
+        const answer = err.getResponse();
+        const code =
+          answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
+        this.logger.error(
+          `Lydia Responsable of ${associationId} (phone ending ${phoneEnd}) added at Lydia, ` +
+            `UNCONFIRMED and NOT recorded: the store refused it (${String(code)}); claim released ` +
+            `by the store` +
+            (code === LYDIA_BUSINESS_CHANGED ? '; the unlink closed the rows' : '')
+        );
+        return;
+      }
       this.logger.error(
         `Lydia Responsable of ${associationId} (phone ending ${phoneEnd}) added at Lydia, ` +
           `UNCONFIRMED and NOT recorded - the step stays claimed until a global admin clears it`

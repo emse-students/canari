@@ -17,6 +17,7 @@ import {
 } from './lydia-payment-provider';
 import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
+  LYDIA_BUSINESS_CHANGED,
   LYDIA_ENROLMENT_IN_FLIGHT,
   LYDIA_NO_BUSINESS,
   LYDIA_RESPONSABLE_ALREADY_SET,
@@ -955,6 +956,35 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
     );
   });
 
+  it('added at Lydia, unconfirmed, and the store answers 409: logs the refusal of the store, never stays-claimed', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const claim = claimOf({ vendorToken: 'vendor-1', member: true, currentUserId: null });
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-claim')) return { status: 200, data: claim };
+      throw Object.assign(new Error('409'), {
+        response: { status: 409, data: { code: LYDIA_BUSINESS_CHANGED, message: 'changed' } },
+      });
+    });
+    paymentService.addLydiaBusinessHolder.mockRejectedValueOnce(
+      new provider.LydiaCashierAddedUnconfirmedException(
+        new BadGatewayException({ code: provider.LYDIA_CASHIER_RIGHTS_INCOMPLETE })
+      )
+    );
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 502 });
+    const logged = error.mock.calls.flat().map(String).join(' | ');
+    expect(logged).toContain(
+      `the store refused it (${LYDIA_BUSINESS_CHANGED}); claim released by the store; the unlink closed the rows`
+    );
+    expect(logged).not.toContain('stays claimed');
+  });
+
   it('record mode READS the rights, never adds, refuses a number that does not manage cashiers, and releases', async () => {
     const { controller, paymentService } = setup({
       vendorToken: 'vendor-1',
@@ -1074,5 +1104,6 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
     expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
+    expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);
   });
 });
