@@ -87,7 +87,7 @@
      match the cards. Glass at EVERY width, unlike the phone-only conversation header, because the
      row floats over cards that scroll under it on desktop too. -->
 <div class="flex items-center gap-2" data-feed-tab-row>
-  <div class="glass-chrome flex min-w-0 flex-1 rounded-full p-1" data-feed-pill>
+  <div class="glass-chrome flex h-11 min-w-0 flex-1 rounded-full p-1" data-feed-pill>
     <div
       bind:this={tabs}
       class="no-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto"
@@ -100,7 +100,7 @@
           data-feed-tab={tab.feed}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target min-h-9 flex-1 shrink-0 rounded-full border px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===
+          class="tap-target flex-1 shrink-0 rounded-full border px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===
           tab.feed
             ? 'text-text-main border-amber-500/40 bg-amber-500/20 font-semibold'
             : 'text-text-muted hover:text-text-main border-transparent font-medium'}"
