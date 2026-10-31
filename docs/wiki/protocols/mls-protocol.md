@@ -1350,7 +1350,7 @@ member as `new-person`. The server takes the report from a member of the group o
 
 ### An unseen device of a member (2026-10-27, interim)
 
-**Superseded by the 2026-10-30 decision: a new device of a member enters by itself, with a history and a visible trace ([backlog](../backlog.md#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built)).** What follows is the interim built in 1.5.
+**Superseded by the 2026-10-30 decision: a new device of a member enters by itself, with a history and a visible trace ([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).** What follows is the interim built in 1.5.
 
 **A leaf proves the user, not the device.** "Who admits a new person" decides on the USER: one who
 already holds a leaf was a member, and any further device of theirs was added automatically. Since
@@ -1469,7 +1469,7 @@ otherwise, a contact's in each conversation they share - where it used to join b
 unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
 joins by itself. A leaf of the user's own OLD device that stopped running counts as another device:
 a user whose only other leaf is that dead device waits for a contact's tap, and with no contact
-online, waits, for as long as that leaf stays in the tree. (Superseded 2026-10-30, not built: the device enters by itself, see [backlog](../backlog.md#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).) The owner's other devices no longer serve it from a push, so the local notification
+online, waits, for as long as that leaf stays in the tree. (Superseded 2026-10-30, not built: the device enters by itself, see [backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md).) The owner's other devices no longer serve it from a push, so the local notification
 "a device was added to your account" follows the foreground Add. The rate is owed from production:
 device ids first seen per week, and how many belong to an account that already had one. **This
 reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
@@ -2826,7 +2826,7 @@ the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_EN
 **the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
 carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
 allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
-[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12).
+[backlog](../backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md).
 
 **Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
 (`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open

@@ -1,0 +1,3 @@
+## P1 - CALL-WS-V6: shipped in `v1.3.1` (#2167), owed ONE phone reading (2026-10-20)
+
+The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](../frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on any build since `v1.3.1`: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` instead means the IPv6 attempt errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, and the iPhone's call RINGING the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete with that reading.

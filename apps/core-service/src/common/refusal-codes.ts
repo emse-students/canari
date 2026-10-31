@@ -12,6 +12,8 @@
  * `auth.controller.ts`, and `USER_ID_INVALID` in `users/user-id.ts`; the sign-in flow words them
  * (`frontend/src/lib/stores/auth.ts`), so they are not repeated here.
  */
+import { REVIEW_COHORT_BOUNDARY } from '../review-cohort';
+
 export const RefusalCode = {
   /** 400 - a block aimed at oneself. */
   BLOCK_SELF: 'BLOCK_SELF',
@@ -35,6 +37,11 @@ export const RefusalCode = {
    * from such a device, so the client has ONE name for the fact.
    */
   DEVICE_REVOKED_BY_OWNER: 'DEVICE_REVOKED_BY_OWNER',
+  /**
+   * 403 - an act across the review cohort's boundary (`review-cohort.ts`, which names the value and
+   * throws it as `ReviewCohortBoundaryException`, a `refusalBody`-shaped body). Neutral, like a block.
+   */
+  REVIEW_COHORT_BOUNDARY: REVIEW_COHORT_BOUNDARY,
 } as const;
 
 /** A stable refusal code of this service. */

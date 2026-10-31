@@ -117,6 +117,28 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 The price, stated: after a reload an anonymous voter sees THAT they voted and the results, but not
 which option they picked - the server does not know.
 
+## Who voted: a capped hover, and an info button that opens the full list (2026-10-24)
+
+`PostPolls.svelte` is the ONE poll card, for a post poll and a channel poll (`ChannelPoll` wraps
+it), so this is one implementation. The voter list used to be a hover tooltip on the vote count,
+reached on a phone only by a long press (hard to hold without voting) and as tall as the voter list
+(45 names overflowed the screen).
+
+- **Hover (mouse only)** on the info button shows `POLL_TOOLTIP_MAX_VOTERS` (10) names, then
+  "+ N autres personnes" (`post_poll_voters_more`, plural), and its `max-height` follows the room
+  above the anchor. A touch pointer never opens it (`pointerType === 'mouse'`).
+- **The info button** (Users icon, 44 px) is a SIBLING of the vote button, never a child: the old
+  count badge was a `role=button` nested in the vote button and relied on `stopPropagation`. It
+  opens `PollVotersSheet.svelte` - `Modal`, so a bottom sheet on a phone and a dialog on desktop,
+  with the focus trap, Escape, the back gesture and focus return. The sheet scrolls and, with
+  two options or more, switches option through a row of toggle buttons (`aria-pressed`; a `tablist` is reserved by `sectionMenus.test.ts`).
+- **Anonymous polls and empty options get no button**: the server sends an anonymous poll no voter
+  ids (a tally), and an option with 0 voters has nobody to list. The server is unchanged.
+- Helpers (cap, name resolution) are in `posts/pollVoters.ts`.
+- **Not verifiable without a phone**: the sheet's height and scroll under the keyboard-aware
+  overlay, and that a scroll starting on the info button never votes (it cannot by construction -
+  the button has no vote handler - but nothing here ran on the Mi 9T).
+
 ## Post creation (EditPostForm.svelte)
 
 - Markdown content editor. **A body OR a media entry, and either is enough** - the client's
@@ -2021,6 +2043,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - **Paging.** `PostCommentThread.loadMore()` reads the next page of `GET /posts/:id/comments` (20 whole threads, newest first) and ADDS it: **a row already held is never replaced by a page's copy** (a heart tapped while the page was in flight is newer), and **a comment removed meanwhile - here, or announced by another surface (`noteRemoved`) - stays gone** though the page was read before the deletion answered. `hasMore` is the server's answer and decides the "view older comments" button; before any page, the server's count against the rows held does. A failure is SAID (`post_comment_load_older_error`), never silent. When a fresher feed row replaces the card's, **the older pages already read are kept** (`keepHeld`: the row's own copy of a comment wins, nothing is read again) - the thread does not collapse to the newest few under the reader's thumb. The whole-thread read (`loadAll`, `GET /posts/:id`) and the ledger "hold" it needed are gone.
 - **The sorts.** "Récents" is the order the pages come in; "Anciens" and "Aimés" are about the WHOLE thread, so they read the remaining pages first (up to 25) or "oldest" would be the oldest of what happens to be loaded; a page that brings nothing ends the wait.
 - **Shared with the reel sheet.** `ReelCommentsSheet` mounts the same `PostComments` and the same `loadMore`; `CommentAuthorAvatar` is drawn by the thread and by the preview, so they cannot disagree about who wrote a comment.
+- **The preview draws the comment's picture and its like (2026-10-31).** The collapsed preview used to render only the author and `text`, so a comment that was only a GIF (empty `text`, a `media` ref) showed as a name in an empty bubble; only the thread drew `media`. Both surfaces now share `CommentMedia` (`compact` is the preview's thumbnail) and `CommentLikeButton` (the heart, `aria-pressed`, the count, the `tap-target` 44 px box). The card hands the preview `thread.like`, the SAME write path as the sheet, so the two hearts read one comment and cannot drift (pinned in `PostCard.commentSync`); a pending row's heart is withheld, as in the thread. A like never opens the sheet (`openFromComment` ignores a `button`). A comment has one text and at most one picture; a mention is a markdown link and a reply is never the preview's comment, so there is no other kind to draw.
 - **Fixed on the way.** The thread's list scrolled sideways: the 44 px hit box a small control gets (`tap-target`, the heart at the row's right end) stuck out of the scroller by a few pixels. The scroller now reaches the sheet's edges (`-mx-4 px-4`), so the box stays inside it.
 
 **Seen** at 390 px in a headless Chrome on a fixture card (the preview, the open sheet, the viewport cut to 480 px). **NOT seen on a phone**: the real keyboard (iOS resizes the visual viewport, Android the layout one - the overlay is built for the first and the layout rule serves both, but only a phone settles it), the back gesture, and the focus handed back to the comment button on close.

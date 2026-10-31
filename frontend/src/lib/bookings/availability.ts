@@ -159,23 +159,6 @@ export function fromStoredLines(lines: readonly StoredLine[]): EditorLine[] {
   return out;
 }
 
-/**
- * THE WARNING THE WP-B2 RULE OWES THE ORGANISER: when a resource is open WHOLE DAYS (00:00-24:00)
- * on two consecutive days, no booking can cross the midnight between them - each whole day is a
- * window of its own (docs/wiki/bookings-chantier.md, "a window crosses at most one midnight"). The
- * days are returned, so the screen can name them; empty when nothing is to say.
- */
-export function wholeDaysInARow(lines: readonly EditorLine[]): string[] {
-  const whole = lines.filter((l) => l.start === '00:00' && l.end === '24:00');
-  const keys = new Set(whole.map((l) => (l.kind === 'weekly' ? `w${l.weekday}` : `d${l.date}`)));
-  const hits: string[] = [];
-  for (const l of whole) {
-    const next = l.kind === 'weekly' ? `w${nextWeekday(l.weekday)}` : `d${nextDate(l.date)}`;
-    if (keys.has(next)) hits.push(l.kind === 'weekly' ? `w${l.weekday}` : `d${l.date}`);
-  }
-  return hits;
-}
-
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /**

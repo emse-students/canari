@@ -541,6 +541,61 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
   });
 
+  describe('a booking across the midnight between two whole open days', () => {
+    /** The setup's space, reopened 00:00-24:00 every day, with `exceptions` closed. */
+    async function wholeDays(exceptions: [string, string][] = []) {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await q(`DELETE FROM booking_availability_rules WHERE "resourceId" = $1`, [r]);
+      for (let weekday = 1; weekday <= 7; weekday++) {
+        await q(
+          `INSERT INTO booking_availability_rules ("resourceId", weekday, "startTime", "endTime")
+           VALUES ($1, $2, '00:00', '24:00')`,
+          [r, weekday]
+        );
+      }
+      for (const [fromDate, toDate] of exceptions) {
+        await q(
+          `INSERT INTO booking_availability_exceptions ("resourceId", "fromDate", "toDate")
+           VALUES ($1, $2, $3)`,
+          [r, fromDate, toDate]
+        );
+      }
+      return { space, r };
+    }
+    const night = (spaceId: string, r: string) =>
+      service.book(
+        spaceId,
+        { resourceId: r, startsAt: on('23:00'), endsAt: on('01:00', '2026-11-03') },
+        as(ALICE),
+        NOW
+      );
+
+    it('books 23:00-01:00 Monday to Tuesday through book()', async () => {
+      const { space, r } = await wholeDays();
+      await expect(night(space.id, r)).resolves.toHaveProperty('id');
+    });
+
+    it('refuses it when a closure takes the Tuesday', async () => {
+      const { space, r } = await wholeDays([['2026-11-03', '2026-11-03']]);
+      expect(await refusal(night(space.id, r))).toEqual({ code: 'outside-availability' });
+    });
+
+    it('refuses an over-long range before any window is built', async () => {
+      const { space, r } = await wholeDays();
+      expect(
+        await refusal(
+          service.book(
+            space.id,
+            { resourceId: r, startsAt: on('23:00'), endsAt: on('23:00', '2066-11-02') },
+            as(ALICE),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'too-many-steps' });
+    });
+  });
+
   describe('cancelling and withdrawing (D5, decided by the user 2026-10-17)', () => {
     it('the holder cancels five minutes before the start, whatever the participants delay', async () => {
       const { space, resourceIds } = await setup({ participantWithdrawMinMinutes: 120 });
@@ -1168,6 +1223,61 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           .map((s) => s.id)
           .filter((id) => mine.includes(id))
       ).toEqual([]);
+    });
+
+    it('lists a review account only the cohort spaces, and a member never one (review-cohort.ts)', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      try {
+        const school = await setup({ name: '0008 school' });
+        const reviewer = await setup({ name: '0009 reviewer', ownerId: DAN });
+        const personal = await setup({ name: '0010 own', associationId: null, ownerId: DAN });
+        const mine = [school.space.id, reviewer.space.id, personal.space.id];
+        expect(await listedAmong(DAN, mine)).toEqual([reviewer.space.id, personal.space.id]);
+        for (const viewer of [ALICE, ORGA]) {
+          expect(await listedAmong(viewer, mine)).toEqual([school.space.id]);
+        }
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
+    });
+
+    it('lets nobody use a space across the review cohort, by link or not, either way (review-cohort.ts)', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      const code = (p: Promise<unknown>) =>
+        p.then(
+          () => 'ok',
+          (e: { getResponse?: () => { code?: string } }) => e.getResponse?.().code ?? 'other'
+        );
+      try {
+        const school = await setup({ name: '0011 school' });
+        const demo = await setup({ name: '0012 demo', associationId: null, ownerId: DAN });
+        // A review account reaches no member's space, and a member no review account's.
+        await expect(code(service.getSpace(school.space.id, as(DAN)))).resolves.toBe(
+          'REVIEW_COHORT_BOUNDARY'
+        );
+        await expect(code(service.getSpace(demo.space.id, as(ALICE)))).resolves.toBe(
+          'REVIEW_COHORT_BOUNDARY'
+        );
+        await expect(
+          code(book(demo.space.id, demo.resourceIds[0], '09:00', '09:30', ALICE))
+        ).resolves.toBe('REVIEW_COHORT_BOUNDARY');
+        // Nor is a review account named a participant of a member's booking.
+        await expect(
+          code(
+            book(school.space.id, school.resourceIds[0], '09:00', '09:30', ALICE, {
+              participantIds: [DAN],
+            })
+          )
+        ).resolves.toBe('REVIEW_COHORT_BOUNDARY');
+        // Within the cohort the space is used as ever.
+        await expect(code(service.getSpace(demo.space.id, as(DAN)))).resolves.toBe('ok');
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
     });
 
     it('keeps the page when core-service fails: only a space needing the profile is left out', async () => {

@@ -160,7 +160,8 @@ function optionsRefused(target: HTMLElement): string[] {
  * voted" mark, which follows the selection and would survive a tally that lost the vote.
  */
 function tallied(target: HTMLElement): boolean {
-  return !!target.querySelector(`[aria-label="${m.post_poll_vote_count_label({ count: 1 })}"]`);
+  const one = m.post_poll_vote_count_label({ count: 1 });
+  return [...target.querySelectorAll('.sr-only')].some((el) => el.textContent === one);
 }
 
 /** Opens the reaction picker and returns its buttons. */

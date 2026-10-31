@@ -551,6 +551,28 @@ describe('CallsService', () => {
       );
     });
 
+    it.each([
+      ['a review account ringing members', 'caller'],
+      ['a member ringing a review account', 'callee-android'],
+    ])('refuses %s with REVIEW_COHORT_BOUNDARY and rings nobody', async (_case, reviewer) => {
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      try {
+        const err = await service
+          .ringGroup('caller', 'group-1', 'call-1', false)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'REVIEW_COHORT_BOUNDARY',
+        });
+        expect(fcmSend).not.toHaveBeenCalled();
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
     it('routes each platform to its ring transport and never rings the caller', async () => {
       pushTokenRepo.find.mockResolvedValue([
         {

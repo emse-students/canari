@@ -600,6 +600,13 @@ pub extern "C" fn canari_ios_on_resume() {
     log::debug!("[iOS] canari_ios_on_resume: garde foreground rafraichie");
 }
 
+/// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
+/// CallKit ring of an app in front stands back only when this is true.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
+    crate::page_ring::page_rings_in_app()
+}
+
 /// Signals the move to background (diagnostic log).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_pause() {

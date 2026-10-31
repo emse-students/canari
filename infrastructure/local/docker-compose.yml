@@ -124,6 +124,8 @@ services:
     ports:
       - "3010:3010"
     environment:
+      # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
       NODE_ENV: development
       # This stack is served over plain HTTP on localhost, where a `Secure` cookie is

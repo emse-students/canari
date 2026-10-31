@@ -120,16 +120,22 @@ describe('the call screen never outlives its ring', () => {
 });
 
 describe('an open iPhone rings once', () => {
-  it('a VoIP push to an app in the foreground is reported and ended at once', () => {
+  it('a VoIP push to an app whose page holds the socket is reported and ended at once', () => {
     const report = between(
       pushMm,
       'static void CanariReportVoipCall(',
       'long long nowMs',
       'CanariReportVoipCall'
     );
-    expect(report).toMatch(
-      /else if \(canari_ios_is_in_foreground\(\)\) \{[\s\S]*?ringUntilMs = 0;/
+    expect(report).toMatch(/else if \(CanariForegroundPageRings\(\)\) \{[\s\S]*?ringUntilMs = 0;/);
+    // In front at the PIN gate CallKit is the only ring: that branch ends nothing.
+    const gate = between(
+      report,
+      'else if (canari_ios_is_in_foreground()) {',
+      '\n  }',
+      'the PIN-gate branch'
     );
+    expect(gate).not.toContain('ringUntilMs');
   });
 
   it('the call not to ring is ended inside the report completion, not after it', () => {
@@ -144,6 +150,77 @@ describe('an open iPhone rings once', () => {
     // Nothing ends the call outside the completion.
     const after = tail.slice(tail.indexOf('}];'));
     expect(after).not.toContain('CanariEndCallKitCall');
+  });
+});
+
+describe('an app in front rings natively unless its page holds the socket (Mi 9T, 2026-10-31)', () => {
+  // The page rings from the caller's invite, a transport frame delivered only over an open gateway
+  // socket. At the PIN gate there is none: the native ring must not stand back for "foreground".
+  const libRs = readFileSync(resolve(here, '../../../src-tauri/src/lib.rs'), 'utf8');
+  const iosFfi = readFileSync(resolve(here, '../../../src-tauri/src/mobile/ios_ffi.rs'), 'utf8');
+  const tauriMls = readFileSync(resolve(here, '../services/TauriMlsService.ts'), 'utf8');
+
+  it('Android: the foreground guard lets call_ring through to the ring', () => {
+    const guard = between(
+      push,
+      'val showsWhileForeground =',
+      'skip background processing',
+      'the foreground guard'
+    );
+    expect(guard).toContain('msgType == "call_ring"');
+  });
+
+  it('Android: the ring stands back only for a page in front that holds the socket', () => {
+    expect(push).toContain(
+      'private fun foregroundPageRings(): Boolean = MainActivity.isInForeground && nativePageRingsInApp()'
+    );
+    const ring = between(
+      push,
+      'internal fun showIncomingCallNotification(',
+      'if (!activeCallRings.add(callId))',
+      'showIncomingCallNotification'
+    );
+    expect(ring).toMatch(/if \(foregroundPageRings\(\)\) \{[\s\S]*?return\s*\}/);
+    // "In front" alone never returns: it only says which ring this is.
+    const front = between(ring, 'if (MainActivity.isInForeground) {', '}', 'the in-front line');
+    expect(front).not.toContain('return');
+    expect(libRs).toContain(
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativePageRingsInApp'
+    );
+  });
+
+  it('iOS: the FCM call_ring and the VoIP push ask the same fact', () => {
+    expect(pushMm).toMatch(
+      /static BOOL CanariForegroundPageRings\(void\) \{\s*return canari_ios_is_in_foreground\(\) && canari_ios_page_rings_in_app\(\);/
+    );
+    const fcm = between(
+      pushMm,
+      'if ([msgType isEqualToString:@"call_ring"]) {',
+      'CanariReportIncomingCall(',
+      'the FCM call_ring branch'
+    );
+    expect(fcm).toContain('if (CanariForegroundPageRings()) {');
+    expect(fcm).not.toContain('canari_ios_is_in_foreground()');
+    expect(iosFfi).toContain('pub extern "C" fn canari_ios_page_rings_in_app() -> bool');
+  });
+
+  it('the page states it at its socket setter, and a new document voids it', () => {
+    expect(libRs).toContain('page_ring::set_page_gateway_socket,');
+    expect(libRs).toMatch(/PageLoadEvent::Started \{\s*page_ring::forget_on_page_load\(\);/);
+    // A dead WKWebView content process: cleared, then reloaded (Tauri's default reload, kept).
+    const terminate = between(
+      libRs,
+      '.on_web_content_process_terminate(|webview| {',
+      '});',
+      'the web content process termination handler'
+    );
+    expect(terminate).toMatch(
+      /page_ring::forget_on_web_content_terminated\(\);[\s\S]*?webview\.reload\(\)/
+    );
+    const setter = between(tauriMls, 'private set ws(', '\n  }\n', 'the socket setter');
+    expect(setter).toContain('reportPageGatewaySocket(');
+    // Every write goes through the setter: no other field holds the socket.
+    expect([...tauriMls.matchAll(/this\._ws = /g)]).toHaveLength(1);
   });
 });
 
@@ -270,8 +347,15 @@ describe('the native answer is a private intent carrying every fact the join nee
       '\n}\n',
       'CanariCallKitSetup'
     );
+    expect(setup).toContain('CanariHandOverCallsToPage(@"the app became active");');
+    const handover = between(
+      pushMm,
+      'static void CanariHandOverCallsToPage(NSString *why) {',
+      '\n}\n',
+      'CanariHandOverCallsToPage'
+    );
     // Queued behind the AnsweredElsewhere ends: once active, no CallKit End can cancel the answer.
-    expect(setup).toMatch(
+    expect(handover).toMatch(
       /CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);[\s\S]*?dispatch_async\(dispatch_get_main_queue\(\), \^\{\s*CanariTellPageOfPendingCallAccept\(\);/
     );
     const answer = between(
@@ -281,6 +365,46 @@ describe('the native answer is a private intent carrying every fact the join nee
       'performAnswerCallAction'
     );
     expect(answer).not.toContain('CanariTellPageOfPendingCallAccept');
+    // An answer made with the app ALREADY active (the PIN gate in front) is followed by no
+    // activation: the handover runs then, after the file is written - and only then.
+    expect(answer).toMatch(
+      /writeToFile:[\s\S]*?\[action fulfill\];[\s\S]*?if \(\[UIApplication sharedApplication\]\.applicationState == UIApplicationStateActive\) \{[\s\S]*?CanariHandOverCallsToPage\(/
+    );
+    expect([...answer.matchAll(/CanariHandOverCallsToPage\(/g)]).toHaveLength(1);
+    // The answer is kept past its ringing entry until the page is told.
+    expect(answer).toContain('CanariAnsweredUntilTold()[action.callUUID.UUIDString] = answered;');
+  });
+
+  it('iOS: the handover never ends an unanswered ring the page cannot ring (review of #2785)', () => {
+    // A Control Center pull over an app ringing at the PIN gate re-activates it: ending every
+    // CallKit call there ended the call's only ring.
+    const handover = between(
+      pushMm,
+      'static void CanariHandOverCallsToPage(NSString *why) {',
+      '\n}\n',
+      'CanariHandOverCallsToPage'
+    );
+    expect(handover).toContain('BOOL pageRings = canari_ios_page_rings_in_app();');
+    expect(handover).toMatch(
+      /if \(answered\) \{[\s\S]*?\} else if \(!pageRings\) \{[\s\S]*?continue;\s*\}\s*CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);/
+    );
+    // The answered records are dropped only once the page was told.
+    expect(handover).toMatch(
+      /CanariTellPageOfPendingCallAccept\(\);[\s\S]*?\[CanariAnsweredUntilTold\(\) removeObjectsForKeys:toldUUIDs\];/
+    );
+  });
+
+  it('iOS: an End between the handover end and the tell still cancels the answer (review of #2785)', () => {
+    const end = between(
+      pushMm,
+      'performEndCallAction:(CXEndCallAction *)action {',
+      '\n}\n',
+      'performEndCallAction'
+    );
+    expect(end).toContain(
+      'NSDictionary *info = g_ringingCallInfo[uuid] ?: CanariAnsweredUntilTold()[uuid];'
+    );
+    expect(end).toMatch(/if \(answered\) \{\s*CanariCancelPendingCallAccept\(callId\);/);
     const tell = between(
       pushMm,
       'static void CanariTellPageOfPendingCallAccept(void) {',
