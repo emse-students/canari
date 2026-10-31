@@ -45,7 +45,6 @@
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
-  import JoinRequestBanner from '$lib/components/shared/JoinRequestBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -695,8 +694,6 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
-    <!-- A new person asking to join a group: only a member's own Add lets them in, so it waits here. -->
-    <JoinRequestBanner />
     <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
