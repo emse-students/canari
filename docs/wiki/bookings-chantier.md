@@ -347,7 +347,7 @@ sentence and nothing else; the server refuses every organiser read anyway.
   over the list; its sentence is the D13 one until WP-N adds the optional message and replaces it. The first read shows a spinner, never the empty sentence; a cancel that succeeded but whose
   re-read of the list failed says exactly that, and still redraws the week.
 - **The layout**: from `lg` the week and "A venir" sit side by side (the mockup's desktop); below
-  it a segmented control shows one at a time. The counters are one line of pills.
+  it a segmented control shows one at a time. The counter is one pill, beside the drag hint.
 - **"Planning"** is `SpaceWeek.svelte` in `block` mode. **`SpaceWeek` is the booker page's week
   EXTRACTED** (column selector, week bar or day strip, grid, the three sheets, the read guard), so
   the two pages draw one implementation; the booker's page keeps only its load, poster, link and
@@ -357,13 +357,14 @@ sentence and nothing else; the server refuses every organiser read anyway.
   is not free - so it never crosses a booking; a stale grid still meets `bookings-inside-block`,
   whose named bookings the sheet lists with their cancel. `BlockSheet` gained `initialCount`, the
   length the drag drew. A taken unit opens the existing detail: who, answers, cancel.
-- **The counters (Q-R16)** come from the SAME week read as the grid, every column
-  (`lib/bookings/dashboard.ts`, pure): distinct bookings, hours taken of hours offered (overlapping
-  fixed slots each count whole: it is what was offered), distinct blocks; a unit belongs to the
-  day it starts on, as on the grid.
-- **"Ajouter une colonne" (D44)** is a card while the space has its one hidden column; it leads to
-  the editor, where a column is named (the naming lives there since WP-R1). Both tabs stay mounted,
-  so the counters follow the week and a cancel in one re-reads the other.
+- **The counter (Q-R16)** is ONE pill, "Réservations cette semaine": the distinct bookings of the
+  SAME week read as the grid, every column (`weekBookingCount`, `lib/bookings/dashboard.ts`, pure);
+  a unit belongs to the day it starts on, as on the grid. The "Heures occupées" and "Blocages"
+  chips were REMOVED by the owner on 2026-10-31, with the code that computed them (client-side
+  only: no server field ever carried them). Both tabs stay mounted, so the counter follows the
+  week and a cancel in one re-reads the other.
+- **No "Une seule colonne" card on the dashboard** (owner, 2026-10-31): a column is added in
+  "Réglages" (`SpaceEditor`, D44), which keeps its own card; the dashboard's copy was removed.
 - **The export** is one function now (`downloadSpaceExport`), shared by the editor and the dashboard.
 
 **Proof.** `bookings.service.integration.spec.ts` "lists only the LIVE bookings still to come from
