@@ -8,13 +8,18 @@
     type Association,
     type AssociationPayoutAccount,
   } from '$lib/associations/api';
+  import {
+    LYDIA_ONBOARDING_REFUSAL,
+    lydiaOnboardingErrorText,
+    lydiaOnboardingOutcomeUnknown,
+    lydiaOnboardingRefusalCode,
+  } from '$lib/associations/lydiaOnboardingRefusal';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
-  import LydiaBusinessKeyField from './LydiaBusinessKeyField.svelte';
 
   interface Props {
     asso: Association;
@@ -140,9 +145,32 @@
         lydiaOnboardingComplete: false,
       };
     } catch (err) {
-      error = err instanceof Error && err.message ? err.message : m.common_save_error();
+      // The detail goes to the log; the screen shows a Paraglide sentence, never the server's prose.
+      console.error('[Lydia] Onboarding refused:', err);
+      error = lydiaOnboardingErrorText(err);
+      // A Business is linked after all (another tab, another manager): show it, not the form.
+      if (lydiaOnboardingRefusalCode(err) === LYDIA_ONBOARDING_REFUSAL.ALREADY_LINKED) {
+        void loadAccount();
+      } else if (lydiaOnboardingOutcomeUnknown(err)) {
+        // No answer: the Business may exist. Re-read the account - linked after all, the screen
+        // shows it and the warning goes; still unlinked, the "check before retrying" line stays.
+        void recheckAfterUnknownOutcome();
+      }
     } finally {
       submitting = false;
+    }
+  }
+
+  /** Re-reads the payout account after an onboarding whose outcome is unknown. */
+  async function recheckAfterUnknownOutcome() {
+    await loadAccount();
+    if (account?.lydiaAccountId) {
+      console.info('[Lydia] Onboarding outcome was unknown; the Business is linked after all');
+      error = '';
+    } else {
+      console.warn(
+        '[Lydia] Onboarding outcome unknown and no Business linked: check before retrying'
+      );
     }
   }
 
@@ -188,7 +216,6 @@
     <p class="text-text-muted text-xs">
       {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{account.lydiaAccountId}</span>
     </p>
-    <LydiaBusinessKeyField associationId={asso.id} />
     <div class="flex flex-wrap items-center gap-2">
       {#if account.lydiaDashboardUrl}
         {@const dashboardUrl = account.lydiaDashboardUrl}

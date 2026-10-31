@@ -20,6 +20,7 @@ import type {
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
+  OnboardingResult,
   PaymentProvider,
   PaymentProviderId,
   WireLineItem,
@@ -111,7 +112,7 @@ export class PaymentService {
     existingAccountId?: string;
     /** Required by Lydia's business/create. */
     legalProfile?: BusinessLegalProfile;
-  }): Promise<{ url: string; accountId: string }> {
+  }): Promise<OnboardingResult> {
     return (await this.getProvider()).createOnboarding(params);
   }
 

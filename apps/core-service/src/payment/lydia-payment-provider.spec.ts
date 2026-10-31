@@ -6,7 +6,13 @@ import {
   LYDIA_CALL_TIMEOUT_MS,
   LYDIA_MAX_AMOUNT_CENTS,
   LYDIA_MIN_AMOUNT_CENTS,
+  LYDIA_BUSINESS_CREATED_UNLINKED,
+  LYDIA_BUSINESS_CREATE_UNCONFIRMED,
+  LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
+  LYDIA_ORPHAN_LOG_TAG,
+  LYDIA_ORPHAN_SUSPECT_LOG_TAG,
   LydiaPaymentProvider,
+  PAYMENTS_PROXY_READ_TIMEOUT_MS,
   PAYMENT_PROVIDER_REFUSED,
 } from './lydia-payment-provider';
 
@@ -439,13 +445,16 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
   };
 
   it('posts business/create with the legal profile and returns the vendor token + dashboard url', async () => {
-    mockedAxios.post.mockResolvedValue({
-      data: {
-        error: '0',
-        api_token: 'vendor-token-xyz',
-        dashboard_url: 'https://lydia-app.com/console/xyz',
-      },
-    });
+    mockedAxios.post
+      .mockResolvedValueOnce({
+        data: {
+          error: '0',
+          api_token: 'vendor-token-xyz',
+          api_token_id: 'throwaway-private-key',
+          dashboard_url: 'https://lydia-app.com/console/xyz',
+        },
+      })
+      .mockResolvedValueOnce({ data: { status: 'ok' } });
 
     const provider = makeProvider();
     const result = await provider.createOnboarding({
@@ -458,6 +467,7 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     expect(result).toEqual({
       url: 'https://lydia-app.com/console/xyz',
       accountId: 'vendor-token-xyz',
+      businessPrivateToken: 'throwaway-private-key',
     });
 
     const [url, body] = mockedAxios.post.mock.calls[0];
@@ -467,24 +477,204 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     expect(sent.get('name')).toBe('BDE Test');
     expect(sent.get('business_email')).toBe('bde@test.example');
     expect(sent.get('business_phone')).toBe('+33100000000');
+    expect(sent.get('webhook')).toMatch(/\/api\/payments\/lydia-business-webhook$/);
+
+    // The key is proven by Lydia BEFORE it is returned: auth/vendortoken with the pair.
+    const [checkUrl, checkBody] = mockedAxios.post.mock.calls[1];
+    expect(checkUrl).toBe('https://homologation.lydia-app.com/api/auth/vendortoken.json');
+    const checked = new URLSearchParams(checkBody as string);
+    expect(checked.get('vendor_token')).toBe('vendor-token-xyz');
+    expect(checked.get('vendor_id')).toBe('throwaway-private-key');
   });
 
-  it('throws rather than silently returning undefined fields when Lydia answers with neither an error nor api_token/dashboard_url', async () => {
-    // Observed in homologation (2026-09-20): a 200 with `{}` - no `error`, no `api_token`, no
-    // `dashboard_url`. Nothing in `postForm` treats that as a failure, so it used to fall through
-    // as { url: undefined, accountId: undefined }, which the controller then serialized as `{}` -
-    // a "successful" onboarding call the treasurer had no way to tell apart from a real one.
-    mockedAxios.post.mockResolvedValue({ data: {} });
+  const httpError = (status: number) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), {
+      response: { status },
+    });
+  it.each([
+    ['error 103', () => Promise.resolve({ data: { error: '103', message: 'Le token id' } })],
+    ['an answer that is not status ok', () => Promise.resolve({ data: { status: 'maybe' } })],
+    [
+      'another Lydia code',
+      () => Promise.resolve({ data: { error: '10', message: 'Non autorise' } }),
+    ],
+    ['an HTTP 400 refusal', () => Promise.reject(httpError(400))],
+    ['an HTTP 500', () => Promise.reject(httpError(500))],
+    [
+      'no answer at all',
+      () =>
+        Promise.reject(
+          Object.assign(new Error('timeout of 60000ms exceeded'), { code: 'ECONNABORTED' })
+        ),
+    ],
+  ])(
+    'auth/vendortoken with %s is the ONE typed LYDIA_BUSINESS_CREATED_UNLINKED, the orphan logged',
+    async (_label, check) => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      mockedAxios.post
+        .mockResolvedValueOnce({
+          data: {
+            error: '0',
+            api_token: 'vendor-token-xyz',
+            api_token_id: 'throwaway-wrong-key',
+            dashboard_url: 'https://lydia-app.com/console/xyz',
+          },
+        })
+        .mockImplementationOnce(check as never);
+      await expect(
+        makeProvider().createOnboarding({
+          associationId: 'assoc-1',
+          refreshUrl: 'r',
+          returnUrl: 'u',
+          legalProfile,
+        })
+      ).rejects.toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
+      const logged = error.mock.calls.flat().map(String).join(' | ');
+      // The durable record of the orphan: its tag, the association and the PUBLIC vendor token.
+      expect(logged).toContain(LYDIA_ORPHAN_LOG_TAG);
+      expect(logged).toContain('assoc-1');
+      expect(logged).toContain('vendor_token=vendor-token-xyz');
+      expect(logged).not.toContain('throwaway-wrong-key');
+      jest.restoreAllMocks();
+    }
+  );
 
-    const provider = makeProvider();
+  it('refuses a business/create answer with no api_token_id without asking auth/vendortoken', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { error: '0', api_token: 'vendor-token-xyz', dashboard_url: 'https://x.example/d' },
+    });
     await expect(
-      provider.createOnboarding({
+      makeProvider().createOnboarding({
         associationId: 'assoc-1',
         refreshUrl: 'r',
         returnUrl: 'u',
         legalProfile,
       })
-    ).rejects.toThrow(/api_token\/dashboard_url/);
+    ).rejects.toMatchObject({ response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  /** Runs one onboarding and returns its rejection plus every ERROR line it logged. */
+  async function onboardingFailure(): Promise<{ err: unknown; logged: string }> {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    try {
+      const err = await makeProvider()
+        .createOnboarding({
+          associationId: 'assoc-1',
+          refreshUrl: 'r',
+          returnUrl: 'u',
+          legalProfile,
+        })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      return { err, logged: error.mock.calls.flat().map(String).join(' | ') };
+    } finally {
+      jest.restoreAllMocks();
+    }
+  }
+
+  it.each([
+    [
+      'no answer in time',
+      () =>
+        Promise.reject(
+          Object.assign(new Error('timeout of 25000ms exceeded'), { code: 'ECONNABORTED' })
+        ),
+    ],
+    ['an HTTP 500', () => Promise.reject(httpError(500))],
+    ['an HTTP 429, which does not say refused', () => Promise.reject(httpError(429))],
+    // Observed in homologation (2026-09-20): a 200 with `{}` - no error, no api_token.
+    ['a 200 with no error and no api_token', () => Promise.resolve({ data: {} })],
+  ])(
+    'business/create with %s is AMBIGUOUS: the typed 504 UNCONFIRMED and an [LYDIA-ORPHAN-SUSPECT] line',
+    async (_label, create) => {
+      mockedAxios.post.mockImplementationOnce(create as never);
+      const { err, logged } = await onboardingFailure();
+      expect(err).toMatchObject({
+        status: 504,
+        response: { code: LYDIA_BUSINESS_CREATE_UNCONFIRMED },
+      });
+      expect(logged).toContain(`${LYDIA_ORPHAN_SUSPECT_LOG_TAG} association assoc-1`);
+      // Nothing to verify: auth/vendortoken is never asked.
+      expect(mockedAxios.post.mock.calls).toHaveLength(1);
+    }
+  );
+
+  it('business/create REFUSED (an error code) created nothing: the typed refusal, no suspect line', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '3', message: 'Parametre invalide' } });
+    const { err, logged } = await onboardingFailure();
+    expect(err).toMatchObject({ status: 400, response: { code: PAYMENT_PROVIDER_REFUSED } });
+    expect(logged).not.toContain(LYDIA_ORPHAN_SUSPECT_LOG_TAG);
+  });
+
+  it('an api_token with no dashboard_url is an orphan: [LYDIA-ORPHAN] and the 502 CREATED_UNLINKED', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { error: '0', api_token: 'vendor-token-xyz', api_token_id: 'throwaway-key' },
+    });
+    const { err, logged } = await onboardingFailure();
+    expect(err).toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
+    expect(logged).toContain(`${LYDIA_ORPHAN_LOG_TAG} association assoc-1`);
+    expect(logged).toContain('vendor_token=vendor-token-xyz');
+    expect(logged).not.toContain('throwaway-key');
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
+  });
+
+  it('bounds business/create and auth/vendortoken by their step budget, not the 60 s default', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({
+        data: {
+          error: '0',
+          api_token: 'vendor-token-xyz',
+          api_token_id: 'throwaway-private-key',
+          dashboard_url: 'https://lydia-app.com/console/xyz',
+        },
+      })
+      .mockResolvedValueOnce({ data: { status: 'ok' } });
+    await makeProvider().createOnboarding({
+      associationId: 'assoc-1',
+      refreshUrl: 'r',
+      returnUrl: 'u',
+      legalProfile,
+    });
+    const timeouts = mockedAxios.post.mock.calls.map(
+      (call) => (call[2] as { timeout?: number }).timeout
+    );
+    expect(timeouts).toEqual([
+      LYDIA_ONBOARDING_STEP_TIMEOUT_MS.create,
+      LYDIA_ONBOARDING_STEP_TIMEOUT_MS.verify,
+    ]);
+  });
+
+  it('the whole onboarding chain answers before nginx gives up on /api/payments', () => {
+    const sum = Object.values(LYDIA_ONBOARDING_STEP_TIMEOUT_MS).reduce((a, b) => a + b, 0);
+    expect(sum).toBeLessThan(PAYMENTS_PROXY_READ_TIMEOUT_MS);
+  });
+
+  it('nginx really gives /api/payments the read timeout the budget is measured against', () => {
+    // The budget above is only true if nginx waits at least PAYMENTS_PROXY_READ_TIMEOUT_MS: read
+    // the single source of the nginx config and fail the day someone tightens that location.
+    const conf = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'infrastructure', 'local', 'Dockerfile.frontend'),
+      'utf8'
+    );
+    const start = conf.indexOf('location /api/payments {');
+    expect(start).toBeGreaterThan(-1);
+    const block = conf.slice(start, conf.indexOf('}', start));
+    const set = /proxy_read_timeout\s+(\d+)(ms|s|m)?\s*;/.exec(block);
+    // None set: nginx's default, 60 s, is what the constant names.
+    const units = { ms: 1, s: 1_000, m: 60_000 } as const;
+    const effectiveMs =
+      set === null ? 60_000 : Number(set[1]) * units[(set[2] ?? 's') as keyof typeof units];
+    expect(effectiveMs).toBeGreaterThanOrEqual(PAYMENTS_PROXY_READ_TIMEOUT_MS);
+    // And with none set, the constant must BE nginx's default, not merely below it.
+    expect(set === null ? PAYMENTS_PROXY_READ_TIMEOUT_MS : effectiveMs).toBe(effectiveMs);
   });
 
   it('surfaces the {status, code, message} error shape, distinct from the {error, message} one', async () => {
@@ -578,19 +768,21 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     expect(logged).not.toContain('SIGNATURESECRET');
   });
 
-  it('never logs the api_token or api_token_id of a freshly created business', async () => {
+  it('never logs the api_token_id nor a vendor_id echo (the private token) of a freshly created business', async () => {
     const lines: string[] = [];
     const sink = (m: unknown) => void lines.push(String(m));
     jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(sink);
-    mockedAxios.post.mockResolvedValue({
-      data: {
-        error: '0',
-        api_token: 'VENDORSECRET',
-        api_token_id: 'PRIVATESECRET',
-        dashboard_url: 'https://lydia-app.com/console/xyz',
-      },
-    });
+    mockedAxios.post
+      .mockResolvedValueOnce({
+        data: {
+          error: '0',
+          api_token: 'VENDORSECRET',
+          api_token_id: 'PRIVATESECRET',
+          dashboard_url: 'https://lydia-app.com/console/xyz',
+        },
+      })
+      .mockResolvedValueOnce({ data: { status: 'ok', vendor_id: 'PRIVATESECRET' } });
     await makeProvider().createOnboarding({
       associationId: 'assoc-1',
       refreshUrl: 'r',
@@ -607,6 +799,7 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     });
     const logged = lines.join(' | ');
     expect(logged).toContain('business/create');
-    expect(logged).not.toMatch(/VENDORSECRET|PRIVATESECRET/);
+    // The private token never; the vendor token is public (lydia-api.md section 1) and may be logged.
+    expect(logged).not.toContain('PRIVATESECRET');
   });
 });

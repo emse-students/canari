@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Headers,
+  HttpCode,
   Post,
   Query,
   Logger,
@@ -15,6 +16,7 @@ import { PaymentService } from './payment.service';
 import type { LydiaCallbackVerdict } from './lydia-callback-verification';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
+  internalLydiaBusinessOfVendorTokenUrl,
   internalSocialRequestConfig,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
@@ -62,6 +64,17 @@ export function describeContentType(contentType: string | undefined): string {
     .toLowerCase()
     .replace(/[^\w/.+-]/g, '');
   return mediaType.slice(0, 48) || 'none';
+}
+
+/** The two events Lydia's documentation names for the `business/create` webhook (lydia-api.md 5b). */
+export const LYDIA_BUSINESS_EVENTS = ['BUSINESS_VALIDATED', 'BUSINESS_UNVALIDATED'] as const;
+
+/** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
+const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
+
+/** A sender-chosen event name, safe for a log line: `[w.-]` only, 32 characters at most. */
+function describeEventName(event: string): string {
+  return event.replace(/[^\w.-]/g, '').slice(0, 32) || 'none';
 }
 
 @Controller('payments')
@@ -302,5 +315,87 @@ export class PaymentWebhookController {
     }
 
     return { received: true };
+  }
+
+  /**
+   * Receives the `webhook` Lydia was given at `business/create` (`LydiaPaymentProvider
+   * .createOnboarding`): two fields, `vendor_token` and `event` (`BUSINESS_VALIDATED` or
+   * `BUSINESS_UNVALIDATED`), and NO signature (lydia-api.md section 5b). The vendor token is
+   * public, so anyone can send this body: it is a HINT, never a proof, and NOTHING here writes.
+   *
+   * Lydia exposes no read of a Business's validation state (the only measured signal is error 5 on
+   * a real `request/do`, which is a payment request, not a probe), so there is no fact this route
+   * could check before marking an onboarding complete. It therefore logs and decides nothing: the
+   * association it names (a read of social-service) at INFO for a validation, WARN for an
+   * unvalidation or anything unrecognised, for a global admin, who keeps "Valider l'onboarding".
+   * Always 200 for a body it read, so Lydia does not retry a hint; bounded and rate-limited like
+   * the request callback (multer limits here, nginx zone `lydia_callback` at the edge).
+   */
+  @Post('lydia-business-webhook')
+  @HttpCode(200)
+  @UseInterceptors(NoFilesInterceptor({ limits: LYDIA_CALLBACK_BODY_LIMITS }))
+  async handleLydiaBusinessWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('content-type') contentType?: string
+  ): Promise<{ received: true }> {
+    const text = (name: string): string => {
+      const value = body?.[name];
+      return typeof value === 'string' ? value : '';
+    };
+    const event = text('event');
+    const vendorToken = text('vendor_token');
+    const known = (LYDIA_BUSINESS_EVENTS as readonly string[]).includes(event);
+    if (!known || !VENDOR_TOKEN_SHAPE.test(vendorToken)) {
+      this.logger.warn(
+        `[LYDIA-BUSINESS-WEBHOOK] unsigned body ignored: event=${describeEventName(event)}, ` +
+          `vendor_token ${vendorToken ? 'malformed' : 'absent'}${known ? '' : ' or event unknown'} ` +
+          `(content-type=${describeContentType(contentType)}, ${describeFieldNames(body)})`
+      );
+      return { received: true };
+    }
+    const holder = await this.associationOfVendorToken(vendorToken);
+    const named = holder
+      ? `association ${holder.associationId} (marked complete here: ${holder.onboardingComplete ? 'yes' : 'no'})`
+      : 'no association of ours';
+    if (event === 'BUSINESS_VALIDATED') {
+      this.logger.log(
+        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned hint) for ${named} - nothing ` +
+          `marked; a global admin validates the onboarding by hand`
+      );
+    } else {
+      this.logger.warn(
+        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned hint) for ${named} - Lydia turns ` +
+          `daily transfers off; nothing changed here, for a global admin to look at`
+      );
+    }
+    return { received: true };
+  }
+
+  /**
+   * Which association holds `vendorToken`, read from social-service (a SELECT, nothing else), or
+   * null when none does, when two do, or when the read fails - which is logged and never turns into
+   * a decision, since the webhook decides nothing.
+   */
+  private async associationOfVendorToken(
+    vendorToken: string
+  ): Promise<{ associationId: string; onboardingComplete: boolean } | null> {
+    try {
+      const { data } = await axios.post<{
+        associationId?: string | null;
+        onboardingComplete?: boolean | null;
+      }>(
+        internalLydiaBusinessOfVendorTokenUrl(),
+        { vendorToken },
+        { ...internalSocialRequestConfig(), timeout: 10_000 }
+      );
+      if (typeof data?.associationId !== 'string') return null;
+      return { associationId: data.associationId, onboardingComplete: !!data.onboardingComplete };
+    } catch (err: unknown) {
+      this.logger.warn(
+        '[LYDIA-BUSINESS-WEBHOOK] could not read which association holds the vendor token',
+        describeHttpError(err as Error)
+      );
+      return null;
+    }
   }
 }

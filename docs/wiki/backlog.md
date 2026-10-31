@@ -4161,7 +4161,7 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **The paste-the-key field is DELETED.** Businesses already linked are migrated with the user in lot 1, a read-only count first. An outside Business still cannot be added without a database edit. **Re-running enrolment while a Business is linked is REFUSED** (unlink first, with confirmation).
 
-**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). `removecashier` fails (error 2): until Lydia fixes it, "Remove" reduces the rights to collect only and says how to finish in the console.
+**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). Removal goes through Lydia's cashier-removal call (its shape is in the private operations notes), measured on homologation 2026-10-30 ([lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)); every revoke re-reads `business/getpermission` and counts only "0 rights" as success - anything else is an ERROR surfaced to the manager, never shown as success. Lot 3 ships no "add" before this revoke is proven once in production. This replaces the "reduce the rights + finish in the console" fallback, which the measurement made unnecessary.
 
 **Refunds from Canari, in this chantier:** total and partial, by `MANAGE_PAYOUT_ACCOUNT` holders, confirmed, with an audit of who refunded. A total refund withdraws the membership or frees the seat, EXCEPT a Cercle top-up, never reversed automatically (the manager is told). **Statement:** Canari's own records only, no `transaction/list`.
 
@@ -4169,7 +4169,9 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen; lot 3 - cashiers; lot 4 - refunds.
 
-**Owed first:** one production check that a cashier added by the API sees the Business in the Lydia Pro app (the 2026-10-23 blocker); approved by the user on 2026-10-30.
+**Lot 2 carries the enrolment-in-flight marker (parked 2026-10-30, review of lot 1):** a durable marker written on the association BEFORE `business/create` and cleared by the link, so a second attempt is REFUSED rather than only discouraged by the "check before retrying" line - lot 1 cannot hold it because it is a column, and its migration rides lot 2's ([payments](frontend/modules/payments.md#a-businesscreate-with-no-answer-the-outcome-is-unknown-and-the-screen-says-so)).
+
+**The production check is DONE (2026-10-30):** a cashier added by the Provider-signed `business/addcashier` gets Lydia's SMS and sees the Business in the Lydia Pro app - the 2026-10-23 blocker is lifted ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
 
 **Lot 2 storage, confirmed by the owner directly on 2026-10-30:** the Responsable's phone is stored sealed, only `phoneEnd` readable, with a migration, an Art. 30 register entry and a privacy policy update together in the same lot.
 

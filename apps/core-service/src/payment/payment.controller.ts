@@ -8,8 +8,10 @@ import {
   HttpCode,
   Param,
   BadRequestException,
+  ConflictException,
   HttpException,
   Logger,
+  NotFoundException,
   Req,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -26,7 +28,11 @@ import axios from 'axios';
 import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
-import { PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
+import {
+  LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
+  PAYMENT_PROVIDER_REFUSED,
+  businessCreatedUnlinked,
+} from './lydia-payment-provider';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Deliberately loose: the provider is the authority on deliverability, this only refuses junk. */
@@ -45,6 +51,32 @@ const PAYER_EMAIL_MAX_LENGTH = 254;
  */
 export const SESSION_ID_RE = /^[0-9a-f]{32}$/i;
 
+/**
+ * The `code` of the 409 refusing an onboarding while a Business is already linked. Mirrored by
+ * social-service's link route and the frontend's `lydiaOnboardingRefusal.ts`.
+ */
+export const LYDIA_ACCOUNT_ALREADY_LINKED = 'LYDIA_ACCOUNT_ALREADY_LINKED';
+
+/**
+ * The `code` of the 503 answered when the payout account cannot be read before `business/create`:
+ * an unknown state is never read as "not linked", which would let a second Business be created.
+ */
+export const PAYOUT_ACCOUNT_UNREADABLE = 'PAYOUT_ACCOUNT_UNREADABLE';
+
+function payoutAccountUnreadable(): ServiceUnavailableException {
+  return new ServiceUnavailableException({
+    code: PAYOUT_ACCOUNT_UNREADABLE,
+    message: 'The payout account could not be read; nothing was created',
+  });
+}
+
+function alreadyLinked(): ConflictException {
+  return new ConflictException({
+    code: LYDIA_ACCOUNT_ALREADY_LINKED,
+    message: 'A Lydia Business is already linked to this association',
+  });
+}
+
 /** Controller handling Lydia Business onboarding and checkout sessions. */
 @Controller('payments')
 export class PaymentController {
@@ -52,7 +84,12 @@ export class PaymentController {
 
   constructor(private readonly paymentService: PaymentService) {}
 
-  private async assertCanManageAssociation(req: Request, associationId: string): Promise<void> {
+  private async assertCanManageAssociation(
+    req: Request,
+    associationId: string,
+    /** A bound on social-service's answer; the onboarding passes its step budget, others none. */
+    timeoutMs?: number
+  ): Promise<void> {
     const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -73,7 +110,7 @@ export class PaymentController {
     try {
       const res = await axios.get<{ ok: boolean }>(
         socialUrl(`associations/${encodeURIComponent(associationId)}/manage-permission`),
-        { headers: fwd, validateStatus: () => true }
+        { headers: fwd, validateStatus: () => true, timeout: timeoutMs }
       );
       if (res.status >= 400 || !res.data?.ok) {
         throw new ForbiddenException('You cannot manage payments for this association');
@@ -141,7 +178,14 @@ export class PaymentController {
     if (!UUID_RE.test(assocId)) {
       throw new BadRequestException('Invalid associationId');
     }
-    await this.assertCanManageAssociation(req, assocId);
+    // Every step below has its own bound, summing under nginx's timeout, so a slow call ends as a
+    // TYPED answer from here rather than a bare 504 from nginx (LYDIA_ONBOARDING_STEP_TIMEOUT_MS).
+    await this.assertCanManageAssociation(
+      req,
+      assocId,
+      LYDIA_ONBOARDING_STEP_TIMEOUT_MS.permission
+    );
+    await this.assertNoLinkedBusiness(assocId);
 
     const legalProfile = body.legalProfile
       ? {
@@ -166,26 +210,89 @@ export class PaymentController {
       legalProfile,
     });
 
-    // Persist the Lydia Business `vendor_token` on the association (social-service).
-    if (result.accountId && assocId && UUID_RE.test(assocId)) {
-      // Lydia's dashboard_url is handed out exactly once, at business/create, so it must be
-      // captured here or it is gone for good.
-      const bodyKey = 'lydiaAccountId';
-      const body: Record<string, string> = { [bodyKey]: result.accountId };
-      if (result.url) body.lydiaDashboardUrl = result.url;
-      try {
-        await axios.post(
-          socialUrl(`associations/${assocId}/lydia-account`),
-          body,
-          internalSocialRequestConfig()
-        );
-      } catch (err: unknown) {
-        const error = err as Error & { response?: { data?: unknown } };
-        this.logger.error(`Failed to save ${bodyKey} on association`, describeHttpError(error));
-      }
+    // Persist the Business on the association (social-service): its `vendor_token`, its
+    // dashboard_url and its private token are each handed out exactly once, at business/create, so
+    // they are captured here or gone for good. A failure here FAILS the onboarding: answering a
+    // success with nothing linked would invite a second business/create.
+    try {
+      await axios.post(
+        socialUrl(`associations/${assocId}/lydia-account`),
+        {
+          lydiaAccountId: result.accountId,
+          lydiaDashboardUrl: result.url || undefined,
+          businessPrivateToken: result.businessPrivateToken,
+        },
+        { ...internalSocialRequestConfig(), timeout: LYDIA_ONBOARDING_STEP_TIMEOUT_MS.link }
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { status?: number; data?: unknown } };
+      this.logger.error(
+        `Lydia onboarding of association ${assocId}: the link to social-service failed`,
+        describeHttpError(error)
+      );
+      // Classified on the CODE social-service answered, never on the status alone.
+      const code = (error.response?.data as { code?: unknown } | undefined)?.code;
+      const concurrent = code === LYDIA_ACCOUNT_ALREADY_LINKED;
+      // Either way this Business is an orphan: its ERROR line is the record an admin works from.
+      const orphan = businessCreatedUnlinked(
+        this.logger,
+        assocId,
+        result.accountId,
+        concurrent
+          ? 'another onboarding linked a Business first'
+          : `the link failed (${error.response?.status ?? 'no answer'})`
+      );
+      // A concurrent run linked one: the screen shows that Business, so it gets the 409.
+      throw concurrent ? alreadyLinked() : orphan;
     }
+    this.logger.log(`Lydia onboarding of association ${assocId}: Business linked with its key`);
 
-    return result;
+    // The private token stays server-side: the browser gets the public pair only.
+    return { url: result.url, accountId: result.accountId };
+  }
+
+  /**
+   * Refuses an onboarding while the association already has a Business linked: `business/create`
+   * would replace it silently (lydia-api.md section 2). The typed 409 the client maps to its own
+   * sentence; unlinking first is the confirmed "disconnect". social-service refuses the same link
+   * atomically, which closes the race two concurrent onboardings would open here.
+   */
+  private async assertNoLinkedBusiness(associationId: string): Promise<void> {
+    let res;
+    try {
+      res = await axios.get<{ lydiaAccountId?: string | null }>(
+        internalPaymentAccountUrl(associationId),
+        {
+          ...internalSocialRequestConfig(),
+          validateStatus: () => true,
+          timeout: LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead,
+        }
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `Lydia onboarding of association ${associationId}: payout account unreadable`,
+        describeHttpError(err as Error)
+      );
+      throw payoutAccountUnreadable();
+    }
+    if (res.status === 404) {
+      // No such association: nothing to link to, so business/create is never called.
+      this.logger.warn(`Lydia onboarding refused: association ${associationId} not found`);
+      throw new NotFoundException('Association not found');
+    }
+    if (res.status >= 400) {
+      // NOT "not linked": an unread state never lets a second Business be created.
+      this.logger.error(
+        `Lydia onboarding of association ${associationId}: payout account unreadable (HTTP ${res.status})`
+      );
+      throw payoutAccountUnreadable();
+    }
+    if (res.data?.lydiaAccountId?.trim()) {
+      this.logger.warn(
+        `Lydia onboarding of association ${associationId} refused: a Business is already linked`
+      );
+      throw alreadyLinked();
+    }
   }
 
   /**
