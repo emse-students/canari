@@ -1418,7 +1418,13 @@ held, but for the wrong reason, and the reason it would have given was wrong too
   local and the identity provider, in `CEILING_WATCHED_COMPOSES`);
 - and none of those files mounts data for the image (`ceiling_compose_image_data`). Every mount is
   data except a bind mount marked read-only: a named volume, an anonymous one, a writable bind,
-  quoted or not, short or long syntax, at any indentation.
+  quoted or not, short or long syntax, at any indentation. `volumes_from` is data too, and a file
+  that uses `extends` or a top-level `include` is refused outright, because it takes services from
+  a file nothing here reads.
+
+The reduction to an image name (dropping the registry, the tag and `library/`) is applied only in
+the docker ecosystems (`ceiling_dependency_subject`). A Gradle coordinate keeps its artifact:
+`com.google.firebase:firebase-messaging-ktx` is not cut down to `com.google.firebase`.
 
 The first draft counted only `- <word>:` lines at two-space indentation. A review of #2779 found
 that it read a hyphenated volume, a quoted entry, an anonymous volume, a writable bind and a

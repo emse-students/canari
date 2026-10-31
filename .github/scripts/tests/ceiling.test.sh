@@ -426,8 +426,27 @@ expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched compose file i
 printf 'services: {edge: {image: "nginx:1.31"}}\n' > "$allow_work/flow.yml"
 CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/flow.yml"
 expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched compose file parses to no image row"
+# `volumes_from` MOUNTS ANOTHER SERVICE'S DATA, and `extends` / `include` take services from a file
+# nothing here reads (re-review of #2779).
+printf 'services:\n  db:\n    image: nginx:1.31\n  metrics:\n    image: influxdb:2.7\n    volumes_from: [db]\n' > "$allow_work/from.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/from.yml"
+expect_stateless no influxdb "volumes_from mounts another service's volumes"
+printf 'services:\n  web:\n    image: caddy:2.8\n    extends:\n      file: base.yml\n      service: web\n' > "$allow_work/extends.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/extends.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched file extends a service from a file nothing here reads"
+printf 'include:\n  - other.yml\nservices:\n  web:\n    image: caddy:2.8\n' > "$allow_work/include.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/include.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched file includes services from a file nothing here reads"
 # ...and none of that reaches a crate: the arm is about images.
 expect_on_ref allowed serde "2.0.0" dependabot/cargo/apps/chat-gateway/serde-2.0.0
+# A GRADLE COORDINATE KEEPS ITS ARTIFACT: the image reduction drops what follows the last `:`.
+for s_case in "com.google.firebase:firebase-messaging-ktx|gradle|com.google.firebase:firebase-messaging-ktx" \
+  "docker.io/library/postgres|docker_compose|postgres" "mirror.gcr.io/library/postgres|docker|postgres" \
+  "@nestjs/common|bun|@nestjs/common" "library/postgres||postgres"; do
+  IFS='|' read -r s_name s_eco s_want <<<"$s_case"
+  s_got="$(ceiling_dependency_subject "$s_name" "$s_eco")"
+  check_that "$s_name (${s_eco:-unknown}) is matched as '$s_want' (got '$s_got')" test "$s_got" = "$s_want"
+done
 CEILING_PROD_COMPOSE="${saved_composes[0]}"
 CEILING_AUTHENTIK_COMPOSE="${saved_composes[1]}"
 CEILING_WATCHED_COMPOSES="${saved_composes[2]}"

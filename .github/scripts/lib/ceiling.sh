@@ -187,6 +187,9 @@ EOF
 #     not), an anonymous one (`- /var/lib/mysql`), a writable bind (`- ./pgdata:/var/...`), quoted
 #     or not. In the long syntax only `type: bind` with `read_only: true` is exempt, and an inline
 #     list (`volumes: [...]`) that is not empty counts as data because nothing here parses it.
+#   - `volumes_from` is data, whatever it names: it mounts another service's volumes.
+#   - `extends` and a top-level `include` pull services from elsewhere, which nothing here reads, so
+#     a file using either makes the awk exit 3 and the caller refuses (re-review of #2779).
 #   - `tmpfs` is not a mount here: it is empty at every start, so there is no old data to refuse.
 ceiling_compose_image_data() { # <compose file>
   awk '
@@ -214,6 +217,7 @@ ceiling_compose_image_data() { # <compose file>
     BEGIN { svc = -1; keyind = -1 }
     /^[ \t]*(#|$)/ { next }
     { ind = indent($0); line = substr($0, ind + 1); sub(/[ \t]+#.*$/, "", line) }
+    ind == 0 && line ~ /^include:/ { foreign = 1 }
     ind == 0 { flush_service(); inservices = (line ~ /^services:[ \t]*$/); svc = -1; next }
     !inservices { next }
     svc < 0 { svc = ind }
@@ -230,7 +234,9 @@ ceiling_compose_image_data() { # <compose file>
     line ~ /^image:/ { v = line; sub(/^image:[ \t]*/, "", v); image = unq(v); next }
     line ~ /^volumes:[ \t]*$/ { invol = 1; volind = ind; itemind = -1; next }
     line ~ /^volumes:[ \t]*\[/ { if (line !~ /\[[ \t]*\]/) data++; next }
-    END { flush_service() }
+    line ~ /^volumes_from:/ { data++; next }
+    line ~ /^extends:/ { foreign = 1; next }
+    END { flush_service(); if (foreign) exit 3 }
   ' "$1"
 }
 
@@ -245,7 +251,8 @@ ceiling_compose_image_data() { # <compose file>
 # compose file (`CEILING_WATCHED_COMPOSES`) could be read AND parsed to at least one image AND none
 # of them mounts data for it (`ceiling_compose_image_data`). A Dockerfile base (`node`, `rust`) is in
 # no compose file and holds no data directory, so it passes; `adminer` and `nginx` mount read-only
-# configuration and pass. A missing file, or one that parses to no image at all, fails closed.
+# configuration and pass. A missing file, one that parses to no image at all, or one that takes
+# services from elsewhere (`extends`, `include`) fails closed.
 ceiling_image_may_cross_major() { # <image name>
   local want f ref vols rows
   want="$(ceiling_image_name "${1:-}")"
@@ -254,7 +261,8 @@ ceiling_image_may_cross_major() { # <image name>
   esac
   for f in $CEILING_WATCHED_COMPOSES; do
     [ -r "$f" ] || return 1
-    rows="$(ceiling_compose_image_data "$f")"
+    # Exit 3 is a file that takes services from elsewhere (`extends`, `include`): not provable here.
+    rows="$(ceiling_compose_image_data "$f")" || return 1
     # A readable file that yields no image is a parse that failed, not a file with nothing in it.
     [ -n "$rows" ] || return 1
     while read -r vols ref; do
@@ -390,6 +398,18 @@ dev_proven_major() {
   ' "$CEILING_VERSION_GAP" 2>/dev/null
 }
 
+# THE NAME THE TABLE MATCHES, for dependency "$1" of ecosystem "$2". An image name is reduced
+# (`ceiling_image_name`) ONLY for an image - the docker ecosystems, or an unknown one, which fails
+# closed as everywhere here. That reduction drops what follows the last `:`, which is a tag for a
+# container and the ARTIFACT for a Gradle coordinate: `com.google.firebase:firebase-messaging-ktx`
+# became `com.google.firebase` (re-review of #2779). Every other ecosystem keeps its name whole.
+ceiling_dependency_subject() { # <name> <ecosystem>
+  case "${2:-}" in
+    '' | docker | docker_compose) ceiling_image_name "${1:-}" ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
 # Prints the gate this repository lacks for "$1", or nothing at all when the check suite is already
 # evidence about it. The name is matched AFTER quote-stripping by the caller, and with
 # `docker.io/library/` removed (`ceiling_image_name`). "$4" is the compose file the update is in
@@ -465,7 +485,7 @@ gate_for_dependency() {
       fi
       ;;
   esac
-  case "$(ceiling_image_name "$1")" in
+  case "$(ceiling_dependency_subject "$1" "${3:-}")" in
     # ---------------------------------------------------------------------------------------------
     # WIRE FORMATS: A FROZEN FIXTURE CAN ONLY EVER SEE ONE DIRECTION
     # ---------------------------------------------------------------------------------------------
