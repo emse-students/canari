@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from './api';
 import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
+import { LYDIA_CASHIER_ADD_ENABLED } from './lydiaCashiers';
 
 /**
  * The typed refusals of `POST /api/payments/lydia-responsable/:id`, shared as data with the servers
@@ -42,7 +43,10 @@ export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
  * The sentence for a Responsable add / record failure, in the reader's language: one per typed
  * code, one for a 403, and a generic one for anything else.
  */
-export function lydiaResponsableErrorText(err: unknown): string {
+export function lydiaResponsableErrorText(
+  err: unknown,
+  numberChangeEnabled: boolean = LYDIA_CASHIER_ADD_ENABLED
+): string {
   if (err instanceof SocialApiError) {
     switch (err.code) {
       case LYDIA_RESPONSABLE_REFUSAL.PHONE_INVALID:
@@ -67,8 +71,11 @@ export function lydiaResponsableErrorText(err: unknown): string {
         return m.asso_lydia_resp_err_unreachable();
       case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.ALREADY_SET:
         return m.asso_lydia_resp_err_already_set();
+      // Also core's answer to any number change while it is switched off (the same flag here).
       case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.PHONE_LOCKED:
-        return m.asso_lydia_resp_err_phone_locked();
+        return numberChangeEnabled
+          ? m.asso_lydia_resp_err_phone_locked()
+          : m.asso_lydia_resp_err_number_change_disabled();
       case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.IN_FLIGHT:
         return m.asso_lydia_resp_err_in_flight();
       case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.BUSINESS_CHANGED:
@@ -85,8 +92,6 @@ export function lydiaResponsableErrorText(err: unknown): string {
       // Lot 3: the replaced number's removal was refused before anything was removed.
       case LYDIA_CASHIER_REFUSAL.REMOVAL_PRECONDITION:
         return m.asso_lydia_cashier_err_removal_refused();
-      case LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED:
-        return m.asso_lydia_resp_err_number_change_disabled();
       case LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_FORBIDDEN:
         return m.asso_lydia_resp_err_number_change_forbidden();
       case LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST:

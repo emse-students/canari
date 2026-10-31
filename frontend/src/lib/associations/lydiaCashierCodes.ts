@@ -11,7 +11,6 @@ export const LYDIA_CASHIER_REFUSAL = {
   /** The check before a removal refused it: nothing was removed. */
   REMOVAL_PRECONDITION: 'LYDIA_CASHIER_REMOVAL_PRECONDITION',
   /** Changing the Responsable's number is off while the add gate is off. */
-  RESPONSABLE_NUMBER_CHANGE_DISABLED: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED',
   /** Only the Responsable themselves, or a global admin, may change their number. */
   RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN',
 } as const;

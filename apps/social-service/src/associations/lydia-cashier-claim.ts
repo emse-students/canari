@@ -24,8 +24,8 @@ export const LYDIA_CASHIER_CLAIM_LOST = 'LYDIA_CASHIER_CLAIM_LOST';
 export const LYDIA_CASHIER_NUMBER_CHANGED = 'LYDIA_CASHIER_NUMBER_CHANGED';
 /**
  * The `code` (409) of a number already held by a live cashier row of the association (its own or a
- * Responsable's other number): adding it again would REPLACE that cashier's rights at Lydia. Shared
- * by the cashier steps and the Responsable's step.
+ * Responsable's other number): one number, one row. Shared by the cashier steps and the
+ * Responsable's step.
  */
 export const LYDIA_CASHIER_PHONE_IN_USE = 'LYDIA_CASHIER_PHONE_IN_USE';
 

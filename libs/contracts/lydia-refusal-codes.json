@@ -17,7 +17,6 @@
     "cashierRevokeUnconfirmed": "LYDIA_CASHIER_REVOKE_UNCONFIRMED",
     "cashierReadbackInvalid": "LYDIA_CASHIER_READBACK_INVALID",
     "cashierRemovalPrecondition": "LYDIA_CASHIER_REMOVAL_PRECONDITION",
-    "responsableNumberChangeDisabled": "LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED",
     "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN"
   },
   "social": {

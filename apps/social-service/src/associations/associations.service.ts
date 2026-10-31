@@ -3691,11 +3691,9 @@ ${rejectionReason}`
   /**
    * Refuses (409 `LYDIA_CASHIER_PHONE_IN_USE`) a Responsable number that ANOTHER live cashier row of
    * `vendorToken`'s Business holds - its current or its other number - as the cashier steps' add does:
-   * the Responsable's add would REPLACE that cashier's rights at Lydia and leave two rows on one
-   * number. The rows are locked by `manager`'s transaction; a seal that does not open counts as
-   * holding the number, refused rather than risked. At the `claim` it is a WARN: nothing was asked
-   * of Lydia yet. At the `record` it is an ERROR: Lydia has already been asked, so it has already
-   * replaced that cashier's rights. The phone is never logged.
+   * one number, one row. The rows are locked by `manager`'s transaction; a seal that does not open
+   * counts as holding the number, refused rather than risked. At the `claim` it is a WARN; at the
+   * `record` it is an ERROR, nothing recorded. The phone is never logged.
    */
   private async assertNotAnotherCashierNumber(
     manager: EntityManager,
@@ -3730,8 +3728,8 @@ ${rejectionReason}`
     if (!match) return;
     if (step === 'record') {
       this.logger.error(
-        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the number is another ` +
-          `cashier's - Lydia has already replaced that cashier's rights`
+        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: number already held by another ` +
+          `cashier row - not recorded`
       );
     } else {
       this.logger.warn(
@@ -3895,8 +3893,8 @@ ${rejectionReason}`
    *   confirmed, nothing changes;
    * - a THIRD number while another is tracked: 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`;
    * - a new number: CONFIRMED, it becomes the current one and the old one the other, to remove next
-   *   (`removeOther`); NOT confirmed, the OLD number stays the live one with every right and the
-   *   new one is only tracked as the other, so nothing is lost until Lydia proves the new one.
+   *   (`removeOther`); NOT confirmed, the OLD number stays the live one and the new one is only
+   *   tracked as the other.
    * The step's claim is cleared by the same transaction, and by every typed refusal here. The phone
    * is never logged.
    */

@@ -21,7 +21,7 @@ export const LYDIA_CASHIER_ADD_ENABLED = false;
 /**
  * The Responsable's resend control, in the reader's language. Changing the Responsable's number is
  * behind the same gate as adding a cashier (core-service refuses it with
- * `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED` while off), so while the gate is off the control only
+ * `LYDIA_RESPONSABLE_PHONE_LOCKED` while off), so while the gate is off the control only
  * offers to resend the SMS and never mentions another number.
  */
 export function responsableResendText(enabled: boolean = LYDIA_CASHIER_ADD_ENABLED): {

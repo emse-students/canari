@@ -11,7 +11,6 @@ import {
  * only a malformed request gets: each falls to the generic sentence.
  */
 const NOT_OWN: readonly string[] = [
-  LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED,
   LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
   LYDIA_CASHIER_SOCIAL_REFUSAL.CONFIRMED_REQUIRED,
 ];

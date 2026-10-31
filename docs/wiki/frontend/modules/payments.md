@@ -801,7 +801,7 @@ member and their phone in E.164:
    locked: the Business must still be the one claimed (`LYDIA_BUSINESS_CHANGED`), one live Responsable
    per association (a partial unique index, whose violation answers the typed
    `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number a number
-   change (lot 3, the other number kept sealed, and the old one stripped only once the new one is
+   change (lot 3, the other number kept sealed, and the old one removed once the new one is
    confirmed - [below](#the-cashiers-enrolment-lot-3)); the same person and number confirms an unconfirmed row; a row of an
    EARLIER Business is closed, its phone and `phoneEnd` cleared; the unlink closes every row the same
    way. Nothing ties the phone to the member: the member is not asked, and the manager types it.
@@ -854,9 +854,8 @@ of the constant, with this table.
 `LydiaCashiersController`): social-service checks and CLAIMS (`lydia-cashier-add-claim`) - a Business is
 linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`) and not already a live
 cashier (`LYDIA_CASHIER_ALREADY_SET`), a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_RESPONSABLE`), and the
-number is not one a live row holds, its own or a Responsable's other number (`LYDIA_CASHIER_PHONE_IN_USE`:
-a second add of a number REPLACES its rights, so adding the Responsable's number as a Vendeur would strip
-the Responsable). Then `addCashier` sends the role's set signed, `notify=yes`, and READS IT BACK. Once the
+number is not one a live row holds, its own or a Responsable's other number (`LYDIA_CASHIER_PHONE_IN_USE`).
+Then `addCashier` sends the role's set signed, `notify=yes`, and READS IT BACK. Once the
 add answered, any failure is `LydiaCashierAddedUnconfirmedException` and the row is recorded UNCONFIRMED,
 as for the Responsable. A confirmed NEW cashier gets a bell row (`lydia_cashier_added`, behind
 `LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, OFF until the floor version -
@@ -877,7 +876,7 @@ grants the 13 and not the five, so the five are not required of it).
 still holds the number Lydia was asked about (`LYDIA_CASHIER_NUMBER_CHANGED`), and the record clears a
 removal flag (`revokeUnconfirmedAt`): the number holds the new role's rights again. Never the
 Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`), and never a row whose number is one of the
-Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`: the re-add would replace the Responsable's rights).
+Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`).
 
 **The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
 the frontend constant of the same name, and `switches.cashierAddEnabled` in
@@ -902,8 +901,9 @@ still holds the number removed, compared sealed-to-opened inside the locking tra
 its own step, below.
 
 **Changing the Responsable's number** (the lot 2 route, the same person with another number). OFF while
-`LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED`, the claim
-released, Lydia never asked; the screen then offers only "Renvoyer le SMS"). Once on, only the
+`LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
+than lot 3 already word as "cannot be changed yet"; the claim released, Lydia never asked; the screen
+then offers only "Renvoyer le SMS"). Once on, only the
 Responsable themselves (the caller IS the row's `userId`) or a global admin may change it - a
 `MANAGE_PAYOUT_ACCOUNT` holder alone gets the typed 403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`.
 The claim answers `numberChange` (only when core asks for it, `allowNumberChange`, so an older core keeps

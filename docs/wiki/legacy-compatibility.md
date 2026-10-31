@@ -325,6 +325,19 @@ row only, no push (so no push key, category or native string is owed); the clien
 `KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
 The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
 
+**What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**
+While the number change is switched off (`LYDIA_CASHIER_ADD_ENABLED = false`), core answers another
+number with `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code those clients already word ("the Responsable's
+number cannot be changed yet"); a lot 3 client reads the same code as "not possible yet" through the
+same flag. **After the flip**, those clients can reach a number change and meet codes they do not
+know, each drawn as their generic "Could not save the Responsable." with nothing lost:
+`LYDIA_CASHIER_PHONE_IN_USE` (the number is already a cashier's - nothing claimed, nothing asked of
+Lydia), and `LYDIA_CASHIER_REMOVAL_PRECONDITION` or `LYDIA_CASHIER_REVOKE_UNCONFIRMED` (the new number
+is recorded; the old one is still listed in the cashiers, with its "Retirer cet autre numéro" button,
+on any up-to-date client). `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN` is a 403, which they word as
+"not allowed to manage the payout account". Nothing to remove: these are wordings, and the floor
+rule above (`minClientVersion` at or above lot 3) retires them.
+
 **Built and waiting on its floor (2026-10-31): `lydia_refund_issued`**, the notice telling a payer that an
 association refunded one of their payments (Lydia enrolment lot 4). It ships behind
 `LYDIA_REFUND_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/refunds/lydia-refund-notifier.service.ts`);

@@ -96,14 +96,11 @@ export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
 /**
  * The `code` (409) of a THIRD number for the live Responsable while another one is still tracked on
  * the row (an old number whose removal Lydia has not confirmed, or a new one it did not confirm -
- * lot 3), or of another number in record mode. Also social-service's.
+ * lot 3), or of another number in record mode. Also social-service's. While the number change is
+ * switched off it is also the answer to any number change: clients older than lot 3 already word
+ * this code ("cannot be changed yet"), so the switched-off answer stays the one they know.
  */
 export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
-/**
- * The `code` (409) of a Responsable number change while it is switched off: it follows
- * `LYDIA_CASHIER_ADD_ENABLED` (the owner's decision), and nothing reaches Lydia.
- */
-export const LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED = 'LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED';
 /**
  * The `code` (403) of a Responsable number change asked by someone who is neither that
  * Responsable nor a global admin: managing the payout account alone does not allow it.
@@ -434,7 +431,7 @@ export class PaymentController {
    * number) and the same-number resend confirms it.
    *
    * ANOTHER NUMBER for the live Responsable is a NUMBER CHANGE (lot 3): switched off with
-   * `LYDIA_CASHIER_ADD_ENABLED` (409 `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED`), and allowed only
+   * `LYDIA_CASHIER_ADD_ENABLED` (409 `LYDIA_RESPONSABLE_PHONE_LOCKED`), and allowed only
    * to that Responsable or a global admin (403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`) - both
    * refused before Lydia is asked anything. The new number is added, and the old number is removed
    * once the new one is confirmed (`LydiaCashierOps.revoke`, `previous`, with its own checks and
@@ -614,7 +611,7 @@ export class PaymentController {
    * The gate and the identity rule of a Responsable NUMBER CHANGE (the owner's decision, lot 3),
    * checked once the step is claimed and before Lydia is asked anything; a refusal releases the
    * claim. Off while `LYDIA_CASHIER_ADD_ENABLED` is off (409
-   * `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED`); on, only the Responsable themselves or a global
+   * `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code older clients word); on, only the Responsable themselves or a global
    * admin may (403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`).
    */
   private async assertNumberChangeAllowed(
@@ -628,7 +625,7 @@ export class PaymentController {
       );
       await this.releaseResponsableClaim(associationId, claimToken);
       throw new ConflictException({
-        code: LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED,
+        code: LYDIA_RESPONSABLE_PHONE_LOCKED,
         message: "Changing the Responsable's number is not open yet",
       });
     }

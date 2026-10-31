@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from './api';
 import { LYDIA_RESPONSABLE_REFUSAL, lydiaResponsableErrorText } from './lydiaResponsableRefusal';
 import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
@@ -22,6 +23,18 @@ describe('lydiaResponsableErrorText', () => {
   });
 });
 
+describe('lydiaResponsableErrorText for a locked number', () => {
+  const locked = new SocialApiError('x', 'LYDIA_RESPONSABLE_PHONE_LOCKED', 409);
+  it('while the number change is off it says the change is not open yet', () => {
+    expect(lydiaResponsableErrorText(locked, false)).toBe(
+      m.asso_lydia_resp_err_number_change_disabled()
+    );
+  });
+  it('once on it says another number is still waiting', () => {
+    expect(lydiaResponsableErrorText(locked, true)).toBe(m.asso_lydia_resp_err_phone_locked());
+  });
+});
+
 describe('lydiaResponsableErrorText after a number change (lot 3)', () => {
   it('says the new number was added and the old one still needs removing, not a generic failure', () => {
     const text = lydiaResponsableErrorText(
@@ -34,7 +47,6 @@ describe('lydiaResponsableErrorText after a number change (lot 3)', () => {
   it('the number change refusals, and a number another cashier holds, each have their own plain sentence', () => {
     const generic = lydiaResponsableErrorText(new Error('x'));
     const texts = [
-      LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED,
       LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
       LYDIA_CASHIER_REFUSAL.REMOVAL_PRECONDITION,
       LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST,

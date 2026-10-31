@@ -59,7 +59,6 @@ describe('Lydia codes follow the shared contract', () => {
       REVOKE_UNCONFIRMED: CONTRACT.core.cashierRevokeUnconfirmed,
       READBACK_INVALID: CONTRACT.core.cashierReadbackInvalid,
       REMOVAL_PRECONDITION: CONTRACT.core.cashierRemovalPrecondition,
-      RESPONSABLE_NUMBER_CHANGE_DISABLED: CONTRACT.core.responsableNumberChangeDisabled,
       RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: CONTRACT.core.responsableNumberChangeForbidden,
     });
     expect(LYDIA_CASHIER_SOCIAL_REFUSAL).toEqual({

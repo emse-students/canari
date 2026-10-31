@@ -707,7 +707,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     expect(Object.values(logs).flat().join('|')).not.toContain('600000099');
   });
 
-  it('a new number Lydia did NOT confirm: the old number stays the live one with every right, the new one only tracked', async () => {
+  it('a new number Lydia did NOT confirm: the old number stays the live one, the new one only tracked', async () => {
     captureLogs();
     const rows: Cashier[] = [];
     const asso = free();
@@ -826,9 +826,11 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       });
       expect(rows).toHaveLength(1);
       expect(asso.token).toBeNull();
-      // At the record Lydia was already asked: an ERROR saying what it already did.
+      // At the record: an ERROR, nothing recorded.
       expect(
-        logs.error.some((l) => l.includes("Lydia has already replaced that cashier's rights"))
+        logs.error.some((l) =>
+          l.includes('number already held by another cashier row - not recorded')
+        )
       ).toBe(true);
     }
   );
@@ -1009,7 +1011,7 @@ describe('AssociationsService.claimLydiaResponsable - the checks and the claim o
     }
     // At the claim nothing was asked of Lydia yet: a WARN, never the record's ERROR.
     expect(logs.warn.filter((l) => l.includes('Responsable claim refused'))).toHaveLength(2);
-    expect(logs.error.some((l) => l.includes('already replaced'))).toBe(false);
+    expect(logs.error.some((l) => l.includes('already held'))).toBe(false);
   });
 
   it('another person, a non-member or no Business is answered and never claimed', async () => {

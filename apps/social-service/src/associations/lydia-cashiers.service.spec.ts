@@ -270,7 +270,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     const cases: Array<[ReturnType<typeof make>, typeof add, string]> = [
       [make([responsable()], { member: false }), add, LYDIA_CASHIER_NOT_A_MEMBER],
       [make([responsable(), vendeur()]), { ...add, userId: 'u2' }, LYDIA_CASHIER_ALREADY_SET],
-      // The Responsable's own number: Lydia would REPLACE their 13 rights with a Vendeur's.
+      // The Responsable's own number is refused.
       [make([responsable()]), { ...add, phone: HOLDER_PHONE }, LYDIA_CASHIER_PHONE_IN_USE],
       // ... and the Responsable's OTHER number too.
       [
@@ -497,8 +497,20 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
   });
 
   it('erasure never removes a number another live row holds', async () => {
-    // A Vendeur row whose number is also the Responsable's other number: removing it would strip it.
+    // A Vendeur row whose number is also the Responsable's other number: that number is skipped.
     const rows = [responsable({ previousPhoneSealed: seal(PHONE) }), vendeur()];
+    const { service, httpService } = make(rows, { core: { verified: true, held: 0 } });
+    await expect(service.revokeBeforeErasure('u2')).resolves.toEqual(new Set());
+    expect(httpService.post).not.toHaveBeenCalled();
+  });
+
+  it('erasure removes nothing when another live row has a seal that does not open', async () => {
+    // A Tresorier row whose number cannot be read: it might be the Vendeur's, so nothing is removed.
+    const rows = [
+      responsable(),
+      vendeur(),
+      vendeur({ id: 't1', userId: 'u3', role: 'tresorier', phoneSealed: 'not-a-seal' }),
+    ];
     const { service, httpService } = make(rows, { core: { verified: true, held: 0 } });
     await expect(service.revokeBeforeErasure('u2')).resolves.toEqual(new Set());
     expect(httpService.post).not.toHaveBeenCalled();

@@ -10,7 +10,7 @@
 -- (2) `lydia_cashiers."previousPhoneSealed"` / `"previousPhoneEnd"`: the Responsable's OTHER number
 --     during a number change - the old one once the new one is confirmed, kept until Lydia confirms
 --     its removal; or the new one while Lydia has not confirmed it (the old one then stays the live
---     number, with every right). Sealed like `phoneSealed` (`secret-box.ts`, purpose
+--     number). Sealed like `phoneSealed` (`secret-box.ts`, purpose
 --     `lydia-cashier-phone/v1`, the association id as context); its last two digits are the only
 --     part any read returns. Personal data: register entry C23. Cleared with the row's own phone
 --     whenever the row is closed, and as soon as that number's removal is confirmed. While set, only

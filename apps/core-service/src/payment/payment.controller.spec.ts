@@ -25,7 +25,6 @@ import {
   LYDIA_RESPONSABLE_NOT_A_CASHIER,
   LYDIA_RESPONSABLE_NOT_A_MEMBER,
   LYDIA_RESPONSABLE_PHONE_LOCKED,
-  LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED,
   LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
   LYDIA_CASHIER_IN_FLIGHT,
   PAYOUT_ACCOUNT_UNREADABLE,
@@ -1116,7 +1115,6 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       cashierRevokeUnconfirmed: provider.LYDIA_CASHIER_REVOKE_UNCONFIRMED,
       cashierReadbackInvalid: provider.LYDIA_CASHIER_READBACK_INVALID,
       cashierRemovalPrecondition: provider.LYDIA_CASHIER_REMOVAL_PRECONDITION,
-      responsableNumberChangeDisabled: LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED,
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
     }).toEqual(contract.core);
     expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
@@ -1209,7 +1207,7 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
     mockedAxios.get.mockReset();
   });
 
-  it('ships OFF with the add gate: refused with the typed 409, the claim released, Lydia never asked', async () => {
+  it('ships OFF with the add gate: the typed 409 PHONE_LOCKED older clients word, the claim released, Lydia never asked', async () => {
     expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(false);
     const { controller, paymentService } = setup({ verified: true, held: 0 }, { open: false });
     expect(controller.numberChangeEnabled()).toBe(false);
@@ -1217,7 +1215,7 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
       controller.setLydiaResponsable(id, { userId: 'u1', phone: NEW, mode: 'add' }, selfReq)
     ).rejects.toMatchObject({
       status: 409,
-      response: { code: LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED },
+      response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED },
     });
     expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
     expect(postsTo('/lydia-responsable-release')[0][1]).toEqual({ claimToken: CLAIM });
