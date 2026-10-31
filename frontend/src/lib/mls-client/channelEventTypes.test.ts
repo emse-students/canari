@@ -40,6 +40,13 @@ describe('isChannelEventFrame', () => {
     }
   });
 
+  /** The ask of an invitation link and its outcome, announced by chat-delivery to every member. */
+  it('routes the join-ask frames chat-delivery publishes', () => {
+    for (const type of ['group.join_ask', 'group.join_ask.settled']) {
+      expect(isChannelEventFrame(type)).toBe(true);
+    }
+  });
+
   /** Frames owned by other branches of the socket handler must NOT be swallowed by this one. */
   it('leaves the socket layer its own frames', () => {
     for (const type of [

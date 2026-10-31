@@ -20,9 +20,9 @@
  * - adapter-static (mobile/Tauri, `BUILD_WEB` unset): the shell is a FILE, so the id is a literal in
  *   `build/index.html` and in `build/_app/immutable/**`.
  * - adapter-node (`BUILD_WEB=1`, the web deploy): the shell is rendered at REQUEST time, so the id is
- *   never a literal on the server side - it is interpolated from `options.version_hash`. The literal
- *   halves are `build/client/_app/immutable/**` and the prerendered pages; the server half is the
- *   `version_hash` itself, compared separately below.
+ *   a literal in the server's `respond` chunk (`const global = "__sveltekit_..."`). The literal
+ *   halves are `build/client/_app/immutable/**` and the prerendered pages; the server half is that
+ *   `global` constant, compared separately below.
  *
  * `build/server/` is deliberately never scanned for `__sveltekit_<id>`: the pattern is a NAME shape,
  * not a value, and the server bundle also carries unrelated globals built the same way - notably
@@ -42,8 +42,11 @@ const BUILD_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'build');
 const SERVER_DIR = join(BUILD_DIR, 'server');
 /** The global's name, as written literally by the shell and by every client chunk. */
 const ID_PATTERN = /__sveltekit_[a-z0-9]+/g;
-/** adapter-node's server half: the same id, without the prefix, as a plain value. */
-const VERSION_HASH_PATTERN = /version_hash:\s*["']([a-z0-9]+)["']/g;
+/**
+ * adapter-node's server half: SvelteKit 3 writes the name literally, as `const global = "..."`, in
+ * the server's `respond` chunk (SvelteKit 2 interpolated `options.version_hash` instead).
+ */
+const SERVER_GLOBAL_PATTERN = /const global = ["'](__sveltekit_[a-z0-9]+)["']/g;
 /** Only these carry the stamp; reading the rest (wasm, images, source maps, .br/.gz) buys nothing. */
 const SCANNED = /\.(js|mjs|html)$/;
 
@@ -127,24 +130,24 @@ const [id] = ids.keys();
 // even though it never writes the name out.
 let serverNote = '';
 if (existsSync(SERVER_DIR)) {
-  const hashes = collect(scannableFiles(SERVER_DIR), VERSION_HASH_PATTERN, true);
+  const hashes = collect(scannableFiles(SERVER_DIR), SERVER_GLOBAL_PATTERN, true);
   if (hashes.size === 0) {
     fail(
-      `build/server/ carries no version_hash - the server renders the shell from it, so this check\n` +
+      `build/server/ carries no server "global" constant - the server renders the shell from it, so this check\n` +
         `  can no longer prove the rendered shell matches the chunks. Fix this check.`
     );
   }
   if (hashes.size > 1) {
     fail(
-      `build/server/ carries ${hashes.size} distinct version_hash values:\n${describe(hashes)}\n` +
+      `build/server/ carries ${hashes.size} distinct globals:\n${describe(hashes)}\n` +
         `  Two builds wrote this directory at once. Remove build/ and rebuild, alone.`
     );
   }
   const [hash] = hashes.keys();
-  if (`__sveltekit_${hash}` !== id) {
+  if (hash !== id) {
     fail(
       `the rendered shell will not match the chunks - the server renders\n` +
-        `  __sveltekit_${hash} while the client reads ${id}.\n` +
+        `  ${hash} while the client reads ${id}.\n` +
         `  Two builds wrote this directory at once. Remove build/ and rebuild, alone.`
     );
   }

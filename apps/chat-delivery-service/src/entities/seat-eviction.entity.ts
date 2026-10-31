@@ -18,6 +18,9 @@ import { Entity, PrimaryColumn, Column, UpdateDateColumn, Index } from 'typeorm'
  * drain (`MessagingService.drainOwedSeatEvictions`), which asks social-service for THAT departure's
  * outcome - never the entitlement, which cannot tell a departure not yet committed from a rejoin.
  *
+ * It also carries a conversation's Decline (`declinedAtSeatGeneration`, below), written only while
+ * the declined seat still exists under the seat lock - so never after an account erasure cut it.
+ *
  * Deleted with the group (`GROUP_OWNED_TABLES`) and with the account.
  */
 @Entity('dm_seat_evictions')
@@ -40,6 +43,16 @@ export class SeatEviction {
   /** The departure in progress (the generation that began it), or null when none is. */
   @Column({ type: 'integer', nullable: true })
   owedDeparture: number | null;
+
+  /**
+   * The group's `seatGeneration` a member's Decline of this person's invitation-link ask moved it to
+   * (`withdrawAwaitingSeat`), or null when none was recorded (migration 039). A COUNTER the commit
+   * gate orders the Decline by against the epoch an Add was built on (`enrolAdmittedPeople`): the
+   * Decline makes no commit, so without it an Add built before it would enrol the person after it.
+   * Refuses no claim - `owedDeparture` alone does.
+   */
+  @Column({ type: 'integer', nullable: true })
+  declinedAtSeatGeneration: number | null;
 
   /** When an eviction last rewrote the row (diagnostic only - nothing is decided on it). */
   @UpdateDateColumn()

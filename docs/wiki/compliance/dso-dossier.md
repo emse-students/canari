@@ -58,7 +58,17 @@ recueilli par un autre moyen que l'application, et MiTV doit en conserver la pre
 principal est le traitement des visages de personnes non membres** : Immich détecte et regroupe
 tous les visages des photos, y compris ceux de personnes qui n'ont jamais été sollicitées. Nous
 demandons votre avis sur les mesures proposées, et sur la nécessité d'une consultation préalable de
-la CNIL (art. 36) si le risque résiduel reste élevé. Document :
+la CNIL (art. 36) si le risque résiduel reste élevé.
+
+**Décision du 2026-10-24 (option C), pas encore construite :** la reconnaissance sort d'Immich.
+MiGallery calcule, photo par photo, les empreintes des visages dans son propre traitement, avec une
+image d'apprentissage automatique figée, et les range dans sa propre base chiffrée. **Aucun
+regroupement, aucune « personne »** : un membre retrouve ses photos en comparant sa propre référence
+au moment de la recherche. Les empreintes vivent aussi longtemps que la photo et sont exclues des
+sauvegardes. Rien n'est construit avant une comparaison des modèles candidats. Le responsable
+assume la question de l'article 9 qui demeure : les empreintes des personnes non membres sont
+calculées et conservées tant que leur photo existe, mais ne sont jamais regroupées en une identité.
+Votre avis sur ce choix nous importe. Document :
 [dpia-migallery-faces](dpia-migallery-faces.md).
 
 ## 3. Le registre et les destinataires

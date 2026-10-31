@@ -1,4 +1,9 @@
 // @vitest-environment happy-dom
+// The acting device's own notice resolves names: a profile read nothing here is about.
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveDisplayNames: async () => (id: string) => id,
+}));
 import {
   removeMemberAndBroadcast,
   sendFullHistoryBundle,
@@ -567,6 +572,8 @@ describe('a removal opens its window on the server BEFORE the commit removes the
   it('records the removal first, then commits', async () => {
     const mlsService = createMlsServiceStub();
     const order: string[] = [];
+    // Bob holds a leaf, so the removal owes a commit.
+    vi.mocked(mlsService.getGroupMemberIdentities).mockResolvedValue([`${BOB}:d1`]);
     vi.mocked(mlsService.removeMemberFromServer).mockImplementation(async () => {
       order.push('server');
     });
@@ -580,6 +587,7 @@ describe('a removal opens its window on the server BEFORE the commit removes the
       memberId: BOB,
       userId: 'user-a',
       deviceKeyB64: 'k',
+      ownNotice: { contactName: GROUP, addMessageToChat: vi.fn(async () => {}) },
     });
 
     expect(order).toEqual(['server', 'commit']);
@@ -597,6 +605,7 @@ describe('a removal opens its window on the server BEFORE the commit removes the
         memberId: BOB,
         userId: 'user-a',
         deviceKeyB64: 'k',
+        ownNotice: { contactName: GROUP, addMessageToChat: vi.fn(async () => {}) },
       })
     ).rejects.toThrow('503');
 

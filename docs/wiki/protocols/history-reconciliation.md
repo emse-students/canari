@@ -910,6 +910,16 @@ answer path can forget it.
   held-back message is served by any member holding it dated - so the margin errs wide. One with no
   usable timestamp at all is held back. When no current member has a window nothing is filtered, and
   every answer is byte-for-byte what it was.
+  **The margin stays SYMMETRIC (decided by the user 2026-10-22, review of #2251; moved from the
+  backlog 2026-10-24).** A joiner's before-arrival span `[0, arrival)` thus also withholds their undated
+  history from the hour AFTER they arrived; a device already holding a message is never filtered, so the
+  loss is that member's NEXT device restoring history, unless a member holding it dated serves it.
+  Widening only the pre-arrival side would leak a message received before the arrival whose sender's
+  clock ran ahead - exactly the case the margin exists for. The cost (a few undated messages just after
+  arrival) is accepted; nothing is owed, and it is not reopened without a new measurement of that cost.
+  That count cannot be read on the server (undated copies live in client stores, bundles are
+  ciphertext): the only reading is the client's `[HISTORY_ENTITLEMENT] ... N undated within 60 min`
+  line on a device that receives a filtered push.
 - **An unreadable window set carries no message**, logged `[HISTORY_ENTITLEMENT]`: the same silence
   an unreadable store produces, so another member or the next connection answers. Never an
   unfiltered answer. **The FULL bundle still sends one frame carrying the conversation state** (floor,
@@ -941,7 +951,74 @@ answer path can forget it.
 
 **The removal order - the record first, and the commit still reaches the removed member.**
 `removeMemberAndBroadcast` calls the server first, then commits the MLS remove, then broadcasts
-`memberRemoved`. `removeGroupMember` (called by somebody other than the removed person) reads the
+`memberRemoved`. A follower tab is refused BEFORE the record (`FollowerTabCommitError`): it may not
+commit, and learning that from the commit, after the record, was a half-removal.
+
+**A Remove that loses the commit race is REBUILT, never left to a sweep** (CC-2, 1.4.1 dev campaign,
+2026-10-25). Between the record and the commit another commit can take the epoch - a concurrent Add,
+a leaf refresh, another holder's collector - and the gate refuses ours. That refusal used to reach the
+caller as a `CommitRefusedError` it only logged: the member off the roster and still in the tree, the
+person who asked told nothing, and `removeStrayLeaves` finishing the job at some holder's next
+connection. Now `commitMemberRemoval` (`groupActions.ts`) stages the Remove again on the tree that won,
+under `rebuildableRefusal` (`CommitRefusedError.ts`) - the one rule the newcomer admission follows too:
+only a refusal whose catch-up moved the epoch past the base the refused commit RECORDED, or an
+overtaken seat claim (each one an eviction), is rebuilt, so the loop ends on a proof, never on a count.
+`rate_limited` and `lock_budget_spent` are never rebuilt: the client decided them, not a race.
+
+**"Out" is read from the tree, after any failure, and only on a tree confirmed current.** Two Removes
+of one person (CC-3) rarely end in a gate refusal: the MLS lock is taken before the stage, and incoming
+commits are applied under the same lock, so the loser waits while the winner's Remove is applied and
+then its STAGE fails - openmls finds no leaf (`NoSuchMember`, `members.rs`), an untyped error from the
+platform. So every failure of the commit except an unknown outcome (whose kept stage a later settle
+decides) asks the tree again (`memberStanding`), and a tree without the member resolves `already-out`,
+quietly: no warning and no second notice. That answer is trusted only at the server's epoch: a tree
+behind an Add that re-admitted the member would say "out" of someone still in, so when the commit log
+is ahead the rung-1 replay applies it first - the whole confirmation (log read, replay, re-read) under
+the MLS lock, like the pipeline's rung 1, because the replay applies commits and may merge or clear a
+staged one, and only sends may mutate the client outside the mutex (`readConfirmedTree`,
+`confirmedTree.ts`, the one helper an Add's device filter uses too; the lock is not re-entrant, so a
+caller must not hold it). Its replay keeps rung 1's books through the one helper the pipeline's gap
+healer and a refused commit's catch-up use too (`replayAndRecord`, `commitReplay.ts`): persisted when
+the epoch moved, un-marked in the epoch-gap registry on a heal, and never run past frames a refused
+backlog is still bringing (a held replay leaves the tree unconfirmed) - and a tree that cannot be brought there is
+`tree-unconfirmed` - surfaced, never "out". Every other ending throws `MemberRemovalNotCommittedError`
+and the person who asked is told by TYPE (`reportMemberRemovalFailure`): "removed, the key change
+finishes at the next connection", never "failed", because the record IS the removal and is not rolled
+back. The collector completes that case from durable state (roster against tree). A follower-tab
+refusal it carries as its `cause` still reaches its own sentence.
+
+**The `memberRemoved` notice follows the record** (decided 2026-10-25): sent on `committed` AND when
+the record landed but the commit did not - safe, because the record already cut the removed device's
+rows - and not on `already-out`. What that rule does NOT promise, stated as it is:
+
+- **`already-out` sends no notice, whoever took the member out.** A concurrent Remove of the same
+  person by another member sends its own; a holder's collector (`removeStrayLeaves`) sends none, and
+  the members then see the roster change without the line.
+- **Two gestures can both send it.** A `concurrent_commit` refusal that moved nothing is not rebuilt,
+  and there may have been NO winner - the lock holder's commit can itself fail or land only later. The
+  member is still in the tree, so this gesture surfaces `MemberRemovalNotCommittedError` and sends the
+  notice, and a concurrent Remove of the same person sends its own: a duplicate line, accepted.
+- **An unknown outcome still attempts the notice, and the attempt is a resubmission.** A send into a
+  group whose state holds an unresolved commit is not refused outright: `sendMessage` settles the kept
+  commit first (`settleBeforeSend`, `BaseMlsService.ts`) and sends once it is merged or cleared. Only a
+  resubmission still unanswered refuses the send (`CommitOutcomeUnknownError`), and the notice is then
+  lost with its `NOT delivered` line - a true one, since no notice is sent later.
+
+**Why the record stays first rather than moving after the commit.** The record is what gates
+delivery: it deletes the member's device rows, so no application frame reaches them from that instant,
+while the parting hint below still queues them the Remove commit that names them. Committed first, the
+removed devices would stay on the fan-out until the record landed - or for good if it then failed -
+with a tree that says they are out; and the exclusion window would open after the commit, so a frame
+sent between the two could later be served to them as if they had been in.
+
+**The removed device's replay is refused, by the same ordering, and that is a separate item.** The
+Remove commit it is queued is built on whatever epoch the group reached - one epoch past its own
+whenever any commit landed between the record and the Remove (a lost race always does, rebuilt or
+not). It sees an epoch gap, asks for the commits it missed, and is answered `403` on
+`commits?sinceEpoch` (and `user-members`, `group-info`): it is no longer a member, so it is not
+entitled to them. The 403 is the answer - "you are out" - but the replay reads it as an error
+(`[GAP] replay error ... 403`). Classifying it at the throw and retiring the conversation from it is
+an eviction decision, gated on proof, so it is owed separately ([backlog](../backlog.md)). `removeGroupMember` (called by somebody other than the removed person) reads the
 removed person's devices and writes each into the Redis hash `group:parting:{gid}` (`partingKey`),
 then deletes their device memberships, then deletes the roster row and closes the interval in one
 transaction. **The hint is written FIRST** because the rows it is derived from are gone after the
@@ -1040,8 +1117,11 @@ that group empty - never unfiltered - and serves the rest.
 
 The exclusions read also counts every person holding a device row (`dm_device_group_memberships`,
 either status - the enum is `pending | active`, and both mean a device the tree admitted), not only
-the roster: an add commit admits devices before `registerMember` enrols the person, and the union
-must include their windows from that first moment. It reads DISTINCT users, not rows.
+the roster: a device row can stand before its person's seat (a key group has no seat at all, and a
+server older than 2026-10-25 admitted a device before the client's `registerMember`; since then a
+conversation commit writes the seat in the same transaction, or drops the admit of a person it
+refuses - [mls-protocol](mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
+and the union must include their windows from that first moment. It reads DISTINCT users, not rows.
 
 Rejected designs, and why:
 
@@ -1275,6 +1355,65 @@ when the frame is inlined in a notification. The delivery service already record
 and device beside each frame, and a push payload already names the sending user (`senderId`); the
 device id in a push payload is what the claim adds there. The author proof of this section is inside
 the ciphertext and adds nothing visible.
+
+### The acting device writes its own notice
+
+**Found by the 1.4.1 dev campaign (4 draws in 10, deterministic), fixed 2026-10-25.** A visible
+notice - a member added or removed, a rename, a photo change - is written on every member's device
+from the frame, under the id the sender minted (`mkVisibleSystem`). MLS never hands a device its own
+application message, so the ACTING device wrote nothing. Its store was one row short of every other
+member's, and the history exchange repaired that the only way it can:
+
+1. the acting device's state key differed from a member's (`Keys differ ... asked <them> to describe`) - on every connection until the step below, not for ever: the key covers ids, not content or time;
+2. the member's diff named the notice as missing there and sent it (`Diff sent: 1 of 1 requested`);
+3. the acting device vetted a row authored by nobody, which no proof can cover, and kept it MARKED: `[AUTHORSHIP] 1 restored message(s) ... carry no author proof - kept, marked unverified`.
+
+**The fix is at the source, and it is the one the channel invitation card already used**
+(`inviteMemberToChannel`): `sendVisibleNotice` (`visibleNotices.ts`) sends the frame and, once the
+delivery service has accepted it, writes the acting device's own row under the frame's id. Every
+device then holds the same row, the state keys agree, the diff is empty, nothing is relayed and
+nothing is vetted - no filter in the digest, the diff or the vetting. Its callers:
+`processBulkAddition` (`memberAdded`), `renameGroupAndBroadcast`, `setGroupImageAndBroadcast` and
+`removeMemberAndBroadcast`. The row follows the frame exactly, so it follows the race rules: a
+`memberRemoved` on `committed` and on a record that landed uncommitted, none on `already-out`
+("The removal order", above); one `memberAdded` for a rebuilt Add, none on
+`already-in-tree` (the winner announced it) or an Add abandoned before its stage (`AddAbortedError`).
+A frame that was not accepted writes no row, since a row only this device
+holds is the same divergence the other way.
+
+**What runs, in order.** (1) The text is rendered: `resolveDisplayNames`, which may fetch a profile
+and so can delay the FRAME (it never throws - an unresolved name stays the id). (2) The frame is sent
+and the call waits for the delivery service's acceptance. (3) The own row is written through
+`addMessageToChat` with `soleWriter` - memory, then the IndexedDB / SQLite row - never deferred into
+a bulk drain's buffer, which a second drain start or `resetMessageCatchupState` discards unflushed
+(the own-message rule, WP-ECHO-1, for the same reason: nothing will ever write this row again).
+(4) For `memberAdded`, the caller's MLS checkpoint follows - so a local write sits between the send
+and that checkpoint; a write that FAILS is logged (`[NOTICE] ... was DELIVERED ... not written`, at
+ERROR) and never thrown as a failed send, so the checkpoint is still reached.
+
+**A kill between (2) and (3) is accepted, and repaired only by the digest diff.** The members hold
+the row and this device does not, so its next reconciliation reads `Keys differ`, the diff relays the
+notice, and it lands here ONCE, marked unverified - exactly an older build's behaviour, for one
+notice. No line marks the window: a "sending" line before every send would be a second line per
+notice to say what the `written` line's absence already says, and the evidence of the repair is the
+existing `[AUTHORSHIP] ... kept, marked unverified` line naming that conversation.
+
+**And the handler that called it must not write a pre-await
+snapshot back**: `handleRenameGroup` / `handleSetGroupImage` did `{ ...convo, name }` after the
+await and erased the notice just written - they now patch the conversation as it stands
+(`patchConversation`). A departure (`memberLeft`) and a deletion
+(`groupDeleted`) write none either: no device of the acting user draws them (the handler skips its
+own departure and purges on its own deletion), so all its devices agree on holding nothing.
+
+**One rendering.** `renderVisibleNotice` draws these four events for the acting device, the live
+handler and the archive replay, which had two copies of it between them. The replay now draws the
+photo notice it never drew, which had left a device that met that frame only in the archive one row
+short as well.
+
+**Mixed versions need nothing.** An older acting device still lacks its row, and converges as before
+(one relay, marked). An older member's digest names the notice the updated acting device now holds,
+so the diff is empty. Rows that only one device should ever hold (an outbox line, an eviction notice)
+are a separate defect ([backlog](../backlog.md)).
 
 ### Reactions
 

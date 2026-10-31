@@ -23,10 +23,18 @@ export const RefusalCode = {
   NOT_BLOCKED: 'NOT_BLOCKED',
   /** 403 - an administrator may not remove their own administrator right. */
   ADMIN_SELF_DEMOTE: 'ADMIN_SELF_DEMOTE',
+  /** 403 - an administrator may not change their own administrator right, granting included. */
+  ADMIN_SELF_CHANGE: 'ADMIN_SELF_CHANGE',
   /** 400 - a people search with no filter at all. */
   USER_SEARCH_FILTER_REQUIRED: 'USER_SEARCH_FILTER_REQUIRED',
   /** 400 - a people search longer than the cap (`max` carries it). */
   USER_SEARCH_TOO_LONG: 'USER_SEARCH_TOO_LONG',
+  /**
+   * 401 - a refresh whose session the owner's revocation of its device ended; `userId` and
+   * `deviceId` name that device. The same name the delivery service gives a device-creating call
+   * from such a device, so the client has ONE name for the fact.
+   */
+  DEVICE_REVOKED_BY_OWNER: 'DEVICE_REVOKED_BY_OWNER',
 } as const;
 
 /** A stable refusal code of this service. */

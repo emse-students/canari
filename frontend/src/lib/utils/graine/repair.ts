@@ -205,6 +205,11 @@ const historyRequest = new Map<
     answerer: string;
     pending: Set<string> | null;
     unanswered: Set<string> | null;
+    /**
+     * The devices recorded as holding nothing for THIS request, in the order they answered. Said
+     * once, on the line of the decision they lead to (the next member asked), never one line each.
+     */
+    heldNothing: string[];
     groupId: string;
     /** The distribution epoch the request was sealed at, `null` when the group was not ridable. */
     epoch: number | null;
@@ -1258,11 +1263,13 @@ export async function requestCommunityHistory(
   // `await` resumes - and against no request in flight it would be ignored. Replaces any earlier
   // ask of this community: a late answer to a superseded request answers a question no longer
   // asked.
+  closeHistoryRequest(workspaceId, 'replaced by a new ask');
   historyRequest.set(workspaceId, {
     requestId,
     answerer: answerer.toLowerCase(),
     pending: answererDevices.length > 0 ? new Set(answererDevices) : null,
     unanswered: heldView.unansweredOnTree(answerer),
+    heldNothing: [],
     groupId,
     epoch,
   });
@@ -1320,6 +1327,33 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
     );
   });
   historyParked.set(workspaceId, cancel);
+}
+
+/**
+ * Ends the history ask in flight for `workspaceId` without its decision line, and says what it had
+ * gathered when it had gathered anything.
+ *
+ * WHY. A device answering "I hold nothing" while a sibling is still to answer says nothing
+ * ({@link noteHistoryHeldNothing} speaks once, at the member's decision). An ask that never reaches
+ * that decision - REPLACED by a new ask, or dropped with its community - would otherwise leave those
+ * answers only in the durable record. So its partial result is said here, once: which devices
+ * answered, and which were still owed. An ask that gathered nothing ends in silence, as it began.
+ * The in-memory record does not survive a restart, so an ask cut short by one says nothing (the next
+ * start's `asked <member> (<devices>)` names only the devices not yet recorded).
+ */
+function closeHistoryRequest(workspaceId: string, why: string): void {
+  const inFlight = historyRequest.get(workspaceId);
+  historyRequest.delete(workspaceId);
+  if (!inFlight || inFlight.heldNothing.length === 0) return;
+  const owed = inFlight.pending ?? inFlight.unanswered;
+  console.info(
+    `[GRAINE] the history ask of community ${workspaceId.slice(0, 8)} to ${inFlight.answerer} ended ` +
+      `before its decision (${why}): ${describeNamedDevices(inFlight.heldNothing)} recorded as ` +
+      `holding nothing at distribution epoch ${inFlight.epoch}, ` +
+      (owed === null
+        ? 'the rest of its devices unknown (no tree read)'
+        : `${owed.size > 0 ? [...owed].join(',') : 'no device'} still owed`)
+  );
 }
 
 /**
@@ -1400,24 +1434,26 @@ export function noteHistoryHeldNothing(
     );
     return;
   }
+  inFlight.heldNothing.push(answererDevice);
   const memberDone = inFlight.unanswered !== null && inFlight.unanswered.size === 0;
   const namedDone = inFlight.pending !== null && inFlight.pending.size === 0;
-  if (!memberDone && !namedDone) {
-    console.info(
-      `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
-        `recorded; ${inFlight.pending?.size ?? inFlight.unanswered?.size ?? 'every other'} device(s) ` +
-        `of ${answerer} still to answer`
-    );
-    return;
-  }
+  // ONE LINE PER DECISION, NOT PER ANSWER (2026-10-29). A device's "nothing" while others of the
+  // member are still to answer moves nothing but the durable record, and said one line each it was a
+  // line per device per ask - three for one member of three tabs, read as dirt by every cross-client
+  // row. The devices are named on the line below, which is the decision they lead to; an ask that
+  // ends before it (replaced, or its community gone) says what it gathered in `closeHistoryRequest`.
+  //
+  // THE LINE STOPS AT THE MEMBER. Whether anybody is left is known only after the next roster read,
+  // so the walk's own next line says it: `asked <next member>`, `is final at distribution epoch N`,
+  // or why it waits. A `- asking the next member` suffix here was false when nobody was left.
+  if (!memberDone && !namedDone) return;
   historyRequest.delete(workspaceId);
   console.info(
-    `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} at ` +
-      `distribution epoch ${inFlight.epoch} - recorded, ` +
+    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} on ` +
+      `${describeNamedDevices(inFlight.heldNothing)} at distribution epoch ${inFlight.epoch} - recorded, ` +
       (memberDone
         ? `every device of ${answerer} on the key group has answered`
-        : `${inFlight.unanswered?.size ?? 'an unknown number of'} device(s) of ${answerer} on the key group are offline and still unasked`) +
-      ' - asking the next member'
+        : `${inFlight.unanswered?.size ?? 'an unknown number of'} device(s) of ${answerer} on the key group are offline and still unasked`)
   );
   // THE NEXT MEMBER, NOW: the election skips every member whose devices online all answered at this
   // tree, so this walks the roster one member at a time and ends - each pass records at least one
@@ -1545,7 +1581,7 @@ export function forgetWorkspaceRepairState(
 ): void {
   historyAsked.delete(workspaceId);
   historyUnanswerableAt.delete(workspaceId);
-  historyRequest.delete(workspaceId);
+  closeHistoryRequest(workspaceId, 'the community left this device');
   if (isGraineReady()) {
     const { userId } = requireGraineRuntime('cannot forget a history answer');
     forgetHistoryHeldNothing(userId, workspaceId);

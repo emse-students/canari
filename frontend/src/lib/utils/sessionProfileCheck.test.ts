@@ -2,13 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 const fetchUserProfile = vi.fn();
 class FakeProfileError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    readonly origin: 'gateway' | 'edge' = 'gateway'
+  ) {
     super('profile');
   }
 }
 vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: (id: string) => fetchUserProfile(id),
-  UserProfileFetchError: FakeProfileError,
+  isAbsentUserError: (e: unknown) =>
+    e instanceof FakeProfileError && e.status === 404 && e.origin === 'gateway',
 }));
 
 const { checkSessionUserInBackground } = await import('./sessionProfileCheck');
@@ -23,6 +27,7 @@ describe('checkSessionUserInBackground', () => {
 
   it.each([
     ['a 500', new FakeProfileError(500)],
+    ["an edge's 404", new FakeProfileError(404, 'edge')],
     ['a transport failure', new TypeError('Failed to fetch')],
   ])('survives %s: a status is an answer, a transport failure is not a verdict', async (_n, e) => {
     fetchUserProfile.mockRejectedValue(e);

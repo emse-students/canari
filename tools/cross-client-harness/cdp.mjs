@@ -155,11 +155,7 @@ export const RESOLVE = `(function (sel) {
  * and still short enough that a poll loop keeps polling.
  */
 export async function listTargets(p = port, timeoutMs = 2000) {
-  const res = await fetch(`http://127.0.0.1:${p}/json/list`, {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const all = await res.json();
-  const pages = all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+  const pages = await pagesOn(p, timeoutMs);
   // THE ONE ATTACH PATH REFUSES A FOREIGN PAGE (R1 review, 2026-10-24). Every runner finds the tab it
   // drives here, so a profile still sitting on production - or on any page that is not the estate,
   // a Tauri scheme, an inert page or an identity provider - stops the run before a CDP socket exists.
@@ -167,6 +163,33 @@ export async function listTargets(p = port, timeoutMs = 2000) {
   await ensureEstate();
   for (const t of pages) refuseForeignPage(String(t.url));
   return pages;
+}
+
+/** Every page target on a devtools endpoint, bounded (see {@link listTargets}), judged by nobody yet. */
+async function pagesOn(p, timeoutMs) {
+  const res = await fetch(`http://127.0.0.1:${p}/json/list`, { signal: AbortSignal.timeout(timeoutMs) });
+  const all = await res.json();
+  return all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
+}
+
+/**
+ * The pages of a browser the rig does NOT own, for a caller that will attach to ONE of them: the
+ * phone's own Chrome, where the IdP form opens beside whatever tabs the phone's user left there
+ * (R1 low finding). Judging every tab there would stop a sign-in on a news page nobody drives.
+ *
+ * NOTHING IS WEAKENED FOR WHAT THE RIG DRIVES: the caller picks its candidates, and every one it
+ * connects to goes through {@link judgedTarget} first; every navigation it sends is judged by
+ * `connect` as before. A browser the rig launches and drives is listed with {@link listTargets}.
+ */
+export async function untrustedBrowserPages(p = port, timeoutMs = 2000) {
+  await ensureEstate();
+  return pagesOn(p, timeoutMs);
+}
+
+/** `target` unchanged once its page passes the allowlist, or a refusal - for {@link untrustedBrowserPages}. */
+export function judgedTarget(target) {
+  refuseForeignPage(String(target.url));
+  return target;
 }
 
 /**
@@ -208,6 +231,8 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   let nextId = 1;
   const pending = new Map();
   const events = [];
+  /** Synchronous subscribers by method - see `on` below. */
+  const listeners = new Map();
   const ready = new Promise((resolve, reject) => {
     // Unref'd for the reason the command timer below is: an armed timer keeps Node alive, so a run
     // that had finished would still sit here until it fired.
@@ -243,6 +268,15 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       } else resolve(msg.result);
     } else if (msg.method) {
       events.push(msg);
+      for (const fn of listeners.get(msg.method) ?? []) {
+        // A listener that throws must not stop the others or the transport; it is LOGGED, because
+        // a swallowed branch leaves nothing else.
+        try {
+          fn(msg.params ?? {}, msg);
+        } catch (e) {
+          console.log(`  [cdp] listener for ${msg.method} threw: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
     }
   });
   // The timer MUST be cleared on the reply, and unref'd besides: an armed 30 s timeout keeps
@@ -300,7 +334,16 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   const guarded = (method, params = {}) =>
     NAVIGATIONS[method] ? ensureEstate().then(() => (refuseForeignPage(String(params[NAVIGATIONS[method]])), cdpSend(method, params))) : cdpSend(method, params);
   const send = webkit ? webkitInput(guarded) : guarded;
-  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
+  // AN EVENT THAT MUST BE ANSWERED, NOT ONLY OBSERVED. `events` is a log a waiter scans; a paused
+  // `Fetch.requestPaused` holds the page's request until somebody answers it, so polling the log
+  // would add the poll interval to EVERY intercepted request. `on` calls the subscriber as the frame
+  // arrives and returns the unsubscribe (`fault.mjs` is its first user).
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, new Set());
+    listeners.get(method).add(fn);
+    return () => listeners.get(method)?.delete(fn);
+  };
+  return { ready, send, events, on, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
 }
 
 /** Evaluates an expression in the page and returns its value, awaiting promises. */

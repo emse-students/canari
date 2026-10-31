@@ -22,6 +22,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
+  import { removeDeviceRow } from './deviceRowRemoval';
 
   interface DeviceInfo {
     deviceId: string;
@@ -266,28 +267,6 @@
   }
 
   /**
-   * Signs a row's logins out. Every session of the row dies: the row IS the
-   * device from the user's point of view, so leaving one alive would answer
-   * "remove this" with "some of it".
-   *
-   * Each revocation is its own try - one failing must not abandon the others -
-   * and the count of failures is returned so a partial result is reported as
-   * partial rather than as success.
-   */
-  async function revokeRowSessions(row: PanelRow): Promise<number> {
-    let failed = 0;
-    for (const s of row.sessions) {
-      try {
-        await revokeAuthSession(s.id);
-      } catch (e) {
-        failed++;
-        console.error(`[DevicePanel] Revoke failed for session ${s.id}`, e);
-      }
-    }
-    return failed;
-  }
-
-  /**
    * The single destructive action of this panel: the row goes away, and whoever
    * held it starts over.
    *
@@ -295,10 +274,12 @@
    * its logins are signed out - because a user removing a machine they no longer
    * trust means one thing, not two, and shipping two buttons made them do half
    * the job. The device is revoked FIRST: it is the irreversible half, and if a
-   * revocation then fails the surviving cookie can only reach the reset path,
-   * whereas the reverse order would leave a trusted device behind a completed
-   * sign-out. A device with no live login is still deletable, and a login with
-   * no device only has the sign-out half to perform.
+   * revocation then fails the surviving cookie can only reach the reset path.
+   * The sign-out half runs EVEN WHEN the device half answered an error
+   * (`removeDeviceRow`): the logins it ends are the ones the server may not have
+   * ended, and what survives stays listed for the user's retry. A device with no
+   * live login is still deletable, and a login with no device only has the
+   * sign-out half to perform.
    */
   async function handleRemoveRow(row: PanelRow) {
     if (row.isCurrentDevice) return;
@@ -325,19 +306,14 @@
 
     deleting = row.key;
     try {
-      if (row.device) {
-        console.log(`[DevicePanel] Deleting device ${shortDeviceId(row.device.deviceId)}…`);
-        const result = await mlsService.deleteDevice(userId, row.device.deviceId);
-        if (result.status !== 'device_deleted') {
-          error = m.chat_device_delete_auth_error();
-          return;
-        }
-        console.log(
-          `[DevicePanel] Deleted device ${shortDeviceId(row.device.deviceId)}… (groups cleaned: ${result.groupsCleaned}, keyPackages: ${result.keyPackagesDeleted})`
-        );
-      }
-      const failed = await revokeRowSessions(row);
-      if (failed > 0) {
+      const { outcome } = await removeDeviceRow(row, {
+        deleteDevice: (deviceId) => mlsService.deleteDevice(userId, deviceId),
+        revokeSession: revokeAuthSession,
+      });
+      if (outcome === 'device-incomplete') {
+        // The removal did not complete; whatever is left is still listed after the reload below.
+        error = m.chat_device_delete_retry_error();
+      } else if (outcome === 'sessions-left') {
         // The device is gone but a credential for it survived: say so, because the two halves
         // have different consequences and only one of them is visible in the list.
         sessionError = m.settings_sessions_revoke_error();

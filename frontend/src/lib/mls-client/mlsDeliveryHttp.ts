@@ -1,3 +1,4 @@
+import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { deliveryUrl, gatewayUrl } from '$lib/utils/apiUrl';
 
 /** Resolved public URLs for chat-gateway (WS) and chat-delivery (MLS HTTP). */
@@ -17,12 +18,19 @@ export function resolveMlsPublicUrls(): MlsPublicUrls {
   return { baseUrl: gatewayUrl(), historyUrl: deliveryUrl() };
 }
 
-/** Throws a descriptive error if the HTTP response status is not 2xx, including up to 300 chars of body. */
+/**
+ * Throws a descriptive error if the HTTP response status is not 2xx, including up to 300 chars of
+ * body - and `NotFromApiError` (a transport failure, no answer) for a 2xx that is not the
+ * delivery service's JSON: a portal's `200` delivered no Welcome.
+ */
 export async function assertOkMlsDeliveryResponse(
   response: Response,
   context: string
 ): Promise<void> {
-  if (response.ok) return;
+  if (response.ok) {
+    assertAnsweredByApi(response, context);
+    return;
+  }
   let bodyPreview = '';
   try {
     bodyPreview = (await response.text()).slice(0, 300);

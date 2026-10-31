@@ -343,7 +343,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
-	@bash .github/scripts/tests/land-release-changelog.test.sh
+	@bash .github/scripts/tests/land-release.test.sh
 	@bash .github/scripts/tests/backend-url.test.sh
 	@bash .github/scripts/tests/release-chain.test.sh
 	@bash .github/scripts/tests/release-notes-body.test.sh
@@ -363,6 +363,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
+	@bun .github/scripts/tests/backlog-fragments.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
@@ -381,6 +382,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/control-characters.test.mjs
 	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
+	@bash .github/scripts/tests/android-app-compile.test.sh
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
@@ -441,11 +443,13 @@ test-harness:
 	@bun tools/cross-client-harness/archive/checks-selftest.mjs
 	@bun tools/cross-client-harness/archive/logcatclassify-selftest.mjs
 	@bun tools/cross-client-harness/archive/devices-selftest.mjs
+	@bun tools/cross-client-harness/archive/phonefocus-selftest.mjs
 	@bun tools/cross-client-harness/archive/debris-selftest.mjs
 	@bun tools/cross-client-harness/archive/gate-selftest.mjs
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs
 	@bun tools/cross-client-harness/archive/spawn-selftest.mjs
 	@bun tools/cross-client-harness/archive/estate-selftest.mjs
+	@bun tools/cross-client-harness/archive/a1plan-selftest.mjs
 	@bun tools/cross-client-harness/archive/seedargs-selftest.mjs
 	@bun tools/cross-client-harness/archive/identity-selftest.mjs
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs
@@ -471,12 +475,36 @@ test-harness:
 	@bun tools/cross-client-harness/archive/ownedpaths-selftest.mjs
 	@bun tools/cross-client-harness/archive/expectations-selftest.mjs
 	@bun tools/cross-client-harness/archive/serverwindow-selftest.mjs
+	@bun tools/cross-client-harness/archive/commitreport-selftest.mjs
 	@bun tools/cross-client-harness/archive/epochfork-selftest.mjs
 	@bun tools/cross-client-harness/archive/consoleorigin-selftest.mjs
 	@bun tools/cross-client-harness/archive/phone-ios-selftest.mjs
 	@bun tools/cross-client-harness/archive/webkit-input-selftest.mjs
 	@bun tools/cross-client-harness/archive/ios-observables-selftest.mjs
 	@bun tools/cross-client-harness/archive/sendtrace-selftest.mjs
+	@bun tools/cross-client-harness/archive/deploy-selftest.mjs
+	@bun tools/cross-client-harness/archive/fault-selftest.mjs
+	@bun tools/cross-client-harness/archive/campaign-selftest.mjs
+	@bun tools/cross-client-harness/archive/invariant-selftest.mjs
+	@bun tools/cross-client-harness/archive/floor-selftest.mjs
+	@bun tools/cross-client-harness/archive/cc-selftest.mjs
+	@bun tools/cross-client-harness/archive/settle-selftest.mjs
+	@bun tools/cross-client-harness/archive/gap-selftest.mjs
+	@bun tools/cross-client-harness/archive/offline-selftest.mjs
+	@bun tools/cross-client-harness/archive/kill-selftest.mjs
+	@bun tools/cross-client-harness/archive/admit-selftest.mjs
+	@bun tools/cross-client-harness/archive/devrows-selftest.mjs
+	@bun tools/cross-client-harness/archive/salon-selftest.mjs
+	@bun tools/cross-client-harness/archive/big-selftest.mjs
+	@bun tools/cross-client-harness/archive/listrace-selftest.mjs
+	@bun tools/cross-client-harness/archive/callweb-selftest.mjs
+	@bun tools/cross-client-harness/archive/liveweb-selftest.mjs
+	@bun tools/cross-client-harness/archive/ssh-selftest.mjs
+	@bun tools/cross-client-harness/archive/removals-selftest.mjs
+	@bun tools/cross-client-harness/archive/grantpanel-selftest.mjs
+	@bun tools/cross-client-harness/archive/testerbuild-selftest.mjs
+	@bun tools/cross-client-harness/archive/devicenotice-selftest.mjs
+	@bun tools/cross-client-harness/archive/handrow-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh
@@ -486,6 +514,7 @@ test-harness:
 test-harness-device:
 	@echo "${BLUE}🧪 Harness self-tests needing a live rig…${RESET}"
 	@bun tools/cross-client-harness/archive/tabguard-selftest.mjs
+	@bun tools/cross-client-harness/archive/fault-live-selftest.mjs
 	@echo "${GREEN}✅ Device self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)
@@ -522,7 +551,7 @@ build-frontend:
 # ── METTRE LE CODE COURANT SUR LA PILE LOCALE ────────────────────────────────────────────────
 # LA CIBLE QUI MANQUAIT, ET SON ABSENCE COÛTE UN CONTENEUR MORT (2026-09-04).
 #
-# `svelte.config.js` choisit adapter-STATIC sauf si `BUILD_WEB` est posé - la polarité est
+# `kit.config.js` choisit adapter-STATIC sauf si `BUILD_WEB` est posé - la polarité est
 # volontaire (Tauri par défaut). Les deux images frontend de la pile locale veulent l'autre forme :
 # `Dockerfile.frontend-ssr` fait `COPY frontend/build ./` et lance `node index.js`, `Dockerfile.
 # frontend` fait `COPY frontend/build/client` et `build/prerendered`. Un `bun run build` nu ne

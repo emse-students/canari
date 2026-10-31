@@ -107,7 +107,7 @@
   });
 </script>
 
-<PageHeader title={m.admin_card_manage_admins_label()} subtitle={m.admin_users_subtitle()}>
+<PageHeader title={m.admin_card_users_label()} subtitle={m.admin_users_subtitle()}>
   {#snippet actions()}
     <button
       type="button"

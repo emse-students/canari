@@ -5,16 +5,18 @@ import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem, mkVisibleSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
+import { clearGroupNotReady } from './notReadyRegistry';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
+import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -24,6 +26,15 @@ import {
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
 import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
+import { rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitOutcomeUnknownError,
+  FollowerTabCommitError,
+} from '$lib/mls-client/commitSubmission';
+import { readConfirmedTree } from './confirmedTree';
+import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
  * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
@@ -139,10 +150,34 @@ export async function deliverWelcomes(params: {
   return delivered;
 }
 
-/** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
+/**
+ * The users holding an ACTIVE device row in a group - who the delivery service ROUTES to, deduplicated
+ * (a user can have multiple devices). Not who is in the group: see {@link fetchGroupRoster}.
+ */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);
   return [...new Set(members.map((m) => m.userId))];
+}
+
+/**
+ * The people IN a group: its user-level roster (`dm_group_members`), less the seats an invitation
+ * link opened that no member has admitted yet. What every surface listing members shows (the group
+ * panel, its count, the mention picker, a call's avatars).
+ *
+ * WHY NOT THE ACTIVE DEVICE ROWS ({@link fetchUniqueGroupMembers}): an Add's commit writes its
+ * newcomers' device rows `pending`, and only the NEWCOMER's own client turns them `active`, when it
+ * opens its Welcome - on its clock, possibly days later. Read right after the Add, that list held
+ * whichever invitee happened to be quick, and the panel then offered no way to remove the others.
+ * The roster is written by the adder ITSELF (`registerMember`, awaited before the Add returns), and
+ * cut first by every removal and every departure, so it is current the moment either gesture ends.
+ */
+export async function fetchGroupRoster(
+  mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
+  groupId: string,
+  opts?: { fresh?: boolean }
+): Promise<string[]> {
+  const rows = await mlsService.getGroupUserMembers(groupId, opts);
+  return [...new Set(rows.filter((r) => r.awaitingAdmission !== true).map((r) => r.userId))];
 }
 
 /**
@@ -182,10 +217,9 @@ export async function deleteGroupAndBroadcast(params: {
   // the deletion from the server (a 410 on their next send, the group gone from their next pull).
   if (holdsGroupState(mlsService, groupId)) {
     try {
-      const controlMsg = encodeAppMessage(
-        mkVisibleSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
-      );
-      await mlsService.sendMessage(groupId, controlMsg);
+      // No row of our own: this device drops the conversation below, and our other devices
+      // purge it on this frame - no device of ours holds the notice (`sendVisibleNotice`).
+      await sendVisibleNotice(mlsService, groupId, 'groupDeleted', { deletedBy: userId });
     } catch (e) {
       const line = `[DELETE] groupDeleted notice for ${groupId.slice(0, 8)}… NOT delivered - deleting without it: ${String(e).slice(0, 120)}`;
       console.warn(line);
@@ -197,12 +231,7 @@ export async function deleteGroupAndBroadcast(params: {
   // than a sentinel value, because "no failure" and "a falsy error" must not be the same state.
   let serverExitFailure: { error: unknown } | null = null;
   try {
-    const serverDeleted = await mlsService.deleteGroupOnServer(groupId);
-    if (!serverDeleted) {
-      // A 404 IS AN ANSWER: the group is not there, which is the end state asked for. Nothing is
-      // owed and nothing is rethrown.
-      log?.(`[DELETE] Group ${groupId.slice(0, 8)}... not found on server (already deleted?)`);
-    }
+    await mlsService.deleteGroupOnServer(groupId);
   } catch (e) {
     serverExitFailure = { error: e };
   }
@@ -223,52 +252,73 @@ export async function deleteGroupAndBroadcast(params: {
   if (serverExitFailure) throw serverExitFailure.error;
 }
 
-/** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
+/**
+ * Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so
+ * their UIs update, and writes this device's own notice under the frame's id (`sendVisibleNotice`).
+ */
 export async function renameGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   newName: string;
   userId: string;
   deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
 }) {
-  const { mlsService, groupId, newName, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, newName, userId, deviceKeyB64, ownNotice } = params;
   await mlsService.renameGroup(groupId, newName);
 
   // Broadcast the rename notification - best-effort: the local rename is
   // already committed to the server; if the MLS message fails, peers will
   // still see the new name when they next fetch group metadata.
   try {
-    const controlMsg = encodeAppMessage(
-      mkVisibleSystem('groupRenamed', JSON.stringify({ newName }))
+    await sendVisibleNotice(
+      mlsService,
+      groupId,
+      'groupRenamed',
+      { newName },
+      { ...ownNotice, actor: userId }
     );
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking: rename already applied server-side
+  } catch (e) {
+    console.warn(
+      `[GROUP] groupRenamed notice for ${groupId.slice(0, 8)}… NOT delivered - the rename stands, the members read it from the group metadata: ${String(e).slice(0, 120)}`
+    );
   }
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
-/** Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all members so their UIs update. Pass mediaId=null to remove the photo. */
+/**
+ * Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all
+ * members so their UIs update, and writes this device's own notice under the frame's id. Pass
+ * mediaId=null to remove the photo.
+ */
 export async function setGroupImageAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   mediaId: string | null;
   userId: string;
   deviceKeyB64: string;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
 }) {
-  const { mlsService, groupId, mediaId, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, mediaId, userId, deviceKeyB64, ownNotice } = params;
   await mlsService.setGroupImage(groupId, mediaId);
 
   // Broadcast the photo change - best-effort: the change is already committed to
   // the server; if the MLS message fails, peers will still see the new photo when
   // they next fetch group metadata via getUserGroups.
   try {
-    const controlMsg = encodeAppMessage(
-      mkVisibleSystem('groupImageChanged', JSON.stringify({ imageMediaId: mediaId }))
+    await sendVisibleNotice(
+      mlsService,
+      groupId,
+      'groupImageChanged',
+      { imageMediaId: mediaId },
+      { ...ownNotice, actor: userId }
     );
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking: image already applied server-side
+  } catch (e) {
+    console.warn(
+      `[GROUP] groupImageChanged notice for ${groupId.slice(0, 8)}… NOT delivered - the photo stands, the members read it from the group metadata: ${String(e).slice(0, 120)}`
+    );
   }
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
@@ -287,13 +337,11 @@ async function notifyMembershipChange(
   groupId: string,
   event: 'memberLeft' | 'memberRemoved',
   payload: Record<string, string>,
-  log?: (msg: string) => void
+  log?: (msg: string) => void,
+  ownNotice?: OwnNotice
 ): Promise<void> {
   try {
-    await mlsService.sendMessage(
-      groupId,
-      encodeAppMessage(mkVisibleSystem(event, JSON.stringify(payload)))
-    );
+    await sendVisibleNotice(mlsService, groupId, event, payload, ownNotice);
   } catch (e) {
     const line = `[GROUP] ${event} notice for ${groupId.slice(0, 8)}… NOT delivered, and not sent later - the members see the roster change without it: ${String(e).slice(0, 120)}`;
     console.warn(line);
@@ -305,19 +353,51 @@ async function notifyMembershipChange(
  * Removes a member from the MLS group (admin action):
  *  1. Ends the membership on the server (dm_group_members + dm_device_group_memberships, and the
  *     membership interval that makes the removal hold against a later re-add).
- *  2. MLS remove commit - removes the leaf from the tree and advances the epoch for all.
+ *  2. MLS remove commit - removes the leaf from the tree and advances the epoch for all, REBUILT on
+ *     the epoch that beat it when it loses the race (see below).
  *  3. Broadcasts `memberRemoved` to remaining members.
  *
  * **THE SERVER RECORD COMES FIRST, AND A FAILURE THERE ABORTS THE REMOVAL** (user, 2026-10-14: a
  * Remove holds against a later re-add). The record used to be written LAST and best-effort: a
  * failed call left one log line, no exclusion window, and a later re-add was served the whole gap.
- * In this order every outcome is durable without a queue of its own:
- *  - the record fails: nothing has happened, the error reaches the person who asked, they retry;
- *  - the record lands and the commit fails: the roster no longer names the member while the tree
- *    still holds their leaves - which is exactly the state `removeStrayLeaves` collects, on every
- *    member's next connection, with a Remove commit of its own. The removal completes itself.
- * The window also opens on the safe side: it starts BEFORE the commit, so nothing sent between the
- * two can later be served to the member as if they had still been in.
+ * The window opens on the safe side: it starts BEFORE the commit, so nothing sent between the two can
+ * later be served to the member as if they had still been in. And the order is what gates DELIVERY:
+ * the record deletes the member's device rows, so no application frame reaches them from that
+ * instant, while the server's parting hint (`group:parting`) still queues them the Remove commit
+ * that names them. Committing first would leave the removed devices on the fan-out for as long as the
+ * record took - or for good if it then failed - with a tree that says they are out.
+ *
+ * **A LOST RACE IS REBUILT, NOT LEFT TO A SWEEP** (CC-2, 1.4.1 dev campaign, 2026-10-25). Another
+ * commit can take the epoch between the record and this commit - an Add, a leaf refresh, another
+ * holder's collector - and the gate refuses ours. It used to reach the caller as a logged
+ * `CommitRefusedError`: the member off the roster and still in the tree, the person who asked told
+ * nothing, and `removeStrayLeaves` finishing the job at some holder's next connection. Now a refusal
+ * whose catch-up MOVED the epoch (or an overtaken seat claim, each one an eviction) is staged again
+ * on the tree that won - {@link rebuildableRefusal}, the one rule an admission follows too - so the
+ * loop ends on a proof, never on a count.
+ *
+ * **"OUT" IS READ FROM THE TREE, AFTER ANY FAILURE, AND ONLY ONCE THE TREE IS CONFIRMED CURRENT.**
+ * Two Removes of one person (CC-3) rarely end in a refusal: the loser waits for the MLS lock while
+ * the winner's Remove is applied under it, and then its STAGE fails - openmls finds no leaf
+ * (`NoSuchMember`, an untyped error from the platform). So every failure of the commit except an
+ * unknown outcome asks the tree again ({@link memberStanding}), and a tree without the member
+ * resolves `already-out`, quietly. That answer is trusted only at the server's epoch: a tree behind
+ * an Add that re-admitted the member would say "out" of a member still in, so it is caught up first,
+ * and a tree that cannot be confirmed is `tree-unconfirmed`, never "out".
+ *
+ * Every other ending throws {@link MemberRemovalNotCommittedError}, so the caller can say so; the
+ * collector still completes it from durable state (roster against tree).
+ *
+ * **THE `memberRemoved` NOTICE FOLLOWS THE RECORD** (decided 2026-10-25): sent on `committed` AND when
+ * the record landed but the commit did not - safe, because the record already cut the removed
+ * device's rows - and NOT on `already-out`. So a collector's removal leaves no line, and two gestures
+ * can both send one: a `concurrent_commit` that moved nothing is surfaced, not rebuilt, and there may
+ * have been no winner at all - a duplicate line is accepted. On an unknown outcome the notice is still
+ * attempted: the send settles the kept commit first and is refused only if it is still unanswered
+ * (history-reconciliation, "The removal order").
+ *
+ * **A FOLLOWER TAB IS REFUSED BEFORE THE RECORD**: it may not commit (`FollowerTabCommitError`), and
+ * learning that from the commit, after the record, was the half-removal itself.
  */
 export async function removeMemberAndBroadcast(params: {
   mlsService: IMlsService;
@@ -325,27 +405,168 @@ export async function removeMemberAndBroadcast(params: {
   memberId: string;
   userId: string;
   deviceKeyB64: string;
-}) {
-  const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
+  /** Where this device writes its own copy of the notice. */
+  ownNotice: Omit<OwnNotice, 'actor'>;
+}): Promise<MemberRemovalOutcome> {
+  const { mlsService, groupId, memberId, userId, deviceKeyB64, ownNotice } = params;
+  const short = groupId.slice(0, 8);
+  // Every `memberRemoved` this device sends, it also holds, under the frame's id
+  // (`sendVisibleNotice`) - on `committed` and on a record that landed uncommitted, never on
+  // `already-out`, which sends nothing.
+  const announce = () =>
+    notifyMembershipChange(
+      mlsService,
+      groupId,
+      'memberRemoved',
+      { targetUser: memberId },
+      undefined,
+      { ...ownNotice, actor: userId }
+    );
+
+  // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
+  if (getTabLeadership() === 'follower') {
+    console.warn(`[REMOVE_MEMBER] ${short}… removal asked of a follower tab - nothing recorded`);
+    throw new FollowerTabCommitError(groupId);
+  }
 
   // 1. The server record. Propagates: a removal the server did not record is not a removal yet.
   try {
     await mlsService.removeMemberFromServer(groupId, memberId);
   } catch (e) {
     console.warn(
-      `[REMOVE_MEMBER] Server refused or missed the removal in ${groupId.slice(0, 8)}… - nothing committed, the removal is not done: ${String(e).slice(0, 120)}`
+      `[REMOVE_MEMBER] Server refused or missed the removal in ${short}… - nothing committed, the removal is not done: ${String(e).slice(0, 120)}`
     );
     throw e;
   }
 
-  // 2. MLS remove commit: removes the member's leaf for all remaining members. A failure here is
-  // completed by `removeStrayLeaves` (see above), and still reaches the caller.
-  await mlsService.removeMember(groupId, [memberId]);
+  // 2. MLS remove commit, rebuilt on the epoch that beat it (see above).
+  let outcome: MemberRemovalOutcome;
+  try {
+    outcome = await commitMemberRemoval(mlsService, groupId, memberId, userId);
+  } catch (e) {
+    // The record stands, so its notice goes (see above), and the caller is told.
+    if (e instanceof MemberRemovalNotCommittedError) {
+      await announce();
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+    }
+    throw e;
+  }
 
-  // 3. Notify remaining members.
-  await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
+  // 3. Notify remaining members - only when THIS commit removed them (see above) - and write our
+  // own notice under the frame's id.
+  if (outcome === 'committed') await announce();
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+  return outcome;
+}
+
+/**
+ * How a removal the server recorded ended in the tree - both are a COMPLETE removal:
+ * - `committed`: this device's Remove commit took the member's leaves out;
+ * - `already-out`: the tree, confirmed at the server's epoch, held no leaf of theirs - another
+ *   commit (a concurrent Remove of the same person, a holder's collector) removed them, or they
+ *   never held one. Not a failure, and never reported as one: a lost race whose goal the winner
+ *   reached.
+ */
+export type MemberRemovalOutcome = 'committed' | 'already-out';
+
+/**
+ * Commits the Remove of every leaf of `memberId` in `groupId`, for the reasons
+ * {@link removeMemberAndBroadcast} gives.
+ *
+ * @param actingUserId - this device's user, for the catch-up that confirms a tree current.
+ * @returns `committed` when this commit removed them, `already-out` when the confirmed tree holds no
+ *   leaf of theirs - before the commit, or after any failure of it.
+ * @throws {@link MemberRemovalNotCommittedError} for every other ending.
+ */
+async function commitMemberRemoval(
+  mlsService: IMlsService,
+  groupId: string,
+  memberId: string,
+  actingUserId: string
+): Promise<MemberRemovalOutcome> {
+  const short = groupId.slice(0, 8);
+  const who = memberId.slice(0, 8);
+  const standing = () => memberStanding(mlsService, groupId, memberId, actingUserId);
+  for (;;) {
+    const before = await standing();
+    if (before === 'out') {
+      console.log(
+        `[REMOVE_MEMBER] ${short}… ${who} holds no leaf at epoch ${mlsService.getEpoch(groupId)} - nothing to commit`
+      );
+      return 'already-out';
+    }
+    if (before === 'unconfirmed') {
+      console.warn(
+        `[REMOVE_MEMBER] ${short}… the tree could not be confirmed before the Remove of ${who} - recorded, NOT committed`
+      );
+      throw new MemberRemovalNotCommittedError(groupId, memberId, 'tree-unconfirmed', before);
+    }
+    try {
+      await mlsService.removeMember(groupId, [memberId]);
+      console.log(
+        `[REMOVE_MEMBER] ${short}… ${who} removed from the tree, now epoch ${mlsService.getEpoch(groupId)}`
+      );
+      return 'committed';
+    } catch (e) {
+      // AN UNKNOWN OUTCOME IS NOT READ FROM THE TREE: the stage is kept and a later settle decides
+      // it, so "holds a leaf" now says nothing about whether this very commit lands.
+      if (e instanceof CommitOutcomeUnknownError) {
+        console.warn(
+          `[REMOVE_MEMBER] ${short}… the Remove of ${who} has an unknown outcome - recorded, settled later`
+        );
+        throw new MemberRemovalNotCommittedError(groupId, memberId, 'commit-not-landed', e);
+      }
+      const rebuild = rebuildableRefusal(e, mlsService.getEpoch(groupId));
+      if (rebuild !== null) {
+        console.log(
+          `[REMOVE_MEMBER] ${short}… the Remove of ${who} was refused (${rebuild}, now epoch ${mlsService.getEpoch(groupId)}) - re-reading the tree`
+        );
+        continue;
+      }
+      // ANY OTHER FAILURE ASKS THE TREE (see `removeMemberAndBroadcast`): a stage that found no leaf
+      // and a refusal by the SAME removal both end here with the member already out.
+      const after = await standing();
+      if (after === 'out') {
+        console.log(
+          `[REMOVE_MEMBER] ${short}… the Remove of ${who} did not go (${String(e).slice(0, 80)}), and ${who} already holds no leaf - another commit removed them`
+        );
+        return 'already-out';
+      }
+      console.warn(
+        `[REMOVE_MEMBER] ${short}… the Remove of ${who} did not land and cannot be rebuilt (${String(e).slice(0, 120)}; ${after}) - recorded, NOT committed`
+      );
+      throw new MemberRemovalNotCommittedError(
+        groupId,
+        memberId,
+        after === 'unconfirmed' ? 'tree-unconfirmed' : 'commit-not-landed',
+        e
+      );
+    }
+  }
+}
+
+/**
+ * What this device's tree says of `memberId`: `holds` a leaf, `out` - confirmed at the server's
+ * epoch - or `unconfirmed`. A tree that holds the member needs no confirmation: the commit that
+ * follows is decided by the gate. One that does NOT is trusted only once confirmed current, under the
+ * MLS lock ({@link readConfirmedTree}, the one helper an Add's device filter uses too).
+ */
+async function memberStanding(
+  mlsService: IMlsService,
+  groupId: string,
+  memberId: string,
+  actingUserId: string
+): Promise<'holds' | 'out' | 'unconfirmed'> {
+  const reading = await readConfirmedTree(
+    mlsService,
+    groupId,
+    actingUserId,
+    '[REMOVE_MEMBER]',
+    (identities) => treeHoldsUser(identities, memberId)
+  );
+  if (reading.status === 'unconfirmed') return 'unconfirmed';
+  return treeHoldsUser(reading.identities, memberId) ? 'holds' : 'out';
 }
 
 /**
@@ -392,7 +613,8 @@ export async function leaveGroupAndBroadcast(params: {
   const { mlsService, groupId, userId, log } = params;
 
   // 1. Notify BEFORE server deletion (WASM must be intact to encrypt), and AWAIT ITS ACCEPTANCE:
-  // the server step below ends the membership, and a frame posted after it is refused.
+  // the server step below ends the membership, and a frame posted after it is refused. No row of
+  // our own: none of our devices draws our own departure (`sendVisibleNotice`).
   // A failure is logged there and the leave goes on - see this function's doc for why it is lost.
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId }, log);
 
@@ -467,21 +689,39 @@ export async function forgetMlsGroupIfPresent(
 /**
  * Removes a sidebar / IndexedDB conversation row only (no MLS mutation).
  * Safe to call even when WASM no longer knows the groupId.
+ *
+ * `userId` names the account whose recovery marker goes with the row: see the comment on
+ * `clearGroupNotReady` below.
  */
 export async function purgeLocalConversationRecord(params: {
   conversations: Map<string, Conversation>;
   contactKey: string;
   groupId: string;
+  userId: string;
   deleteConversation?: (key: string) => Promise<void>;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { conversations, contactKey, groupId, deleteConversation, log } = params;
+  const { conversations, contactKey, groupId, userId, deleteConversation, log } = params;
   localStorage.removeItem(`discovery_pending:${groupId}`);
   // Same reason as the `discovery_pending` key above, and the same lifetime: per-conversation local
   // state may not outlive the conversation. This one was user-visible when it did.
   forgetGroupReconciliation(groupId);
+  // THE RECOVERY MARKER IS THE IDENTITY OF EVERY LATER RE-ADD, AND IT DIES WITH THE ROW (ADM-2,
+  // 2026-10-25). The SYNC_WATCHDOG enumerates the not-ready registry, which is persisted, so a
+  // marker written while an invitation-link ask waited survived discovery removing the declined
+  // ask: the next pass - after a reload, 27 s later - re-created the placeholder, tried an external
+  // join the server refused (403) and left the conversation listed as `removed`. Every caller of
+  // this function drops the row because the server no longer lists this account in the group, so no
+  // recovery is owed for it. The in-memory cooldown (`lastReAddAt`) is a throttle, schedules
+  // nothing, and stays.
+  clearGroupNotReady(userId, groupId);
   if (deleteConversation) {
-    await deleteConversation(contactKey).catch(() => {});
+    // Best-effort, never silent: a row left in the local store comes back at the next restore.
+    await deleteConversation(contactKey).catch((e: unknown) =>
+      log?.(
+        `[UI] Local conversation ${groupId} dropped from memory, but its stored row could not be deleted: ${String(e).slice(0, 120)}`
+      )
+    );
   }
   conversations.delete(contactKey);
   log?.(`[UI] Local conversation removed (${groupId})`);
@@ -505,7 +745,7 @@ export async function purgeOrphanGroup(params: {
   if (mlsChanged) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
-  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
+  await purgeLocalConversationRecord({ ...uiParams, groupId, userId, log });
 }
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */
@@ -721,6 +961,13 @@ export async function sendFullHistoryBundle(
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
+  // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
+    );
+    return;
+  }
 
   let messages: StoredMessage[];
   try {
@@ -739,6 +986,15 @@ export async function sendFullHistoryBundle(
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
   const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
+      );
+      return;
+    }
     const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
       await mlsService.sendMessage(
@@ -795,6 +1051,27 @@ export async function sendFullHistoryBundle(
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
 }
 
+/**
+ * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
+ * decided (`settleDeviceEvents`): an answer scheduled in the drain that carried an unvouched entry
+ * must not read the record before that entry wrote it. Events that could not be decided withhold:
+ * fail closed, the next answer settles again.
+ */
+async function historyWithheldAfterSettling(
+  groupId: string,
+  to: string,
+  mlsService: IMlsService,
+  log: (msg: string) => void
+): Promise<boolean> {
+  if (!(await mlsService.settleDeviceEvents('history answer'))) {
+    log(
+      `[HISTORY_BUNDLE] device events not decided before answering in ${groupId.slice(0, 8)}... - nothing answered, withheld until they are`
+    );
+    return true;
+  }
+  return historyWithheldFrom(groupId, to);
+}
+
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
 type HistorySendDeps = { mlsService: IMlsService; log: (msg: string) => void };
 
@@ -843,6 +1120,14 @@ async function sendBundleChunks(
     push?: boolean;
   }
 ): Promise<BundleOutcome> {
+  // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
+  // nothing from before is given to a device that let itself in until a member vouches for it.
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history answered to it until a member vouches for it`
+    );
+    return { kind: 'refused' };
+  }
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
   // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
@@ -870,6 +1155,17 @@ async function sendBundleChunks(
     }
     read = true;
     addressed = chosen.mode === 'addressed';
+    // A BROADCAST IS READ BY EVERY LEAF, a withheld device's included (`historyWithheld.ts`): while
+    // one is withheld here, an answer that cannot be addressed is not sent at all.
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
+      );
+      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+    }
     if (addressed && !answer?.requestId && !answer?.join) {
       log(
         `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`

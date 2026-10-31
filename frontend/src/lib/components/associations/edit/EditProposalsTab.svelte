@@ -156,6 +156,7 @@
             <li class="border-cn-border space-y-2 rounded-xl border p-4">
               <div class="flex items-center gap-2">
                 <AssociationAvatar
+                  id={proposal.from.id}
                   name={proposal.from.name}
                   logoUrl={proposal.from.logoUrl}
                   size="sm"
@@ -204,6 +205,7 @@
               <div class="flex items-center gap-2">
                 {#if proposal.to}
                   <AssociationAvatar
+                    id={proposal.to.id}
                     name={proposal.to.name}
                     logoUrl={proposal.to.logoUrl}
                     size="sm"

@@ -366,13 +366,26 @@ channel's member list in the server's order. All three now render through `membe
   re-reads every name. Pinned by `memberOrder.svelte.test.ts`, `familyNameOrder.test.ts` and
   `ChannelMembersList.order.svelte.test.ts`.
 - **A newcomer is never absent (2026-10-05, user: they appeared, vanished, reappeared).** The
-  group roster is `dm_device_group_memberships` (active devices), refetched when the invite ends;
+  group roster is refetched when the invite ends (see the next item for which table);
   the newcomer's profile lookup is still in flight, so the roster HOLDS the id while the ordered
   list does not LIST it. `ChatGroupPanel` hid its "Inviting..." row on roster membership: appeared
   (pending), vanished (roster, not listed), reappeared (listed). `joiningRows` now decides by what
   the list renders: a row stays until the member row replaces it, one hand-over, no timer. NOT an
   MLS ordering problem - commit, welcome and roster were already in order. Pinned by
   `memberOrder.svelte.test.ts` ("a member added while the panel is open").
+- **The group's member list is its ROSTER, not its active devices (2026-10-25, seen twice by the
+  rig).** A bulk Add of two people in one commit left the creator's open panel at `Membres (2)` with
+  a remove button for ONE invitee, while the server held both. `loadGroupMembers` read
+  `GET .../members` - devices whose row is `active` - and an Add's commit writes its newcomers'
+  rows `pending`: only the NEWCOMER's client activates them, when it opens its Welcome, on its own
+  clock. The one read at the end of the Add caught the quick invitee only, and nothing read it again
+  in that page (a later document, read after both had activated, listed both). It now reads
+  `fetchGroupRoster` (`groupActions.ts`): `dm_group_members` less the seats awaiting a member's
+  admission, which the adder writes itself (`registerMember`, awaited before the Add returns) and
+  every Remove or departure cuts first. So the list is current when the gesture ends, by
+  construction; the panel, its count, the mention picker and a call's avatars all read this one
+  list (`convs.groupMembers`). `fetchUniqueGroupMembers` stays for its own question - who is ROUTED
+  to (the membership check). Pinned by `useConversations.memberPanel.svelte.test.ts`.
 
 Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
 one the bureau arranges by drag (`sortOrder`), and the president is its first row.
@@ -727,7 +740,10 @@ deleted); it now only ANNOUNCES the edit.
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
-  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  runs when the conversation changes, and **an edit's text never stays as a draft** (2026-10-27):
+  `begin` binds a writer to the draft of the conversation it starts in (`bindDraftWriter`), and
+  `reset` gives the saved draft back through it - to the conversation the edit began in, never to
+  the one now open ([each conversation keeps its own draft](#each-conversation-keeps-its-own-draft-2026-10-27)).
   **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
   replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
   each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
@@ -1298,6 +1314,93 @@ cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 i
 5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
 [backlog](../../backlog.md). Pinned by `outbox.test.ts`.
 
+### A 2xx a captive portal answered is no answer (2026-10-25)
+
+Under a captive portal every request is answered `200 text/html` without reaching the server. The
+send read that as "accepted, its answer unreadable": the outbox dropped the entry, the sender saw a
+sent bubble, and the copy stayed undated, so no history answer ever carried it either - a message
+lost for good (cross-client rig, `1.4.1-alpha.3`, 2 of 2). **Who answered is now read before
+what was answered**, in ONE helper (`utils/apiJson.ts`, `readApiJson` / `assertAnsweredByApi`):
+
+| A 2xx with... | Read as |
+| --- | --- |
+| no JSON content type (a portal's HTML, an empty `204`) | `NotFromApiError`, the body never read |
+| a JSON type, a body that does not parse (empty, truncated) | `NotFromApiError`, the parse error as its cause |
+| the API's JSON of an unexpected shape | the API's answer - the caller reads what it needs |
+| the send's JSON without `receivedAt` (a server predating it) | accepted, undated - the legacy reading, kept |
+
+`NotFromApiError` is a `TransportFailureError`, so `isTransportFailure` reads it and every caller
+already does the right thing: the send throws `DeliveryUnreachableError`, the entry stays `pending`
+and goes again on the outbox's backoff ladder (up to 60 s after the portal ends - connectivity never
+left "reachable", see [backlog](../../backlog.md)), and receivers deduplicate on the inner messageId.
+The same reading covers the commit gate (kept and resubmitted, never a refusal), `GET` and `POST
+/group-info` (never "no base", never `stored: false`), the key-group base on social-service, the
+Welcome, both key-package publishes, the ACK (ids kept, then persisted), the pending pull (a non-JSON
+or unparseable page fails at once instead of halving nine times), the push registration (not
+counted, so it registers again), the media `complete` and the payments onboarding.
+
+**A PURGE IS NEVER READ FROM A NON-ANSWER.** `getGroupServerStatus` answered `absent` - which purges
+the local conversation and its MLS state - for any 2xx body that did not parse, so a portal's page
+erased a conversation. `absent` now comes only from the delivery service's JSON. The server spells
+a missing row `{ found: false }`, and "nothing stored" on `GET /group-info` `{ groupInfo: null }`,
+because a handler's bare `null` leaves Nest as an empty, untyped `200` that a portal can send too.
+Every older client already reads both objects as before. An empty untyped `200` is now `error`
+(doubt, nothing purged). So is a **404**: the handler never sends one, so a 404 is an edge, a portal
+or a misrouted deploy, and a route-level 404 would have purged EVERY group at once. `absent` is an
+allowlist of one answer. Only the 404 is logged as an accusation; any other non-2xx or a portal's
+`200` is the same answer for every group of a sweep, so `getGroupServerStatus` keeps it at debug and
+`discoverMissingGroups` says it ONCE: `[DISCOVERY] <n> group(s) kept - server status unanswered,
+nothing purged: <groups>`.
+
+The same review of status-only arms changed four more places, each to the rule "a status decides
+only when the API said it":
+- The 403 behind `NotAGroupMemberError` (`fetchGroupInfo`, `getGroupMembers`) counts only with the
+  gateway's JSON. A caller retires the conversation on it, and an edge's HTML 403 (a WAF ban page)
+  says nothing about membership.
+- `deleteGroupOnServer` no longer reads a 404 as "already gone". The route never sends one, so a
+  delete for everyone was reported done with nothing deleted. A non-API 2xx is now no answer.
+- An owed exit (`classifyExitFailure`) is forgotten only on the delivery service's own 403, carried
+  as `GroupExitRefusedError.origin`. A 404 never forgets it (neither exit route sends one), and an
+  edge's 403 or 404 keeps the row. `removeMemberFromServer` and `dismissGroup` read a non-API 2xx as
+  no answer too, so a portal cannot clear an owed leave.
+- A profile 404 (`isAbsentUserError`, which sends the session to the login page) counts only from
+  core-service.
+- The refresh's 401/403 latches the cookie dead and signs out only when core-service sent it. An
+  edge's 403 is transient, like a 5xx.
+
+The discriminator is the
+content type `responseOrigin` already used for an edge refusal, plus the parse - facts the
+response carries, never a guess from its words. **Where the reading DESTROYS something** (the
+refresh's sign-out, the membership 403, the profile 404, the exit 403) the header is not enough: the
+estate sits behind an edge that can answer an API client in JSON too. There `refusalOrigin` reads
+one of the two shapes our services write: Nest's error envelope (`statusCode` equal to the HTTP
+status, which every `HttpException` built from a string and every guard refusal carries because no
+service installs an exception filter), or a coded refusal `{ code, message }` (`refusalBody`),
+which Nest sends WITHOUT `statusCode` and which is believed only when `code` belongs to the shared
+contract (`isContractRefusalCode`, `utils/refusalCodes.ts`). The membership refusals a removed
+member meets (`NOT_A_MEMBER`, `MEMBERSHIP_NOT_ALLOWED`) are coded: an envelope-only first draft read
+them as the edge's, so a removed member kept the conversation and an owed leave replayed for ever.
+Any other JSON body (a CDN's `{ type, title, status, detail, error_code }`, an unknown code) is the
+edge's, except the delivery service's 409 `{ error: 'awaiting_admission' }` to a pending member,
+recognised (`isAwaitingAdmissionBody`) so its label is true although nothing destroys on it. The
+gateway's own error pages (nginx) imitate the envelope for 413/429/5xx and for a 404 under
+`/api/media/public/live/`; no destructive reader acts on those statuses or on that route. A refused
+exit also carries the service's `code` (`GroupExitRefusedError.code`), which changes no outcome and
+names the answer in the drain's log (`KEY_DISTRIBUTION_GROUP` has its own line). A best-effort
+server delete nothing retries (a failed creation's orphan, a merged duplicate) logs its failure
+through `logBestEffortGroupDeleteFailure`. `getGroupServerStatus` reads `absent` from `{ found:
+false }` alone; any other JSON without an id is `error`. The remaining header-only readers (the send's edge refusal, media, live, resumable upload)
+only choose between retrying and reporting, so a misread there costs a retry, not a state. The log line an operator reads is
+`[DELIVERY] send to <group> answered 200 with no answer of the delivery service - not accepted, kept
+for a retry: NotFromApiError: POST /api/mls/send (group <group>) answered 200 with text/html... -
+not the API, read as no answer`.
+
+**Not covered**, each in [backlog](../../backlog.md): a 2xx a caller believes WITHOUT reading
+anything (`renameGroup`, most `apiFetch` writes), the Android background
+senders, and connectivity's reading of a portal as "reachable". Pinned by `apiJson.test.ts`,
+`mlsDeliveryApi.notFromApi.test.ts`, `mlsDeliveryApi.groupStatus.test.ts`,
+`ChannelService.notFromApi.test.ts`, `outbox.test.ts` and the two chat-delivery controller specs.
+
 `enqueue` logs too: it is the first trace of a message on this device, and without it a send that
 never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a
 loss needs `[OUTBOX]` from the sender and `[QUEUE]` from the recipient at the same moment.
@@ -1449,6 +1552,7 @@ group - is written by **two paths that never meet**, and copied between devices 
 | live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `memberLeft` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
 | archive replay | `historySystemEvents.ts`, the same events re-read from `history:{groupId}` |
 | a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored** |
+| the acting device itself | `sendVisibleNotice` (`visibleNotices.ts`) writes its own row under the frame's id once the frame is accepted, since MLS never hands it that frame (2026-10-25, [history-reconciliation](../../protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)) |
 
 **Every deduplication in the application compares ids** - the bulk-ingest check in
 `addMessageToChat`, the bundle's `existingIds` set, the post-save merge. So a notice with no id
@@ -2259,6 +2363,30 @@ This is independent of [the notice-identity fix](#a-visible-system-notice-needs-
 which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
 arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
 
+#### A system notice is not conversation activity (user, 2026-10-27)
+
+"X added a device" moved its conversation to the top of the list. The sidebar key is
+`conversationRecency` (`utils/chat/conversations.ts`, also read by the share targets, the mini panel
+and the persisted `updatedAt`) and it read the newest row of `messages`, notices included. It now
+skips every row for which `isSystemRow` (`messageOrder.ts`) is true - `isSystem` OR the `system`
+sender, the same fact in its two forms - and every writer of the `lastMessageAt` seed goes through
+`advanceLastMessageAt`, which ignores notices too (`addMessageToChat`, `batchAddMessages`, the FCM
+cache merge, the channel join notice). A conversation holding notices only keeps its seed, then
+`startedAt` (the server's creation instant), then 0: never the arrival time of a notice.
+
+**A CALL RECORD IS ACTIVITY (decided 2026-10-27)**: a system row carrying a `callEvent` envelope (missed,
+ended, declined) still moves the conversation, as on Messenger and WhatsApp; `isNoticeRow` is the
+predicate every consumer uses (notice = system row that is not a call record). Tab-sync events omit
+`lastMessageAt` when there is no seed (`tabSeed`) instead of writing 0. A conversation created on
+this device is seeded with its creation moment (`lastMessageAt`, group / DM / channel creation and
+the channel join), NOT `startedAt`, which stays the server's write-once fact that the sweep
+backfills. The boot stub seeded from an old `meta.updatedAt` (written while notices counted) is
+transient: the first load of messages replaces it, no migration.
+
+**The preview line is unchanged** and still shows the newest row, notice included: it is a text, not
+a position, and hiding it would show a stale sentence. Read receipts and unread counts already
+ignored notices. Not changed: native notification previews (they raise only for inbound messages).
+
 ### What ended the wait, and why there is no wait left
 
 Kept because the shape recurs, not because the code is still there. The exchange used to be gated by
@@ -2728,8 +2856,8 @@ Three properties, and none of them is a timer:
 - **Idempotence from the row**, not from a guard. The primary key is the `groupId`, so deciding twice
   cannot queue two calls, and the newer decision (a `leave` after a `delete`) is the one that
   survives.
-- **Termination from a PROOF.** The row is cleared when the server answers - a success, or a 403/404
-  saying it is already done - and never on an attempt count or an elapsed time. A server that is
+- **Termination from a PROOF.** The row is cleared when the server answers - a success, or the
+  delivery service's 403 saying it is already done - and never on an attempt count or an elapsed time. A server that is
   reachable and REFUSES (a 500) keeps the row and logs at a level that accuses, because that is a
   server bug and dropping the row would hide it.
 - **The trigger is an EVENT**: `connectivity.onReconnect`, plus exactly one pass at startup, for an
@@ -2740,8 +2868,10 @@ Three properties, and none of them is a timer:
 **One classifier, or the defect comes back with its halves swapped.** The drain and
 `exitGroupAndCleanup` both have to read a failure, and if they disagreed about a 403 the composable
 would keep a row the drain would clear, or worse. `classifyExitFailure` in
-`utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for 403/404,
-`'refused'` for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
+`utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for the delivery
+service's own 403 (Nest's envelope or a contract refusal code, never an edge's page, never a 404 - neither route sends one, see
+[the 2xx a portal answered](#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)), `'refused'`
+for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
 `apiFetch` uses to decide the server is unreachable - says so. Note what that means for a
 PROGRAMMING error thrown inside the call: it classifies as `refused`, not `unreachable`. That is the
 choice we want, because a bug must not be able to keep a row for ever while blaming the link.
@@ -3092,14 +3222,78 @@ every run. The request ordering is the proof and needs no inference: the console
 `GET /api/channels/workspaces/user/me` issued at line 196, `POST /api/channels/workspaces` (the
 creation) at 398, and `[WORKSPACE-LOAD] communities/channels loaded` at 497.
 
-The repair is a **creation tick**, not a timestamp: `creationEpoch` counts what this device has
-created, ever. It is read BEFORE the listing request goes out, stamped onto the sidebar entry the
-moment a community exists locally (`createdEpoch`) and onto `locallyCreatedChannels` for a salon, and
-both prunes spare anything stamped later than the request. The question is not "how old is this" but
-"did this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
-wrong about and nothing to tune. A community that really was deleted elsewhere is still removed, and
-both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
-can attribute.
+The repair is a **tick**, not a timestamp. It is read BEFORE the listing request goes out, and both
+prunes spare anything dated later than the request. The question is not "how old is this" but "did
+this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
+wrong about and nothing to tune. A community that really was deleted elsewhere is still removed.
+
+### A live fact heard during a listing is newer than its answer (2026-10-26)
+
+The 2026-08-20 repair dated only what this device CREATED. **Measured on dev by the cross-client rig
+(Mi 9T)**: a community joined in-session logged `[WORKSPACE-LOAD] community joined in-session -
+loading its salons` at T, its listing went out at T+0.2 s, the server created a salon at T+2.6 s and
+the phone logged `Joined channel <id>` (`onChannelMemberJoined`), the listing answered at T+6.4 s - and
+its prune deleted the salon's conversation and row, without a line. The member did not see the salon
+until a later listing. Same code on the web: only the width of the in-flight window differs.
+
+The mirror image was open too: a salon or community DELETED, LEFT or taken from this member during a
+listing was still in its answer, and the listing drew it back.
+
+**One record, `listingLedger.ts`**, holds the LAST thing learned live about each id - `present`
+(created here, or heard of on the socket) or `gone` (deleted, left, removed) - with the tick it was
+learned at. Salons are keyed by conversation id, communities by `community:<slug>`. Every live
+write goes through one of four places, and the listing's own writes go through none of them:
+
+| Live fact | Where it is dated |
+| --- | --- |
+| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`) |
+| community heard of on an event, or created here | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName` |
+| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
+| community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
+
+`leaveCurrentChannel` and `deleteCurrentChannel` record the removal as soon as the server answers,
+before they await the store delete: a listing answered during that await used to set the
+conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
+guard in the same test file.
+
+A listing then:
+
+1. **Does not draw back** a community or salon learned `gone` after its request
+   (`[WORKSPACE-LOAD] <kind> <id> not restored: ...`). This is asked again at each point
+   `loadCommunitySalons` would write next, because the purge can land while that community's salons
+   or key group are still on their way. A community removed in that window gets no conversation, no
+   channel map, no key-group join and no entry.
+2. **Gathers every store that holds a salon the answer does not name** - its conversation, its row
+   (in the communities the answer covers) and its stored page (F4) - and **decides once per salon**,
+   reading the ledger first:
+   - learned `present`: kept (`kept salon <id> (<stores>): ...`);
+   - learned `gone`, with the purge still running: finished quietly
+     (`salon <id> (<stores>) removed on this device after the listing was asked - its removal is
+     finished here`), never blamed as unheard;
+   - nothing learned: pruned, with **one `warn` per salon** -
+     `pruned salon <id> (conversation, row, stored page): not listed by the server, and neither
+     created nor heard of on this device after the listing was asked (tick N)`. This is the visible
+     end of a removal this device did not hear live, usually one made while the app was shut: one
+     line, not one per store.
+
+   Communities get the same three outcomes.
+
+The keep, decline and finish lines go to the session log (`ctx.log`), so they reach a phone's
+in-app log: `appLog.ts` does not keep `debug`. Each attempt of a retried listing reads the tick
+again, so a salon heard during the back-off is judged by the retry's answer.
+
+A community first drawn from an event under a slug the server does not use (`workspace-<id>` when
+the event named none) is folded into the listed entry by id, under the server's slug. It used to
+appear twice.
+
+The ledger keeps only the last fact, so a salon removed and then heard of again in the same window
+is drawn. All of this is pinned by an explicit order in `useChannelWorkspaces.svelte.test.ts` ("a
+live fact heard while a listing is in flight"), and the not-heard control is still pruned.
+
+**What the ledger does NOT cover** (the same race, on fields rather than existence): a rename or a
+`viewerCanWrite` change heard during a listing (`onChannelUpdated`) is overwritten by the listing's
+older row, and a role change (`workspace.role.changed`) or a cover/history change
+(`workspace.updated`) by `upsertWorkspaceFromDto`'s older DTO, until the next listing.
 
 ### The communities are loaded side by side, not one after another (2026-10-12)
 
@@ -3389,7 +3583,8 @@ scroll handler, which nothing could test and nothing could explain.
 
 That last row is the one that makes a single mechanism correct rather than convenient: **composer
 growth and content growth are literally the same number**, so all three observers call one `follow()`
-closure, which asks `shouldFollowThreadBottom` about one `scrollHeight`. Three copies of this
+closure, which asks one predicate about one number (`threadGrowthResponse` and the reach since
+2026-10-30, below). Three copies of this
 judgement could disagree about where the bottom is; one cannot.
 
 Every trigger is the change itself. There is no timer, nothing to tune, and nothing that fires when
@@ -3417,6 +3612,65 @@ growing above, and the typing bubble sliding in, were already followed (0 px) an
 **iOS WebKit was not run.** The viewport numbers feeding the box (visual vs layout viewport, the iOS
 safe-area) are `keyboardViewport.svelte.ts`'s, corrected in PR #1667; this change reads only the
 resulting box, so the two combine without overlap.
+
+### A field that stays focused with the keyboard down: the rise that covered the thread, and the "+" that raised the keyboard (2026-10-29)
+
+Reported by the owner on 1.5.0 (Android, Gboard): the keyboard covered the conversation instead of
+lifting it, and once the keyboard had been opened, "+" opened the keyboard again instead of its menu.
+**One fact causes both: an Android WebView keeps the text field FOCUSED when the keyboard is put
+away** (Back, Gboard's down arrow). Read on the Mi 9T (`1.5.1-alpha.7`, LatinIME, over CDP):
+`document.activeElement` is still the composer's editor after Back, with `innerHeight` back at 945.
+
+- **The rise.** Focusing the composer goes to the end of the thread, from any distance (`ChatArea`'s
+  `_composerFocused` effect). A tap on a field that is ALREADY focused raises the keyboard with no
+  focus event, and the keyboard effect followed only a reader within the 120 px slack
+  (`isPinnedToBottom`). A reader 138 px up kept their `scrollTop` (2772 before and after) and the
+  distance to the bottom went from 138 to 483 px: the last messages stood behind the keyboard and the
+  scroll-down arrow appeared. `keyboardChangeResponse` (`threadAnchor.ts`) now answers a keyboard
+  rising for the focused composer like the focus itself, wherever the reader was; a keyboard FALLING
+  still moves only a reader at the bottom.
+- **The "+".** `keepsFocus` (#1345, first stable `1.0.1`) cancels the press's `mousedown` so the
+  keyboard stays up under the menu. With the keyboard already DOWN it left the field focused, and
+  Chromium raises the keyboard on any tap while an editable element holds focus; the rising keyboard
+  then closed the menu (`keyboardOpened`). Measured: no menu and the keyboard up; with the field
+  blurred first (`activeElement.blur()` over CDP, the control), the five entries and no keyboard. The
+  composer now asks for `keepsFocus` only while the keyboard is up (`menuPressKeepsFocus`,
+  `composerSurface.ts`): with it down the press takes focus, the field blurs, and the menu opens.
+
+**What was not a regression.** Nothing in this area changed between `1.5.0` and `1.5.1`; the "+" half
+dates from #1345 (2026-10-02) and the rise half from the keyboard effect of 2026-05 combined with the
+120 px slack of 2026-09-22. The native IME padding (`MainActivity.applyKeyboardInsets`) worked on the
+Mi 9T (Android 16, edge-to-edge enforced): `IME inset: 885 -> content padding`, `innerHeight`
+945 -> 588. Both fixes were read on the Mi 9T by reproducing the change over CDP on the installed
+build (a capture-phase `mousedown` that skips the hold while the keyboard is down: the menu, no
+keyboard; the hold kept with the keyboard up: the menu over the keyboard, focus kept); the built
+change itself is owed one reading ([check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+
+### A reader at the bottom is anchored to the bottom, in both directions (2026-10-30)
+
+Reported on production 1.5.1 by the owner (Pixel 6a) and a friend: in a DM whose tail holds a photo,
+opening the keyboard showed OLDER messages, the photo cut by the composer and the scroll-down arrow
+up; a text-only DM rose correctly. The friend read it as "it anchors on the end as it was when the
+app opened". **That reading, and the hypothesis of a stale `isNearBottom` snapshot, were refuted on
+the Mi 9T** (`1.5.1`, CDP, the real observer): late growth and new messages were followed every time
+and the flag was right.
+
+**The mover was the row anchor.** On Android the WebView itself resizes for the keyboard
+(`MainActivity.applyKeyboardInsets`), so every `svh` length shrinks with it, and a chat photo sits
+under `--media-max-height: 60svh`. Measured, a 567 px block (60svh) above the last rows, keyboard
+357 px: frame 1, the box shrinks, the reach grows, `follow()` pins (distance 0); frame 2, the WebView
+resize shrinks the block by 214 px (0.6 x 357), the reach SHRINKS, and `shouldFollowThreadBottom`
+followed growth only - so `anchorShift` kept the row at the top of the viewport in place by moving
+`scrollTop` 3527 -> 3313: distance 214, arrow up. The 214 px is the photo's loss, not the keyboard's.
+
+`threadGrowthResponse` (`threadAnchor.ts`) replaces the predicate with three answers: a reader at the
+bottom FOLLOWS any change of reach, growth or shrink (`follow-bottom`), holds when nothing moved
+(`hold-bottom`), and is never anchor-compensated; the row anchor (`keep-row`) is for a reader in
+history, while entering and while older messages are prepended, exactly as before.
+`threadGrowthObserver.test.ts` drives the observer through late growth, the keyboard box and the
+`svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
+in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
+portrait photo near its end.**
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
@@ -3714,7 +3968,7 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
-A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - into the draft of the conversation the text was written in, whichever one is open by then (each conversation keeps its own draft since 2026-10-27, [below](#each-conversation-keeps-its-own-draft-2026-10-27)), and it logs. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
@@ -3867,3 +4121,35 @@ bracket the unknown stretch between the conversation map and the pane DOM:
 (the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
 rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
 means `selectedContact` and the pane disagree.
+
+## Each conversation keeps its own draft (2026-10-27)
+
+The composer's text was ONE field of `MainChatPage` (`messageText`), cleared only when the route
+switched between `/chat` and `/communities`. A draft left in one conversation - or a share staged
+there - sat in the next conversation's composer, and that conversation's Send posted it there: read
+on the Mi 9T, where two shared links followed the reader into two other conversations. The text now
+follows the rule the staged files and the armed reply already followed:
+`useMessaging.draftByConversation`, keyed by conversation id, read through `draftFor` and written
+through `setDraft`; the page's `messageText` is a `$derived` of the open conversation's entry.
+`forgetAccount` clears it with the other two at sign-out, since the next account may open the same
+DM or salon. A refused send (`restoreFailedDraft`), a taken-back send and a share all write into
+the draft of THEIR conversation. Test: `useMessaging.draft.svelte.test.ts`.
+
+Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
+
+- **Text that comes back LATER is written through `lateDraftWriter`**, which captures
+  `signOutGeneration()` when it is made and drops the text (logged, without the content) once a
+  sign-out has begun: an edit's saved draft, a refused send and a resumed salon text. A sign-out
+  clears the drafts (`forgetAccount`) while the composer is still mounted, and the edit's reset or
+  the refused send's answer came after the clear - the next account to open the same DM or salon
+  saw, and could send, the leaving account's text. Test: `useMessaging.draft.svelte.test.ts`.
+- **The composer resets an open edit when it UNMOUNTS** (`ChatArea`'s `onDestroy`), not only when
+  the conversation id changes: the page remounts on any route change, so an edit left open there
+  left the edited message's text as the draft, with no banner, for Send to post twice. Test:
+  `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
+  derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
+  (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
+  under an open conversation (a name resolved late, a rename) strands the draft under the old key:
+  invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
+  "vanishes" from a DM.

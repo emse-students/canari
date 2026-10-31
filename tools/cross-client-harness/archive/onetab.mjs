@@ -10,7 +10,8 @@
  *   --dry  report only, and exit non-zero if any browser is ambiguous
  */
 import { listTargets } from '../cdp.mjs';
-import { closeExtraAppTabs } from './tabs.mjs';
+import { EstateRefusedError } from '../estate-target.mjs';
+import { closeExtraAppTabs, closeRefusedTabs } from './tabs.mjs';
 import { PORTS } from '../names.mjs';
 import { SITE } from '../site.mjs';
 
@@ -30,9 +31,24 @@ for (const d of devices) {
   let targets;
   try {
     targets = await listTargets(port);
-  } catch {
-    console.log(`${d} (${port}): not answering - skipped`);
-    continue;
+  } catch (e) {
+    // A REFUSAL IS AN ANSWER, NOT SILENCE (R1 low finding): the browser answered with a page the
+    // allowlist refuses. Said as such, and the refused tabs are closed unless this is a dry run.
+    if (!(e instanceof EstateRefusedError)) {
+      console.log(`${d} (${port}): not answering - skipped`);
+      continue;
+    }
+    console.log(`${d} (${port}): REFUSED - ${e.message}`);
+    if (dry) continue;
+    const gone = await closeRefusedTabs(port);
+    console.log(`${d} (${port}): closed ${gone.length} refused tab(s): ${gone.join(' ')}`);
+    closed += gone.length;
+    try {
+      targets = await listTargets(port);
+    } catch (again) {
+      console.log(`${d} (${port}): still refused or not answering after closing - skipped: ${again?.message ?? again}`);
+      continue;
+    }
   }
   const app = targets.filter((t) => String(t.url).includes(SITE));
   const blanks = targets.filter((t) => String(t.url).startsWith('about:blank'));

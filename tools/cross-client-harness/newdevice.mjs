@@ -46,6 +46,8 @@ import {
 } from "./devices.mjs";
 import { APP_TAB, client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
+import { recordCreated } from "./campaign.mjs";
+import { DEVICE_ID_NOW } from "./devicerows.mjs";
 import { PORTS } from "./names.mjs";
 import { ORIGIN } from "./site.mjs";
 import { recordObserved } from "./results.mjs";
@@ -92,7 +94,9 @@ const keepOpen = argv.includes("--keep-open");
  * local material, and the login + `pin.mjs` that follow enter the ACCOUNT's current PIN on a device
  * with nothing to migrate. W2 and W3 are untouched, which a re-registration would not have left true.
  */
-const WIPEABLE = ["W3", "W1"];
+// W6 JOINED ON 2026-10-25 for the 1.4.1 campaign: DEV-4 races two fresh devices of the owner and
+// DEV-6 needs a second one after the first is revoked. It is a scratch profile like W3 and holds nothing.
+const WIPEABLE = ["W3", "W1", "W6"];
 const device = opt("device", "W3");
 if (!WIPEABLE.includes(device)) {
   throw new Error(
@@ -161,14 +165,6 @@ const CENSUS_OF_ORIGIN = `(async function () {
 
 const readOrigin = async (cx) => JSON.parse(await evaluate(cx, CENSUS_OF_ORIGIN));
 
-/** The device id the web client is using, read from the one entry that carries it. */
-const DEVICE_ID_NOW = `(function () {
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k.indexOf('mls_device_id_') === 0) return JSON.stringify({ userId: k.slice('mls_device_id_'.length), deviceId: localStorage.getItem(k) });
-  }
-  return 'null';
-})()`;
 
 /**
  * Makes `device` a device the server has never seen, and RETURNS THE MOMENT THAT DEVICE IS LIVE.
@@ -413,6 +409,8 @@ export async function confirmEnrolment({
   );
 
   const aFreshIdWasMinted = !!now && (!was || now.deviceId !== was.deviceId);
+  // THE DEVICE THIS MINT CREATED IS THE CAMPAIGN'S (R5), so a later purge of it on dev passes the guard.
+  if (aFreshIdWasMinted) recordCreated({ kind: "device", id: now.deviceId, by: "newdevice" });
   const theServerHadNeverSeenIt = !!now && !knownBefore.has(now.deviceId);
   const theSameAccountCameBack = !!now && !!was && now.userId === was.userId;
 

@@ -1,4 +1,4 @@
-import { fetchUserProfile, UserProfileFetchError } from '$lib/stores/user';
+import { fetchUserProfile, isAbsentUserError } from '$lib/stores/user';
 
 /**
  * Asks the server whether the signed-in user still exists, WITHOUT holding anything up
@@ -25,7 +25,8 @@ export function checkSessionUserInBackground(
   return fetchUserProfile(userId).then(
     () => undefined,
     async (error: unknown) => {
-      if (error instanceof UserProfileFetchError && error.status === 404) {
+      // `isAbsentUserError`: a 404 core-service itself answered, never an edge's "Not Found".
+      if (isAbsentUserError(error)) {
         console.warn(
           `[LAYOUT] User ${userId.slice(0, 8)} does not exist (404) - to the login page`
         );

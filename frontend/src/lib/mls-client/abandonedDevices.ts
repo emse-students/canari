@@ -69,17 +69,17 @@ export function retireAbandonedDevices(target: RetirementTarget): Promise<void> 
         );
       } else {
         let confirmed = false;
+        // ONE LINE PER REFUSAL: why it was not retired, and that it is kept.
+        let why = 'the server did not confirm the delete';
         try {
           const res = await target.deleteDevice(target.userId, id);
           confirmed = !!res && res.status !== 'error';
         } catch (e) {
-          console.warn(
-            `[MLS] retiring abandoned device ${sanitizeForLog(id)} failed: ${String(e)}`
-          );
+          why = String(e);
         }
         if (!confirmed) {
           console.warn(
-            `[MLS] abandoned device ${sanitizeForLog(id)} not retired yet - kept, retried at the next published round`
+            `[MLS] abandoned device ${sanitizeForLog(id)} not retired yet (${sanitizeForLog(why)}) - kept, retried at the next published round`
           );
           continue;
         }

@@ -19,7 +19,8 @@
  * app perfectly healthy. `background()` therefore turns it OFF for the duration and back on after,
  * which is invisible to every caller and fixes the whole TAB phase in one place.
  */
-import { evaluate, listTargets } from '../cdp.mjs';
+import { evaluate, listTargets, untrustedBrowserPages } from '../cdp.mjs';
+import { pageVerdict, registeredAttachOrigin } from '../estate-target.mjs';
 import { SITE } from '../site.mjs';
 
 /**
@@ -45,6 +46,24 @@ export async function closeExtraAppTabs(port) {
   ];
   for (const t of doomed) await fetch(`http://127.0.0.1:${port}/json/close/${t.id}`).catch(() => {});
   return doomed.length;
+}
+
+/**
+ * Closes every tab on `port` that the attach allowlist refuses (`pageVerdict`), and nothing else -
+ * so a rig browser left on a foreign page can be repaired by hand with `onetab.mjs` (R1 low
+ * finding). Closing sends the browser NOWHERE: it is `/json/close`, never a navigation.
+ *
+ * @returns the URLs closed
+ */
+export async function closeRefusedTabs(port) {
+  const origin = registeredAttachOrigin();
+  if (!origin) throw new Error('closeRefusedTabs: no estate registered - site.mjs was never evaluated');
+  const refused = (await untrustedBrowserPages(port)).filter((t) => !pageVerdict(String(t.url), origin).ok);
+  for (const t of refused) {
+    const r = await fetch(`http://127.0.0.1:${port}/json/close/${t.id}`).catch((e) => ({ ok: false, statusText: String(e?.message ?? e) }));
+    if (!r.ok) console.log(`[tabs] could not close refused tab ${t.url} on ${port}: ${r.statusText}`);
+  }
+  return refused.map((t) => String(t.url));
 }
 
 /** Focus emulation pins a page `visible`; toggle it around anything that needs a real hide. */

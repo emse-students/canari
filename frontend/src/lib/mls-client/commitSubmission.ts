@@ -36,6 +36,7 @@
 import { commitAdmits } from './commitAdmits';
 import type { CommitRemoval } from './mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { SessionExpiredError } from '$lib/stores/auth';
 import { toBase64 } from '$lib/utils/hex';
 import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -53,6 +54,12 @@ export interface CommitSubmission {
   /** The devices the commit adds - also the recipients of its Welcome. */
   admits?: Array<{ userId: string; deviceId: string }>;
   removes?: CommitRemoval[];
+  /**
+   * The seat generation the member's invitation this Add carries read with its roster baseline
+   * ({@link CommitInvitation.seatGeneration}) - sent so the gate orders a Decline or a removal
+   * against when the member decided. Absent for every other commit.
+   */
+  invitationSeatGeneration?: number;
   /**
    * An Add's Welcome, base64. Kept because the Welcome is a SEPARATE request made after the
    * accept: a commit accepted only through a later resubmission has nobody left to send it.
@@ -73,6 +80,64 @@ export interface CommitIntent {
   removes?: CommitRemoval[];
   /** For an Add of several devices: the device of each key package, by position. */
   keyPackageDevices?: string[];
+  /**
+   * Present only when the commit is the Add of a MEMBER'S INVITATION ({@link CommitInvitation}): the
+   * one Add no durable server row re-derives, so the only one a lost commit must re-plan
+   * (`owedInvitations.ts`). Not part of the request.
+   */
+  invitation?: CommitInvitation;
+}
+
+/**
+ * What a member's invitation rests on, written into the intent of its Add so it outlives the gesture
+ * - the stage and its record are in the MLS state, on disk before the first request leaves:
+ * - `users`: the people invited (user ids, lower-cased as the invitation normalises them);
+ * - `rostered`: those of them who were on the conversation's roster when the invitation BEGAN - the
+ *   baseline a later re-plan compares against, so a person taken off it meanwhile (removed, or a
+ *   join ask declined) is never brought back. ABSENT when that roster could not be read: a re-plan
+ *   then has no premise to stand on and is abandoned, never guessed.
+ * - `seatGeneration`: the group's seat generation the server read BEFORE that roster
+ *   (`getGroupRosterAtGeneration`) - when the member decided, as the counter every Decline and
+ *   removal moves. Sent with the Add (`invitationSeatGeneration`), and kept here so a re-plan sends
+ *   the gesture's own number, never a later one. ABSENT when the roster was not read, or the server
+ *   predates the number.
+ */
+export interface CommitInvitation {
+  users: string[];
+  rostered?: string[];
+  seatGeneration?: number;
+}
+
+/**
+ * The invitation a staged commit's record carries, or `null` - for every commit that is not a
+ * member's invitation, and for an intent that does not decode (said by {@link composeSubmission},
+ * which reads the same bytes first).
+ */
+export function invitationOf(record: StagedRecord): CommitInvitation | null {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(record.intent)) as Partial<CommitIntent>;
+    const inv = parsed?.invitation;
+    if (!inv || !Array.isArray(inv.users)) return null;
+    const users = inv.users.filter((u): u is string => typeof u === 'string');
+    const rostered = Array.isArray(inv.rostered)
+      ? inv.rostered.filter((u): u is string => typeof u === 'string')
+      : undefined;
+    const seatGeneration = seatGenerationOf(inv.seatGeneration);
+    return users.length > 0
+      ? {
+          users,
+          ...(rostered ? { rostered } : {}),
+          ...(seatGeneration !== undefined ? { seatGeneration } : {}),
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A recorded seat generation, or `undefined` when the value is not one (a non-negative integer). */
+function seatGenerationOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** Encodes an intent for the stage (opaque bytes to the platform). */
@@ -138,6 +203,9 @@ export function composeSubmission(record: StagedRecord): CommitSubmission | null
       : undefined,
     intent.self
   );
+  // When the member decided, for the gate's Decline and removal order - only an invitation's Add.
+  const invitationSeatGeneration =
+    admits.length > 0 ? seatGenerationOf(intent.invitation?.seatGeneration) : undefined;
   return {
     groupId: intent.groupId,
     baseEpoch: record.baseEpoch,
@@ -145,6 +213,7 @@ export function composeSubmission(record: StagedRecord): CommitSubmission | null
     groupInfo: toBase64(record.groupInfo),
     ...(intent.excludeDeviceIds ? { excludeDeviceIds: intent.excludeDeviceIds } : {}),
     ...(admits.length > 0 ? { admits } : {}),
+    ...(invitationSeatGeneration !== undefined ? { invitationSeatGeneration } : {}),
     ...(intent.removes ? { removes: intent.removes } : {}),
     ...(record.welcome ? { welcome: toBase64(record.welcome) } : {}),
   };
@@ -173,6 +242,40 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
         `(${why}) - kept until a resubmission answers`
     );
     this.name = 'CommitOutcomeUnknownError';
+  }
+}
+
+/**
+ * THE SERVER ACCEPTED the commit of `groupId` staged on `baseEpoch`, and merging it HERE then
+ * failed. The commit LANDED - the members have it - whatever this device's state says, so a caller
+ * must never read this as a refusal: the tree this device still holds is the one before the commit.
+ * The original failure is the `cause`, and its text stays in the message.
+ */
+export class AcceptedCommitNotMergedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly baseEpoch: number,
+    cause: unknown
+  ) {
+    super(
+      `the commit of ${groupId.slice(0, 8)}... staged on epoch ${baseEpoch} was ACCEPTED by the server ` +
+        `and its local merge failed: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'AcceptedCommitNotMergedError';
+  }
+}
+
+/**
+ * NOTHING WAS STAGED: `groupId` still holds an EARLIER commit whose outcome is unknown, and no commit
+ * is built on top of one (`runCommitTransaction`). A {@link CommitOutcomeUnknownError} for every
+ * caller that only needs "retry when the server answers"; its own type for the one that must tell a
+ * member whether THEIR gesture is kept - this one is not, the earlier commit is.
+ */
+export class PreviousCommitUnresolvedError extends CommitOutcomeUnknownError {
+  constructor(groupId: string, epoch: number) {
+    super(groupId, epoch, undefined, 'the previous commit of this group is still unresolved');
+    this.name = 'PreviousCommitUnresolvedError';
   }
 }
 
@@ -241,9 +344,17 @@ export class FollowerTabCommitError extends Error {
  * A 5xx, a gateway error or a transport failure is NOT one: the advance may have committed before
  * the answer was lost. A RESUBMISSION reads some of these 4xx differently
  * ({@link refusesOnlyThisRequest}).
+ *
+ * A {@link SessionExpiredError} is one too: the refresh cookie proven dead, either before anything
+ * was sent (no token to send with) or by the renewal after the request's 401 (`renewOn401.ts`) - in
+ * every case no request of these bytes reached the gate. A renewed token refused too arrives as a
+ * 401 `ApiRefusalError` (`DeliveryRefusedRenewedTokenError`) and is read by the status above.
  */
 export function isDefinitiveCommitRefusal(error: unknown): boolean {
-  return error instanceof ApiRefusalError && error.status >= 400 && error.status < 500;
+  return (
+    error instanceof SessionExpiredError ||
+    (error instanceof ApiRefusalError && error.status >= 400 && error.status < 500)
+  );
 }
 
 /**
@@ -251,12 +362,14 @@ export function isDefinitiveCommitRefusal(error: unknown): boolean {
  * guard (a session that expired, a device revoked since, a committer no longer a member) or a 429
  * from the throttler, all given before the gate. On a resubmission they say nothing of the EARLIER
  * request of the same bytes, which may have landed - an expired session after an accepted but
- * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused.
+ * unanswered commit is exactly that - so the outcome stays UNKNOWN, never refused. So is a
+ * {@link SessionExpiredError}: the dead cookie it reports says nothing of an earlier request either.
  */
 export function refusesOnlyThisRequest(error: unknown): boolean {
   return (
-    error instanceof ApiRefusalError &&
-    (error.status === 401 || error.status === 403 || error.status === 429)
+    error instanceof SessionExpiredError ||
+    (error instanceof ApiRefusalError &&
+      (error.status === 401 || error.status === 403 || error.status === 429))
   );
 }
 

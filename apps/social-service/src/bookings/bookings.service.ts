@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository, type EntityManager } from 'typeorm';
+import { In, IsNull, MoreThan, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
@@ -29,7 +29,13 @@ import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
 import { BookingBlock } from './entities/booking-block.entity';
 import { BookingSlotsService, type SlotView } from './booking-slots.service';
-import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
+import {
+  availabilityWindows,
+  checkRangeShape,
+  datesAround,
+  rangeLengthRefusal,
+  type Range,
+} from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import {
   bookingView,
@@ -39,6 +45,7 @@ import {
   type BookingView,
 } from './booking-views';
 import { BookingFilesService } from './booking-files.service';
+import { BookingNotificationsService } from './booking-notifications.service';
 import { fileAnswersOf, type FileAnswer } from '../forms/form-files.service';
 import { bookingsWorkbook, type BookingExportLabels } from './booking-export';
 import {
@@ -141,7 +148,8 @@ export class BookingsService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly pricingFacts: PricingFactsService,
-    private readonly bookingFiles: BookingFilesService
+    private readonly bookingFiles: BookingFilesService,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -223,6 +231,8 @@ export class BookingsService {
       maxPeople: space.maxPeople,
       // How long a file answer is kept after the slot (D8), said under the file picker.
       retentionDays: space.retentionDays,
+      // The space's default reminder delay (Q-R1), offered as the booker's own in the sheet.
+      reminderMinutes: space.reminderMinutes,
       poster: space.poster,
       canManage,
       resources: resources.map((r) => ({
@@ -352,15 +362,18 @@ export class BookingsService {
       const space = resource && spaceById.get(resource.spaceId);
       if (!resource || !space) return [];
       const relation = relationTo(b, people, actor.userId, false, resource.linkedUserId);
-      const withdrawn = people.some(
-        (p) => p.bookingId === b.id && p.userId === actor.userId && p.withdrawnAt !== null
-      );
+      const own = people.find((p) => p.bookingId === b.id && p.userId === actor.userId);
+      const withdrawn = own !== undefined && own.withdrawnAt !== null;
       return [
         {
           ...bookingView(b, people, relation, space.nameVisibility, actor.userId),
           withdrawn: b.holderId !== actor.userId && withdrawn,
           holder: b.holderId === actor.userId,
           linked: resource.linkedUserId === actor.userId,
+          // THIS person's reminder delay (Q-R1): the holder's on the booking, a participant's on
+          // their own row; null = none. A linked account that is neither has none to set.
+          reminderMinutes:
+            b.holderId === actor.userId ? b.reminderMinutes : (own?.reminderMinutes ?? null),
           space: { id: space.id, name: space.name, timeZone: space.timeZone },
           resource: { id: resource.id, name: resource.name },
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
@@ -552,16 +565,21 @@ export class BookingsService {
    * D20). `offset` is the position in that order; `nextOffset` is null on the last page. `ids`
    * narrows it to those bookings - the ones a D29 refusal named, which the organiser's screen lists
    * with their cancel button; an id of another space is simply not found.
+   *
+   * `fromMs` (WP-R5, D50) narrows it to what is STILL TO COME: the LIVE bookings (never cancelled)
+   * that end after that instant - the one under way included - so the dashboard's first page is
+   * the next ones, not the oldest of the space's whole history.
    */
   async spaceBookings(
     spaceId: string,
     actor: Actor,
     offset = 0,
     limit = SPACE_BOOKINGS_PAGE,
-    ids?: readonly string[]
+    ids?: readonly string[],
+    fromMs?: number
   ) {
     this.logger.debug(
-      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'}`
+      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'} from=${fromMs ?? 'all'}`
     );
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
@@ -571,7 +589,13 @@ export class BookingsService {
     const resources = await this.resources.findBy({ spaceId });
     if (resources.length === 0 || ids?.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
-      where: { resourceId: In(resources.map((r) => r.id)), ...(ids ? { id: In([...ids]) } : {}) },
+      where: {
+        resourceId: In(resources.map((r) => r.id)),
+        ...(ids ? { id: In([...ids]) } : {}),
+        ...(fromMs !== undefined
+          ? { cancelledAt: IsNull(), endsAt: MoreThan(new Date(fromMs)) }
+          : {}),
+      },
       order: { startsAt: 'ASC', id: 'ASC' },
       skip: offset,
       take: take + 1,
@@ -767,7 +791,7 @@ export class BookingsService {
     const people = [holderId, ...participantIds];
 
     try {
-      return await this.bookings.manager.transaction(async (m) => {
+      const booked = await this.bookings.manager.transaction(async (m) => {
         const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
         if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
           throw new ConflictException({ code: 'space-changed' });
@@ -776,7 +800,14 @@ export class BookingsService {
           throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
         }
 
-        // The shape (D3): one slot, or 1..maxSteps steps of one window.
+        // The shape (D3): one slot, or 1..maxSteps consecutive steps of one opening. The length
+        // bound comes first, from the settings alone: an over-long range is refused before any
+        // window is built.
+        const tooLong = rangeLengthRefusal(space, range);
+        if (tooLong) {
+          this.logger.debug(`[BOOKINGS] book refused before any window: ${tooLong}`);
+          throw new BadRequestException({ code: tooLong });
+        }
         const [from, to] = datesAround(range, space.timeZone);
         const [rules, exceptions] = await Promise.all([
           m.query(
@@ -836,9 +867,17 @@ export class BookingsService {
           }
         }
 
+        // Each person's reminder delay (Q-R1): the space's default, or the booker's own choice
+        // for themselves - never for an account booked on behalf of, who chooses theirs later.
+        // Chosen NOW, which is what Q-R6 reads: a booking made inside its delay gets no reminder.
+        const holderReminder =
+          !onBehalf && dto.reminderMinutes !== undefined
+            ? dto.reminderMinutes
+            : space.reminderMinutes;
         const [row]: { id: string }[] = await m.query(
-          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers,
+                                 "reminderMinutes", "reminderSetAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
           [
             resource.id,
             holderId,
@@ -847,13 +886,21 @@ export class BookingsService {
             new Date(range.startMs),
             new Date(range.endMs),
             answers === null ? null : JSON.stringify(answers),
+            holderReminder,
+            new Date(nowMs),
           ]
         );
         if (participantIds.length) {
           await m.query(
-            `INSERT INTO booking_participants ("bookingId", "userId", "userName")
-             SELECT $1, u, n FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
-            [row.id, participantIds, participantIds.map((p) => names.get(p))]
+            `INSERT INTO booking_participants ("bookingId", "userId", "userName", "reminderMinutes", "reminderSetAt")
+             SELECT $1, u, n, $4::int, $5::timestamptz FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
+            [
+              row.id,
+              participantIds,
+              participantIds.map((p) => names.get(p)),
+              space.reminderMinutes,
+              new Date(nowMs),
+            ]
           );
         }
         // D7: each file answer must be the ACTOR's own upload for this space and question; taken in
@@ -864,6 +911,9 @@ export class BookingsService {
         );
         return { id: row.id };
       });
+      // After the commit, best-effort (`BookingNotificationsService`): the people added are told.
+      await this.notices.added(booked.id, actor.userId);
+      return booked;
     } catch (err) {
       if (isExclusionViolation(err)) {
         this.logger.log(`[BOOKINGS] slot taken resource=${dto.resourceId.slice(0, 8)}`);
@@ -902,10 +952,13 @@ export class BookingsService {
    *
    * WHO is judged BEFORE the booking's state: booking ids are published in the grid, so a stranger
    * must learn nothing of a booking's state from the refusal - only `not-yours`.
+   *
+   * Once committed, its people are told (D53, Q-R2), the one who cancelled excepted; `message` is
+   * the organiser's optional word (Q-R3), quoted by the notice and stored nowhere.
    */
-  async cancel(bookingId: string, actor: Actor, nowMs: number) {
+  async cancel(bookingId: string, actor: Actor, nowMs: number, message?: string) {
     this.logger.debug(`[BOOKINGS] cancel booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    const done = await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const isHolder = booking.holderId === actor.userId;
       if (!isHolder && !(await this.mayManage(space, actor))) {
@@ -921,18 +974,22 @@ export class BookingsService {
         actor.userId,
       ]);
       this.logger.log(`[BOOKINGS] cancelled id=${bookingId.slice(0, 8)} byHolder=${isHolder}`);
-      return { ok: true };
+      return { isHolder };
     });
+    // Only the organiser's word is Q-R3's: a holder cancelling their own booking sends none.
+    await this.notices.cancelled(bookingId, actor.userId, done.isHolder ? undefined : message);
+    return { ok: true };
   }
 
   /**
    * A participant leaves a coming booking alone (D4), until the space's minimum delay before the
    * start (D5 as the user decided on 2026-10-17); the row stays, marked (D15). Whether the actor is
-   * a participant still in is judged first, for the reason `cancel` gives.
+   * a participant still in is judged first, for the reason `cancel` gives. Once committed, the
+   * holder is told (Q-R2).
    */
   async withdraw(bookingId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] withdraw booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const mine: unknown[] = await m.query(
         `SELECT 1 FROM booking_participants
@@ -952,7 +1009,53 @@ export class BookingsService {
         [bookingId, actor.userId, new Date(nowMs)]
       );
       this.logger.log(`[BOOKINGS] withdrawn booking=${bookingId.slice(0, 8)}`);
-      return { ok: true };
+    });
+    await this.notices.withdrawn(bookingId, actor.userId);
+    return { ok: true };
+  }
+
+  /**
+   * Sets THIS person's reminder delay on a booking (Q-R1): its holder on the booking, a participant
+   * still in on their own row; `null` = no reminder. Refused on a cancelled or started booking -
+   * nothing is left to remind. Choosing re-arms: the claim is cleared and `reminderSetAt` is now, so
+   * an instant already past when chosen sends nothing (Q-R6), and one still to come sends once.
+   * WHO is judged before the booking's state, for the reason `cancel` gives.
+   */
+  async setReminder(bookingId: string, minutes: number | null, actor: Actor, nowMs: number) {
+    this.logger.debug(`[BOOKINGS] setReminder booking=${bookingId} minutes=${minutes}`);
+    return this.bookings.manager.transaction(async (m) => {
+      const { booking } = await this.lockBooking(m, bookingId);
+      const isHolder = booking.holderId === actor.userId;
+      if (!isHolder) {
+        const mine: unknown[] = await m.query(
+          `SELECT 1 FROM booking_participants
+            WHERE "bookingId" = $1 AND "userId" = $2 AND "withdrawnAt" IS NULL FOR UPDATE`,
+          [bookingId, actor.userId]
+        );
+        if (mine.length === 0) throw new ForbiddenException({ code: 'not-yours' });
+      }
+      if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+      if (new Date(booking.startsAt).getTime() <= nowMs) {
+        throw new ConflictException({ code: 'history-frozen' });
+      }
+      const set = `"reminderMinutes" = $2, "reminderSetAt" = $3, "reminderSentAt" = NULL`;
+      if (isHolder) {
+        await m.query(`UPDATE bookings SET ${set} WHERE id = $1`, [
+          bookingId,
+          minutes,
+          new Date(nowMs),
+        ]);
+      } else {
+        await m.query(
+          `UPDATE booking_participants SET ${set}
+            WHERE "bookingId" = $1 AND "userId" = $4 AND "withdrawnAt" IS NULL`,
+          [bookingId, minutes, new Date(nowMs), actor.userId]
+        );
+      }
+      this.logger.log(
+        `[BOOKINGS] reminder set booking=${bookingId.slice(0, 8)} holder=${isHolder} minutes=${minutes}`
+      );
+      return { ok: true, reminderMinutes: minutes };
     });
   }
 

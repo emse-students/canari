@@ -269,6 +269,35 @@ about the row - only what a refusal owes its caller, and what to answer for `rem
 | `pending -> active` | `activateDeviceMembership`, `messaging.service.ts` | the commit fan-out; `POST mls/invitations/status`; `POST mls/push/membership-active`; `createGroup`; the external-joiner promotion (`internal.controller.ts`) |
 | `-> pending` | `deactivateDeviceMembership`, `messaging.service.ts` | `mls/kick-stale-user`; `mls/kick-stale-device`; `POST mls/invitations/status` demotion; `detectStaleDevices` (cron) |
 
+### Seat writes check membership (2026-10-25)
+
+**Neither transition writer creates a seat.** A seat is created only by a writer that checks
+membership first: the roster in a conversation; in a key-distribution group, social-service's
+entitlement (`isEntitledToDistributionGroup`) asked against a claim re-read under the seat lock
+(`utils/seat-eviction.ts`) - the accepted commit and its admits, the Welcome, the publisher.
+
+- **The demotion is one conditional `UPDATE`, never an upsert.** Every caller demotes a row it read
+  or its own device's seat. A caller that read the row names it (`seatId`), so a row deleted and
+  written again since - a new admission - is left alone. With no such row the demotion writes
+  nothing, returns `false` and warns `NOT DEMOTED ... reason=no_seat` under the caller's tag; the
+  cron and both kicks count only what was demoted, and the status route answers 403 `NOT_A_MEMBER`
+  `reason=no_seat`, as its promotion already did.
+- **A report of `active` in a key-distribution group asks the entitlement** before promoting a
+  `pending` seat (`claimEntitledReport`). Not entitled is 403 `NOT_A_MEMBER` `reason=not_entitled`;
+  an unanswered question the usual retryable 503. **Only this person's departure in progress
+  refuses it (`departed`)** - read before asking, and again under the lock. Another person's
+  eviction moves the group's seat generation and must not: a report is one-shot on every client,
+  and none is needed, because the statement is an `UPDATE` under the seat lock and an eviction of
+  this person deletes their rows. An `active` seat reported again asks nobody, and the `UPDATE` then
+  matches `status = 'active'` only. A conversation's report is unchanged: its roster is in the
+  same statement.
+- **A member commit from a `pending` key-group seat asks the entitlement too**
+  (`memberCommitterHoldsSeat`): that first commit writes the seat `active`, so it is a seat writer
+  like the others. Not entitled refuses the commit (403 `NOT_A_MEMBER`
+  `error=committer_not_member`) before the epoch moves; an `active` committer asks nobody.
+
+Proven against PostgreSQL by `seat-writes-membership.integration.spec.ts`, through the real doors.
+
 **ENROLMENT IS NOT A DEMOTION AND DOES NOT GO THROUGH THAT WRITER.** `registerDevice`
 (`devices.controller.ts`), `addGroupMember` (`members.controller.ts`) and `sendWelcome`
 (`messaging.service.ts`) insert a `pending` row for a device that has never been in this group's
@@ -551,7 +580,7 @@ tree is a claim about that tree, so all three were run again against `main`:
 those two numbers.
 
 **`D8`'s backlog row pointed at "the P1 above", and no P1 preceded it** - the section above it is the
-user's own "owed to you" table. `D8` and `R-D8` are recorded as REFUTED in `CLAUDE.md`: the send
+user's own "owed to you" table. `D8` and `R-D8` are REFUTED (recorded here since 2026-10-22, in `CLAUDE.md` before): the send
 ledger holds one invariant, and one `runFlush` holds the outbox's eight flush sites. Not to be
 re-opened.
 

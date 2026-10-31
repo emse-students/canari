@@ -204,7 +204,7 @@ change failing.
   `changelog.d/` or repo files - check `lineEndings`, `googleVerification`, `svelteConfigStamp`) to
   `.github/scripts/tests` as `bun` scripts wired into `test-ci-scripts`
   (`recipe-covers-tests.test.mjs` then enforces the wiring); build the production frontend on PRs
-  that touch `frontend/package.json`, `bun.lock`, `patches/`, `svelte.config.js` or `vite.config.js`
+  that touch `frontend/package.json`, `bun.lock`, `patches/`, `kit.config.js` or `vite.config.js`
   (+0.7 min on those PRs only).
 - **Removes**: defects 3.1, 3.2 and 3.3. Minutes: none; this WP buys catches.
 - **Risk**: none for behaviour. Revalidate: a docs-only PR with a bad fragment goes red; a jest
@@ -673,3 +673,27 @@ now holds the lock with A, queues B and C, releases A twice, and asserts B is gr
 blocked, which is the harm a double release could do.
 
 **Left of the WP:** WP-T7, the rig change in one campaign session (not a desk task).
+
+## 8. Intermittent local failures under load, read 2026-10-30
+
+Local runs on Windows with many workers (and several agents at once) failed tests that pass alone.
+Reproduced with 16 workers plus 32 busy threads, one full run: 3 failures in 2 files, none on the
+tests first reported - **the class is real, the victims are random.** Four causes, three fixed:
+
+- **`outbox.reelResume` "KILL MID-UPLOAD" was a real race in the TEST.** It waited on
+  `partsReceived() === 2`, which is true the instant part 1 lands, BEFORE part 2's request reaches
+  the injected fault (the one that kills the life). The test then cleared the fault and started the
+  second life while the first was still uploading. A 150 ms stall before part 2 fails the old test
+  deterministically (`expected 0 to be 1`) and not the new one. The wait is now on the fault having
+  been HIT (`hangPart`), not on a count that merely passes through the value.
+- **A first import paid inside a test.** `callsAvailability` "needs the server open" imports the
+  app-version store graph under `vi.resetModules`: 1.8 s alone, 46 ms for every later test. It is
+  now imported once at file scope, outside any test deadline.
+- **`environment.test` walked and read ~1,200 files inside the test** (a 5 s timeout under load);
+  it now reads the run's shared snapshot like every other scan.
+- **Not a code cost: the sync bookings date tests** (`availability`, `dashboard`, `spaceSettings`,
+  `stranded`) take 0-23 ms and import nothing lazily. Vitest checks the wall clock when a test
+  returns (`deadline.exceeded()`, even for a synchronous one), so a worker frozen for 5 s by CPU
+  oversubscription fails whichever test it was in. Nothing in those files can be fixed; the lever is
+  the load (fewer workers per run when several runs share a machine, `--maxWorkers`), and a per-file
+  timeout would only hide the next victim.

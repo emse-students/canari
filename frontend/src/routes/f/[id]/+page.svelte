@@ -86,7 +86,7 @@
   onMount(async () => {
     if (currentUserId()) {
       Log.d('PublicForm', `member on a guest link, sent to the member page form=${formId}`);
-      await goto(resolve(`/forms/${formId}`), { replaceState: true });
+      await goto(resolve(`forms/${formId}`), { replace: true });
       return;
     }
     try {

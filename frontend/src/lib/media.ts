@@ -196,8 +196,10 @@ import {
   segmentedCiphertextLength,
   writesSegmented,
 } from '$lib/mediaSegmented';
-import { refresh, SessionExpiredError } from '$lib/stores/auth';
+import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
+import { sendRenewingOn401 } from '$lib/utils/renewOn401';
 import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { readApiJson } from '$lib/utils/apiJson';
 import {
   assertWithinRequestBudget,
   GATEWAY_MAX_BODY_BYTES,
@@ -264,7 +266,8 @@ const pauseUnlessAborted: ReaskPause = (ms, signal) =>
  * a 15-minute token to expire, so a 401 here usually means "stale copy", not "no session" - and a
  * web client that read it as the second used to end up signed out (9 `POST /api/media/upload` 401
  * in 30 h of production, each followed by a logout and a sign-in). Only a 401 AFTER a refresh may
- * end the session, and `refresh()` is single-flight, so a burst of uploads shares ONE renewal.
+ * end the session, and `refresh()` is single-flight, so a burst of uploads shares ONE renewal. The
+ * rule is the one every bearer request obeys, `sendRenewingOn401` (`renewOn401.ts`).
  *
  * Throws what `refresh()` throws (dead cookie, refused, unreachable) unchanged, and
  * `SessionExpiredError` when a freshly minted token is refused too. Any other status is returned
@@ -311,24 +314,12 @@ export async function fetchUpload(
         )
       : fetchWithAnswerDeadline(url, init);
   };
-  const res = await send(authToken);
-  if (res.status !== 401) return res;
-  console.warn(`[media] 401 on ${where} - refreshing the token and retrying once`);
-  let fresh: string;
-  try {
-    fresh = await refresh();
-  } catch (e) {
-    const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    console.warn(`[media] refresh failed on ${where} - ${cause}`);
-    throw e;
-  }
-  const retry = await send(fresh);
-  console.log(`[media] ${retry.status} on ${where} (retry after refresh)`);
-  if (retry.status === 401) {
-    console.warn(`[media] double 401 on ${where} - session invalid`);
-    throw new SessionExpiredError();
-  }
-  return retry;
+  return sendRenewingOn401(send, authToken, {
+    tokenNow: () => getToken(),
+    renew: () => refresh(),
+    refusedRenewed: () => new SessionExpiredError(),
+    where,
+  });
 }
 
 /**
@@ -734,7 +725,12 @@ export class MediaService {
             sessionLost: res.status === 404,
           });
         }
-        const { mediaId } = await res.json();
+        // A portal's 2xx assembled nothing: `NotFromApiError`, a transport failure, asked again
+        // below like any other lost answer (the server's complete is idempotent).
+        const { mediaId } = (await readApiJson(
+          res,
+          `POST /api/media/upload/chunk/${uploadId}/complete`
+        )) as { mediaId: string };
         return mediaId;
       } catch (err) {
         if (err instanceof UploadAbortedError || attempt >= COMPLETE_ATTEMPTS) throw err;

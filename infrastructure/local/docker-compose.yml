@@ -195,7 +195,7 @@ services:
   # Garage - S3-compatible object storage for encrypted media blobs (replaces MinIO)
   # ─────────────────────────────────────────────────────
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
       - "9000:3900"   # S3 API
@@ -246,7 +246,7 @@ services:
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      # exactly `true`. ON here, as render-env.sh renders it on both estates; lives_mode is the runtime switch.
       LIVE_ENABLED: ${LIVE_ENABLED:-true}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -302,7 +302,7 @@ services:
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
@@ -372,8 +372,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      # exactly `true`. ON here, as render-env.sh renders it on both estates; lives_mode is the runtime switch.
       LIVE_ENABLED: ${LIVE_ENABLED:-true}
+      # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
+      # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
+      # production until the amount format Lydia signs is measured.
+      LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-true}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
@@ -382,7 +386,7 @@ services:
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
       LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
-      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       # The last of the 17 keys the drift audit found (2026-09-02). Le Cercle is a separate
@@ -423,10 +427,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin. Locally that is the port nginx publishes, because the
-      # browser's address bar is what `ORIGIN` has to agree with - a mismatch makes adapter-node
-      # refuse form posts as cross-origin.
-      ORIGIN: http://localhost:${CANARI_LOCAL_API_PORT:-8081}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012

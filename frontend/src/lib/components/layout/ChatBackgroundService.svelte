@@ -15,7 +15,7 @@
    */
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { navigating } from '$app/state';
   import { internalPath, loginAfterSessionExpiry } from '$lib/utils/internalPath';
   import { m } from '$lib/paraglide/messages';
@@ -26,6 +26,10 @@
     isDeviceKeyPersistenceEnabled,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
+  import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
+  import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
+  import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
+  import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -70,7 +74,18 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
-  import { removalOutcome } from '$lib/utils/chat/memberRemoval';
+  import {
+    departureToDecide,
+    isOwnLeave,
+    removalOutcome,
+    salonGrants,
+  } from '$lib/utils/chat/memberRemoval';
+  import {
+    commitDepartureIfElected,
+    commitReleasedDepartureIfElected,
+    forgetDeferredRemovals,
+  } from '$lib/utils/graine/departureCommitter';
+  import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type {
@@ -78,7 +93,7 @@
     WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import type { BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -86,6 +101,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -117,7 +133,10 @@
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
-  import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import {
+    drainNativePendingCallAccept,
+    listenForNativeCallAccept,
+  } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
@@ -226,7 +245,7 @@
     // lands, instead of leaving it waiting for the conversations map to mutate again.
     const targetRoute = chatDeepLinkRoute(id);
     const step = landingStep({
-      arrived: $page.url.pathname === targetRoute,
+      arrived: page.url.pathname === targetRoute,
       routeAlreadyRequested: lastRoutedLanding === landing,
     });
     if (step !== 'await-arrival') lastRoutedLanding = landing;
@@ -621,8 +640,16 @@
    * than leave a "Session expired" message stuck in the PIN modal - which strands the user
    * with no clear action - close the modal, clear the auth state, and redirect straight to
    * the login page so they can sign in again.
+   *
+   * ONE DEAD SESSION IS ANSWERED DIFFERENTLY: one the server ended BECAUSE ITS OWNER REVOKED THIS
+   * DEVICE (`revokedDeviceOfEndedSession`, latched from the refresh refusal, naming this device). That device
+   * is returned to a fresh install - the same reset the `device_revoked` frame runs, joined if it is
+   * already running - before the redirect. Read from the latch, not from whoever called: the
+   * notifier, a login that met the dead session, and a late handler's replay all land here, and the
+   * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
+   * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
-  async function handleSessionExpired() {
+  async function handleSessionExpired(outcome?: SessionExpiredOutcome) {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
     // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
     // several observers reach the same verdict at once (the global notifier, the promotion path, a
@@ -667,9 +694,42 @@
         hash: string;
       } | null
     );
-    appendLog(`[AUTH] Session expired - logging out and redirecting to ${loginPath}.`);
-    await clearAuth().catch(() => {});
-    void goto(resolve(internalPath(loginPath)), { replaceState: true });
+    // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
+    // account is the refused credential's: on a cold start no login has named it to the session yet.
+    //
+    // The sign-out is `endExpiredSession`'s decision: the revoked-device reset's own `clearAuth` counts.
+    await endExpiredSession({
+      outcome,
+      settleRevocation: () =>
+        globalSession.settleSessionEndByRevocation(
+          sessionCb(),
+          globalSession.userId || currentUserId() || ''
+        ),
+      signOut: clearAuth,
+      loginPath,
+      log: appendLog,
+    });
+    void goto(resolve(internalPath(loginPath)), { replace: true });
+  }
+
+  /**
+   * A lost MLS session (`reportMlsSessionLost`): the live session ends on this device and the account
+   * reopens at the PIN gate. NOT `handleSessionExpired`: nothing here is a 401/403, so nothing is
+   * revoked, erased or signed out - see `reopenAtPinGate`.
+   */
+  async function handleMlsSessionLost(why: MlsSessionLoss) {
+    await reopenAtPinGate({
+      why,
+      endLiveSession: () => globalSession.endLostSession(sessionCb()),
+      releaseLoginFlow: () => {
+        dismissAuthPrompts();
+        pinError = '';
+        _loginInProgress = false;
+        globalSession.isLoginInProgress = false;
+      },
+      openPinGate: () => openPinModal(globalSession.userId || currentUserId() || ''),
+      log: appendLog,
+    });
   }
 
   /**
@@ -694,6 +754,12 @@
     globalMessaging.forgetAccount(appendLog);
     // ...and the media held by a closed new-post composer (`holdPostComposerMedia`).
     forgetPostComposerMedia();
+    // ...and the salon grants seen, which order the next account's removals against nothing of theirs.
+    salonGrants.clear();
+    // ...and the revocation answers it was given, which the next account must ask for itself.
+    forgetRevokedLeafAnswers();
+    // ...and the removals this device deferred to an actor, which a release is matched against.
+    forgetDeferredRemovals();
     _loginInProgress = false;
   }
 
@@ -975,9 +1041,12 @@
         const communityIsNew = globalChannels.isCommunityUnknownToEvent(event);
         const workspace = globalChannels.ensureWorkspaceForChannelEvent(event);
         const isPrivate = event.visibility === 'private';
+        // The server's casing (`validateChannelName` keeps it), so a salon shows the same on a
+        // device that heard of it live as on one that listed it after a reload.
+        const channelName = event.channelName || 'canal';
         globalChannels.addChannelToWorkspace(workspace.id, {
           id: channelConversationId,
-          name: (event.channelName || 'canal').toLowerCase(),
+          name: channelName,
           isPrivate,
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
@@ -988,8 +1057,9 @@
               lifecycle: 'active',
               identity: {
                 contactName: channelConversationId,
-                displayName: (event.channelName || 'canal').toLowerCase(),
+                displayName: channelName,
               },
+              lastMessageAt: Date.now(), // creation moment, see groupCreation
             })
           );
         }
@@ -1053,13 +1123,34 @@
               globalConvs.conversations.set(channelConversationId, {
                 ...convo,
                 messages: [...convo.messages, newMsg],
-                lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+                // A join notice is not activity: the seed does not move for it.
               });
             } catch {
               // Non-blocking: system message is best-effort.
             }
           })();
         }
+      },
+      onChannelRemovalReleased: (event: {
+        workspaceId: string;
+        channelId: string;
+        removedUserId: string;
+        releasedBy: string;
+        releasedByDevice: string;
+      }) => {
+        // The actor did not commit a Remove it claimed, and said so: elect for that one scope,
+        // among everybody but the actor.
+        void commitReleasedDepartureIfElected(
+          channelService,
+          {
+            workspaceId: event.workspaceId,
+            channelId: event.channelId,
+            departedUserId: event.removedUserId,
+            releasedByUserId: event.releasedBy,
+            releasedByDeviceId: event.releasedByDevice,
+          },
+          appendLog
+        );
       },
       onChannelMemberKicked: (event: any) => {
         const outcome = removalOutcome({
@@ -1068,7 +1159,13 @@
           channelId: event.channelId,
           channelIsPrivate: event.channelIsPrivate,
         });
-        if (outcome === 'ignore') return;
+        if (outcome === 'ignore') {
+          // Somebody else left or was removed. When the actor cannot commit it - a leave, or an
+          // actor with no leaf in a key group - ONE elected remaining device does (`departureCommitter`).
+          const departure = departureToDecide(event);
+          if (departure) void commitDepartureIfElected(channelService, departure, appendLog);
+          return;
+        }
 
         if (outcome === 'community') {
           const communityName =
@@ -1091,7 +1188,11 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            appendLog(`[CHANNEL] stored copy of ${event.channelId} not deleted: ${String(e)}`)
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1100,8 +1201,13 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Removed from channel ${event.channelId}`);
-        showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        // A salon this user LEFT is announced to their own devices too (2026-10-27), so they drop
+        // it; being told they were "removed" from it would be false, so a leave says nothing.
+        const selfLeft = isOwnLeave(event, globalSession.userId);
+        appendLog(`${selfLeft ? 'Left' : 'Removed from'} channel ${event.channelId}`);
+        if (!selfLeft) {
+          showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
+        }
       },
       onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
         globalChannels.handleRolePermissionsChanged(event);
@@ -1148,7 +1254,15 @@
         const channelConversationId = `channel_${event.channelId}`;
         globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
-        void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
+        // A mark still owed for it could only meet the server's 404 CHANNEL_NOT_FOUND.
+        forgetSalonReadMark(globalSession.userId || currentUserId() || '', channelConversationId);
+        void globalSession.storage
+          ?.deleteConversation(channelConversationId)
+          .catch((e: unknown) =>
+            console.warn(
+              `[CHANNEL] deleted salon ${event.channelId.slice(0, 8)} left its local row: ${String(e)}`
+            )
+          );
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
@@ -1324,6 +1438,9 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // A signed-in session whose MLS session is lost is NOT an expired one - that is a status, this a
+    // local fact (`mlsSessionLoss.ts`) - so it ends on this device only and reopens at the PIN gate.
+    setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));
     // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
     setSignOutHandler(handleSignedOut);
 
@@ -1331,6 +1448,7 @@
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setMlsSessionLostHandler(null);
       setSignOutHandler(null);
       setGraineRepairListener(null);
     };
@@ -1411,7 +1529,9 @@
       globalConvs.conversations.set(event.conversationId, {
         ...target,
         messages: insertMessageOrdered(target.messages, event.message),
-        lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt),
+        ...(event.lastMessageAt !== undefined
+          ? { lastMessageAt: Math.max(target.lastMessageAt ?? 0, event.lastMessageAt) }
+          : {}),
         // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
         // has nothing to say about what this tab has read.
       });
@@ -1455,7 +1575,7 @@
       globalConvs.conversations.set(event.conversationId, {
         ...convo,
         messages: merged.messages,
-        lastMessageAt: event.lastMessageAt,
+        ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
         unreadCount: isOpenHere ? 0 : event.unreadCount,
       });
       return;
@@ -1471,7 +1591,7 @@
     globalConvs.conversations.set(event.conversationId, {
       ...convo,
       messages: merged,
-      lastMessageAt: event.lastMessageAt,
+      ...(event.lastMessageAt !== undefined ? { lastMessageAt: event.lastMessageAt } : {}),
       unreadCount: isOpenHere ? 0 : event.unreadCount,
     });
   }
@@ -1649,8 +1769,9 @@
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
     globalSession.initServices(appendLog);
-    // WP-XP-5: a CallKit answer may predate this cold start (app launched from the call UI).
-    // Drain it before login so the auto-accept fires as soon as the invite arrives over WS.
+    // WP-XP-5: an answer on the native ring (Android or CallKit) may predate this cold start - the
+    // answer is what launched the app. Held now, it is joined from its own facts once the login's
+    // socket has caught up; no invite is awaited (`pendingCallAccept.ts`).
     void drainNativePendingCallAccept();
     void startLoginFlow();
 
@@ -1664,7 +1785,9 @@
     // background writers on BOTH platforms, but iOS only refreshes it once (canari_ios_on_resume);
     // without this 10s heartbeat the guard would expire ~30s into a genuinely-foregrounded iOS
     // session and an in-process FCM data push could clobber the warm engine's in-memory state. The
-    // native mls_foreground_heartbeat command is platform-agnostic (mark_foreground_active).
+    // native mls_foreground_heartbeat command is platform-agnostic, and holds the guard only while a
+    // foreground manager is loaded (`heartbeat_foreground_guard`): at the PIN gate there is nothing
+    // to protect, and a page iOS launched in the background believes itself visible.
     // createPausableInterval auto-pauses on hidden, so the guard expires shortly after backgrounding
     // even without a clean `hidden` event.
     const stopForegroundHeartbeat = isMobileTauriRuntime()
@@ -1695,6 +1818,11 @@
           .finally(() => invokeNative('pause_mls_foreground'));
         return;
       }
+      if (document.visibilityState === 'visible' && !globalSession.isLoggedIn) {
+        // A warm app still at its PIN gate: an answer given on the native ring meanwhile is held
+        // now, and joined once the login's socket has caught up (`pendingCallAccept.ts`).
+        void drainNativePendingCallAccept();
+      }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
         const { deviceKeyB64, storage } = globalSession;
         // Ordered resume sequence. C2 first: reload mls.bin into the warm engine BEFORE anything
@@ -1714,7 +1842,17 @@
             steps.push(`${name} ${Math.round(now - stepStart)}`);
             stepStart = now;
           };
-          await globalSession.ensureMls().reloadStateFromDisk();
+          try {
+            await globalSession.ensureMls().reloadStateFromDisk();
+          } catch (e) {
+            if (!(e instanceof MlsSessionVacantError)) throw e;
+            // The loss was reported and the session is reopening at the PIN gate: no later step of
+            // this resume may run on it.
+            appendLog(
+              '[RESUME] Stopped - no native MLS session under this session; it reopens at the PIN gate.'
+            );
+            return;
+          }
           stepDone('reload');
           // The push-join ledger is the warm process's too (channel-encryption section 26): taken
           // right after the reload, so a group joined while away is registered before the drain.
@@ -1722,8 +1860,8 @@
           stepDone('key-group-joins');
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           stepDone('outbox');
-          // WP-XP-5: the user may have answered a CallKit ring while we were away - record
-          // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
+          // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
+          // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).
           await drainNativePendingCallAccept();
           stepDone('call');
           // WHAT THE SHADE DID WHILE WE WERE AWAY IS MERGED BEFORE THE SOCKET OPENS, in the order
@@ -1786,6 +1924,10 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnlineResume);
+    // The native side says an answer waits (`canari:call-accept`): a page that sees no
+    // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
+    // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
+    const stopNativeCallAccept = listenForNativeCallAccept();
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1824,6 +1966,7 @@
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
+      stopNativeCallAccept();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
@@ -2026,7 +2169,10 @@
   // Safety net for navigations that arrive before onMount's startLoginFlow completes
   // (e.g. the OIDC callback navigates to /posts while onMount already ran with uid=null).
   // Delegates to startLoginFlow which handles both mobile and web paths uniformly.
-  afterNavigate(async ({ to }) => {
+  afterNavigate(async ({ to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||
@@ -2099,7 +2245,6 @@
       ? m.auth_pin_reset_withheld_key_unreadable()
       : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
-  account={globalSession.userId}
 />
 
 <!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->
@@ -2114,7 +2259,6 @@
   externalError={recoverError}
   isLoading={recoverLoading}
   loadingProgress={recoverProgress}
-  account={globalSession.userId}
 />
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}

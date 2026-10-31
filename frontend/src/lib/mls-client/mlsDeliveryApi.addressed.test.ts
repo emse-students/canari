@@ -9,7 +9,11 @@ import { DELIVERY, addressedHistoryAnswer, addressedKeyMaterial } from './frameD
  */
 describe('postApplicationMessage and the frame it addresses', () => {
   function bodyOf(delivery: Parameters<MlsDeliveryApi['postApplicationMessage']>[2]) {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+      );
     const api = new MlsDeliveryApi({
       historyUrl: 'https://example.test',
       getToken: async () => 'token',

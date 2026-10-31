@@ -8,6 +8,7 @@
  */
 
 import { CameraAccessError, classifyCameraError, type CameraFacing } from '$lib/reels/cameraAccess';
+import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
 import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
 import {
   LIVE_BATTERY_WARN_LEVEL,
@@ -21,12 +22,17 @@ import {
  * tab makes (a refused microphone refuses the live, said by the camera screen's `denied` text).
  *
  * 1280x720 asked as the bench asked it; both phones answer a portrait 720x1280 track (WP-L1). The
- * lens is EXACT, as the reel camera asks it (`openReelCamera`: an `ideal` gave the back lens on iOS).
+ * lens is asked as the reel camera asks it (`lensIsExact`): EXACT on a phone and on a switch, IDEAL on
+ * a desktop's first capture, whose webcam has no facing for an exact one to match.
  *
  * @throws {CameraAccessError} for every refusal, with its fault.
  */
-export async function openLiveCamera(facing: CameraFacing): Promise<MediaStream> {
-  console.debug(`[LIVE-CAM] opening ${facing}`);
+export async function openLiveCamera(
+  facing: CameraFacing,
+  switching = false
+): Promise<MediaStream> {
+  const exact = lensIsExact(switching);
+  console.debug(`[LIVE-CAM] opening ${facing} (${exact ? 'exact' : 'ideal'})`);
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
   if (!devices?.getUserMedia) {
     console.warn('[LIVE-CAM] navigator.mediaDevices.getUserMedia is absent');
@@ -35,7 +41,7 @@ export async function openLiveCamera(facing: CameraFacing): Promise<MediaStream>
   try {
     const stream = await devices.getUserMedia({
       video: {
-        facingMode: { exact: facing },
+        facingMode: facingConstraint(facing, exact),
         width: { ideal: LIVE_CAPTURE_LONG_SIDE_PX },
         height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
         frameRate: { ideal: LIVE_CAPTURE_FPS },

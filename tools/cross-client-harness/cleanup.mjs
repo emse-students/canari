@@ -3,6 +3,14 @@
  * `SITE` NAMES - the local estate or dev, never production (R1 refuses it).
  *
  *   bun cleanup.mjs [--dry]
+ *   bun cleanup.mjs --only <id>[,<id>...] --expect N     # REQUIRED on dev (R5)
+ *
+ * ON DEV, ONLY WHAT THE CAMPAIGN CREATED, AND ONLY WHAT THE CALLER NAMED (R5, 2026-10-24). Dev is
+ * shared with testers, so a matching NAME is not ownership there: a candidate must also be in the
+ * campaign ledger (`campaign.mjs`), and the sweep acts only on the ids `--only` names, refusing the
+ * whole sweep when `--expect` differs or a named id is no longer a candidate. `--dry` prints the
+ * exact `--only ... --expect N` line for what it would take. On the local estate both flags stay
+ * optional and the name allowlists decide, as before.
  *
  * THREE ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
  * community takes it down with it, so debris there is rare - but most checks build a SALON inside the
@@ -38,8 +46,10 @@
  */
 import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
-import { isGroupDebris } from './debris.mjs';
+import { isCommunityDebris, isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
+import { planCampaignSweep } from './campaign.mjs';
+import { sweepArgs } from './campaign-ledger.mjs';
 import { psql } from './estate.mjs';
 import { PORTS, VENUE } from './names.mjs';
 import { SITE } from './site.mjs';
@@ -50,9 +60,9 @@ import { SITE } from './site.mjs';
  * every run of it left a community behind that no sweep would ever take. Found 2026-08-20 with four
  * of seven communities matching and a fifth sitting there in plain sight. Widen this by ENUMERATING
  * what the runners mint, never by relaxing it: the price of a loose pattern here is a real
- * community, typed name and all, and there is no undo.
+ * community, typed name and all, and there is no undo. The list is `debris.mjs`'s
+ * `COMMUNITY_DEBRIS`, beside the group one, so `debris-selftest.mjs` pins both.
  */
-const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
 
 /**
  * THE SAME ALLOWLIST, FOR THE OTHER ESTATE, and enumerated from the runners rather than guessed:
@@ -105,7 +115,7 @@ const named = psql(`SELECT id, name FROM channel_workspaces ORDER BY "createdAt"
     return { id: line.slice(0, at), name: line.slice(at + 1) };
   });
 
-const debris = named.filter((w) => DEBRIS.test(w.name));
+let debris = named.filter((w) => isCommunityDebris(w.name));
 
 // NAMES THE ESTATE, because this file DELETES. It said "on production" unconditionally while
 // routing through `estate.mjs`, which picks the local containers or production from `SITE` - so on
@@ -123,7 +133,7 @@ for (const w of debris) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
 // and a scratch probe on 2026-08-21 that minted `C22 PROBE-<mark>` outside the shape. Naming the
 // rest costs one line and makes the next escape visible on the run that causes it. These are REAL
 // communities, so they are listed and never touched.
-const strangers = named.filter((w) => !DEBRIS.test(w.name));
+const strangers = named.filter((w) => !isCommunityDebris(w.name));
 if (strangers.length > 0) {
   console.log(`[cleanup] ${strangers.length} NOT matched - left alone, check none of these is debris:`);
   for (const w of strangers) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
@@ -133,13 +143,21 @@ if (strangers.length > 0) {
 // the sidebar is the thing this debris BREAKS, so a sweep enumerating from the screen would go blind
 // at exactly the size that makes it necessary.
 const shared = named.find((w) => w.name === SHARED);
-const salons = shared
-  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}' ORDER BY "createdAt"`)
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
+/** `id|name` rows of a query, as objects. */
+const idNameRows = (out) =>
+  out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf('|');
+      return { id: line.slice(0, at), name: line.slice(at + 1) };
+    });
+const salonRows = shared
+  ? idNameRows(psql(`SELECT id, name FROM channels WHERE "workspaceId" = '${shared.id}' ORDER BY "createdAt"`))
   : [];
-const salonDebris = salons.filter((n) => SALON_DEBRIS.test(n));
+const salons = salonRows.map((r) => r.name);
+let salonDebris = salons.filter((n) => SALON_DEBRIS.test(n));
 const salonStrangers = salons.filter((n) => !SALON_DEBRIS.test(n));
 
 if (shared) {
@@ -157,11 +175,8 @@ if (shared) {
 
 // THE LIVE ONES ONLY. A tombstoned group is a check that worked; deleting the record of that would
 // be the sweep destroying evidence rather than debris.
-const liveGroups = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL ORDER BY "createdAt"`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter(Boolean);
-const groupDebris = liveGroups.filter(isGroupDebris);
+const liveGroupRows = idNameRows(psql(`SELECT id, name FROM dm_groups WHERE "deletedAt" IS NULL ORDER BY "createdAt"`));
+let groupDebris = liveGroupRows.map((r) => r.name).filter(isGroupDebris);
 if (groupDebris.length > 0) {
   console.log(`[cleanup] ${groupDebris.length} live throwaway group(s) - a check died before its own delete:`);
   for (const n of groupDebris) console.log(`  ${n}`);
@@ -215,8 +230,36 @@ if (debris.length === 0 && salonDebris.length === 0 && groupDebris.length === 0)
   console.log('[cleanup] nothing to sweep in the three stores this file owns - communities, salons, groups');
   process.exit(0);
 }
+// THE ALLOWLIST BY ID, AND ON DEV THE OWNERSHIP (R5). The name shapes above chose the candidates;
+// `planCampaignSweep` decides which of them this run may take - on dev only the ids the caller
+// named, each campaign-owned, with the count it expected. Anything refused stops the WHOLE sweep.
+const candidates = [
+  ...debris.map((w) => ({ kind: 'community', id: w.id, name: w.name })),
+  ...salonRows
+    .filter((r) => salonDebris.includes(r.name))
+    .map((r) => ({ kind: 'salon', id: r.id, name: r.name, parent: SHARED })),
+  ...liveGroupRows.filter((r) => groupDebris.includes(r.name)).map((r) => ({ kind: 'group', id: r.id, name: r.name })),
+];
+const plan = planCampaignSweep({ candidates, ...sweepArgs(process.argv) });
+if (!plan.ok) {
+  for (const r of plan.refusals) console.log(`[cleanup] REFUSED: ${r}`);
+  console.log(
+    `[cleanup] to take every candidate, after reading the list above: ` +
+      `--only ${candidates.map((c) => c.id).join(',')} --expect ${candidates.length}`
+  );
+  if (dry) {
+    console.log('[cleanup] --dry: nothing deleted');
+    process.exit(0);
+  }
+  process.exit(1);
+}
+const taken = new Set(plan.targets.map((t) => `${t.kind}:${t.name}`));
+debris = debris.filter((w) => taken.has(`community:${w.name}`));
+salonDebris = salonDebris.filter((n) => taken.has(`salon:${n}`));
+groupDebris = groupDebris.filter((n) => taken.has(`group:${n}`));
+for (const c of plan.left) console.log(`[cleanup] not named by --only, LEFT: ${c.kind} ${c.name} (${c.id})`);
 if (dry) {
-  console.log('[cleanup] --dry: nothing deleted');
+  console.log(`[cleanup] --dry: nothing deleted; would take ${plan.targets.length}`);
   process.exit(0);
 }
 
@@ -280,23 +323,25 @@ for (const w of debris) {
 }
 
 // Re-read rather than trust the gestures: the dialog reports success from the screen, and what the
-// campaign needs is the table saying they are gone.
-const left = psql(`SELECT name FROM channel_workspaces`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter((l) => DEBRIS.test(l));
+// campaign needs is the table saying they are gone. ONLY THIS RUN'S TARGETS are counted: a candidate
+// `--only` did not name was left on purpose (printed above as LEFT), and counting it here printed
+// "groups -2/0 swept" and would fail a sweep that did everything it was asked (2026-10-25).
+const namesIn = (sql) =>
+  psql(sql)
+    .split('\n')
+    .map((l) => l.trim());
+const stillThere = (present, targets) => targets.filter((n) => present.includes(n));
+
+const left = stillThere(
+  namesIn(`SELECT name FROM channel_workspaces`),
+  debris.map((w) => w.name)
+);
 
 const salonsLeft = shared
-  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`)
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => SALON_DEBRIS.test(l))
+  ? stillThere(namesIn(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`), salonDebris)
   : [];
 
-const groupsLeft = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`)
-  .split('\n')
-  .map((l) => l.trim())
-  .filter(isGroupDebris);
+const groupsLeft = stillThere(namesIn(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`), groupDebris);
 
 console.log(
   `[cleanup] communities ${debris.length - left.length}/${debris.length} swept, ${left.length} left`
@@ -309,8 +354,8 @@ console.log(
   `[cleanup] salons ${salonDebris.length - salonsLeft.length}/${salonDebris.length} swept, ` +
     `${salonsLeft.length} left`
 );
-for (const name of [...left, ...salonsLeft]) console.log(`  still there: ${name}`);
+for (const name of [...left, ...salonsLeft, ...groupsLeft]) console.log(`  still there: ${name}`);
 for (const f of failed) console.log(`  failure: ${f}`);
 
 w1.close();
-process.exit(left.length === 0 && salonsLeft.length === 0 ? 0 : 1);
+process.exit(left.length === 0 && salonsLeft.length === 0 && groupsLeft.length === 0 ? 0 : 1);

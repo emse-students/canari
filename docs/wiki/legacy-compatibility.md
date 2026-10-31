@@ -12,6 +12,14 @@ than an archaeology exercise. Every shim below also carries a comment at its sit
 **Nothing below is WORK.** Each entry is a date, and the code change behind it is minutes. What is
 being waited on is the world, not a decision - do not "do" these early, and do not re-argue them.
 
+## The floor rule: raised when both stores serve the latest update (owner, 2026-10-24)
+
+**`minClientVersion` is raised, on both estates, to the latest stable as soon as BOTH Play AND the App
+Store serve it** - read with `bun tools/play-vitals/vitals.mjs` and the App Store state, never inferred.
+It replaces every per-entry "the user's gesture, when the time comes": a removal condition below names
+the version the floor must pass, and this rule is what moves the floor there. The raise is a production
+setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
+
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
@@ -86,15 +94,20 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
-| Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor is now `1.2.9` on production) |
+| Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
+| `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
+| Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
+| `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
+| The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
+| `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -113,6 +126,79 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Revisit 2026-12-31 - a `DEVICE_REVOKED` refusal that does not say who revoked the device
+
+**Site:** `classifyRevokedDeviceRefusal` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`.
+**What it humours:** a delivery service older than migration 040, whose `DEVICE_REVOKED` carries no
+`reason`. It cannot tell an id its own install retired from a device its owner revoked, so a client
+reads it as the owner's - a sign-out and a wipe, said at `error` - and only `reason: 'retired'`
+licenses a re-enrolment. That reading is the safe one and stays; what goes is only the ACCUSATION
+wording about an older server, once no server without the reason can answer.
+**The other direction needs nothing:** a client older than `DEVICE_REVOKED_BY_OWNER` reads it as an
+unknown 403 and does not re-enrol (the code is new precisely so it cannot), and still re-enrols on
+`DEVICE_REVOKED`, which a current server sends only for a retired id. A `revoked_device` row written
+before the column holds NULL and is read as the owner's for good - data at rest, not a shim, so it
+has no date.
+**The window this opens, and it is a real one:** the stores can ship this client BEFORE production
+runs migration 040. In that window an install whose own rotation retired its id gets a reasonless
+`DEVICE_REVOKED` and is signed out and wiped instead of taking a fresh id - the fail-safe direction,
+paid by the few installs that rotate in it. The same client's `?reason=retired` is ignored by such a
+server, which records a plain ban (read as the owner's once 040 lands - see below).
+**Old clients record retirements as owner bans, for good:** a client older than `?reason=retired`
+deletes its abandoned id without a reason, which a current server records as the owner's. The id is
+abandoned, so nothing re-enrols it; the cost is only that the delete also ends the sessions bound to
+that id (never the caller's own, which is the one the install is using). Permanent data at rest, no
+date.
+**Condition:** every estate serves migration 040 (one deploy of each). The date is when to check.
+
+### Removal at deploy + one access-token lifetime - an access token that names no session
+
+**Site:** the `legacy` branch of `AuthController.sessionOfToken` in
+`apps/core-service/src/auth/auth.controller.ts`.
+**What it humours:** an access token minted before its issuer wrote `sid`. The issuer always writes it
+now, so such a token is pre-deploy by construction and dies by its own `exp` within
+`ACCESS_TOKEN_TTL_SECONDS` (1 h) of the deploy; it is accepted without a session read, `X-Session-Id`
+empty, logged once per process at `log`. Refusing it would answer every client signed in at the
+deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tokens already carry
+`sid`).
+**Condition:** production has run the release carrying the check for longer than one access-token
+lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
+one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+### No date yet - the Lydia key paste field of a build older than enrolment lot 1
+
+**Site:** `retiredLydiaBusinessKeyPaste` (`PUT :id/lydia-business-key`) and `lydiaBusinessKeyStatus`
+(`GET` on the same path) in `apps/social-service/src/associations/associations.controller.ts`, with
+`AssociationsService.isLydiaBusinessKeySet`.
+**What it humours:** since enrolment lot 1 the Business private token is captured at `business/create`
+([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) and the
+paste field is gone from the app. An APK or IPA older than that release EMBEDS the old field: it reads the
+`GET` status (kept, so the panel still shows "set" or "not set") and may `PUT` a key. The `PUT` writes
+nothing and answers `410` with the code `LYDIA_KEY_PASTE_RETIRED`; the old field shows its own "could not
+save" line for any refusal (it never reads the body), so a bare status is enough there. Each hit is
+logged at WARN, naming the association and never a value: the count of old clients still using it. The
+shim keeps the old route's throttle and `MANAGE_PAYOUT_ACCOUNT` check, so a non-manager gets the `403`
+it always got and only a manager's hit is counted.
+**The cost while it stands:** none - nothing is written; an old screen shows a save error.
+**Removal condition:** `minClientVersion` past the first build without the field, on BOTH stores. Then
+delete both routes, `isLydiaBusinessKeySet`, their spec block, and this entry.
+
+### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
+
+**Site:** the `explicitSlug` branch of `AssociationsService.create`
+(`apps/social-service/src/associations/associations.service.ts`) and the optional
+`CreateAssociationDto.slug`.
+**What it humours:** since the slug became derived by the server (2026-10-26,
+[associations](frontend/modules/associations.md#the-slug-is-a-technical-id-derived-by-the-server-never-shown-typed-or-edited-user-2026-10-26)),
+the app sends none. An APK or IPA older than that release EMBEDS the old form, which still sends the
+slug its creator typed; the branch validates it (pattern, reserved route words) and refuses it `400`
+when taken, as before, so those builds keep creating.
+**The cost while it stands:** any API caller - not only an old build - may still choose its slug.
+That squatting is NOT new (every client could before), and it ends with the branch.
+**Removal condition:** `minClientVersion` covers the release carrying the derived slug on BOTH stores,
+so no supported client still sends one. Then make the DTO refuse `slug` (or drop it) and delete the
+branch and its tests; the derived path is then the only one.
+
 ### No date yet - a member client older than the admission rule still adds a new person automatically
 
 **Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
@@ -121,22 +207,24 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
 running a build that carries it. A member on an older build still Adds from the `pending` row the
 link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
-can tell it from a member's Add. The server honours it as one: the Welcome that older client stores
-lifts the joiner's `awaitingAdmission` (a commit older than `admits` declares nobody, so the Welcome
-is the one door that sees its Add), and without that lift the joiner would sit `active` under a flag
-refusing every commit of theirs.
+can tell it from a member's Add. The server honours it as one: that older client's commit declares
+the joiner in its `admits` (every client at the floor does, #1151, `v0.18.28`), and the accepted
+commit lifts the joiner's `awaitingAdmission`. **The Welcome-sent-apart lift is GONE since ADM-3
+(2026-10-25)**: it existed for a commit older than `admits`, which no client at the floor sends, and
+it was the door through which a Decline the gate had honoured was undone
+([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 **When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
 never at the deploy, never on a date. Until then an older client gets the tolerated 409
 `awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
-instead of retiring the conversation), and an older member's automatic Add is honoured through the
-Welcome lift. That tolerance is the shim; its removal condition is that floor, and there is no
+instead of retiring the conversation), and an older member's automatic Add is honoured through its
+commit's `admits`. That tolerance is the shim; its removal condition is that floor, and there is no
 calendar date.
 **The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
 serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
 outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
 every one of those paths, so the build does not run without it.
-**Removal:** nothing - this entry closes when the floor passes; the lift by Welcome stays, since it
-is also how every current Add's Welcome lands.
+**Removal:** nothing - this entry closes when the floor passes; the lift by the accepted commit is
+how every Add admits, and stays.
 **A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
 every existing row to `false`, so a person who accepted a link before the deploy and had not entered
 yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
@@ -176,7 +264,7 @@ id is not a post keeps a DEAD tap on every client.
 `repost_proposed` (and the agenda's types before their own rows) show the comment sentence on a client
 older than the release carrying their rows.
 **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** - the release
-carrying PR #1911, both stores serving it, then `minClientVersion` raised to it. A new type shipped
+carrying PR #1911 (`v1.2.9`), the floor moving by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). A new type shipped
 earlier reaches the floor clients as a wrong sentence and a dead link, which no server change can undo.
 **Checklist - a NEW notification type** (no other checklist existed; this is it):
 1. The floor above covers PR #1911 first.
@@ -186,13 +274,42 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 **Removal condition:** none; this is a floor requirement, not a shim.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
-Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
-ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+**Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
+owner's explicit decision, read back from the public version endpoint as `1.2.9`; both stores serve `1.5.0`,
+far above the floor, so the raise cannot lock out a shipped client (compare the v0.14.0 incident above). A new
+notification type, bookings included, may now ship once its own flag flips. Dev's floor is a separate row
+([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
-version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
-knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
+version that CARRIES #2228 (`v1.4.0`, not merely `1.2.9`: that build also declares the `form-responses` host and
+knows the type), on BOTH estates, by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
+
+**Switched on by the flip pull request (2026-10-29), on the `1.2.9` floor: the bookings' four** - `booking_cancelled`,
+`booking_withdrawn`, `booking_added`, `booking_reminder` ([bookings-chantier](bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+Steps 2-4 are done in the same pull request (target `bookings`, the four rows, the three native
+tables). They ship behind `BOOKING_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/bookings/booking-notifications.service.ts`) and its client mirror
+`BOOKING_NOTIFICATIONS_LIVE`. A `1.2.9` client draws them as the neutral unknown-type row, shows the
+push's French legacy sentence, and on Android a tap opens the app where it was (no `bookings` host);
+the version CARRYING this pull request draws all of it. That degraded display between `1.2.9` and
+the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
+stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
+The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
+
+**Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
+notices telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active or were
+paused (Lydia enrolment lot 2). They ship behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/associations/lydia-payments-notifier.service.ts`); while it is off nothing is
+written and the caller's ERROR/WARN line plus the payments screen state carry the fact. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 2 (PR to be numbered), on BOTH
+estates, once Play and the App Store serve it - then a one-line pull request sets the constant to `true` and
+changes the spec that pins it. A client older than that release draws them as the neutral unknown-type row.
+Steps 2-4 are done: the push keys and French legacy sentence, the `forms` push category, the native
+tables (Android, the iOS app and its notification extension), the client row, `KNOWN_NOTIFICATION_TYPES` and the
+`payments` section of the association edit page. The push opens the notifications list (`notifications`
+host): no deep-link host exists for an association's edit section. The type names are shared through
+`libs/contracts/lydia-refusal-codes.json`.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
@@ -222,6 +339,39 @@ state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_lea
 when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
 still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
 
+### No date yet - an owed Welcome stored as ONE bare entry per group (2026-10-25)
+
+**Site (client, native and WASM alike):** `decode_entries` in `frontend/mls-core/src/owed_welcome.rs`.
+**Shim:** since DUP-7 (2026-10-25) a group's owed-Welcome record is a CBOR LIST, one entry per Add,
+because every accepted Add now owes its Welcome and a second Add must not erase the first. A build
+before it wrote one bare entry; the reader takes that shape as a list of one. Every write is the list.
+An older build reading a list fails to decode it, says so at error level and drops it at its next
+save - its invitee then joins by its own repair, as before this change.
+**Removal condition:** `minClientVersion` is at or above the first stable carrying DUP-7 on both
+stores, and 30 days have passed: a bare entry exists only in a state an older build left with a
+Welcome unsent, and the first connection after the upgrade sends it and rewrites the record. After
+removal such a record fails to decode and is dropped, costing at most one invitee's self-repair.
+
+### No date yet - the add-lock released by OWNER alone, with no token (2026-10-25)
+
+**Site (server):** `releaseAddLock` in `apps/chat-delivery-service/src/utils/add-lock.ts`
+(`RELEASE_IF_OWNER_LEGACY`), reached by both doors (`DELETE mls/add-lock`, `DELETE
+mls/push/release-add-lock`) when the body carries no `token`.
+**Site (client):** `MlsDeliveryApi.acquireAddLock` / `releaseAddLock` in
+`frontend/src/lib/mls-client/mlsDeliveryApi.ts`: an acquire answered without a `token` (a server
+older than this change) is released with none.
+**Shim:** since #2426 every acquisition writes `owner#token` and answers the token, and a release
+naming it deletes that acquisition or nothing. A release with no token still deletes ANY acquisition
+of the same device (the bare `owner` an older server wrote, or a `owner#token` value). It is kept
+ONLY for builds older than #2426: web and app clients, and above all the Android background service
+of those builds (`CanariFirebaseMessagingService.kt`). Since #2426 that service also reads the token
+from the acquire answer and sends it on its release. The legacy path is exactly as blind as before: a
+late release can still free a live lock of the same device.
+**Removal condition:** `minClientVersion` is at or above the first stable carrying #2426 on both
+stores (the Android service of every allowed build then sends its token). After that a token-less
+release is refused, not legacy. On the client side, the token-less release (the web client's and the
+Android service's) goes once every estate's chat-delivery-service answers the token.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
@@ -235,6 +385,70 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - the presence ids in a URL
+
+**Two halves, two conditions** ([chat-gateway](services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).
+Since 2026-10-28 the presence read is `POST /api/presence` with the ids in the body; until then it was
+`GET /api/presence?users=<id>,...`, which wrote every watched id into every proxy's access log.
+
+**Server half - site:** `get_presence` and `LegacyGetTally` in `apps/chat-gateway/src/presence.rs`,
+the `get(...)` on the `/api/presence` route in `main.rs`, and the `/api/presence?query-redacted` rule
+of the access-log map (`Dockerfile.frontend`, `access-log-redaction.test.mjs`). **What it humours:**
+every install built before the POST client, which keeps calling the GET until it updates - a store
+build is not reached by a deploy. **Removal condition:** a CLIENT FLOOR AND A MEASUREMENT -
+`minClientVersion` at or above the first stable carrying the POST client, on both estates with both
+stores serving it, AND the gateway's `[presence] legacy GET /api/presence served ...` line absent from
+production for a week (the tally writes nothing for a window nobody called in, so silence is the
+zero). Then delete `get_presence`, `PresenceQuery`, the tally and its `AppState` field, the map rule
+and its test cases; a GET is then answered 405 by axum.
+
+**Client half - site:** `fetchPresence`'s `legacyGet` arm and `legacyRouteAnnounced` in
+`frontend/src/lib/stores/presenceStore.ts`, `serverPresencePost()` in `appVersionCheck.svelte.ts`,
+the `presencePost` field in `appVersion.ts` and in core-service's `version.service.ts`. **What it
+humours:** an estate whose gateway predates the POST - production for the days between a stable's
+store release and its deploy, and any estate rolled back below it. The client reads the capability
+before asking, so it never learns the route by a 405. **Removal condition:** a SERVER VERSION, not a
+client floor - every estate's gateway serves the POST (dev and production both deployed past this
+change, no rollback below it planned). Then the client always POSTs and the capability field goes from
+both sides; a client that no longer reads it is unaffected by a server that still sends it.
+
+### No date yet - `registerMember` after an accepted Add, for a server older than 2026-10-25
+
+**Sites:** every Add path that calls `registerMember` for the people it added once the commit
+returned - `processBulkAddition` and `performDirectAdd` in `frontend/src/lib/utils/chat/groupCreation.ts`,
+the pending-invitation and `welcome_request` Adds in `frontend/src/lib/utils/chat/actions.ts`.
+**Shim (2026-10-25):** the commit gate enrols the people an Add admits IN THE TRANSACTION THAT
+ACCEPTS IT (`enrolAdmittedPeople`, [mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)),
+so against a current server the call after the accept ENROLS NOBODY (ADM-3, 2026-10-25): it writes
+the device rows of a person the commit admitted, and answers `409 MEMBER_NOT_ADMITTED` for anyone
+else (absent, or a seat still awaiting a member) - typed client-side as `MemberNotAdmittedError`,
+on which the caller withholds the Welcome. And the gate refuses WHOLE a commit that would admit a
+person it may not (`{accepted: false, reason: 'admit_refused'}`), so no such commit gives anyone a leaf. So a departure or a
+member's Decline holds against an Add decided before it on EVERY path, the direct accept included
+([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
+It stays for a store build live before production deploys, whose server does not enrol with the
+commit: dropping it there would lose the enrolment of every Add.
+**The one re-invite this used to rescue:** a re-invite right after a Decline, at an unchanged epoch,
+by a client that sends no `invitationSeatGeneration` (older than ADM-3), is ordered by the base
+epoch and refused; the member re-invites after the next commit. A current client sends the
+generation it read and is a fresh invite.
+**Why the refusal is an answer in the body, not a status:** a client older than ADM-3 (read in the
+`v1.4.0` tag) clears its staged commit on a `200 {accepted: false}` and reports the Add failed, never
+retrying it in a loop; a thrown 4xx from `POST /api/mls/commit` would leave that stage in place. So
+`admit_refused` takes the shape `WelcomeSeatGone` already answers, and an older client loses nothing
+but that one Add.
+**Transitional loss, accepted:** an Add the PRE-DEPLOY server accepted with its answer lost, and
+settled after the deploy as a `duplicate`, is never enrolled - the duplicate is answered before any
+transaction, and the enrolment ran with an advance that predates it. Its Welcome is refused
+`WELCOME_TARGET_NOT_MEMBER`, cleared as terminal by a current client (an older client keeps
+re-sending it, as before), and the stray sweep REMOVES the leaf - it repairs nothing; the person
+needs a new Add.
+**Removal condition:** every estate's chat-delivery-service enrols with the commit (dev and
+production both deployed past the 2026-10-25 change, no rollback below it planned); then the
+post-accept `registerMember` calls go. A server version, not a client floor. The CREATOR's own
+`registerMember` before `createGroup` is not this shim - it puts the creator on the roster before the
+group exists, and stays.
 
 ### No date yet - an OIDC callback with no PKCE verifier
 
@@ -451,6 +665,21 @@ this entry deliberately has no date: a date would be a guess about a platform no
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
 
+### No date yet - the two paid-form tier codes of #2667, on an embedded build that predates them
+
+**Site:** `providerRefusalMessage` in `frontend/src/lib/associations/paymentRefusal.ts`, read by the
+paid form page (`frontend/src/routes/forms/[id]/+page.svelte`); the codes come from `formTierRefusal`
+(`apps/social-service/src/associations/tier-pricing.ts`).
+**What an older build shows:** the APK and the IPA EMBED the frontend, so a build older than the
+release carrying #2667 does not know `FORM_TIER_NOT_SOLD` (a form granting a tier whose product was
+deleted) or `FORM_TIER_ALREADY_HELD` (a submitter already holding the form's tier): `providerRefusalMessage`
+answers null and the form page shows the server's English `message` instead of the fr/en sentence.
+The refusal itself holds on every build - no money is taken; only the wording differs. Before #2667
+those builds got the shop's codes (`TIER_NOT_RANKABLE`, `PRODUCT_ALREADY_PURCHASED`) and their sentences.
+**Removal condition:** none, nothing on the server humours old builds; the line is right everywhere
+once `minClientVersion` covers the release carrying #2667 (both stores serving it). Do not map the
+codes back to the old ones to cover the gap: those sentences were the wrong ones.
+
 ### Removed 2026-10-22 - the pre-MLS send path; the `content` column and its read arm wait for a migration
 
 **Removed per measurement, 2026-10-22**, ahead of the 2026-11-19 date, which was conditional on
@@ -465,6 +694,28 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 ([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts))
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
+
+### 2027-04-25 - a salon access rewrite with no `baseAccessRevision`
+
+**Site:** `ChannelService.updateChannelAccess` (`ignoredDrops`) in
+[`apps/social-service/src/channels/channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts),
+and the optional `baseAccessRevision` of `UpdateChannelAccessDto`.
+**Shim:** since 2026-10-25 the settings panel sends the access revision it edited, and a stale one is
+refused `409 CHANNEL_ACCESS_CHANGED` ([social-service](services/social-service.md#an-access-rewrite-names-the-revision-it-edited-2026-10-25)).
+An older client sends none, and its list is the one it read when the tab opened, so it proves
+nothing but the name it appended. `baselessAllowList` reads the request as the one gesture of the
+`v0.18.29` panel (every client the `1.0.3` floor admits) it can be: on a salon that stays private,
+Add grants its LAST element only and a write-policy save grants nothing, and nobody is ever dropped
+(that panel removes through the per-member `DELETE`, unchanged); a request that flips the visibility
+WITH a write policy, or goes private WITH a list, read the other visibility and is refused `409`.
+**What it does not cover:** a stale TOGGLE - a panel that read private, while another admin made the
+salon public and private again, can still flip it; the toggle carries nothing that tells.
+**Why a date and not the floor alone:** the panel ships inside the phone apps, which update when their
+store decides; six months, as for the push wording above.
+**On removal** (the date, or earlier once `minClientVersion` is a build carrying the base): make
+`baseAccessRevision` required (a `400` without it) and delete `baselessAllowList`. Its warn line,
+`baseless rewrite (client older than the access revision)`, measures the traffic first.
+**Cost of keeping it:** an old client cannot remove anyone through a PATCH - which it never did.
 
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 

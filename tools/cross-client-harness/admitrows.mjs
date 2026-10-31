@@ -1,0 +1,550 @@
+/**
+ * THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..10 - their table, the waiting seat's route table,
+ * and their judges.
+ *
+ * Pure, so `archive/admit-selftest.mjs` pins every judge on a checkout with no rig; the action is
+ * `archive/admit.mjs`, the gestures `archive/grouplink.mjs`. `docs/wiki/cross-client-campaign-1-4-1.md`
+ * section 4.2 is the plan. The question: a new person who follows a GROUP link waits for a member -
+ * the base is withheld, every member is asked, one member's Add or Decline settles it - and a seat
+ * that waits can do nothing a member can.
+ */
+
+/** The tag an OLD client of the mixed-version rows is built from (plan Q8). */
+export const OLD_REF = 'v1.4.0';
+
+/** The rows `archive/admit.mjs` plays. */
+export const ADMIT_ROWS = {
+  'ADM-1': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    answer: { by: 'W1', choice: 'approve' },
+    what: 'W4 follows the group link: it waits, the base answers 409, both members show the ask, W1 Adds, the ask leaves both screens',
+  },
+  'ADM-2': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    answer: { by: 'W2', choice: 'decline' },
+    what: "W2 Declines: the ask withdrawn - W4's roster row and seats gone, no exclusion written, W4 never reads the conversation",
+  },
+  'ADM-3': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    race: { approve: 'W1', decline: 'W2' },
+    what: 'W1 Adds and W2 Declines at once (both requests held, released together): one wins, and an admitted person is never stripped',
+  },
+  'ADM-4': {
+    devices: ['W1', 'W2', 'W4', 'W5'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    probe: true,
+    what: 'the waiting seat calls every member route from its own page: each answers 409 awaiting_admission, and nothing it does admits anyone',
+    note: 'the presence and ring AUDIENCES are not asserted: a refused ring rings nobody, which is all this row can observe from a browser',
+  },
+  'ADM-5': {
+    devices: ['A1', 'W2', 'W4'],
+    owner: 'W2',
+    setup: ['W4'],
+    old: 'A1',
+    joiner: 'A1',
+    answer: { by: 'W2', choice: 'approve' },
+    what: `A1 on the ${'v1.4.0'} APK follows a link made on new clients: it meets the withheld base, asks a member, is admitted by W2's Add; the base-withheld line is rate-limited`,
+    note: "A1 signs in as the OWNER, so the group is W2's and W4's: with W1 in it the owner would not be a new person (the plan's W1 W2)",
+  },
+  'ADM-6': {
+    devices: ['A1', 'W1', 'W4'],
+    owner: 'W1',
+    setup: [],
+    ownerDevices: ['A1'],
+    old: 'A1',
+    joiner: 'W4',
+    shimWaitMs: 60_000,
+    answer: { by: 'W1', choice: 'approve' },
+    what: `A1 on the ${'v1.4.0'} APK is a member when W4 follows the link: A1 may auto-Add (the shim); the admission lifts; no [ADMISSION] ERROR; which device added is recorded`,
+    note: "A1 is the owner's second device, so W1's group seats it without an Add. A1 is given shimWaitMs to auto-Add W4; if it does not, W1 Adds - either way is a PASS, and the record says which",
+  },
+  'ADM-7': {
+    devices: ['A1', 'W2', 'W4'],
+    owner: 'W2',
+    setup: ['W4'],
+    old: 'A1',
+    outsider: 'A1',
+    what: `A1 on the ${'v1.4.0'} APK, never a member, asks the base an external join needs: refused, no [UNINVITED_ENTRY], no "entered without a member" notice`,
+    note: "an external commit needs the base, so the refusal of the base IS the refusal of the join; the row asks it from the old client's own page. A1 signs in as the OWNER, so the group is W2's and W4's",
+  },
+  'ADM-8': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: [],
+    joiner: 'W4',
+    kinds: ['direct', 'key-group'],
+    what: 'a link minted on a 1:1 or on a key group raises no ask: only a GROUP conversation takes one',
+    note: "minted and accepted through the API (the panel offers no link there): the mint's refusal, or the accept's, is the answer, and no ask line nor awaiting row may follow",
+  },
+  'ADM-9': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    reinvite: { decline: 'W2', approve: 'W1' },
+    what: 'W2 Declines W4; W1 then mints a NEW link, W4 follows it and waits again, W1 Adds: a Decline is not a ban, and an invitation built after it admits',
+    note: 'asked by the coordinator 2026-10-26 with the ADM-3 fix (a Decline now holds against an earlier Add): the fix must not turn a Decline into a refusal of every later invitation',
+  },
+  'ADM-10': {
+    devices: ['W1', 'W2', 'W4'],
+    owner: 'W1',
+    setup: ['W2'],
+    joiner: 'W4',
+    stale: { approve: 'W1', decline: 'W2' },
+    what: "W1's Add commit is held, W2 Declines and the Decline settles, then the Add is released: the stale Add admits nobody - refused at the commit gate AND by the member-add route that follows it",
+    note: 'ADM-3 releases both answers together and accepts either winner; this row ORDERS them, Decline first, which is the case 1.4.1-alpha.4 got wrong (the commit gate held, the member-add route re-enrolled)',
+  },
+};
+
+/**
+ * HOW EACH ROW'S ASK ENDS, which decides the narration its devices may print (`watch.mjs`
+ * `admissionMemberNarration` / `admissionJoinerNarration`). A row absent from this table raises no ask
+ * at all: ADM-8's point is that none is raised, and ADM-7's outsider is refused before one. ADM-3
+ * races the two answers and either may win.
+ */
+export const ADMISSION_ENDINGS = {
+  'ADM-1': { admitted: true },
+  'ADM-2': { declined: true },
+  // `addRefused`: a member's Add may land AFTER the Decline and be refused whole by the gate (#2505) -
+  // ADM-3 when the Decline wins the race, ADM-10 always. Its approver narrates that refusal.
+  'ADM-3': { admitted: true, declined: true, addRefused: true },
+  'ADM-4': { declined: true },
+  'ADM-5': { admitted: true },
+  'ADM-6': { admitted: true },
+  'ADM-9': { admitted: true, declined: true },
+  'ADM-10': { declined: true, addRefused: true },
+};
+
+/** Whether an `apiCall` answer is the waiting seat's refusal. */
+export const isAwaitingRefusal = (r) => r?.status === 409 && /awaiting_admission/.test(String(r?.body ?? ''));
+
+/** The reasons the commit gate gives when a Decline holds against an Add (#2505). */
+export const DEPARTED_REASONS = ['departed_since_decision', 'departed_and_undated'];
+
+/**
+ * The commit gate's per-person refusals of `user` in `group` (#2505, `enrolAdmittedPeople`):
+ * `NOT_ENROLLED ... - the commit is refused whole`. Only a reason in `reasons` counts, by default the
+ * two a Decline produces. Another `NOT_ENROLLED` (`committer_not_on_roster`, `blocked`) is a
+ * different refusal, and it would pass the row on a gate that never weighed the Decline. The gate
+ * names the user by an 8-hex prefix.
+ */
+export function gateRefusals(lines, group, user, reasons = DEPARTED_REASONS) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] NOT_ENROLLED group=(\S+) user=([0-9a-f]+) reason=(\S+) .* - the commit is refused whole$/.exec(l);
+    return m !== null && m[1] === group && m[2] === prefix && reasons.includes(m[3]);
+  }).length;
+}
+
+/**
+ * The commits the gate refused WHOLE in `group` (#2505): `[COMMIT][trace] REJECT admit_refused` (or
+ * `committer_not_on_roster`), each with the people it would have admitted. Nothing advanced for any
+ * of them; the client is answered `200 {accepted: false, reason}`.
+ *
+ * @returns {{trace: string, reason: string, baseEpoch: number, users: string[]}[]}
+ */
+export function refusedCommits(lines, group) {
+  const out = [];
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT (admit_refused|committer_not_on_roster) group=(\S+) baseEpoch=(\d+) users=([0-9a-f,]+) - /.exec(l);
+    if (m && m[3] === group) out.push({ trace: m[1], reason: m[2], baseEpoch: Number(m[4]), users: m[5].split(',') });
+  }
+  return out;
+}
+
+/** How many refused-whole commits named `user` (by its 8-hex prefix) with reason `admit_refused`. */
+export const admitRefusedFor = (lines, group, user) =>
+  refusedCommits(lines, group).filter((r) => r.reason === 'admit_refused' && r.users.includes(String(user).toLowerCase().slice(0, 8))).length;
+
+/**
+ * THE OTHER WAY A COMMIT IS REFUSED WHOLE: the Add carried the person's Welcome inline, and the
+ * server refuses it as `REJECT welcome_target_not_admitted` BEFORE it reaches the `admit_refused` line
+ * (`messaging.service.ts`, the inline-Welcome check precedes it and throws). The target is the full
+ * user id; matched by `user`'s 8-hex prefix as the other lines are.
+ *
+ * @returns {{trace: string, target: string}[]}
+ */
+export function welcomeRefusals(lines, group) {
+  const out = [];
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT welcome_target_not_admitted group=(\S+) target=([^:\s]+):\S+ - /.exec(l);
+    if (m && m[2] === group) out.push({ trace: m[1], target: m[3].toLowerCase() });
+  }
+  return out;
+}
+
+/** How many commits were refused whole for carrying `user`'s Welcome. */
+export const welcomeRefusedFor = (lines, group, user) => welcomeRefusals(lines, group).filter((r) => r.target.startsWith(String(user).toLowerCase().slice(0, 8))).length;
+
+/**
+ * Every commit START in `group`: its trace, the device that sent it and the epoch it was built on -
+ * the only line of a commit that names the committing DEVICE (the gate names a user).
+ *
+ * @returns {Map<string, {device: string, baseEpoch: number}>}
+ */
+export function commitStarts(lines, group) {
+  const out = new Map();
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] START group=(\S+) device=(\S+) baseEpoch=(\d+)/.exec(l);
+    if (m && m[2] === group) out.set(m[1], { device: m[3], baseEpoch: Number(m[4]) });
+  }
+  return out;
+}
+
+/** The traces of the commits refused whole for `user`, by either path (`admit_refused`, inline Welcome). */
+export function refusedTracesFor(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return [
+    ...new Set([
+      ...refusedCommits(lines, group)
+        .filter((r) => r.reason === 'admit_refused' && r.users.includes(prefix))
+        .map((r) => r.trace),
+      ...welcomeRefusals(lines, group)
+        .filter((r) => r.target.startsWith(prefix))
+        .map((r) => r.trace),
+    ]),
+  ];
+}
+
+/**
+ * WHAT A REFUSED COMMIT ADVANCED - the narrow reading of "nothing advanced". An `ACCEPT` of a refused
+ * trace itself, or an `ACCEPT` from the SAME base epoch whose trace names `user` (its `ADMITS`,
+ * `ENROLLED` or `ADMITTED_UNDATED` line): the refused Add accepted after all, under another request.
+ * The group's epoch as a whole is NOT read: a leaf refresh or a rebuilt Add without the person moves
+ * it, and neither says the refusal failed.
+ */
+export function advancedFor(lines, group, user) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  const refused = refusedTracesFor(lines, group, user);
+  const starts = commitStarts(lines, group);
+  const bases = new Set(refused.map((t) => starts.get(t)?.baseEpoch).filter((b) => b !== undefined));
+  const naming = new Set();
+  for (const l of lines ?? []) {
+    const m = /\[(?:ADD_MEMBER|COMMIT)\]\[(commit-[0-9a-f]+)\] (?:ADMITS|ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) (.*)$/.exec(l);
+    if (m && m[2] === group && new RegExp(`(user=|devices=(?:\\S*,)?)${prefix}`).test(m[3])) naming.add(m[1]);
+  }
+  let n = 0;
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] ACCEPT group=(\S+) newEpoch=(\d+)/.exec(l);
+    if (!m || m[2] !== group) continue;
+    if (refused.includes(m[1]) || (bases.has(Number(m[3]) - 1) && naming.has(m[1]))) n++;
+  }
+  return n;
+}
+
+/**
+ * AN ADMISSION NOBODY DATED, about `user` in `group`: `ENROLLED by commit ... decidedBy=base_epoch`
+ * (a new person enrolled by an Add ordered by its base epoch alone) or `ADMITTED_UNDATED` (an
+ * awaiting seat lifted that way). After a Decline, either is the person let back in by an Add that
+ * cannot say it came after - the ADM-3c rule (a re-ask with a killed committer, or a v1.4.0 committer).
+ * `kinds` narrows it to one of the two sentences.
+ */
+export function undatedAdmissions(lines, group, user, kinds = ['ENROLLED by commit', 'ADMITTED_UNDATED']) {
+  const prefix = String(user).toLowerCase().slice(0, 8);
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[commit-[0-9a-f]+\] (ENROLLED by commit|ADMITTED_UNDATED) group=(\S+) user=([0-9a-f]+) .*decidedBy=base_epoch/.exec(l);
+    return m !== null && kinds.includes(m[1]) && m[2] === group && m[3] === prefix;
+  }).length;
+}
+
+/**
+ * Refused commits per CONNECTION of one device: `rejectAt` the refusals' instants, `openedAt` the
+ * instants the gateway accepted a new connection from it (`New WebSocket connection`). A connection
+ * OPENING is the cut, not `[presence] Explicit disconnect`: a dropped socket or a killed app never
+ * says goodbye, and the next connection still begins a new attempt. A v1.4.0 member re-adding a
+ * refused person is refused once per connection, and a second refusal inside one connection is a
+ * stage it did not clear - a wedge.
+ *
+ * @param {number[]} rejectAt
+ * @param {number[]} openedAt
+ * @returns {number[]} the count before the first opening, then in each connection, in order
+ */
+export function perConnection(rejectAt, openedAt) {
+  const cuts = [...openedAt].sort((a, b) => a - b);
+  const counts = Array.from({ length: cuts.length + 1 }, () => 0);
+  for (const t of rejectAt) {
+    let i = 0;
+    while (i < cuts.length && t > cuts[i]) i++;
+    counts[i]++;
+  }
+  return counts;
+}
+
+/**
+ * The instant docker received a line (`srvLines(..., {timestamps: true})`), in ms, or null. Docker's
+ * clock is the one both services' lines share, in UTC and sub-second; Nest's own stamp is neither.
+ */
+export function dockerInstant(line) {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z\s/.exec(String(line));
+  if (!m) return null;
+  return Date.parse(`${m[1]}${(m[2] ?? '.000').slice(0, 4).padEnd(4, '0')}Z`);
+}
+
+/** The instants the gateway opened a connection for `user`'s `device`, read from docker-stamped lines. */
+export function connectionOpens(gatewayLines, user, device) {
+  const out = [];
+  for (const l of gatewayLines ?? []) {
+    const m = /New WebSocket connection: User=([^,\s]+), Device=([^,\s]+)/.exec(l);
+    const at = dockerInstant(l);
+    if (m && at !== null && m[1].toLowerCase() === String(user).toLowerCase() && m[2] === device) out.push(at);
+  }
+  return out;
+}
+
+/**
+ * The instants of the commits `device` had refused WHOLE in `group`, by either path, read from
+ * docker-stamped lines: one per trace, the device read from the trace's own `START` line. By DEVICE,
+ * so another device of the same user (W1 beside A1) is never counted as this one.
+ */
+export function deviceRefusals(lines, group, device) {
+  const starts = commitStarts(lines, group);
+  const seen = new Map();
+  for (const l of lines ?? []) {
+    const m = /\[COMMIT\]\[(commit-[0-9a-f]+)\] REJECT (?:admit_refused|committer_not_on_roster|welcome_target_not_admitted) group=(\S+) /.exec(l);
+    if (m && m[2] === group && starts.get(m[1])?.device === device && !seen.has(m[1])) seen.set(m[1], dockerInstant(l));
+  }
+  return [...seen.values()];
+}
+
+/**
+ * ADM-10's second door: the member-add route's enrolments of `user` in `group`. The joiner is never
+ * admitted in ADM-10, so any one of them since the row began is the defect. The count is read from
+ * the row's start, never from the rig's clock at the Decline, which may disagree with the server's.
+ */
+export function routeEnrolments(lines, group, user) {
+  const full = String(user).toLowerCase();
+  return (lines ?? []).filter((l) => {
+    const m = /\[ADD_MEMBER\]\[add-member-[0-9a-f]+\] DONE group=(\S+) user=(\S+)/.exec(l);
+    return m !== null && m[1] === group && m[2].toLowerCase() === full;
+  }).length;
+}
+
+/**
+ * Every member route ADM-4 calls from the waiting seat's page (plan: roster, members, enrol someone,
+ * mint a link, vouch, history, exclusions, call initiate/ring - and the base, which ADM-1 also reads).
+ *
+ * @param {string} g the group
+ * @param {{enrolUser: string, vouchUser: string, vouchDevice: string}} others someone the seat may try to admit
+ */
+export function memberRoutes(g, { enrolUser, vouchUser, vouchDevice }) {
+  return [
+    { what: 'roster', method: 'GET', path: `/api/mls/groups/${g}/user-members` },
+    { what: 'members', method: 'GET', path: `/api/mls/groups/${g}/members` },
+    { what: 'enrol someone', method: 'POST', path: `/api/mls/groups/${g}/members`, body: { userId: enrolUser } },
+    { what: 'mint a link', method: 'POST', path: `/api/mls/groups/${g}/invites`, body: {} },
+    { what: 'vouch', method: 'POST', path: '/api/mls/invitations/status', body: { groupId: g, userId: vouchUser, deviceId: vouchDevice, status: 'active' } },
+    { what: 'history', method: 'GET', path: `/api/mls/history/${g}` },
+    { what: 'exclusions', method: 'GET', path: `/api/mls/groups/${g}/exclusions` },
+    { what: 'the base', method: 'GET', path: `/api/mls/group-info/${g}` },
+    { what: 'call initiate', method: 'POST', path: '/api/calls/initiate', body: { groupId: g } },
+    { what: 'call ring', method: 'POST', path: '/api/calls/ring', body: { groupId: g, callId: 'adm4-probe' } },
+  ];
+}
+
+/** The `repeat=N` of every `[GROUP_INFO] ... base withheld` line about `groupId`. */
+export function baseWithheldRepeats(lines, groupId) {
+  return lines
+    .filter((l) => l.includes('[GROUP_INFO]') && l.includes(`group=${groupId}`) && l.includes('base withheld'))
+    .map((l) => Number(/repeat=(\d+)/.exec(l)?.[1] ?? NaN));
+}
+
+/** 1, 10, 100, ... - the only repeats a rate-limited line may carry. */
+export const isPowerOfTen = (n) => Number.isInteger(n) && n >= 1 && /^10*$/.test(String(n));
+
+const ms = (v) => (v === null || v === undefined ? 'never' : `${v} ms`);
+
+/** The joiner's seat in the server's view: on the roster and waiting, admitted, or absent. */
+export function seatState(view, user) {
+  const lower = String(user).toLowerCase();
+  const row = (view.roster ?? []).find((r) => String(r.userId).toLowerCase() === lower);
+  const active = (view.seats ?? []).filter((s) => String(s.userId).toLowerCase() === lower && s.status === 'active' && !s.kicked).length;
+  if (!row) return { state: 'absent', active };
+  return { state: row.awaitingAdmission ? 'waiting' : 'admitted', active };
+}
+
+/** ADM-1 (and ADM-5's admission half): waiting, refused the base, asked everywhere, admitted, the ask gone. */
+export function admittedOwn({ waitingText, base, waitingSeat, asks, admitted, listed, gone }) {
+  return [
+    { what: `the joiner reads the waiting text (${waitingText ? 'shown' : 'NOT shown'})`, ok: waitingText === true },
+    { what: `the base answers 409 awaiting_admission to the waiting seat (${base?.status ?? 'no answer'})`, ok: isAwaitingRefusal(base) },
+    { what: `the server holds the seat as waiting (${waitingSeat})`, ok: waitingSeat === 'waiting' },
+    ...Object.entries(asks).map(([d, v]) => ({ what: `${d} shows the ask (${ms(v)})`, ok: v !== null })),
+    { what: `one member's Add admitted the joiner (${admitted.state}, ${admitted.active} active seat(s))`, ok: admitted.state === 'admitted' && admitted.active > 0 },
+    { what: `the joiner lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
+    ...Object.entries(gone).map(([d, v]) => ({ what: `the ask left ${d}'s screen (${ms(v)})`, ok: v !== null })),
+  ];
+}
+
+/** ADM-2: withdrawn, and nothing more than withdrawn. */
+export function declinedOwn({ asks, after, excluded, listed, shown }) {
+  return [
+    ...Object.entries(asks).map(([d, v]) => ({ what: `${d} shows the ask (${ms(v)})`, ok: v !== null })),
+    { what: `the roster row is gone (${after.state})`, ok: after.state === 'absent' },
+    { what: `no device seat is left (${after.active})`, ok: after.active === 0 },
+    { what: `no exclusion was written for the joiner (${excluded ? 'EXCLUDED' : 'none'})`, ok: !excluded },
+    { what: `the joiner never lists the conversation (${listed ? 'LISTED' : 'not listed'})`, ok: !listed },
+    { what: `the joiner never reads a message sent after the Decline (${shown})`, ok: shown === 0 },
+  ];
+}
+
+/**
+ * ADM-3: one answer won and the two sides agree; an admitted person is never stripped. `listedTrail`
+ * is the joiner's "lists the conversation" sampled across the settling window, and `stateTrail` the
+ * server's seat state (`seatState`) at the same samples.
+ *
+ * STRIPPED IS JUDGED ON THE SERVER'S STATE, NEVER ON THE JOINER'S LISTING: a waiting joiner lists the
+ * conversation too - its placeholder (`[DISCOVERY] ... awaits a member admission`) - and a Decline
+ * removes that placeholder, which is the Decline winning, not a member taken away (alpha.5 ADM-3 read
+ * `L-----` on exactly that). A sample `admitted` on the server followed by one that is not is a
+ * person admitted and then taken away. The listing still decides whether the two sides agree at the end.
+ */
+export function raceOwn({ outcomes, after, listedTrail, stateTrail = [], refusal = null }) {
+  const stripped = stateTrail.some((s, i) => s === 'admitted' && stateTrail.slice(i + 1).some((t) => t !== 'admitted'));
+  const listedAtEnd = listedTrail.at(-1) === true;
+  const consistent = after.state === 'admitted' ? after.active > 0 && listedAtEnd : after.state === 'absent' ? after.active === 0 && !listedAtEnd : false;
+  return [
+    { what: `both answers were given (${Object.entries(outcomes).map(([d, o]) => `${d} ${o.ok ? 'ok' : o.error}`).join('; ')})`, ok: Object.keys(outcomes).length === 2 },
+    { what: `one side won and the server and the joiner agree (${after.state}, ${after.active} seat(s), ${listedAtEnd ? 'listed' : 'not listed'})`, ok: consistent },
+    { what: `an admitted person was never stripped (listed ${listedTrail.map((v) => (v ? 'L' : '-')).join('')}, server ${stateTrail.map((s) => String(s)[0]).join('')})`, ok: !stripped },
+    // WHEN THE DECLINE WON, the Add was refused whole and nothing let the person back in undated. An
+    // Add that WON may be dated by its base epoch alone (it raced nothing that settled before it).
+    ...(after.state === 'absent' && refusal
+      ? [...refusedWholeOwn({ ...refusal, after }), { what: `no Add after the Decline admitted the joiner undated (${refusal.undated} base_epoch line(s))`, ok: refusal.undated === 0 }]
+      : []),
+  ];
+}
+
+/**
+ * A commit REFUSED WHOLE (#2505): the gate named the person, the commit was refused by one of its two
+ * lines (`admit_refused`, or `welcome_target_not_admitted` when the Add carried the person's Welcome
+ * inline - that one fires first and the other never does), and nothing advanced (`advancedFor`: no
+ * accept of the refused trace, nor of another trace from its base naming the person).
+ *
+ * The queued-Welcome count is read once, at the row's end: weak evidence (a row delivered and deleted
+ * in between would read 0), kept as a cross-check; the log lines carry the verdict. "In no tree" is
+ * read through the SERVER's proxy (no roster row, no active seat): no client exposes its ratchet tree
+ * to the rig, and a commit that advanced nothing put nobody in one.
+ */
+export function refusedWholeOwn({ gateRefused, admitRefused, welcomeRefused = 0, advanced, welcomes, after }) {
+  return [
+    { what: `the commit gate named the person (${gateRefused} NOT_ENROLLED line(s))`, ok: gateRefused > 0 },
+    { what: `the commit was refused whole (${admitRefused} REJECT admit_refused, ${welcomeRefused} REJECT welcome_target_not_admitted)`, ok: admitRefused + welcomeRefused > 0 },
+    { what: `the refused commit advanced nothing (${advanced} ACCEPT of it or of its base naming the person)`, ok: advanced === 0 },
+    { what: `no Welcome is queued for the person at the end (${welcomes}; a cross-check, the lines carry the verdict)`, ok: welcomes === 0 },
+    { what: `the person is in no tree - server proxy: no roster row, no active seat (${after.state}, ${after.active})`, ok: after.state === 'absent' && after.active === 0 },
+  ];
+}
+
+/**
+ * ADM-9: declined, then invited again by a NEW link, waiting again, admitted. A Decline that also
+ * refused the second invitation would be a ban nobody decided.
+ */
+export function reinviteOwn({ declined, rewaiting, asks, admitted, listed }) {
+  return [
+    { what: `the first ask was declined (${declined.state}, ${declined.active} seat(s))`, ok: declined.state === 'absent' && declined.active === 0 },
+    { what: `the new link left the joiner waiting again (${rewaiting})`, ok: rewaiting === 'waiting' },
+    ...Object.entries(asks).map(([d, v]) => ({ what: `${d} shows the second ask (${ms(v)})`, ok: v !== null })),
+    { what: `the Add built after the Decline admitted the joiner (${admitted.state}, ${admitted.active} active seat(s))`, ok: admitted.state === 'admitted' && admitted.active > 0 },
+    { what: `the joiner lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
+  ];
+}
+
+/**
+ * ADM-10: an Add built before a Decline and landing after it. `trail` is the joiner's server state
+ * sampled from the release on; one `admitted` sample is a person let in against a settled Decline.
+ * `gateRefused` counts the commit gate's `NOT_ENROLLED` lines about the joiner in this group, and
+ * `routeEnrolled` the member-add route's `DONE` lines about the joiner after the Decline - the two
+ * doors the alpha.4 run proved distinct.
+ */
+export function staleAddOwn({ held, declined, trail, after, listed, gateRefused, admitRefused, welcomeRefused, advanced, welcomes, undated, routeEnrolled }) {
+  return [
+    { what: `the Add's commit was held before the Decline (${held.ok ? 'held' : held.error})`, ok: held.ok === true },
+    { what: `the Decline settled first (${declined.state})`, ok: declined.state === 'absent' },
+    ...refusedWholeOwn({ gateRefused, admitRefused, welcomeRefused, advanced, welcomes, after }),
+    { what: `no Add admitted the joiner undated (${undated} base_epoch line(s))`, ok: undated === 0 },
+    { what: `the member-add route enrolled nobody after the Decline (${routeEnrolled} DONE line(s))`, ok: routeEnrolled === 0 },
+    { what: `the joiner was never admitted after the release (${trail.map((s) => s[0]).join('')})`, ok: !trail.includes('admitted') },
+    { what: `the joiner never lists the conversation (${listed ? 'LISTED' : 'not listed'})`, ok: !listed },
+  ];
+}
+
+/** ADM-4: every member route refused the waiting seat; nothing it did admitted anyone. */
+export function probeOwn({ answers, after, enrolled }) {
+  return [
+    ...answers.map((a) => ({ what: `${a.what}: ${a.method} answered ${a.status ?? a.threw ?? 'nothing'}`, ok: isAwaitingRefusal(a) })),
+    { what: `the seat still waits (${after.state})`, ok: after.state === 'waiting' },
+    { what: `the person it tried to enrol is not on the roster (${enrolled})`, ok: enrolled === 'absent' },
+  ];
+}
+
+/** The old-client premise: the seat runs the build of `OLD_REF`. */
+export function oldBuildOwn({ device, build, oldCommit }) {
+  const ok = !!build?.commit && !!oldCommit && oldCommit.startsWith(build.commit);
+  return [{ what: `${device} runs the ${OLD_REF} build (${build?.commit ?? 'unreadable'} vs ${oldCommit ? oldCommit.slice(0, 12) : 'no tag'})`, ok }];
+}
+
+/** ADM-5's server half: the base-withheld line was said at 1, 10, 100... and never per retry. */
+export function rateLimitedOwn(repeats) {
+  return [
+    { what: `the old joiner met the withheld base (${repeats.length} line(s))`, ok: repeats.length > 0 },
+    { what: `every base-withheld line is rate-limited (repeats ${repeats.join(',') || 'none'})`, ok: repeats.every(isPowerOfTen) },
+  ];
+}
+
+/**
+ * ADM-6: admitted, by whichever device, and no [ADMISSION] ERROR. When the v1.4.0 shim admitted, its
+ * Add names no invitation generation, so the lift is `ADMITTED_UNDATED` (`shimUndated`) - the line
+ * the row's srvlog rule expects, asserted rather than only forgiven.
+ *
+ * `refusalsPerConnection` is the old member's refused commits per connection (`perConnection`). This
+ * row declines nobody, so it provokes no refusal: with none, the check is NOT made (an empty count
+ * would pass vacuously) and the row says so; only a refusal that happened is judged, at most one per
+ * connection.
+ */
+export function oldMemberOwn({ admitted, listed, admissionErrors, addedBy, shim = false, shimUndated = 0, refusalsPerConnection = [] }) {
+  const refusals = refusalsPerConnection.reduce((a, n) => a + n, 0);
+  return [
+    { what: `the joiner was admitted (${admitted.state}, ${admitted.active} seat(s)) by ${addedBy}`, ok: admitted.state === 'admitted' && admitted.active > 0 },
+    { what: `the joiner lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
+    { what: `no [ADMISSION] ERROR on the server (${admissionErrors})`, ok: admissionErrors === 0 },
+    ...(shim ? [{ what: `the shim's undated Add lifted the ask as ADMITTED_UNDATED (${shimUndated} line(s))`, ok: shimUndated > 0 }] : []),
+    ...(refusals > 0 ? [{ what: `the old member was refused at most once per connection (${refusalsPerConnection.join(',')})`, ok: refusalsPerConnection.every((n) => n <= 1) }] : []),
+  ];
+}
+
+/** ADM-7: the outsider's base refused, and nothing reported as an entry nobody made. */
+export function outsiderOwn({ base, uninvited, notices, after }) {
+  return [
+    { what: `the base is refused to a non-member (${base?.status ?? base?.threw ?? 'no answer'})`, ok: [403, 404, 409].includes(base?.status) },
+    { what: `no [UNINVITED_ENTRY] line (${uninvited})`, ok: uninvited === 0 },
+    { what: `no "joined without a member" notice on any member (${notices})`, ok: notices === 0 },
+    { what: `the outsider is not on the roster (${after.state})`, ok: after.state === 'absent' },
+  ];
+}
+
+/** ADM-8: per kind, no link was usable, or using it raised no ask and no waiting seat. */
+export function noAskOwn(kinds) {
+  const out = [];
+  for (const k of kinds) {
+    if (k.missing) {
+      out.push({ what: `${k.kind}: ${k.missing}`, ok: false });
+      continue;
+    }
+    const refusedAt = k.mint?.status >= 400 ? 'the mint' : k.accept?.status >= 400 ? 'the accept' : null;
+    out.push({ what: `${k.kind}: the link is refused at ${refusedAt ?? 'NEITHER'} (mint ${k.mint?.status ?? '-'}, accept ${k.accept?.status ?? '-'})`, ok: refusedAt !== null });
+    out.push({ what: `${k.kind}: no ask was raised (${k.askLines} line(s))`, ok: k.askLines === 0 });
+    out.push({ what: `${k.kind}: no waiting seat was written (${k.after.state})`, ok: k.after.state !== 'waiting' });
+  }
+  return out;
+}

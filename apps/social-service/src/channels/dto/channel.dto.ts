@@ -96,6 +96,12 @@ export interface UpdateChannelAccessDto {
   isPrivate: boolean;
   allowedUserIds: string[];
   writePolicy?: ChannelWritePolicy;
+  /**
+   * The `accessRevision` the caller's list was read at (the access read and every successful rewrite
+   * answer it). A stale one is refused `409 CHANNEL_ACCESS_CHANGED`; absent is a client older than the
+   * revision, whose list may grant but never drop (docs/wiki/legacy-compatibility.md).
+   */
+  baseAccessRevision?: number;
 }
 
 /** Body of the update-workspace-member-role endpoint (the actor is taken from the auth header). */

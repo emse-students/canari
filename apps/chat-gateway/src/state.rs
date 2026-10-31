@@ -21,18 +21,21 @@ pub struct AppState {
     /// Allows `ConnectionGuard::drop` to remove exactly one entry from `connected_users`
     /// without risking a race on `is_closed()`.
     pub next_conn_id: AtomicU64,
-    /// Per connection (`conn_id`): whether its socket declared
-    /// [`crate::addressing::ADDRESSED_HISTORY_CAPABILITY`]. Read by the pub/sub loop's edge filter
-    /// ([`crate::addressing::addressed_recipients`]); the cross-process fact is the sessions hash.
-    pub session_caps: Arc<Mutex<HashMap<u64, bool>>>,
+    /// Per connection (`conn_id`): what its socket declared ([`crate::addressing::SessionCaps`]).
+    /// Read by the pub/sub loop's edge filter ([`crate::addressing::deliverable_sessions`]); the
+    /// cross-process fact is the sessions hash.
+    pub session_caps: Arc<Mutex<HashMap<u64, crate::addressing::SessionCaps>>>,
     /// This process's identity in the shared sessions hash, so two gateway processes - which both
     /// number their connections from 0 - never write the same session field.
     pub instance_id: String,
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
     /// Who may see whose presence: asked of chat-delivery and social-service on every
-    /// `GET /api/presence` (WP-PRESENCE).
+    /// `POST /api/presence` and its legacy `GET` (WP-PRESENCE).
     pub presence_audience: PresenceAudience,
+    /// How many legacy `GET /api/presence` calls this process still serves, reported once per
+    /// window - the measurement that decides the route's removal.
+    pub legacy_presence_gets: crate::presence::LegacyGetTally,
 }
 
 impl AppState {
@@ -51,6 +54,7 @@ impl AppState {
             instance_id: uuid::Uuid::new_v4().to_string(),
             jwt_secret,
             presence_audience,
+            legacy_presence_gets: crate::presence::LegacyGetTally::new(std::time::Instant::now()),
         }
     }
 
@@ -80,11 +84,8 @@ impl AppState {
     }
 
     /// Record what the socket `conn_id` declared on upgrade (`caps=`).
-    pub fn note_session_caps(&self, conn_id: u64, addressed_history: bool) {
-        self.session_caps
-            .lock()
-            .unwrap()
-            .insert(conn_id, addressed_history);
+    pub fn note_session_caps(&self, conn_id: u64, declared: crate::addressing::SessionCaps) {
+        self.session_caps.lock().unwrap().insert(conn_id, declared);
     }
 }
 

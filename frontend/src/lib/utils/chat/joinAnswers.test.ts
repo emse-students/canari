@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A MEMBER'S ANSWER TO A JOIN ASK, AND THE INVITATION LINK END TO END.
  *
@@ -22,7 +23,13 @@ import { handleWelcomeRequest } from './actions';
 import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
 import {
+  memberDeviceAnswer,
+  setMemberDeviceSweep,
+  undoMemberDeviceDecline,
+} from './memberDeviceAnswers';
+import {
   answerJoinRequest,
+  isOwnDeviceAsk,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -73,7 +80,12 @@ function linkSeat(): FakeSeat {
 
 /** The member's side: a tree that holds `leaves`, and an Add that puts the joiner in it. */
 function memberSide(
-  opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[]; seat?: FakeSeat } = {}
+  opts: {
+    addOutcome?: BulkAdditionOutcome;
+    leaves?: string[];
+    seat?: FakeSeat;
+    collectorFails?: boolean;
+  } = {}
 ) {
   const seat = opts.seat ?? linkSeat();
   const leaves = [...(opts.leaves ?? ['me:self', 'peer:p1'])];
@@ -88,6 +100,14 @@ function memberSide(
       .fn()
       .mockResolvedValue([{ deviceId: JOINER_DEVICE, keyPackage: new Uint8Array([7]) }]),
     getGroupMemberIdentities: vi.fn(async () => [...leaves]),
+    // The seat as the roster read at a generation answers it.
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [
+        { userId: 'me' },
+        ...(seat.exists ? [{ userId: JOINER, awaitingAdmission: seat.awaitingAdmission }] : []),
+      ],
+      seatGeneration: 1,
+    })),
     // The server's guarded withdrawal: only a seat that still awaits a member.
     declineJoinRequest: vi.fn(async () => {
       if (!seat.exists) return 'gone' as const;
@@ -109,13 +129,21 @@ function memberSide(
     }
     return outcome;
   });
+  // The stray collector: takes out the joiner's leaves, as it does for a leaf under no admitted seat.
+  const collectStrayLeaves = vi.fn(async () => {
+    if (opts.collectorFails) return false;
+    const before = leaves.length;
+    leaves.splice(0, leaves.length, ...leaves.filter((l) => !l.startsWith(`${JOINER}:`)));
+    return leaves.length < before;
+  });
   const deps: JoinAnswerDeps = {
     mlsService: mlsService as unknown as JoinAnswerDeps['mlsService'],
     conversations: conversations(),
     invite,
+    collectStrayLeaves,
     log: vi.fn(),
   };
-  return { mlsService, invite, deps, leaves, seat };
+  return { mlsService, invite, deps, leaves, seat, collectStrayLeaves };
 }
 
 /**
@@ -149,6 +177,8 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
     isDistributionGroup: vi.fn().mockReturnValue(false),
     noteDistributionGroup: vi.fn(),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    // A seat whose Welcome is queued pulls this device's own mailbox rather than asking a member.
+    fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     forgetGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue(JOINER_DEVICE),
@@ -168,6 +198,10 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
             },
           ]
         : []
+    ),
+    // The account's list names the group while the seat exists, as `GET mls/users/:id/groups` does.
+    getUserGroups: vi.fn(async () =>
+      member.seat.exists ? [{ groupId: GROUP, name: 'Club', isGroup: true }] : []
     ),
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
   };
@@ -214,7 +248,18 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
     const m = memberSide();
 
     expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
-    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP));
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), undefined);
+  });
+
+  it('answers AS the ask it was tapped on: the Add carries its identity', async () => {
+    // So the Add stops before its stage if a Decline settled that ask first (`rosterPremise`).
+    const m = memberSide();
+
+    expect(await admitJoinRequest({ ...request, askId: 'ask-1' }, m.deps)).toEqual({ done: true });
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), {
+      userId: JOINER,
+      askId: 'ask-1',
+    });
   });
 
   it('is not done when the Add did not happen, and names why', async () => {
@@ -233,10 +278,35 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
   });
 
   it('adds nobody when another member already did', async () => {
-    const m = memberSide({ leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`] });
+    const m = memberSide({
+      leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`],
+      seat: { ...linkSeat(), awaitingAdmission: false },
+    });
 
     expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
     expect(m.invite).not.toHaveBeenCalled();
+    expect(m.collectStrayLeaves).not.toHaveBeenCalled();
+  });
+
+  it('a leaf is not an admission: under a seat still awaiting, it is removed and the member Adds', async () => {
+    const m = memberSide({ leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`] });
+
+    expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(m.collectStrayLeaves).toHaveBeenCalledExactlyOnceWith(GROUP);
+    expect(m.invite).toHaveBeenCalledOnce();
+    // The member's own Add lifted the seat, not the leaf it found.
+    expect(m.seat.awaitingAdmission).toBe(false);
+  });
+
+  it('is not done while a leaf under a seat still awaiting could not be removed', async () => {
+    const m = memberSide({
+      leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`],
+      collectorFails: true,
+    });
+
+    expect((await admitJoinRequest(request, m.deps)).done).toBe(false);
+    expect(m.invite).not.toHaveBeenCalled();
+    expect(m.seat.awaitingAdmission).toBe(true);
   });
 
   it('answers nothing about a 1:1 conversation', async () => {
@@ -291,6 +361,152 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
   });
 });
 
+/**
+ * AN UNSEEN DEVICE OF A MEMBER (`kind: 'device'`): the answer is about ONE DEVICE under ONE KEY. Add
+ * records the member's approval bound to the key fingerprint the entry showed and starts the sweep
+ * that adds it; Decline records the refusal in this conversation. Neither touches the person's seat -
+ * they are a member, their other devices stay.
+ */
+describe('a device ask - answered for the device, never for the seat', () => {
+  const deviceAsk: JoinRequest = {
+    groupId: GROUP,
+    userId: 'peer',
+    deviceIds: ['never-seen'],
+    kind: 'device',
+    keyFingerprint: 'a1b2c3d4e5f60718',
+  };
+  afterEach(() => setMemberDeviceSweep(null));
+
+  it('Add records the approval under the shown key and starts the sweep; no invite, no seat touched', async () => {
+    const m = memberSide();
+    const sweep = vi.fn().mockResolvedValue(undefined);
+    setMemberDeviceSweep(sweep);
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toEqual({
+      kind: 'approved',
+      fingerprint: 'a1b2c3d4e5f60718',
+    });
+    expect(sweep).toHaveBeenCalledOnce();
+    expect(m.invite).not.toHaveBeenCalled();
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+  });
+
+  it('the Add resolves on the tap - it never waits for the sweep it started', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(() => new Promise<void>(() => {}));
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+  });
+
+  it('an entry with no key, or naming two devices, approves nothing', async () => {
+    const m = memberSide();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { keyFingerprint: _unused, ...keyless } = deviceAsk;
+    expect((await admitJoinRequest(keyless, m.deps)).done).toBe(false);
+    expect(
+      (await admitJoinRequest({ ...deviceAsk, deviceIds: ['never-seen', 'other'] }, m.deps)).done
+    ).toBe(false);
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toBeNull();
+    expect(memberDeviceAnswer(GROUP, 'peer', 'other')).toBeNull();
+    error.mockRestore();
+  });
+
+  it('Add in a 1:1 conversation is answered too - the device of a DM peer', async () => {
+    const m = memberSide();
+    m.deps.conversations = conversations('direct');
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    expect(await admitJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+  });
+
+  it('Decline is per conversation, asks the server for nothing, and can be undone', async () => {
+    const m = memberSide();
+    const sweep = vi.fn().mockResolvedValue(undefined);
+    setMemberDeviceSweep(sweep);
+
+    expect(await declineJoinRequest(deviceAsk, m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toEqual({ kind: 'declined' });
+    expect(memberDeviceAnswer('other-group', 'peer', 'never-seen')).toBeNull();
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+    expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
+
+    undoMemberDeviceDecline(GROUP, 'peer', 'never-seen');
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')).toBeNull();
+    expect(sweep).toHaveBeenCalledOnce();
+  });
+
+  it('an Add in one conversation never lifts a Decline given in another', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+
+    await declineJoinRequest({ ...deviceAsk, groupId: 'other-group' }, m.deps);
+    await admitJoinRequest(deviceAsk, m.deps);
+
+    expect(memberDeviceAnswer('other-group', 'peer', 'never-seen')).toEqual({ kind: 'declined' });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'never-seen')?.kind).toBe('approved');
+  });
+
+  it('is its own entry beside an ask of the same person, and tells the own account apart', () => {
+    raiseJoinRequest({ groupId: GROUP, requesterUserId: 'peer', requesterDeviceId: 'p-1' });
+    raiseJoinRequest({
+      groupId: GROUP,
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device',
+      keyFingerprint: 'a1b2c3d4e5f60718',
+    });
+
+    const asks = pendingJoinRequests();
+    expect(asks).toHaveLength(2);
+    const device = asks.find((a) => a.kind === 'device');
+    expect(device?.deviceIds).toEqual(['never-seen']);
+    expect(isOwnDeviceAsk(device!, 'Peer')).toBe(true);
+    expect(isOwnDeviceAsk(device!, 'me')).toBe(false);
+  });
+
+  it('two unseen devices of one member are TWO entries, and one tap approves one', async () => {
+    const m = memberSide();
+    setMemberDeviceSweep(vi.fn().mockResolvedValue(undefined));
+    for (const [deviceId, keyFingerprint] of [
+      ['phone-new', '1111111111111111'],
+      ['laptop-new', '2222222222222222'],
+    ]) {
+      raiseJoinRequest({
+        groupId: GROUP,
+        requesterUserId: 'peer',
+        requesterDeviceId: deviceId,
+        kind: 'device',
+        keyFingerprint,
+        deviceLabel: deviceId,
+      });
+    }
+
+    const asks = pendingJoinRequests().filter((a) => a.kind === 'device');
+    expect(asks.map((a) => a.deviceIds)).toEqual([['phone-new'], ['laptop-new']]);
+    expect(asks.map((a) => a.keyFingerprint)).toEqual(['1111111111111111', '2222222222222222']);
+
+    expect(await admitJoinRequest(asks[0], m.deps)).toEqual({ done: true });
+    expect(memberDeviceAnswer(GROUP, 'peer', 'phone-new')?.kind).toBe('approved');
+    expect(memberDeviceAnswer(GROUP, 'peer', 'laptop-new')).toBeNull();
+  });
+
+  it('the same device showing another key replaces its entry - the member answers the key now shown', () => {
+    const ask = {
+      groupId: GROUP,
+      requesterUserId: 'peer',
+      requesterDeviceId: 'never-seen',
+      kind: 'device' as const,
+    };
+    raiseJoinRequest({ ...ask, keyFingerprint: '1111111111111111' });
+    raiseJoinRequest({ ...ask, keyFingerprint: '9999999999999999' });
+
+    const asks = pendingJoinRequests().filter((a) => a.kind === 'device');
+    expect(asks).toHaveLength(1);
+    expect(asks[0].keyFingerprint).toBe('9999999999999999');
+  });
+});
+
 describe('a join by invitation link, end to end', () => {
   function register(m: ReturnType<typeof memberSide>) {
     setJoinRequestHandlers({
@@ -335,8 +551,12 @@ describe('a join by invitation link, end to end', () => {
 
     // The Add stored a Welcome: the seat is owed, no longer awaiting - the joiner waits for it.
     resetReAddCooldowns();
+    joiner.mlsService.sendWelcomeRequest.mockClear();
     await requestReAdd(GROUP, joiner.deps);
     expect(joiner.mlsService.externalJoin).not.toHaveBeenCalled();
+    // Waits by pulling its own mailbox, where the Welcome is - and asks no member again.
+    expect(joiner.mlsService.fetchPendingMessages).toHaveBeenCalled();
+    expect(joiner.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
 
     // The Welcome processed, the device reports itself active: in the tree, nothing left to join.
     m.seat.status = 'active';
@@ -356,15 +576,22 @@ describe('a join by invitation link, end to end', () => {
     expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
     expect(m.invite).not.toHaveBeenCalled();
     expect(pendingJoinRequests()).toEqual([]);
-    // No seat any more: the server refuses the base as to a non-member (403), the joiner retires
-    // the conversation and asks nobody - no ask raised again on every cadence.
+    // No seat any more, and the joiner READS it rather than learning it from a refusal (ADM-2,
+    // 2026-10-25): its never-admitted row goes, no external join is tried, nobody is asked again,
+    // and no `removed` conversation is left listed.
     resetReAddCooldowns();
     joiner.mlsService.sendWelcomeRequest.mockClear();
     joiner.mlsService.externalJoin = vi.fn().mockRejectedValue(new NotAGroupMemberError(GROUP));
-    joiner.deps.conversations.set(GROUP, { id: GROUP, name: 'Club', lifecycle: 'active' });
+    joiner.deps.conversations.set(GROUP, {
+      id: GROUP,
+      name: 'Club',
+      lifecycle: 'pending',
+      awaitingAdmission: true,
+    });
     await requestReAdd(GROUP, joiner.deps);
     expect(joiner.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    expect(joiner.deps.conversations.get(GROUP)?.lifecycle).toBe('removed');
+    expect(joiner.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(joiner.deps.conversations.has(GROUP)).toBe(false);
     expect(pendingJoinRequests()).toEqual([]);
   });
 

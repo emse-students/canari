@@ -36,7 +36,7 @@ export const APP_TAB = new URL(SITE).host;
 
 /** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
 export const APP_HOST = new URL(SITE).hostname;
-import { OVERLAYS } from './overlay-probe.mjs';
+import { IS_BACKDROP_FN, OVERLAYS } from './overlay-probe.mjs';
 import { serial } from './serial.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
@@ -219,6 +219,15 @@ const PANE_TEXT = `(function () {
   var draft = c ? (c.innerText || '').trim() : '';
   return draft ? text.split(draft).join('') : text;
 })()`;
+
+/**
+ * How many times `text` appears in the OPEN conversation's pane - never the whole page, whose
+ * sidebar previews repeat any line written in several conversations. DEV-1 counted the body and read
+ * a contact's new-device line eight times on W2: once per conversation W2 shares with the owner, each
+ * one correct (2026-10-25).
+ */
+export const paneOccurrences = (cx, text) =>
+  evaluate(cx, `${PANE_TEXT}.split(${JSON.stringify(text)}).length - 1`).then(Number);
 
 /**
  * Connect to a client by port, optionally picking the tab whose URL contains `match`.
@@ -797,18 +806,34 @@ export async function clearOverlays(cx) {
       // Tag then click the tagged element, so the click addresses exactly what the predicate chose -
       // the same rule `openConversation` learnt the hard way. The tag is always removed: a stray one
       // would be picked up by the next call, which is how a harness fix becomes a harness fault.
-      const tagged = await evaluate(
-        cx,
-        `(function () {
-          var area = window.innerWidth * window.innerHeight;
-          var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
-            var r = e.getBoundingClientRect();
-            return r.width * r.height >= 0.8 * area;
-          })[0];
-          if (b) b.setAttribute('${TAG}', '1');
-          return b ? 'tagged' : 'gone';
-        })()`,
+      //
+      // CLICKED AT A POINT IT OWNS, NOT AT ITS CENTRE. A SidePanel scrim sits UNDER its own drawer, and
+      // on a ~958 px seat the drawer covers the scrim's centre - so a centre click either refused
+      // ('not on top at own centre') or landed inside the panel and closed nothing. The point is the
+      // first on a coarse grid where the hit-test returns the backdrop itself.
+      const target = JSON.parse(
+        await evaluate(
+          cx,
+          `JSON.stringify((function () {
+            var isBackdrop = ${IS_BACKDROP_FN};
+            var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
+              var r = e.getBoundingClientRect();
+              return r.width > 0 && r.height > 0 && isBackdrop(e, r);
+            })[0];
+            if (!b) return { state: 'gone' };
+            b.setAttribute('${TAG}', '1');
+            var r = b.getBoundingClientRect();
+            for (var fy = 0.1; fy < 1; fy += 0.2) {
+              for (var fx = 0.05; fx < 1; fx += 0.15) {
+                var x = r.left + r.width * fx, y = r.top + r.height * fy;
+                if (document.elementFromPoint(x, y) === b) return { state: 'tagged', x: x, y: y };
+              }
+            }
+            return { state: 'tagged' };
+          })())`,
+        ),
       );
+      const tagged = target.state;
       // GONE BETWEEN THE READ AND THE TAG IS PROGRESS, NOT A TARGET. The probe counts a backdrop
       // still fading out (its opacity is animating), so the one a confirmation just dismissed can be
       // read here and be gone a frame later - and a click aimed at no element threw `no stable
@@ -820,7 +845,8 @@ export async function clearOverlays(cx) {
       // element still there - never from the click's message; one still standing re-throws.
       try {
         if (tagged === 'tagged') {
-          await realClick(cx, `[${TAG}]`).catch(async (e) => {
+          const click = target.x === undefined ? realClick(cx, `[${TAG}]`) : clickAtPoint(cx, target.x, target.y);
+          await click.catch(async (e) => {
             const still = await evaluate(cx, `document.querySelector('[${TAG}]') ? 'present' : 'gone'`);
             if (still !== 'gone') throw e;
           });
@@ -2472,11 +2498,12 @@ export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realC
  * app's next refresh picks up the new value like any other.
  *
  * @param method the verb; a body is sent as JSON and omitted entirely when there is none
+ * @param apiBase the API origin, when it is not the page's own (a phone - see {@link apiAt})
  * @returns `{ status, body }` - `status` null ONLY on a transport failure, which is not an answer
  *   either and is reported as itself rather than folded into a status.
  */
-async function apiCall(cx, method, path, body) {
-  const base = await origin(cx);
+async function apiCall(cx, method, path, body, apiBase = null) {
+  const base = apiBase ?? (await origin(cx));
   const raw = await evaluate(
     cx,
     `(async function () {
@@ -2517,6 +2544,16 @@ export async function apiGet(cx, path) {
  */
 export async function apiPost(cx, path, body) {
   return apiCall(cx, 'POST', path, body ?? {});
+}
+
+/**
+ * {@link apiCall} against an explicit API origin. A PHONE'S PAGE IS NOT ON THE ESTATE: its
+ * `location.origin` is `tauri.localhost` (`frontendDist` is `../build`) and the app reaches the API
+ * at the origin its build was given, so a check asking the server as the phone's own session passes
+ * that origin (`SITE`) here (ADM-5 and ADM-7 ask the base from an old APK).
+ */
+export async function apiAt(cx, apiBase, method, path, body) {
+  return apiCall(cx, method, path, method === 'GET' ? undefined : (body ?? {}), apiBase);
 }
 
 /**

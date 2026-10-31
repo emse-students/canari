@@ -17,7 +17,8 @@ It does **not** perform encryption, store messages, or make business logic decis
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence of the asked users the caller may see: themself, and whoever shares a live conversation or a community with them ([audience](../../docs/wiki/services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)) |
+| POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000) the caller may see: themself, and whoever shares a live conversation or a community with them ([audience](../../docs/wiki/services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](../../docs/wiki/services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
+| GET | `/api/presence?users=` | yes | LEGACY, the same answer for clients installed before the POST, counted once an hour ([legacy-compatibility](../../docs/wiki/legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 

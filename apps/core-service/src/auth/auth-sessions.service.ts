@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, LessThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AuthSession } from './entities/auth-session.entity';
+import { DeviceRevokedSession } from './entities/device-revoked-session.entity';
+import { CREDENTIAL_SKEW_SECONDS } from './token-lifetimes';
 import { EndedSession, SessionEndCause, SessionPushEndService } from './session-push-end.service';
 
 /** Idle lifetime of a session. Every successful refresh pushes the deadline forward. */
@@ -60,6 +62,13 @@ export type RotateResult =
   | { status: 'reissued'; tokenId: string; expiresAt: Date }
   /** The presented `jti` is neither: two holders share one cookie, so the session was destroyed. */
   | { status: 'replayed' }
+  /**
+   * The session was ended by its OWNER REVOKING THE DEVICE it was bound to - the one ending the
+   * device must answer differently (a full local reset, not a sign-out that keeps its stores).
+   * Names WHICH device and account, so a client resets only when they are its own: a client whose
+   * device id rotated since the session was opened is a different device.
+   */
+  | { status: 'device-revoked'; userId: string; deviceId: string }
   /** No such session, or it has expired or been revoked. */
   | { status: 'unknown' };
 
@@ -97,15 +106,17 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectRepository(AuthSession)
     private readonly sessions: Repository<AuthSession>,
-    private readonly pushEnd: SessionPushEndService
+    private readonly pushEnd: SessionPushEndService,
+    @InjectRepository(DeviceRevokedSession)
+    private readonly revokedSessions: Repository<DeviceRevokedSession>
   ) {}
 
   /**
    * Deletes sessions and records the push ending each one owes IN ONE TRANSACTION - so a session's
    * end and its push ending are one durable fact (`docs/wiki/sessions.md`, "A session that ends
    * takes its device's push registration with it"). `remove` deletes inside the transaction and
-   * answers the rows it deleted; a failure anywhere rolls both back, and the caller's error is the
-   * user's to retry.
+   * answers the rows it deleted (and may write other rows of the same fact through `manager`); a
+   * failure anywhere rolls everything back, and the caller's error is the user's to retry.
    *
    * The call to chat-delivery-service is NOT made here: `SessionPushEndService` drains the outbox
    * right after the commit and on its own interval until chat-delivery answers 2xx, so a slow or
@@ -113,11 +124,14 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
    */
   private async endSessions<T>(
     cause: SessionEndCause,
-    remove: (repo: Repository<AuthSession>) => Promise<{ ended: EndedSession[]; result: T }>
+    remove: (
+      repo: Repository<AuthSession>,
+      manager: EntityManager
+    ) => Promise<{ ended: EndedSession[]; result: T }>
   ): Promise<T> {
     let queued = 0;
     const result = await this.sessions.manager.transaction(async (manager: EntityManager) => {
-      const { ended, result } = await remove(manager.getRepository(AuthSession));
+      const { ended, result } = await remove(manager.getRepository(AuthSession), manager);
       queued = await this.pushEnd.enqueue(manager, ended, cause);
       return result;
     });
@@ -205,6 +219,19 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const row = await this.sessions.findOne({ where: { id: sessionId } });
+    if (!row) {
+      // THE ONE ENDING THE DEVICE MUST TELL APART, because it answers it with a full local reset
+      // rather than a sign-out that keeps its stores - and nothing else can tell it: its own
+      // revocation check is asked with an access token that died with this session. One primary-key
+      // read, on the refusal path only.
+      const revoked = await this.revokedSessions.findOne({ where: { sessionId } });
+      if (revoked) {
+        this.logger.warn(
+          `Refresh refused sid=${sessionId} user=${revoked.userId} - the session was ended by its owner revoking device ${revoked.deviceId}`
+        );
+        return { status: 'device-revoked', userId: revoked.userId, deviceId: revoked.deviceId };
+      }
+    }
     if (!row || row.expiresAt.getTime() <= now.getTime()) {
       // The caller signs the device out on this answer, so it names which of the two it was. A
       // missing row is a revocation - or a database replaced under the session, as dev's refresh
@@ -244,6 +271,23 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       `Refresh token replay detected sid=${sessionId} user=${row.userId} presented=${kind} rotatedAgo=${ago} - session revoked`
     );
     return { status: 'replayed' };
+  }
+
+  /**
+   * Whether `sessionId` is a session of `userId` that has neither ended nor expired - the question
+   * `/api/auth/verify` asks of every access token, so a token outlives its session by nothing
+   * (`docs/wiki/sessions.md`, "An access token is only as alive as its session"). One primary-key
+   * read. Every ending of a session DELETES its row, so absence is the ended state; `expiresAt` is
+   * compared too because an idle-expired row may not have been swept yet. A restore-key registration
+   * asks a stricter question of the same row (also the presented refresh `jti`) -
+   * `RestoreCredentialsService.isLiveSessionOf`.
+   */
+  async isLive(sessionId: string, userId: string, now: Date = new Date()): Promise<boolean> {
+    const row = await this.sessions.findOne({
+      where: { id: sessionId, userId },
+      select: { id: true, expiresAt: true },
+    });
+    return row !== null && row.expiresAt.getTime() > now.getTime();
   }
 
   /**
@@ -368,6 +412,47 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Ends every session of `userId` BOUND to `deviceId` (`auth_sessions."deviceId"`, written by
+   * {@link bindDevice}) except `exceptSessionId`, recording each one's push ending in the same
+   * transaction - the server-side half of an owner revoking a device, asked by chat-delivery once
+   * the device's ban is recorded, so a revocation no longer depends on the panel's second request.
+   *
+   * `exceptSessionId` is the CALLER's own session: whoever deletes a device never signs itself out
+   * by doing so (an install whose identity rotation is still bound to the id it abandoned included).
+   * What it does not reach, stated: a session bound to NO device (opened, never unlocked) or bound
+   * to another id - those are ended only by the panel's own session revocation. Returns how many
+   * ended; idempotent (a second call ends nothing).
+   *
+   * EACH ENDED SESSION IS RECORDED AS ENDED BY THIS REVOCATION (`device_revoked_sessions`), in the
+   * same transaction, so the device's next refresh is refused as `device-revoked` ({@link rotate})
+   * rather than as a session that merely ended - the device's only way to learn it was revoked once
+   * the credential it would ask with is gone.
+   */
+  async endDeviceSessions(
+    userId: string,
+    deviceId: string,
+    exceptSessionId: string | null
+  ): Promise<number> {
+    return this.endSessions('revoked-by-owner', async (repo, manager) => {
+      const qb = repo
+        .createQueryBuilder()
+        .delete()
+        .from(AuthSession)
+        .where('"userId" = :userId AND "deviceId" = :deviceId', { userId, deviceId })
+        .returning(['id', 'userId', 'deviceId']);
+      if (exceptSessionId) qb.andWhere('id != :except', { except: exceptSessionId });
+      const res = await qb.execute();
+      const ended = (res.raw ?? []) as EndedSession[];
+      if (ended.length > 0) {
+        await manager
+          .getRepository(DeviceRevokedSession)
+          .insert(ended.map((row) => ({ sessionId: row.id, userId, deviceId })));
+      }
+      return { ended, result: ended.length };
+    });
+  }
+
   /** Live sessions of a user, most recently used first. Expired rows are filtered out, not waited on. */
   async listForUser(userId: string): Promise<SessionSummary[]> {
     const rows = await this.sessions.find({
@@ -388,14 +473,31 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       }));
   }
 
-  /** Drops rows past their idle deadline. Idempotent, so concurrent replicas may both run it. */
+  /**
+   * Drops rows past their idle deadline, and the device-revocation records no refresh token can ask
+   * about any more. Idempotent, so concurrent replicas may both run it.
+   *
+   * A record is read only by a refresh whose token VERIFIED, and a token naming the session expires
+   * at most `SESSION_TTL_SECONDS` after its last rotation, which preceded `endedAt`. Past that (plus
+   * skew) the token's own `exp` refuses it before the session is looked up - a proof that the record
+   * is unreachable, not a guess about how long it is useful.
+   */
   async deleteExpired(): Promise<number> {
     try {
+      const now = Date.now();
       const res = await this.sessions.delete({
-        expiresAt: LessThan(new Date()),
+        expiresAt: LessThan(new Date(now)),
       });
       const removed = res.affected ?? 0;
       if (removed > 0) this.logger.debug(`Swept ${removed} expired session(s)`);
+      const unreachable = await this.revokedSessions.delete({
+        endedAt: LessThan(new Date(now - (SESSION_TTL_SECONDS + CREDENTIAL_SKEW_SECONDS) * 1000)),
+      });
+      if ((unreachable.affected ?? 0) > 0) {
+        this.logger.debug(
+          `Swept ${unreachable.affected} device-revocation record(s) no refresh token can reach`
+        );
+      }
       return removed;
     } catch (e) {
       // Housekeeping must never take the service down (e.g. the table is not

@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const refreshMock = vi.fn();
 vi.mock('$lib/stores/auth', () => ({
-  getToken: () => Promise.resolve('token'),
+  // The token in memory is the refused one, so a 401 renews (a different one would be used as is).
+  getToken: () => Promise.resolve('stale'),
   refresh: () => refreshMock(),
   SessionExpiredError: class extends Error {},
 }));

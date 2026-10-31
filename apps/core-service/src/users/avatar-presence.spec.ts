@@ -40,7 +40,8 @@ describe('avatar presence', () => {
       {} as UserBlocksService,
       {} as ProfileEditService,
       {} as ProfileCorrectionService,
-      {} as AccountErasureService
+      {} as AccountErasureService,
+      {} as never // AuthSessionsService: no admin flag route here
     );
   }
 

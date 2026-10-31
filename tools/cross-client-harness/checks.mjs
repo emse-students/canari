@@ -1,6 +1,16 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ADMIT_ROWS } from './admitrows.mjs';
+import { BIG_ROWS } from './bigrows.mjs';
+import { LIST_RACE_ROWS } from './listracerows.mjs';
+import { LIVE_ROWS } from './liverows.mjs';
+import { CALL_WEB_ROWS } from './callrows.mjs';
+import { REMOVAL_ROWS } from './removalrows.mjs';
+import { DEV_ROWS } from './devicerows.mjs';
+import { FLOOR_ROWS } from './floorrows.mjs';
+import { KILL_ROWS } from './killrows.mjs';
+import { OFFLINE_ROWS } from './offlinerows.mjs';
 
 const HARNESS = dirname(fileURLToPath(import.meta.url));
 /**
@@ -442,6 +452,127 @@ export const PHASES = {
     ],
     needs: ['W1', 'W2'],
   },
+  // THE 1.4.1 FLOOR (`docs/wiki/cross-client-campaign-1-4-1.md` section 4.2), browsers only. FLOOR-3 is
+  // NOT here: it is class B (A1 and I1), its phone door is `openSeats` in `mlsrow.mjs`, which
+  // `checks-selftest.mjs` cannot see, and the plan runs it by hand on the bench -
+  // `bun archive/floor.mjs --row 3` with `A1_BUILD` set.
+  FLOOR: {
+    title: '1.4.1 - the floor re-proved on dev',
+    scripts: ['floor.mjs --row 1', 'floor.mjs --row 2'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // CONCURRENT COMMITS, browsers only. CC-5 is not here: it needs a fifth campaign account
+  // (`ccrows.mjs` `CC5_PREMISE`).
+  CC: {
+    title: '1.4.1 - concurrent commits',
+    scripts: ['cc.mjs --row 1', 'cc.mjs --row 2', 'cc.mjs --row 3', 'cc.mjs --row 4'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // THE SETTLEMENT (DUP, OFF-1/-2, TOK-1/-2), browsers only. DUP-3 records SKIPPED with the plan's
+  // reason (Q2). TOK-3 is NOT here: it waits 61 min with the socket open, so it is run alone and
+  // unattended - `bun archive/settle.mjs --row TOK-3`. DUP-7 is a devrows.mjs row (an invite with its answer lost) and is not a
+  // settle.mjs row (`settlerows.mjs` `DUP7_ELSEWHERE`).
+  SETTLE: {
+    title: '1.4.1 - commit settlement: a lost, refused or late answer',
+    scripts: [
+      'settle.mjs --row DUP-1',
+      'settle.mjs --row DUP-2',
+      'settle.mjs --row DUP-3',
+      'settle.mjs --row DUP-4',
+      'settle.mjs --row DUP-5',
+      'settle.mjs --row DUP-6',
+      'settle.mjs --row OFF-1',
+      'settle.mjs --row OFF-2',
+      'settle.mjs --row TOK-1',
+      'settle.mjs --row TOK-2',
+    ],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // FRAMES OUT OF ORDER (GAP-1, GAP-2), browsers only. GAP-4 records SKIPPED (the shared-payload
+  // writer stays off). GAP-3 is NOT here: it sends 2100 messages first, about forty minutes, so it
+  // is run alone - `bun archive/gap.mjs --row GAP-3`.
+  GAP: {
+    title: '1.4.1 - frames ahead of their commits, and past-epoch frames again',
+    scripts: ['gap.mjs --row GAP-1', 'gap.mjs --row GAP-2', 'gap.mjs --row GAP-4'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // A SEAT WITHOUT A WORKING LINK FOR A WHILE (OFF-3, NET-1..3, RM-8), browsers only. NET-2 alone is
+  // five minutes. OFF-5 is NOT here: it is class B, played on A1 - `bun archive/offline.mjs --row OFF-5`.
+  // OFF-4 is BLOCKED-ON-ACCOUNT and has no row to run.
+  OFFLINE: {
+    title: '1.4.1 - away while others move on, a slow link, a flapping socket, a captive portal',
+    scripts: ['offline.mjs --row OFF-3', 'offline.mjs --row NET-1', 'offline.mjs --row NET-2', 'offline.mjs --row NET-3', 'offline.mjs --row RM-8'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // A PROCESS THAT DIES WITH A COMMIT OR A MESSAGE IN FLIGHT (KILL-1, KILL-2, KILL-3, KILL-5, RM-3),
+  // browsers only. KILL-1 is twenty tab closes, KILL-2 ten browser relaunches and KILL-3 twelve, each
+  // with its PIN. KILL-4 is NOT here: it is class B, played on A1 - `bun archive/kill.mjs --row KILL-4`.
+  KILL: {
+    title: '1.4.1 - a tab, a browser or a remover killed with a commit in flight',
+    scripts: ['kill.mjs --row KILL-1', 'kill.mjs --row KILL-2', 'kill.mjs --row KILL-3', 'kill.mjs --row KILL-5', 'kill.mjs --row RM-3'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // A GROUP LINK AND ITS ASK (ADM-1..4, ADM-8..10), browsers only. ADM-5..7 are NOT here: they need A1 on
+  // the v1.4.0 APK, installed by the operator - `bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7`.
+  ADMIT: {
+    title: '1.4.1 - a group link: the ask, Add or Decline, and what a waiting seat may not do',
+    scripts: ['admit.mjs --row ADM-1', 'admit.mjs --row ADM-2', 'admit.mjs --row ADM-3', 'admit.mjs --row ADM-4', 'admit.mjs --row ADM-8', 'admit.mjs --row ADM-9', 'admit.mjs --row ADM-10'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // A NEW DEVICE OF THE OWNER (DEV-1..4, DEV-6), browsers only: every row mints on W3 (and W6); DUP-7
+  // rides here and invites W4 instead (an Add that really happens on 1.4.1),
+  // so the phase is LAST in its session (plan section 5, step 6). DEV-7 needs A1 swiped away, run by
+  // hand: `bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale`. DEV-5 is CORRUPT-8's.
+  DEVICES: {
+    title: '1.4.1 - a new device of the owner: seated, revoked online and offline, two at once, and its Welcome once',
+    scripts: ['devrows.mjs --row DEV-1', 'devrows.mjs --row DEV-2', 'devrows.mjs --row DEV-3', 'devrows.mjs --row DEV-4', 'devrows.mjs --row DEV-6', 'devrows.mjs --row DUP-7'],
+    needs: ['W1', 'W2', 'W3', 'W4', 'W6'],
+  },
+  // THE REMOVAL BOUND ON A SALON (RM-4..6), browsers only: each row mints its own community, joined by
+  // link, and deletes it once its verdict is on disk.
+  SALON: {
+    title: '1.4.1 - a salon access list: two admins at once, a kick against a grant, and a removal beyond the actor',
+    scripts: ['salon.mjs --row RM-4', 'salon.mjs --row RM-4b', 'salon.mjs --row RM-5', 'salon.mjs --row RM-6'],
+    needs: ['W1', 'W2', 'W4', 'W5'],
+  },
+  // A LARGE GROUP (BIG-1..3), class B: every web seat and A1. Declared on 2026-10-26, when the first
+  // `--file big.mjs` run was refused for belonging to no phase. The `-noI1` variants are the ones the
+  // rig can play unattended. The full rows also need I1, which no preflight here arms, so they are
+  // run by hand once the iPhone is wired: `bun archive/big.mjs --row BIG-1|BIG-2|BIG-3`.
+  BIG: {
+    title: '1.4.1 - a large group: twelve devices, a burst under commits, a community removal and newcomer',
+    scripts: ['big.mjs --row BIG-1-noI1', 'big.mjs --row BIG-2-noI1', 'big.mjs --row BIG-3-noI1'],
+    needs: ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'A1'],
+  },
+  // A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS HELD (LIST-RACE-1, 2026-10-26), browsers
+  // only: the web row and its control. The `-A1` pair is class B and in no phase, preflighted with
+  // the phone through `ROW_TABLES`: `bun run.mjs --file listrace.mjs --row LIST-RACE-1-A1`.
+  LISTRACE: {
+    title: "1.4.1 - a salon heard of live while its community's listing is held, and its control",
+    scripts: ['listrace.mjs --row LIST-RACE-1-W', 'listrace.mjs --row LIST-RACE-1-W-CTL'],
+    needs: ['W1', 'W4', 'W8'],
+  },
+  // A REMOVAL COMMITTED, NOT ONLY UNROUTED (KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP,
+  // 2026-10-27). DEVREVOKE-KEYGROUP drives the device panel from W6 and mints W3 as its subject.
+  REMOVALS: {
+    title: '1.5.0 - a removal is committed, not only unrouted',
+    scripts: Object.keys(REMOVAL_ROWS).map((row) => `removals.mjs --row ${row}`),
+    needs: ['W1', 'W2', 'W3', 'W6'],
+  },
+  // IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS (CALL-WEB-1..8, 2026-10-26). W8 is only closed and
+  // reopened (CALL-WEB-6: no device of the callee may answer); each seat is put on its own tone.
+  CALLWEB: {
+    title: '1.4.1 - in-app 1:1 audio calls between two browsers',
+    scripts: Object.keys(CALL_WEB_ROWS).map((row) => `callweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'W5', 'W8'],
+  },
+  // A LIVE FROM THE MI 9T WATCHED FROM TWO BROWSERS (LIVE-WEB-2, and L-F1's LIVE-STALL-1, 2026-10-27).
+  // Every row names A1, the broadcaster, so `ROW_TABLES` arms the phone and stamps its build.
+  LIVEWEB: {
+    title: '1.5.0 - a live from the Mi 9T, watched from two browsers',
+    scripts: Object.keys(LIVE_ROWS).map((row) => `liveweb.mjs --row ${row}`),
+    needs: ['W2', 'W4', 'A1'],
+  },
 };
 
 /**
@@ -515,8 +646,8 @@ export const SCRATCH_SCRIPTS = {
  * reason pointing at the cable instead of at the declaration one file away.
  *
  * THREE ANSWERS, AND THE MIDDLE ONE IS THE POINT.
- *   A file belonging to no phase gets the two browsers, and `phase: null` says so - the caller owes
- *     its operator that note, because a silent default is indistinguishable from a declaration.
+ *   A file belonging to no phase gets the two browsers, and `phase: null` says so - and `run.mjs`
+ *     REFUSES it through {@link fileRefusal}: a note was not enough (FLOOR-2, 2026-10-25).
  *   A file in a phase gets that phase's `needs`, which is the UNION over its scripts.
  *   ...UNLESS the phase narrowed its phone requirement with `PHONE_SCRIPTS` and this invocation is
  *     not one of the named ones, in which case A1 is dropped. A preflight that refuses a run it has
@@ -557,10 +688,43 @@ const onlyOf = (words) => {
   return null;
 };
 
+/**
+ * THE 1.4.1 ROW TABLES, by the script that plays them: each row names its own `devices`. A row that
+ * names A1 is class B and is in NO phase (a phase is browsers only), so `--file <script> --row <id>`
+ * used to preflight the phase's browsers alone - no phone read, no `a1Build` stamp, and the row then
+ * recorded "bound a phone and carries no a1Build" (OFF-5, 2026-10-25). FLOOR is selected by number.
+ */
+export const ROW_TABLES = {
+  'offline.mjs': OFFLINE_ROWS,
+  'kill.mjs': KILL_ROWS,
+  'admit.mjs': ADMIT_ROWS,
+  'devrows.mjs': DEV_ROWS,
+  'big.mjs': BIG_ROWS,
+  'listrace.mjs': LIST_RACE_ROWS,
+  'removals.mjs': REMOVAL_ROWS,
+  'callweb.mjs': CALL_WEB_ROWS,
+  'liveweb.mjs': LIVE_ROWS,
+  'floor.mjs': Object.fromEntries(Object.entries(FLOOR_ROWS).map(([k, v]) => [k.replace(/^FLOOR-/, ''), v])),
+};
+
+/** The devices the row `--row` selects names in its own table, or null when there is no such row. */
+export function rowDevices(file, args = []) {
+  const i = args.indexOf('--row');
+  const row = i === -1 ? null : ROW_TABLES[file]?.[args[i + 1]];
+  return row?.devices ?? null;
+}
+
 export function devicesFor(file, args = []) {
+  const named = rowDevices(file, args);
   const owner = Object.entries(PHASES).find(([, p]) =>
     p.scripts.some((s) => s.split(' ')[0] === file)
   );
+  // A ROW THAT NAMES A1 IS PREFLIGHTED WITH A1, whatever its phase says - that is what stamps its
+  // build. Only the PHONE is added: the browsers stay the phase's, which the preflight already covers.
+  if (named?.includes('A1')) {
+    const base = owner ? devicesFor(file, []).devices : ['W1', 'W2'];
+    return { devices: [...new Set([...base.filter((d) => d !== 'A1'), ...named.filter((d) => d === 'A1' || /^W\d$/.test(d))])], phase: owner?.[0] ?? null };
+  }
   if (!owner) return { devices: ['W1', 'W2'], phase: null };
   const [name, phase] = owner;
   const narrowed = PHONE_SCRIPTS[name];
@@ -596,6 +760,31 @@ export function devicesFor(file, args = []) {
   if (!isNamed(narrowed)) keep.delete('A1');
   if (!isNamed(SCRATCH_SCRIPTS[name])) keep.delete('W3');
   return { devices: [...keep], phase: name };
+}
+
+/**
+ * Why `run.mjs --file <file>` must not start, or null when it may.
+ *
+ * A FILE NO PHASE DECLARES HAS NO KNOWN DEVICES, AND A PREFLIGHT THAT GUESSES THEM IS NOT A PREFLIGHT.
+ * `devicesFor` answers such a file with W1 and W2 and `phase: null`, and until 2026-10-25 `run.mjs`
+ * printed a note and ran it. That note was read by nobody: a chain spelt the name as a PATH,
+ * `archive/floor.mjs`, which matches no `scripts` entry, so fourteen rows (FLOOR, ADM, DEV, DUP-7,
+ * KILL, RM) were preflighted with W1 and W2 alone. FLOOR-2 then recorded VACUOUS because W5, never
+ * preflighted, sat on a page without the conversation list - its Welcome had landed.
+ *
+ * So both spellings are refused, and each refusal names what lifts it: a path is rewritten as the
+ * name `scripts` uses, and an undeclared script is declared in a phase, where `checks-selftest`
+ * holds its `needs` to what the script drives.
+ */
+export function fileRefusal(file, args = []) {
+  if (/[\\/]/.test(file)) {
+    const name = file.split(/[\\/]/).pop();
+    return `--file takes a script NAME as PHASES spells it, not a path: "${file}" matches no phase, so its preflight would guess W1 and W2. Write --file ${name}`;
+  }
+  if (devicesFor(file, args).phase === null) {
+    return `${file} belongs to no phase in checks.mjs, so no preflight knows which devices it drives - declare it in a phase (its scripts and needs) before running it through run.mjs`;
+  }
+  return null;
 }
 
 /**

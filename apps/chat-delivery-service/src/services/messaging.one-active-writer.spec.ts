@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { GroupsController } from '../controllers/groups.controller';
 import { InvitationsController } from '../controllers/invitations.controller';
@@ -18,6 +18,16 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+
+// social-service's entitlement answer, which a report in a key-distribution group asks.
+jest.mock('../internal/distribution-entitlement', () => ({
+  ...jest.requireActual('../internal/distribution-entitlement'),
+  isEntitledToDistributionGroup: jest.fn(),
+}));
+const entitled = isEntitledToDistributionGroup as jest.MockedFunction<
+  typeof isEntitledToDistributionGroup
+>;
 
 /**
  * ONE WRITER FOR `pending -> active`, ASSERTED AS ONE WRITER AND AS THREE DOORS.
@@ -68,6 +78,7 @@ describe('the ONE writer of an active membership', () => {
   const deviceGroupRepo = {
     findOne: jest.fn().mockResolvedValue(null),
     upsert: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
     find: jest.fn().mockResolvedValue([]),
     createQueryBuilder: jest.fn(),
   };
@@ -87,6 +98,8 @@ describe('the ONE writer of an active membership', () => {
     // The seat lock's transaction: the lock statement answers nothing, the seat table is the
     // in-memory one below - so a write and the route's re-read see the same rows.
     groupRepo.manager = {
+      // The seat claim's read (`claimSeat`): generation 0, no departure in progress.
+      query: async () => [],
       transaction: async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
           query: async () => [],
@@ -105,6 +118,8 @@ describe('the ONE writer of an active membership', () => {
     keyPackageRepo.find.mockResolvedValue([{ userId: 'u1', deviceId: 'd1' }]);
     deviceGroupRepo.findOne.mockResolvedValue(null);
     redis.xrange.mockResolvedValue([]);
+    entitled.mockReset();
+    entitled.mockResolvedValue(true);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -291,21 +306,29 @@ describe('the ONE writer of an active membership', () => {
       deviceGroupRepo.createQueryBuilder.mockImplementation(() => {
         let params: Record<string, unknown> = {};
         let values: Partial<Seat> = {};
+        const mine: string[] = [];
         const qb = {
           update: () => qb,
           set: (v: Partial<Seat>) => ((values = v), qb),
-          where: (c: string, p: Record<string, unknown>) => (clauses.push(c), (params = p), qb),
-          andWhere: (c: string) => (clauses.push(c), qb),
+          where: (c: string, p: Record<string, unknown>) => (
+            clauses.push(c),
+            mine.push(c),
+            (params = p),
+            qb
+          ),
+          andWhere: (c: string) => (clauses.push(c), mine.push(c), qb),
           execute: async () => {
             racing?.();
-            const keyGroup =
-              !!groupRow &&
-              (!!groupRow.distributionWorkspaceId || !!groupRow.distributionChannelId);
+            // The guards this statement was BUILT with: a pending row only where an unkicked one is
+            // allowed, and the roster only where it is required.
+            const sql = mine.join(' ');
+            const pendingAllowed = sql.includes('"kickedAt" IS NULL');
+            const rosterRequired = sql.includes('dm_group_members');
             const row = seats.find(
               (r) =>
                 matches(r, params) &&
-                (r.status === 'active' || !r.kickedAt) &&
-                (keyGroup ||
+                (r.status === 'active' || (pendingAllowed && !r.kickedAt)) &&
+                (!rosterRequired ||
                   roster.some((m) => matches(m, { groupId: r.groupId, userId: r.userId })))
             );
             if (row) Object.assign(row, values);
@@ -317,6 +340,14 @@ describe('the ONE writer of an active membership', () => {
       deviceGroupRepo.findOne.mockImplementation(
         async ({ where }: { where: Record<string, unknown> }) =>
           seats.find((r) => matches(r, where)) ?? null
+      );
+      // A demotion's UPDATE: the rows its criteria match, never an insert.
+      deviceGroupRepo.update.mockImplementation(
+        async (where: Record<string, unknown>, values: Partial<Seat>) => {
+          const hit = seats.filter((r) => matches(r, where));
+          hit.forEach((r) => Object.assign(r, values));
+          return { affected: hit.length };
+        }
       );
       // The table's unique key is (deviceId, groupId): an upsert merges into that row.
       deviceGroupRepo.upsert.mockImplementation(async (row: Seat) => {
@@ -344,7 +375,8 @@ describe('the ONE writer of an active membership', () => {
       );
       expect(sql).toContain(`(status = 'active' OR "kickedAt" IS NULL)`);
       expect(sql).toContain('dm_group_members');
-      expect(sql).toContain('"distributionWorkspaceId" IS NOT NULL');
+      // A conversation's membership is its roster: social-service is not asked.
+      expect(entitled).not.toHaveBeenCalled();
     });
 
     it('does not re-create a row a removal deleted between any read and the write', async () => {
@@ -405,12 +437,114 @@ describe('the ONE writer of an active membership', () => {
       expect(line).toContain(`reason=${reason}`);
     });
 
-    it('accepts a key group on its seat alone: it has no user roster here', async () => {
-      groupRow = { id: 'g1', distributionWorkspaceId: 'ws-1' };
-      roster = [];
+    describe('in a key-distribution group, which has no user roster here', () => {
+      beforeEach(() => {
+        groupRow = { id: 'g1', distributionWorkspaceId: 'ws-1' };
+        roster = [];
+      });
 
-      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
-        ok: true,
+      it('promotes a pending seat once social-service answers that its owner is entitled', async () => {
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: true,
+        });
+        expect(entitled).toHaveBeenCalledWith(
+          { kind: 'workspace', id: 'ws-1' },
+          'u1',
+          expect.any(String)
+        );
+        expect(seats[0]).toMatchObject({ status: 'active' });
+        expect(clauses.join(' ')).not.toContain('dm_group_members');
+      });
+
+      it('refuses a pending seat whose owner is not entitled, and writes neither the row nor the set', async () => {
+        entitled.mockResolvedValue(false);
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: false,
+          reason: 'not_entitled',
+        });
+        expect(seats[0]).toMatchObject({ status: 'pending' });
+        expect(redis.sadd).not.toHaveBeenCalled();
+        expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+        const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('REFUSED'));
+        expect(line).toContain('INVITATION_STATUS');
+        expect(line).toContain('reason=not_entitled');
+      });
+
+      it('re-reports an active seat without asking anyone, and promotes no pending one that way', async () => {
+        seats[0].status = 'active';
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: true,
+        });
+        expect(entitled).not.toHaveBeenCalled();
+        // Unasked, the statement may match an active seat only.
+        expect(clauses.join(' ')).toContain(`status = 'active'`);
+        expect(clauses.join(' ')).not.toContain('"kickedAt" IS NULL');
+      });
+
+      it('promotes nothing when a departure overtook the claim the entitlement was asked against', async () => {
+        // The departure begins while social-service is answering: the claim re-read under the
+        // seat lock finds it in progress.
+        (groupRepo as unknown as { manager: unknown }).manager = {
+          query: async () => [],
+          transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+            cb({
+              query: async (sql: string) =>
+                sql.includes('FROM dm_seat_evictions') ? [{ generation: 0, owedDeparture: 1 }] : [],
+              getRepository: () => deviceGroupRepo,
+            }),
+        };
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: false,
+          reason: 'departed',
+        });
+        expect(seats[0]).toMatchObject({ status: 'pending' });
+        expect(redis.sadd).not.toHaveBeenCalled();
+      });
+
+      it("promotes when only SOMEONE ELSE's eviction moved the group's generation meanwhile", async () => {
+        // A report has no retry: the generation is the group's, so it must not refuse here. An
+        // eviction of THIS person would have deleted the row the statement updates.
+        (groupRepo as unknown as { manager: unknown }).manager = {
+          query: async () => [],
+          transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+            cb({
+              query: async (sql: string) =>
+                sql.includes('FROM dm_seat_evictions')
+                  ? [{ generation: 7, owedDeparture: null }]
+                  : [],
+              getRepository: () => deviceGroupRepo,
+            }),
+        };
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: true,
+        });
+        expect(seats[0]).toMatchObject({ status: 'active' });
+      });
+
+      it('refuses a departure already in progress without asking social-service', async () => {
+        (groupRepo as unknown as { manager: { query: unknown } }).manager.query = async () => [
+          { generation: 1, owedDeparture: 1 },
+        ];
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+          ok: false,
+          reason: 'departed',
+        });
+        expect(entitled).not.toHaveBeenCalled();
+        expect(seats[0]).toMatchObject({ status: 'pending' });
+      });
+
+      it('lets an unanswered entitlement fail the report whole, promoting nothing', async () => {
+        entitled.mockRejectedValue(new Error('503'));
+
+        await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).rejects.toThrow(
+          '503'
+        );
+        expect(seats[0]).toMatchObject({ status: 'pending' });
       });
     });
 
@@ -423,6 +557,7 @@ describe('the ONE writer of an active membership', () => {
     ) => {
       const locks: string[] = [];
       (groupRepo as unknown as { manager: unknown }).manager = {
+        query: async () => [],
         transaction: async (cb: (m: unknown) => Promise<unknown>) =>
           cb({
             query: async (sql: string, params: unknown[]) => {
@@ -467,6 +602,7 @@ describe('the ONE writer of an active membership', () => {
       ).transaction;
       let calls = 0;
       (groupRepo as unknown as { manager: unknown }).manager = {
+        query: async () => [],
         transaction: async (cb: (m: unknown) => Promise<unknown>) => {
           if (++calls === 2) seats = [];
           return transaction(cb);
@@ -554,7 +690,7 @@ describe('the INVITATION_STATUS door', () => {
   let controller: InvitationsController;
   const messaging = {
     activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
-    deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined),
+    deactivateDeviceMembership: jest.fn().mockResolvedValue(true),
     deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
   };
   const deviceGroupRepo = {
@@ -677,6 +813,7 @@ describe('the CREATE_GROUP door', () => {
       providers: [
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(GroupMember), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: { findOne: jest.fn() } },
         { provide: 'REDIS_CLIENT', useValue: { sadd: jest.fn() } },
         { provide: MessagingService, useValue: messaging },
@@ -784,5 +921,29 @@ describe('the CREATE_GROUP door', () => {
     expect(groupRepo.save).toHaveBeenCalled();
     expect(messaging.deviceAddressability).not.toHaveBeenCalled();
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+  });
+
+  it('records the AUTHENTICATED caller as the creator - the one account the empty roster admits', async () => {
+    await controller.createGroup(BODY, 'u1');
+
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('compares the body and the header in canonical form: an id differing only in case is the caller', async () => {
+    await controller.createGroup({ ...BODY, createdBy: ' U1 ' }, 'U1');
+
+    // Stored lower-cased, the form the guard verifies the header against.
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('refuses 403 a body createdBy naming someone other than the caller, and writes no row', async () => {
+    const err = await controller.createGroup(BODY, 'mallory').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({
+      code: 'MEMBERSHIP_NOT_ALLOWED',
+    });
+    expect(groupRepo.save).not.toHaveBeenCalled();
+    expect(messaging.deviceAddressability).not.toHaveBeenCalled();
   });
 });

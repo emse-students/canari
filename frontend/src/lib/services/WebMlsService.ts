@@ -4,6 +4,7 @@ import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitS
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
+import type { GatewaySocketOpen } from '$lib/mls-client/gatewaySocketOpen';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
 import {
@@ -47,7 +48,6 @@ import {
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { getToken } from '$lib/stores/auth';
 import {
   loadMlsState,
   saveMlsState,
@@ -55,6 +55,7 @@ import {
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
   toBase64,
+  toHex,
   fromBase64,
   tagMlsSnapshot,
   propagateMlsSnapshotVersion,
@@ -410,8 +411,16 @@ export class WebMlsService extends BaseMlsService {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /** WASM client wrapper - opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
-  async connect(token?: string): Promise<void> {
+  /**
+   * Opens a native browser WebSocket to the chat gateway under `open.deviceId`, wiring message/close
+   * handlers and registering reconnect listeners once. Reached through `connect` only.
+   *
+   * NO AWAIT BEFORE THE SOCKET EXISTS: the caller fetched the token, so nothing can land between the
+   * fence being read and `new WebSocket`. The deadline and the half-open socket are registered with
+   * `open.onAbandon`, so a pause settles this open at once instead of leaving it to the deadline.
+   */
+  protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
+    const { deviceId, token } = open;
     this.clearHeartbeat();
     // Close existing socket before creating a new one
     if (this.ws) {
@@ -474,41 +483,46 @@ export class WebMlsService extends BaseMlsService {
     const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
       match === 'https:' ? 'wss:' : 'ws:'
     );
-    let resolvedToken = token;
-    if (!resolvedToken) {
-      try {
-        resolvedToken = await getToken();
-      } catch {
-        /* rely on canari_ws_token cookie only */
-      }
-    }
-    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
-      wsUrl,
-      this.deviceId,
-      resolvedToken || undefined
-    );
+    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(wsUrl, deviceId, token);
 
     return new Promise((resolve, reject) => {
       console.log(`[WS] Opening connection → ${logUrl}`);
-      this.ws = new WebSocket(fullWsUrl);
+      const socket = new WebSocket(fullWsUrl);
+      this.ws = socket;
       let resolved = false;
 
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
-          this.ws?.close();
+          // ITS OWN socket: `this.ws` may already be a later one.
+          socket.close();
           reject(new Error('WebSocket connection timeout after 15s'));
         }
       }, 15_000);
+      open.onAbandon(() => {
+        clearTimeout(timeout);
+        resolved = true;
+        socket.onopen = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        // STILL CONNECTING, which `safeCloseWebSocket` deliberately leaves alone: closed directly.
+        try {
+          socket.close();
+        } catch (e) {
+          console.warn(`[WS] closing an abandoned connecting socket failed: ${String(e)}`);
+        }
+        if (this.ws === socket) this.ws = null;
+      });
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
         this.startHeartbeat();
-        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(this.deviceId)}`);
+        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
         resolve();
       };
-      this.ws.onerror = (event) => {
+      socket.onerror = (event) => {
         clearTimeout(timeout);
         console.error('[WS] WebSocket error:', event);
         if (!resolved) {
@@ -520,7 +534,7 @@ export class WebMlsService extends BaseMlsService {
           );
         }
       };
-      this.ws.onclose = (event) => {
+      socket.onclose = (event) => {
         clearTimeout(timeout);
         if (!resolved) {
           resolved = true;
@@ -542,7 +556,7 @@ export class WebMlsService extends BaseMlsService {
           this.disconnectCallback?.();
         }
       };
-      this.ws.onmessage = async (event) => {
+      socket.onmessage = async (event) => {
         // Any incoming frame proves the server is alive - reset heartbeat miss counter.
         this.resetHeartbeatCounter();
         try {
@@ -747,7 +761,7 @@ export class WebMlsService extends BaseMlsService {
    * reports no disconnection - see {@link IMlsService.pauseSocket}. Same shape as the teardown at
    * the top of `connect`.
    */
-  pauseSocket(): void {
+  protected override pausePlatformSocket(): void {
     this.clearHeartbeat();
     const ws = this.ws;
     if (!ws) return;
@@ -1382,6 +1396,12 @@ export class WebMlsService extends BaseMlsService {
     return this.client.own_leaf_minted_at(groupId) ?? null;
   }
 
+  /** WASM client wrapper - this device's leaf key as hex, `null` with no own leaf. */
+  protected async ownLeafKey(groupId: string): Promise<string | null> {
+    const key = this.client.own_leaf_encryption_key(groupId);
+    return key ? toHex(key) : null;
+  }
+
   /** WASM client wrapper - whether this device's context is the one the served base describes. */
   protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
     return this.client.own_context_matches_base(groupId, groupInfo);
@@ -1423,8 +1443,12 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.welcomeDelivered}. */
-  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
-    this.client.welcome_delivered(groupId, recipient);
+  protected async welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void> {
+    this.client.welcome_delivered(groupId, recipient, welcome);
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
@@ -1455,6 +1479,11 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - exports the self-contained GroupInfo (external-join base). */
   protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
     return this.client.export_group_info(groupId) as Uint8Array;
+  }
+
+  /** WASM client wrapper - `external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return this.client.external_join_is_a_further_device(groupInfoBytes);
   }
 
   /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns
@@ -1643,6 +1672,14 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
+  /**
+   * See {@link BaseMlsService.heldGroupsKnown}: the WASM module is read live, so the list is known
+   * exactly when a client exists - before one, `getLocalGroups()` answers `[]`, which says nothing.
+   */
+  override heldGroupsKnown(): boolean {
+    return this.client !== null && this.client !== undefined;
+  }
+
   /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
   getLocalGroups(): string[] {
     if (!this.client) return [];
@@ -1701,6 +1738,12 @@ export class WebMlsService extends BaseMlsService {
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
   graineSignatureEngine(): GraineSignatureEngine {
     return wasmGraineSignatureEngine();
+  }
+
+  /** WASM client wrapper - this device's own credential signature key, public half. */
+  async ownSignatureKey(): Promise<Uint8Array> {
+    if (!this.client) throw new Error('[MLS] WASM client not ready - no own signature key yet');
+    return this.client.own_signature_key() as Uint8Array;
   }
 
   /** WASM client wrapper - this device's credential key signs `message` (a v2 endorsement). */

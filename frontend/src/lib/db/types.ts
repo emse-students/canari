@@ -43,6 +43,14 @@ export interface ConversationMeta {
    * so group photos appeared seconds after people's (which need no id). `null` = no photo.
    */
   imageMediaId?: string | null;
+  /**
+   * This account's seat in the group is an invitation-link ask no member has answered yet, as the
+   * server's conversation list last said (`deviceMembership.awaitingAdmission`). A NEVER-ADMITTED
+   * conversation: nothing in it was ever readable here, so it reads as waiting rather than as an
+   * established channel, and its row leaves when the server stops listing it (a member declined,
+   * or the ask expired). Absent on rows written before it existed, which reads as `false`.
+   */
+  awaitingAdmission?: boolean;
 }
 
 /** A decrypted message as stored in and read from the local database. */

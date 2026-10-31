@@ -2,9 +2,9 @@ import { MlsDeliveryApi, NotAGroupMemberError, type MlsDeliveryFetch } from './m
 
 /**
  * `getGroupServerStatus` must distinguish an ABSENT group (legitimate purge) from a genuine
- * network ERROR (doubt -> keep it). Backend-specific trap: `GET mls/groups/:id` returns the
- * handler's `null` as an EMPTY BODY (200) -> `res.json()` throws. Without the fix, that case was
- * classified 'error' ("uncertain status") and the deleted conversation was never purged.
+ * network ERROR (doubt -> keep it). 'absent' PURGES, so it is read only from the delivery
+ * service's JSON: the handler answers `{ found: false }` for a missing row. A bare `null` used to
+ * leave Nest as an empty untyped 200, which a captive portal can answer too.
  */
 function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
   return new MlsDeliveryApi({
@@ -14,29 +14,88 @@ function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
   });
 }
 
-function response(body: string, init: { status?: number }): Response {
-  return new Response(body, { status: init.status ?? 200 });
+/** The JSON content type the real server sends, unless a case is about a body that is not the API's. */
+function response(body: string, init: { status?: number; contentType?: string | null }): Response {
+  const type = init.contentType === undefined ? 'application/json' : init.contentType;
+  return new Response(body, {
+    status: init.status ?? 200,
+    headers: type === null ? {} : { 'content-type': type },
+  });
 }
 
 describe('getGroupServerStatus', () => {
-  it("corps vide sur 200 (handler a renvoye null) -> 'absent'", async () => {
-    const api = makeApi(async () => response('', { status: 200 }));
+  it("the server's { found: false } on 200 -> 'absent'", async () => {
+    const api = makeApi(async () => response('{"found":false}', { status: 200 }));
     expect(await api.getGroupServerStatus('g1')).toBe('absent');
   });
 
-  it('corps "null" litteral sur 200 -> \'absent\'', async () => {
-    const api = makeApi(async () => response('null', { status: 200 }));
-    expect(await api.getGroupServerStatus('g1')).toBe('absent');
+  it("a captive portal's 200 text/html -> 'error', never a purge", async () => {
+    const api = makeApi(async () =>
+      response('<html>Sign in to use this network</html>', {
+        status: 200,
+        contentType: 'text/html',
+      })
+    );
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
-  it("404 -> 'absent' (aucune ligne dm_groups)", async () => {
-    const api = makeApi(async () => response('Not Found', { status: 404 }));
-    expect(await api.getGroupServerStatus('g1')).toBe('absent');
+  it("an empty untyped 200 -> 'error': it cannot be told from a portal's, so it never purges", async () => {
+    const api = makeApi(async () => response('', { status: 200, contentType: null }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
+  });
+
+  it("a JSON type whose body does not parse -> 'error'", async () => {
+    const api = makeApi(async () => response('{"half', { status: 200 }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
+  });
+
+  // Only `{ found: false }` purges: any other JSON without an id is a body nobody documented.
+  it.each([['null'], ['[]'], ['{}'], ['{"found":true}'], ['{"found":"false"}']])(
+    "JSON %s on 200 -> 'error', never a purge",
+    async (body) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const api = makeApi(async () => response(body, { status: 200 }));
+      expect(await api.getGroupServerStatus('g1')).toBe('error');
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    }
+  );
+
+  // THE HANDLER NEVER ANSWERS 404 (a missing row is `{ found: false }`), so a 404 is an edge, a
+  // portal or a misrouted deploy - and a route-level 404 would purge EVERY group at once.
+  it.each([
+    ['plain text', 'text/plain'],
+    ['JSON', 'application/json'],
+  ])("a 404 (%s) -> 'error', never a purge", async (_label, contentType) => {
+    const api = makeApi(async () => response('Not Found', { status: 404, contentType }));
+    expect(await api.getGroupServerStatus('g1')).toBe('error');
   });
 
   it("500 -> 'error' (doute reel, on ne purge pas)", async () => {
     const api = makeApi(async () => response('boom', { status: 500 }));
     expect(await api.getGroupServerStatus('g1')).toBe('error');
+  });
+
+  // ONLY THE 404 ACCUSES (the handler never sends one). A 5xx or a portal answers every group of a
+  // sweep alike, so it stays at debug and the sweep says it once (`discoverMissingGroups`).
+  it('warns on a 404 only; a 5xx and a portal 200 are debug lines', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    try {
+      await makeApi(async () => response('boom', { status: 502 })).getGroupServerStatus('g1');
+      await makeApi(async () =>
+        response('<html>portal</html>', { status: 200, contentType: 'text/html' })
+      ).getGroupServerStatus('g1');
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(2);
+      await makeApi(async () =>
+        response('Not Found', { status: 404, contentType: 'text/plain' })
+      ).getGroupServerStatus('g1');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('never sends'));
+    } finally {
+      warn.mockRestore();
+      debug.mockRestore();
+    }
   });
 
   it("fetch rejette (reseau coupe) -> 'error'", async () => {
@@ -70,15 +129,69 @@ describe('getGroupServerStatus', () => {
  * apart from an outage - which it could not do while every failure was one `catch` answering `true`.
  */
 describe('getGroupMembers - a status code is an answer, a transport failure is not', () => {
-  it('raises a typed refusal on 403, carrying the group', async () => {
+  // The REAL body: `assertCallerIsGroupMember` throws `refusalBody(NOT_A_MEMBER, ...)`, which Nest
+  // serialises as `{ code, message }` alone - no `statusCode`. An envelope-only reading missed it,
+  // and a removed member kept the conversation.
+  it('raises a typed refusal on the coded 403 the route really sends, carrying the group', async () => {
     const api = makeApi(async () =>
-      response('{"message":"Caller is not a member"}', { status: 403 })
+      response('{"code":"NOT_A_MEMBER","message":"Caller is not a member of this group"}', {
+        status: 403,
+      })
     );
 
     const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(NotAGroupMemberError);
     expect((err as NotAGroupMemberError).groupId).toBe('g1');
+  });
+
+  it("a 403 whose code is not the contract's is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('{"code":"ACCESS_DENIED","message":"blocked"}', { status: 403 })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  it('a JSON-speaking CDN 403 is no membership answer', async () => {
+    const api = makeApi(async () =>
+      response(
+        '{"type":"https://developers.cloudflare.com/x","title":"Access denied","status":403,' +
+          '"detail":"blocked","error_code":1020}',
+        { status: 403 }
+      )
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  // The gateway's own error pages imitate Nest's envelope for 5xx: a gateway origin, but a status
+  // that says nothing about membership.
+  it('an envelope-imitating 502 is no membership answer', async () => {
+    const api = makeApi(async () =>
+      response('{"statusCode":502,"message":"Bad Gateway"}', { status: 502 })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  it("an edge's HTML 403 is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('<html>Access denied</html>', { status: 403, contentType: 'text/html' })
+    );
+
+    const err = await api.getGroupMembers('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
   });
 
   // Every other non-2xx says NOTHING about membership, so none of them may be mistaken for one.
@@ -111,15 +224,40 @@ describe('getGroupMembers - a status code is an answer, a transport failure is n
  * conversations on a bad deploy, which is a worse failure than the one being fixed.
  */
 describe('fetchGroupInfo - a refused base is a membership answer', () => {
+  // `messaging.service.ts` throws `ForbiddenException(string)` here, so this one IS the envelope.
   it('raises a typed refusal on 403, carrying the group', async () => {
     const api = makeApi(async () =>
-      response('{"message":"User u is not a member of group g1"}', { status: 403 })
+      response('{"statusCode":403,"message":"User u is not a member of group g1"}', {
+        status: 403,
+      })
     );
 
     const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(NotAGroupMemberError);
     expect((err as NotAGroupMemberError).groupId).toBe('g1');
+  });
+
+  it("an edge's HTML 403 is no membership answer", async () => {
+    const api = makeApi(async () =>
+      response('<html>Access denied</html>', { status: 403, contentType: 'text/html' })
+    );
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  it('a JSON-speaking edge 403 (no Nest envelope) is no membership answer either', async () => {
+    const api = makeApi(async () =>
+      response('{"status":403,"title":"Access denied"}', { status: 403 })
+    );
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
   });
 
   it.each([401, 404, 500, 502, 503])('leaves %i unclassified', async (status) => {

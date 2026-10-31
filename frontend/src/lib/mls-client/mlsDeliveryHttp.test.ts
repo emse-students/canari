@@ -4,6 +4,8 @@ import {
   deliveryKeepalivePost,
 } from './mlsDeliveryHttp';
 import { deliveryUrl, gatewayUrl } from '$lib/utils/apiUrl';
+import { NotFromApiError } from '$lib/utils/apiJson';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 describe('resolveMlsPublicUrls', () => {
   const origGateway = import.meta.env.VITE_GATEWAY_URL;
@@ -43,9 +45,20 @@ describe('resolveMlsPublicUrls', () => {
 });
 
 describe('assertOkMlsDeliveryResponse', () => {
-  it('resolves on 2xx without reading body', async () => {
-    const res = new Response(null, { status: 204 });
+  it('resolves on a 2xx the delivery service answered, without reading its body', async () => {
+    const res = Response.json({ status: 'queued' });
     await expect(assertOkMlsDeliveryResponse(res, 'welcome')).resolves.toBeUndefined();
+    expect(res.bodyUsed).toBe(false);
+  });
+
+  it('reads a portal 200 (text/html) as no answer, never as a delivered Welcome', async () => {
+    const res = new Response('<html>log in to the Wi-Fi</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+    const failure = await assertOkMlsDeliveryResponse(res, 'welcome').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(NotFromApiError);
+    expect(isTransportFailure(failure)).toBe(true);
   });
 
   it('throws with status, context, and body preview on error', async () => {

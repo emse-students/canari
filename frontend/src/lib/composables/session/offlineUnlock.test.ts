@@ -332,21 +332,26 @@ describe('a login can never race the wipe that erases it', () => {
  * wires unconditionally. These pin the choice, not the wording.
  */
 describe('a revoked live device is logged out, not asked for its PIN', () => {
-  /** The push handler from the line that announces the revocation to the next registration. */
+  /** The frame's answer, from the line that announces the revocation to the end of the function. */
   const liveRevocationTail = (() => {
-    const at = loginImplBody.indexOf('[SECURITY] This device was revoked by its owner');
+    const frameBody = bodyOf('export async function answerDeviceRevokedFrame');
+    const at = frameBody.indexOf('[SECURITY] This device was revoked by its owner');
     expect(at).toBeGreaterThan(-1);
-    const end = loginImplBody.indexOf('onWelcomeRequest', at);
-    expect(end).toBeGreaterThan(at);
-    return loginImplBody.slice(at, end);
+    return frameBody.slice(at);
   })();
+
+  it('is the handler the live session registers for the frame', () => {
+    expect(loginImplBody).toContain('answerDeviceRevokedFrame(ctx, cb, mlsService)');
+  });
 
   it('wipes first, then hands over to the session-expired seam', () => {
     const wipe = liveRevocationTail.indexOf('await wipeRevokedDevice(ctx, cb);');
     expect(wipe).toBeGreaterThan(-1);
     // The order is the point: handing over before the wipe would navigate away from the device
     // being erased, and nothing would finish erasing it.
-    expect(liveRevocationTail.indexOf('cb.onSessionExpired?.();')).toBeGreaterThan(wipe);
+    expect(
+      liveRevocationTail.indexOf('cb.onSessionExpired?.({ alreadySignedOut: true });')
+    ).toBeGreaterThan(wipe);
   });
 
   it('never reopens the PIN prompt for a device that no longer has one', () => {
@@ -483,7 +488,7 @@ describe('the gateway handshake is held across the MLS state load', () => {
 
   it('opens no socket at all on an offline session', () => {
     // There is no token to carry and no server to reach; the attempt would cost a timeout and log
-    // `Gateway inaccessible` for a device that never had a gateway.
+    // `[WS] Gateway connection failed` for a device that never had a gateway.
     expect(loginImplBody).toContain('const startedHandshake = offlineSession\n      ? null');
   });
 

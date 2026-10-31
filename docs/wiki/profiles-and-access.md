@@ -46,10 +46,10 @@ email and locale only, and an `external` account cannot open authentik's user in
 (`formation`) and `First + Last Names` (`firstName`/`lastName`, split from `name`: words entirely in
 capitals become the last name). All but MiGallery and the Cercle also carry `Personnel de l'école`
 (`school_status`), which **no application reads**. The `profile` scope carries `groups`, and the only
-group is `authentik Admins` (5, superuser). **No application has an access policy**: every account
+group is the identity provider's administrators group. **No application has an access policy**: every account
 can sign in to all nine.
 
-**The population.** 600 `external` + 5 `internal` + 1 service account.
+**The population.** 600 `external` accounts, a few `internal` ones and 1 service account.
 
 | | Accounts |
 | --- | --- |
@@ -307,8 +307,7 @@ profile editor (WP4) is tried on the production instance with test accounts. **S
 `miconnect-` prefix (`miconnect-enrollment-prompt-cursus`, `miconnect-claim-promo`), displayed TEXT
 in French in the "tu" register; the Cercle's 30 s / 2 min tokens are KEPT and documented, because it
 reads the verified id_token once at its callback and discards the rest
-(`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
-A local break-glass administrator account is kept in case the CAS is down.
+(`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later.
 
 **WPA is two pull requests, both MERGED AND APPLIED to production on 2026-09-30.**
 
@@ -738,7 +737,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Population | Space | Sees student content | State |
 | --- | --- | --- | --- |
 | Student or alumnus (no distinction) | formation x campus (an alumnus keeps the former one) | what their spaces and memberships reach | built |
-| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post | next |
+| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, not built: [backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | next |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
 spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
@@ -751,7 +750,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); never an institution; an admin only by id | built |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); never an institution; an admin only by id. Decided 2026-10-25, not built: also the author's ACCEPTED followers, whatever their space, and a member's repost with the author's consent ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -770,6 +769,7 @@ box no longer defines anything.
 | Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader - **NOT BUILT: no promo or contributor filter exists in code yet**, so nothing narrows either branch |
 | Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
+| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); until WP-F5 an accepted follow fills Suivis and opens nothing a shared space did not already open |
 | Moderation | global (D23) |
 
 ### Decided last (user, 2026-10-04)

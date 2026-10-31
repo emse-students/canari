@@ -272,7 +272,7 @@ for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose
   # `|| true` because a missing key is the case this assertion EXISTS for, and under `pipefail`
   # grep's exit 1 would otherwise kill the script before it could say so - failing the suite with no
   # diagnostic at all, which is how a guard costs more than it buys.
-  project="$(grep -E '^name:[[:space:]]*' "$file" 2>/dev/null | head -1 |
+  project="$(grep -E '^name:[[:space:]]*' "$file" 2>/dev/null | sed -n 1p |
     sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
   if [ -z "$project" ]; then
     fail "$file declares no top-level 'name:', so its project is the directory it sits in - which is the same directory as the other deployed estate"
@@ -440,8 +440,8 @@ DEV_ABSENT_BY_DESIGN="adminer"
 #                       is NOT exempt from the Cloudflare pair since calls lot 1
 #                       (2026-10-17): it mints the TURN credentials of dev's 1:1
 #                       calls, rendered from the DEV_CLOUDFLARE_* secrets.
-#   APNS_VOIP_*         a VoIP push certificate for that same held-off feature,
-#                       and no iOS client points at dev.
+#   (APNS_VOIP_* IS wired since 2026-10-30: iOS dev calls ring through the DEV_APNS_VOIP_*
+#   secrets; leaving it out meant a locked iPhone on dev was never rung.)
 #   MICONNECT_EDITOR_TOKEN
 #                       the authentik service account that edits a profile. Dev and production
 #                       share ONE MiConnect, so a dev edit would change a real person: dev holds
@@ -457,9 +457,6 @@ DEV_ABSENT_KEYS="
   call-service:CLOUDFLARE_TURN_TTL_SECONDS
   chat-delivery-service:TURN_URL chat-delivery-service:TURN_USERNAME
   chat-delivery-service:TURN_CREDENTIAL
-  chat-delivery-service:APNS_VOIP_KEY_ID chat-delivery-service:APNS_VOIP_KEY_P8
-  chat-delivery-service:APNS_VOIP_SANDBOX chat-delivery-service:APNS_VOIP_TEAM_ID
-  chat-delivery-service:APNS_VOIP_TOPIC
   chat-delivery-service:MIGALLERY_API_KEY chat-delivery-service:MIGALLERY_API_URL
 "
 

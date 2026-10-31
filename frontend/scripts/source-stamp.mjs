@@ -51,7 +51,7 @@ const INPUTS = [
   'messages',
   'static',
   'vite.config.js',
-  'svelte.config.js',
+  'kit.config.js',
   'package.json',
   'project.inlang/settings.json',
 ];

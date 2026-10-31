@@ -7,6 +7,7 @@ import {
   purgeLocalConversationRecord,
   purgeOrphanGroup,
 } from './groupActions';
+import { enumerateNotReadyGroups, markGroupNotReady } from './notReadyRegistry';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -83,12 +84,42 @@ describe('purgeLocalConversationRecord', () => {
       conversations,
       contactKey: 'g1',
       groupId: 'g1',
+      userId: 'user-a',
       deleteConversation,
     });
 
     expect(conversations.has('g1')).toBe(false);
     expect(deleteConversation).toHaveBeenCalledWith('g1');
     expect(mlsService.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  it('drops the recovery marker with the row, so no re-add outlives the conversation (ADM-2)', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          name: 'Test',
+          messages: [],
+          lifecycle: 'pending',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    localStorage.clear();
+    markGroupNotReady('user-a', 'g1');
+    markGroupNotReady('user-a', 'g2');
+
+    await purgeLocalConversationRecord({
+      conversations,
+      contactKey: 'g1',
+      groupId: 'g1',
+      userId: 'user-a',
+    });
+
+    // The watchdog enumerates this registry; the other group's marker is not this row's to drop.
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g2']);
   });
 });
 
@@ -523,6 +554,10 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(conversations.has('graine-group')).toBe(false);
     expect(deleteConversation).toHaveBeenCalledWith('graine-group');
     expect(mlsService.noteDistributionGroup).toHaveBeenCalledWith('graine-group');
+    // THE KIND IS READ BEFORE THE ROSTER IS ASKED FOR. The server refuses `user-members` on a key
+    // group with a 403, so asking first printed that refusal at every boot - for a question the
+    // status row already in hand had answered.
+    expect(mlsService.getGroupUserMembers).not.toHaveBeenCalledWith('graine-group');
   });
 
   it('purges nothing when the list is EMPTY while this device holds trees', async () => {
@@ -801,5 +836,108 @@ describe('discoverMissingGroups - a 1v1 pending deletion must not block its repl
     });
 
     expect(conversations.has(NEW)).toBe(false);
+  });
+});
+
+/**
+ * A CONVERSATION THIS ACCOUNT WAS NEVER ADMITTED TO: a declined joiner, or a link ask nobody
+ * answered, kept a sidebar row captioned as an established channel that never existed. The server's
+ * list says, of this device's seat, whether it is an invitation-link ask
+ * (`deviceMembership.awaitingAdmission`); the row carries it durably, and a never-admitted row the
+ * list stops naming goes.
+ */
+describe('discoverMissingGroups - a never-admitted conversation', () => {
+  const row = (id: string, awaitingAdmission?: boolean): Conversation => ({
+    id,
+    contactName: id,
+    name: 'Groupe',
+    messages: [],
+    lifecycle: 'pending',
+    mlsStateHex: null,
+    conversationType: 'group',
+    ...(awaitingAdmission === undefined ? {} : { awaitingAdmission }),
+  });
+  const listed = (groupId: string, awaitingAdmission: boolean) => ({
+    groupId,
+    name: 'Groupe',
+    isGroup: true,
+    deviceMembership: {
+      status: 'pending' as const,
+      welcomeQueued: false,
+      addInFlight: false,
+      admitted: false,
+      awaitingAdmission,
+    },
+  });
+  const run = (
+    conversations: Map<string, Conversation>,
+    mlsService: IMlsService,
+    saveConversation = vi.fn().mockResolvedValue(undefined),
+    deleteConversation = vi.fn().mockResolvedValue(undefined)
+  ) =>
+    discoverMissingGroups({
+      mlsService,
+      userId: 'joiner',
+      deviceKeyB64: '1234',
+      conversations,
+      saveConversation,
+      deleteConversation,
+      log: vi.fn(),
+    });
+
+  it('marks the row the list names as an ask, durably, and clears it once a member admits', async () => {
+    const conversations = new Map([['ask-id', row('ask-id')]]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const getUserGroups = vi.fn().mockResolvedValue([listed('ask-id', true)]);
+
+    await run(conversations, makeMls({ getUserGroups }), saveConversation);
+    expect(conversations.get('ask-id')?.awaitingAdmission).toBe(true);
+    expect(saveConversation).toHaveBeenCalledWith('ask-id');
+
+    getUserGroups.mockResolvedValue([listed('ask-id', false)]);
+    await run(conversations, makeMls({ getUserGroups }), saveConversation);
+    expect(conversations.get('ask-id')?.awaitingAdmission).toBe(false);
+  });
+
+  it('removes it once the list stops naming it - a member declined - without asking anything', async () => {
+    const conversations = new Map([['declined-id', row('declined-id', true)]]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([listed('other-id', false)]),
+      // The group lives on, and a declined person reads no roster: this used to keep the row.
+      getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'declined-id', deletedAt: null }),
+      getGroupUserMembers: vi.fn().mockRejectedValue(new Error('403')),
+    });
+
+    await run(conversations, mlsService, undefined, deleteConversation);
+
+    expect(conversations.has('declined-id')).toBe(false);
+    expect(deleteConversation).toHaveBeenCalledWith('declined-id');
+    expect(mlsService.getGroupServerStatus).not.toHaveBeenCalledWith('declined-id');
+  });
+
+  it('leaves an unflagged placeholder absent from the list to the fate decision, as before', async () => {
+    const conversations = new Map([['admitted-id', row('admitted-id', false)]]);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([listed('other-id', false)]),
+    });
+
+    await run(conversations, mlsService);
+
+    expect(mlsService.getGroupServerStatus).toHaveBeenCalledWith('admitted-id');
+  });
+
+  it('keeps it while the list cannot be believed (empty while this device holds trees)', async () => {
+    const conversations = new Map([['ask-id', row('ask-id', true)]]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getLocalGroups: vi.fn().mockReturnValue(['held-id']),
+    });
+
+    await run(conversations, mlsService, undefined, deleteConversation);
+
+    expect(conversations.has('ask-id')).toBe(true);
+    expect(deleteConversation).not.toHaveBeenCalledWith('ask-id');
   });
 });

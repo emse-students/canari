@@ -174,8 +174,12 @@ export const IDP_HOSTS = ['miconnect.emse.fr', 'auth.canari-emse.fr', 'cas.emse.
  * Browser pages that are no estate and run no application: a blank tab, Chrome's new-tab page, and
  * the error page Chrome shows when a navigation failed (a NET row that cut the link lands there).
  * Exact URLs - a prefix would let `about:blank#...` style tricks and any `chrome://` page through.
+ *
+ * THE EMPTY STRING IS ONE OF THEM: a WebView the engine has just created on a cold start reports its
+ * target with url '' until its first navigation commits, and COMM-18's cold start attached in that
+ * window and was refused as 'not a URL' (2026-10-27). It holds no document, so it runs nothing.
  */
-export const INERT_PAGES = ['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-error://chromewebdata/'];
+export const INERT_PAGES = ['', 'about:blank', 'chrome://newtab/', 'chrome://new-tab-page/', 'chrome-native://newtab/', 'chrome-error://chromewebdata/'];
 
 /**
  * Whether a page may be attached to or navigated to by a rig whose estate is `estateOrigin` - an
@@ -291,11 +295,26 @@ export const devPsqlCommand = (sql) =>
   `if [ -z "$u" ]; then echo "[estate] refused: $c carries no POSTGRES_USER" >&2; exit ${REFUSED_STATUS}; fi; ` +
   `docker exec "$c" psql -X -U "$u" -d ${DEV_DATABASE} -tAc ${shq(sql)}`;
 
-/** One dev service's log window, both streams. */
-export function devLogsCommand(service, since) {
+/**
+ * One dev service's log window, both streams. `timestamps` prefixes each line with docker's own
+ * receive instant (RFC 3339, UTC, sub-second): the one clock two services' lines can be ordered by,
+ * where Nest prints whole seconds in the container's zone.
+ */
+export function devLogsCommand(service, since, { timestamps = false } = {}) {
   if (!SINCE.test(since)) throw new Error(`devLogsCommand: '${since}' is not a docker --since value`);
-  return `${devResolveContainer(service)}; docker logs --since ${since} "$c" 2>&1`;
+  return `${devResolveContainer(service)}; docker logs${timestamps ? ' --timestamps' : ''} --since ${since} "$c" 2>&1`;
 }
+
+/**
+ * `<name> <StartedAt> <FinishedAt> <Running>` for EVERY container of dev's compose project, running
+ * or not, one per line - the restart witness `deploy.mjs` reads for a dev window (R4). A container
+ * that stopped inside the window and stayed down is a disruption too, so stopped ones are listed
+ * (R4 low finding). Read-only, and an empty project prints nothing, which the reader treats as
+ * unanswered rather than as "nothing restarted".
+ */
+export const devContainerStartsCommand = () =>
+  `docker ps -aq --filter label=com.docker.compose.project=${DEV_PROJECT} ` +
+  `| xargs -r docker inspect --format '{{.Name}} {{.State.StartedAt}} {{.State.FinishedAt}} {{.State.Running}}'`;
 
 /** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
 // oxlint-disable-next-line no-control-regex -- ESC is the character this must match; that IS the rule.
@@ -357,14 +376,17 @@ export function makeEstate({ site, devSshHost, docker, dockerSpawn, ssh }) {
       ? localExec('postgres', `psql -U admin -d auth_db -tAc "${sql.replace(/"/g, '\\"')}"`, { timeoutMs: 60_000, ...opts })
       : ssh(devSshHost, devPsqlCommand(sql), { timeoutMs: 60_000, ...opts });
 
-  /** One service's log lines in the window, both streams, ANSI stripped, blanks dropped. */
-  const srvLines = (service, since) => {
+  /**
+   * One service's log lines in the window, both streams, ANSI stripped, blanks dropped. With
+   * `timestamps`, each line starts with docker's receive instant (`devLogsCommand`).
+   */
+  const srvLines = (service, since, { timestamps = false } = {}) => {
     if (LOCAL) {
-      const r = dockerSpawn(['logs', '--since', since, localContainer(service)]);
+      const r = dockerSpawn(['logs', ...(timestamps ? ['--timestamps'] : []), '--since', since, localContainer(service)]);
       if (r.error || r.status !== 0) throw new Error(`docker logs ${localContainer(service)} failed: ${r.error ?? r.stderr}`);
       return logLines(`${r.stdout}\n${r.stderr}`);
     }
-    return logLines(ssh(devSshHost, devLogsCommand(service, since), { timeoutMs: 90_000 }));
+    return logLines(ssh(devSshHost, devLogsCommand(service, since, { timestamps }), { timeoutMs: 90_000 }));
   };
 
   /**
@@ -382,5 +404,15 @@ export function makeEstate({ site, devSshHost, docker, dockerSpawn, ssh }) {
         : `${service} -> ${ssh(devSshHost, `${devResolveContainer(service)}; echo "$c"`, { timeoutMs: 30_000 })}`,
     );
 
-  return { ESTATE, LOCAL, DEV: ESTATE === 'dev', redis, psql, srvLines, verifyTarget };
+  /**
+   * DEV's container start times as `<name> <StartedAt>` lines, over the same ssh route and the same
+   * compose label as every other dev read. The local estate's restarts are `estateRestarts` in
+   * `deploy.mjs`, which needs no machine-local name; this one does (`devSshHost`), hence here.
+   */
+  const devContainerStarts = () => {
+    if (LOCAL) throw new Error('devContainerStarts: the estate is local - its restarts are read by estateRestarts in deploy.mjs');
+    return ssh(devSshHost, devContainerStartsCommand(), { timeoutMs: 30_000 });
+  };
+
+  return { ESTATE, LOCAL, DEV: ESTATE === 'dev', redis, psql, srvLines, verifyTarget, devContainerStarts };
 }

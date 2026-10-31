@@ -3,7 +3,9 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
 
 export default defineConfig({
-  plugins: [svelte()],
+  // No `svelte.config.js` exists any more (SvelteKit 3 reads its options from `vite.config.js`), so
+  // the plugin is told not to look for one - it logs "no Svelte config found" otherwise.
+  plugins: [svelte({ configFile: false })],
   test: {
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.

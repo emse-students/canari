@@ -18,7 +18,17 @@ import {
   SEAT_CLAIM_OVERTAKEN_MAX_ATTEMPTS,
 } from '$lib/mls-client/CommitRefusedError';
 import { commitRateLimitRemainingMs, resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
-import { CommitOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import {
+  AcceptedCommitNotMergedError,
+  CommitOutcomeUnknownError,
+} from '$lib/mls-client/commitSubmission';
+import {
+  dischargeRefusedBacklog,
+  noteUnackedFrame,
+  refusedBacklogMark,
+  resetUnackedFrames,
+} from '$lib/mls-client/messagePipeline/unackedFrames';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /**
  * The WRITE-side entrance to the recovery ladder: a commit the server refuses because our base
@@ -50,6 +60,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       submitCommit: vi.fn(),
       fetchCommitsSince: vi.fn(),
     },
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn(async () => state.epoch),
     getEpoch: vi.fn(() => state.epoch),
@@ -59,6 +70,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       return null;
     }),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([1])),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
@@ -66,6 +79,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deviceId: 'web-a',
     // No staged commit kept in the state: every commit here is answered at once.
     groupsWithPendingCommit: vi.fn(async () => []),
+    // What a replay held behind a refused backlog asks for: the pull that ends the hold.
+    notifyConversationAvailable: vi.fn(),
+    // What a replay that applied commits announces (a lost invitation's wake): nothing waits here.
+    notifyCommitsApplied: vi.fn(),
     // REAL: with no staged commit kept they settle nothing and submit once, which is the
     // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
     ...Object.fromEntries(
@@ -74,6 +91,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         'settleUnresolvedCommitFromLog',
         'checkpointStageBeforeSend',
         'submitRecorded',
+        'mergeAccepted',
+        'noteOwnLeafReplaced',
         'resubmitUnresolved',
       ].map((name) => [
         name,
@@ -435,5 +454,148 @@ describe('BaseMlsService - a partial replay after a refused commit', () => {
     none.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 400, belowFloor: true });
     await none.catchUpOnRefusedCommit('g', 195, 400);
     expect(persistNow).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A REFUSED COMMIT'S CATCH-UP HELD BEHIND A REFUSED BACKLOG ASKS FOR THE PULL THAT ENDS THE HOLD
+ * (round 4 of #2414): the mark is discharged only by a pull, and a quiet conversation has no next
+ * frame to start one - so the hold used to last until the stuck-gap escalation or a reconnect.
+ */
+describe('BaseMlsService - a refused commit held behind a refused backlog', () => {
+  beforeEach(() => {
+    resetUnackedFrames();
+    resetEpochGapRegistry();
+  });
+
+  it('replays nothing, asks for the pull ONCE, and replays once that pull has discharged the backlog', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const ctx = makeCtx();
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AA==' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+    noteUnackedFrame('g', 'absent-conversation');
+
+    await ctx.catchUpOnRefusedCommit('g', 195, 196);
+
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledWith('g');
+
+    // The pull listed the whole mailbox: the backlog is discharged, and the next refusal replays.
+    dischargeRefusedBacklog(refusedBacklogMark());
+    await ctx.catchUpOnRefusedCommit('g', 195, 196);
+
+    expect(ctx.state.epoch).toBe(196);
+    expect(isInEpochGap('g')).toBe(false);
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+});
+
+/**
+ * A `concurrent_commit` REPORTS THE EPOCH THE GATE READ WHILE ANOTHER COMMIT HELD ITS LOCK (CC-4,
+ * 2026-10-25): "not ahead" there is not an answer, so the log is read once - a winner that landed is
+ * applied, which is the progress a caller's rebuild needs; one that did not leaves the epoch, and no
+ * gap is marked for a group that has none.
+ */
+describe('BaseMlsService - a commit refused concurrent_commit', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('reads the log once and applies the winner that landed, so the epoch MOVES', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AQID' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected: concurrent_commit');
+
+    expect(ctx.fetchCommitsSince).toHaveBeenCalledWith('g', 195);
+    expect(ctx.state.epoch).toBe(196);
+    expect(isInEpochGap('g')).toBe(false);
+  });
+
+  it('held behind a refused backlog: asks for its pull once, in ONE [COMMIT] line, no [GAP]', async () => {
+    resetUnackedFrames();
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [{ baseEpoch: 195, proto: 'AQID' }],
+      activeEpoch: 196,
+      belowFloor: false,
+    });
+    noteUnackedFrame('g', 'absent-conversation');
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+
+    await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitRefusedError);
+
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+    expect(lines.filter((l) => l.includes('[GAP]'))).toEqual([]);
+    expect(lines.filter((l) => l.includes('refused concurrent_commit at epoch 195'))).toHaveLength(
+      1
+    );
+    vi.restoreAllMocks();
+    resetUnackedFrames();
+  });
+
+  it('leaves the epoch and marks no gap when the winner has not landed yet', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'concurrent_commit',
+      currentEpoch: 195,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 195, belowFloor: false });
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+
+    await expect(runCommit(ctx, 'g')).rejects.toBeInstanceOf(CommitRefusedError);
+
+    expect(ctx.state.epoch).toBe(195);
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(isInEpochGap('g')).toBe(false);
+    // An ordinary race, so no `[GAP]` narration (the GAP rows assert none) - ONE `[COMMIT]` line.
+    expect(lines.filter((l) => l.includes('[GAP]'))).toEqual([]);
+    expect(lines.filter((l) => l.includes('refused concurrent_commit at epoch 195'))).toHaveLength(
+      1
+    );
+    vi.restoreAllMocks();
+  });
+});
+
+describe('BaseMlsService - a commit ACCEPTED and then not merged here', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('throws its own type, never one a caller reads as a refusal: the commit landed', async () => {
+    // A caller that read a raw merge failure as "refused" released a Remove every member
+    // already had, and the receivers elected a second commit of it.
+    const ctx = makeCtx({ mergePendingCommit: vi.fn().mockRejectedValue(new Error('wasm merge')) });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 196 });
+
+    const thrown = await runCommit(ctx, 'g-merge').catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(AcceptedCommitNotMergedError);
+    expect(thrown).not.toBeInstanceOf(CommitRefusedError);
+    expect(String(thrown)).toContain('wasm merge');
+    expect((thrown as AcceptedCommitNotMergedError).baseEpoch).toBe(195);
   });
 });

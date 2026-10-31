@@ -109,6 +109,34 @@ describe('AssociationsController cotisation config gating (D5)', () => {
  * private column here carries a recognisable value, and each route that answers a row must carry
  * none of them, by value or by key name.
  */
+describe('AssociationsController cotisation options capability', () => {
+  it('says it derives a new tier key from its label, so a client may offer tier creation', async () => {
+    const service = { mayAct: jest.fn(() => Promise.resolve(false)) };
+    const userTagService = {
+      listCotisationTiers: jest.fn(() =>
+        Promise.resolve([{ variantKey: null, name: 'Cotisation', tagName: 'cotisant:bde' }])
+      ),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      userTagService as unknown as UserTagService,
+      {} as UserProfileService,
+      {} as never
+    );
+
+    const out = await controller.cotisationOptions('asso1', 'user1', undefined);
+
+    expect(out).toEqual({
+      tiers: [{ variantKey: null, name: 'Cotisation' }],
+      mayGrant: false,
+      tierKeyFromLabel: true,
+    });
+  });
+});
+
 describe('AssociationsController response shape', () => {
   const VENDOR_TOKEN = 'vendor_tok_LEAK_9f8e7d';
   const DASHBOARD_URL = 'https://lydia.example/dashboard/LEAK';
@@ -196,12 +224,22 @@ describe('AssociationsController response shape', () => {
       service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
       const result = await controller.setLydiaAccount(
         'asso1',
-        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        {
+          lydiaAccountId: VENDOR_TOKEN,
+          lydiaDashboardUrl: DASHBOARD_URL,
+          businessPrivateToken: 'throwaway-business-key',
+        },
         'internal-secret-for-tests'
       );
       expect(result).toEqual({ ok: true });
       const body = JSON.stringify(result);
-      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+      for (const secret of [
+        VENDOR_TOKEN,
+        DASHBOARD_URL,
+        VAULT_KEY,
+        NOTES,
+        'throwaway-business-key',
+      ]) {
         expect(body).not.toContain(secret);
       }
     } finally {

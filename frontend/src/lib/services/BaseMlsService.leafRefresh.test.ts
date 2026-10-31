@@ -17,6 +17,7 @@ import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
 /** Any intent: the refresh only hands it on to its stage. */
 const INTENT = new Uint8Array([9]);
@@ -56,8 +57,11 @@ function commitCtx(accepted: boolean) {
           accepted ? { accepted: true } : { accepted: false, reason: 'concurrent_commit' }
         ),
     },
+    ...plainCommitLock,
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
@@ -70,6 +74,8 @@ function commitCtx(accepted: boolean) {
         'settleUnresolvedLocked',
         'checkpointStageBeforeSend',
         'submitRecorded',
+        'mergeAccepted',
+        'noteOwnLeafReplaced',
         'resubmitUnresolved',
       ].map((name) => [
         name,
@@ -84,10 +90,36 @@ const staged = async () => ({ commit: new Uint8Array([1]), groupInfo: new Uint8A
 beforeEach(() => localStorage.clear());
 
 describe('BaseMlsService - every accepted own commit dates the leaf', () => {
-  it('records the epoch the accepted commit created', async () => {
+  it('records the epoch the accepted commit created, naming the leaf the MERGE produced', async () => {
     const ctx = commitCtx(true);
     await runCommitTransaction.call(ctx, 'g-1', ctx.recorder.wrap(staged), {});
-    expect(readLeafRefreshLedger(U, D)['g-1']).toMatchObject({ epoch: 6 });
+    expect(readLeafRefreshLedger(U, D)['g-1']).toMatchObject({ epoch: 6, leaf: 'k-leaf' });
+    // Read after the merge: before it, the key is the leaf this commit replaces.
+    expect(ctx.ownLeafKey.mock.invocationCallOrder[0]).toBeGreaterThan(
+      ctx.mergePendingCommit.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a kept commit merged by its settlement dates the leaf through the same writer', async () => {
+    // KILL-2 asked whether some merge of an own commit skips the ledger: the transaction and the
+    // settlement both merge through `mergeAccepted`, which dates the leaf.
+    const ctx = commitCtx(true);
+    const mergeSettled = (
+      BaseMlsService.prototype as unknown as { mergeSettled(s: unknown): Promise<void> }
+    ).mergeSettled;
+    await mergeSettled.call(ctx, { groupId: 'g-1', baseEpoch: 9, commit: 'Y29tbWl0' });
+    expect(ctx.mergePendingCommit).toHaveBeenCalledExactlyOnceWith('g-1');
+    expect(readLeafRefreshLedger(U, D)['g-1']).toMatchObject({ epoch: 10, leaf: 'k-leaf' });
+  });
+
+  it('a leaf key that cannot be read dates nothing, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = commitCtx(true);
+    ctx.ownLeafKey.mockRejectedValue(new Error('no state'));
+    await runCommitTransaction.call(ctx, 'g-1', ctx.recorder.wrap(staged), {});
+    expect(readLeafRefreshLedger(U, D)['g-1']).toBeUndefined();
+    expect(warn.mock.calls.flat().join(' ')).toContain('not dated');
+    warn.mockRestore();
   });
 
   it('records nothing for a refused commit - the leaf did not change', async () => {
@@ -115,6 +147,11 @@ describe('the commits no person asks for - staged only on the branch the server 
     );
     return {
       delivery: { fetchGroupInfo: vi.fn().mockResolvedValue(opts.base) },
+      // REAL routing: a conversation (no registered scope) reads its base from chat-delivery.
+      distributionScopeByGroup: new Map(),
+      knownDistributionGroups: new Set(),
+      groupInfoChannel: (BaseMlsService.prototype as unknown as { groupInfoChannel: unknown })
+        .groupInfoChannel,
       freshEpoch: vi.fn().mockResolvedValue(5),
       ownContextMatchesBase: vi.fn().mockResolvedValue(opts.matches ?? true),
       runCommitTransaction: run,

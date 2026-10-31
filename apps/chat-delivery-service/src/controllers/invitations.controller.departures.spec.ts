@@ -60,7 +60,7 @@ describe('InvitationsController - a device leaving a group', () => {
   };
 
   it("DELETE device-memberships/:user/:device/:group takes that group's Welcomes for the device", async () => {
-    await controller.deleteDeviceMembership('bob', 'b1', 'g-1');
+    await controller.deleteDeviceMembership('bob', 'b1', 'g-1', 'bob');
 
     expect(txDeletes).toEqual([
       {
@@ -86,7 +86,7 @@ describe('InvitationsController - a device leaving a group', () => {
   });
 
   it('DELETE device-memberships/:user/:device takes every Welcome queued for the device', async () => {
-    await controller.deleteAllDeviceMemberships('bob', 'b1');
+    await controller.deleteAllDeviceMemberships('bob', 'b1', 'bob');
 
     expect(txDeletes).toEqual([
       { entity: QueuedMessage, where: { recipientId: 'bob', deviceId: 'b1', isWelcome: true } },

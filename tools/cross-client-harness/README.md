@@ -98,6 +98,13 @@ reported them as dev's.
   `Page.navigate` / `Target.createTarget` a connection sends, and in `launch.mjs` `startBrowser`
   (its landing url, and the tabs the profile restored). With no estate registered (`site.mjs` not
   yet evaluated) `listTargets` loads it; the guard itself never passes a page by default.
+  A browser `startBrowser` launched that comes back with a refused tab is KILLED, not left running.
+  **ONE BROWSER THE RIG DOES NOT OWN is judged per target instead:** the phone's own Chrome, where
+  `login.mjs` finds the IdP form beside whatever tabs the phone's user left open. There
+  `untrustedBrowserPages` lists without judging, and `judgedTarget` judges each tab before it is
+  attached. Every page the rig drives is still judged in full. `onetab.mjs` and `iosbench.mjs`
+  report a refusal as a refusal, not as "not answering", and `onetab.mjs` closes refused tabs
+  (`/json/close`, never a navigation).
 - **A NATIVE CLIENT RUNNING A PRODUCTION BUILD IS NOT REFUSED BY THE PAGE GUARD.** A Tauri app's
   page is `http://tauri.localhost` / `tauri://localhost` whatever origins its build baked in, so
   the guard cannot see that an APK or an iPhone build talks to production. That is checked AFTER
@@ -111,6 +118,48 @@ reported them as dev's.
   (read-only); `archive/run.mjs`'s preflight does the same on its first lines and refuses on a miss.
 - **Dev is shared with testers.** Reads are free; writes to dev's database and Redis are allowed by
   the owner for campaign-owned fixtures only. Nothing the rig runs may write anywhere else.
+
+### What a row may destroy on dev: the campaign ledger (R5)
+
+**On dev a destructive gesture touches only what the campaign CREATED**, and "created" is a record
+written at creation time, never a name that looks minted. One append-only ledger per estate,
+`STATE_DIR/campaign/<estate>.ndjson` (`campaign.mjs`; decisions pure in `campaign-ledger.mjs`,
+pinned by `archive/campaign-selftest.mjs`):
+
+- **Written by** `groupnav.createGroup` / `createDM`, `comm.createCommunity` / `createChannel`,
+  `newdevice.mjs` (the device it mints) and `campaign-fixtures.mjs` (fixtures, the four accounts and
+  each seat's device, with their ids).
+- **Read by `assertCampaignOwned`, called before the first click of**: `groupnav.deleteGroup`;
+  `comm.openCommunitySettings` (the one panel where a community is deleted, left, re-roled, purged of
+  members, re-permissioned or has its invite rotated); `comm.openChannelSettings` (salon delete,
+  access revoke, privacy, write policy); `arm.expireInvite` (a database write); `purge-devices.mjs`
+  (every `--only` id, in full - a prefix is a family); `archive/addmember.mjs` `removeMember`
+  and `leaveGroup` (moved out of `archive/grp.mjs` for the race rows); `archive/del1.mjs`'s inline delete. Every other destructive runner reaches these.
+- **`cleanup.mjs` on dev needs `--only <ids> --expect N`**: the name shapes choose candidates, then
+  only the named ids, each owned, with the expected count, are taken - anything off refuses the
+  whole sweep. `--dry` prints the exact flags.
+- **`stale-devices.mjs` is the device half of that sweep, in the preflight**: every browser device of
+  the rig's accounts that no live seat holds and the ledger records creating (each DEV row mints and
+  abandons one). Read only by default; `--purge --expect N` purges exactly the N it printed, through
+  `purge-devices.mjs`. A web seat that does not answer refuses the plan - its device would look stale.
+- **The "Nouvel appareil" notices a mint leaves on the owner's other seats** are dismissed by the
+  minting row itself, after its verdict, through the banner's "Compris" (`devicenotice.mjs`, pinned
+  by `archive/devicenotice-selftest.mjs`; wired in `archive/devrows.mjs` and `archive/removals.mjs`).
+  It is an allowlist of the ids the row minted: the first notice of any other device stops it and is
+  reported at `error`, for a human to read. `cleanup.mjs` does not touch notices.
+- **Not guarded, deliberately**: `dismissLocally` (it removes only the rig device's own copy of a
+  conversation already deleted) and the message deletions of `mut.mjs` and `search.mjs`, which pick
+  the bubble by the run term of a message the row itself sent seconds earlier.
+- **On local the ledger is written but not required** - the whole estate is the rig's, and the name
+  allowlists decide as before.
+
+**The fixtures** - the four accounts signed in, the owner-peer DM, `VENUE` with a public and a
+`campaign-private` salon, groups `campaign-g2`, `campaign-g4`, `campaign-big` - are built through
+the product by `bun campaign-fixtures.mjs --build` (plan step 2, after the pre-release); without
+`--build` it reads and reports what is owed. Each account needs a web seat in `names.mjs`
+(`ACCOUNT_OF`, `PORTS`; the plan puts third and fourth on W4/W5). Every group's missing members are
+added in ONE bulk Add (`addMembers`), the product's ordinary path, so a fixture's history is one
+commit per group and not one per member.
 
 ## Setting it up
 
@@ -170,6 +219,15 @@ A pass is `PASS` only if its assertions hold **and** its window is clean on web,
 the server. `srvlog.mjs` classifies the whole server window - `--shapes` collapses `unexplained` and
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
+
+**A 1.4.1 line is judged BY THE ROW** (`ROW_RULES` in `srvlog.mjs`, R6 of
+the 1.4.1 campaign, `docs/wiki/cross-client-campaign-1-4-1.md`): a `[COMMIT] DUPLICATE`, an
+`awaiting_admission` refusal, a `[BG_WELCOME]` or a removal-bound refusal is `expected` in the rows
+that provoke it and `outOfRow` - which breaks `clean` - in any other row and in a window no row
+named. A gated row passes its own id (`recordObserved` does it); by hand, `bun srvlog.mjs --since
+15m --row DUP-1` or `bun logs.mjs --server --row DUP-1`. A throttled line whose `repeat=` is not 1,
+10, 100... is dirt in every row: the throttle is what it would be telling you about. ERROR lines are
+never judged per row.
 
 **A network line in a client report renders as `<sentence> <- METHOD /path`**, joined through
 `Log.entryAdded`'s `networkRequestId` to the request the classifier already holds - because "the
@@ -365,13 +423,78 @@ name in `SERIAL_OF`, or `ANDROID_SERIAL` - adb's own variable, which `useDevice`
 every adb this rig shells out to inherits the binding. A device name carries its platform: `W*` is a
 Chrome profile, `A*` is Android.
 
-**THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
+**ON THE LOCAL ESTATE, THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
 `tauri.conf.json` names capability `default` alone, whose fetch scope is `https://**`;
 `src-tauri/tauri.local.conf.json` adds `local-estate`, and `a1apk.mjs` passes it. Without it the
 phone reaches the IdP, authenticates, comes back - and then shows the product's own red
 `url not allowed on the configured scope: http://localhost:8081/...` under the PIN field, because
 `https://**` matches port 443 and `http://**` matches port 80, neither of which is 8081. See
 [`frontend/src-tauri/capabilities/local-estate.json`](../../frontend/src-tauri/capabilities/local-estate.json).
+
+**ON DEV THE APK TAKES NEITHER THE OVERLAY NOR THE REVERSE (R2, 2026-10-24).** `a1apk.mjs` asks
+`a1plan.mjs` what the estate `SITE` names needs: dev (`https://dev.canari-emse.fr`) sits inside the
+default `https://**` scope and the default CSP, the phone reaches it over its radios (so `adb reverse`
+is skipped and `estateReverse` is a logged no-op, and cutting the radios really takes the phone
+offline), and the identity provider is dev's: `DEV_AUTHENTIK` in the machine-local `names.mjs`, the
+pair the pre-release pipeline takes from its `DEV_` secrets, refused when absent. It is still a
+`--debug` build, so CDP reaches the WebView. The packaged bundle - EVERY file under
+`build/_app/immutable` (chunks, nodes, entry) - must name the estate AND no production origin in
+any spelling (`https://`, `http://`, `wss://`, `ws://`, a bare `//`, upper case, a trailing dot).
+ONE allowance, and it is scoped to a CHUNK: `publicAppUrl.ts`'s two link constants
+(`DEFAULT_PUBLIC_APP_ORIGIN`, `LEGACY_PUBLIC_APP_ORIGIN`, read from that source file) as whole
+string literals, inside the one chunk that also carries `PUBLIC_APP_HOSTS` - that module's own
+chunk. **They were NOT always "never a request target"**: until #2385 the root layout started the
+push service with `historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN`, and `seo/site.ts` read the legacy
+constant; the bundler inlined both into the layout's node, which is where the first dev build put
+them. #2385 removed the fallback and made every consumer call a function of that module, so a
+production literal anywhere else is a real target again and is refused. A dev APK therefore builds
+only from a tree carrying #2385, and a `--ref` older than it (v1.4.0 included) is REFUSED for that
+fallback - which is the right answer: that client really can call production.
+**`--accept-dead-production-literal` IS THE ONE EXCEPTION, FOR THE FLOOR/OLD-CLIENT ROWS ADM-5..7
+ONLY (decided 2026-10-24)**. It is never a default and nothing implies it. It is accepted only with
+`--build-only --ref <tag>`, and only for a ref whose layout still carries the fallback; on any tree
+carrying #2385 it is refused, since there is nothing to accept. It lets through at most ONE
+occurrence of each of two compiled shapes, and every other production spelling, in every chunk,
+stays refused:
+- `push-service-fallback`: `.historyBaseUrl||"<canonical origin>",` (the layout before #2385).
+- `legacy-apex-comparison`: `!=="<legacy origin>"?` (`seo/site.ts` before #2385 comparing the baked
+  origin with the legacy apex - a comparison, never a request target).
+
+Why the fallback may be accepted:
+- A signed-in dev build always has `historyBaseUrl` set (it is the baked delivery URL), so the
+  fallback is unreachable.
+- The worst case is an old client sending a DEV token to production, which refuses it.
+The acceptance is written into the build's `a1-builds.ndjson` record (`acceptedDeadProductionLiteral`
+names each shape accepted, beside the occurrences and the ref), and a `--no-build` install of that APK is REFUSED unless `--accept-dead-production-literal` is passed again. A tag predating the
+constants themselves cannot be checked at all, and `linkModuleOf` says so rather than guessing.
+The build ENVIRONMENT is checked before the build: no `VITE_*` value in the process or an
+unoverridden `frontend/.env*` line (`export VITE_X=` included) may name production, because the
+bundle cannot tell a baked target from a constant and the environment can. A `--ref` build takes
+its identity-provider pair from the MAIN checkout's machine configuration, never from the tag.
+`--build-only` touches no phone, not even `adb`; `--build-only --ref <tag>` builds an OLD client in
+its own detached worktree (system temp, `a1-ref-<tag>`) and keeps the APK in `STATE_DIR/apks/`.
+**`--no-build` installs only an APK this rig recorded**: a Tauri APK embeds the frontend
+brotli-compressed inside `lib/<abi>/libmines_app_lib.so`, so there is nothing to unzip and rescan;
+instead every build appends its APK's sha256, origin and bundle verdict to `a1-builds.ndjson`, and
+`installVerdict` refuses an artefact whose hash was never recorded as passing for this estate.
+Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
+
+**A Play TESTER build is recorded, never installed, by `bun a1tester.mjs --tag vX.Y.Z-alpha.N`.**
+A Play-signed app cannot be replaced by the rig's APK (another signature, and no uninstall), so a
+phone the tester programme moved stays there, and `pin.mjs` refuses an app no record vouches for.
+`a1tester.mjs` reads the facts where they live: the installed versionName/versionCode from `dumpsys`,
+the running bundle's stamp from the app, and the release, its Android job and that job's log from
+GitHub. `testerbuild.mjs` (pinned by `archive/testerbuild-selftest.mjs`) accepts only when all of
+these hold:
+- the tag is a pre-release;
+- its Android job succeeded and printed `Android build targets dev`;
+- the phone's bundle names the commit that job checked out and was built inside the job's window;
+- the versionName is the tag's.
+On acceptance it appends `source: 'play-tester'` to `a1-builds.ndjson`. Its `bundleOk: true` is INHERITED from
+the job log's dev line, not from a bundle grep: a release APK embeds its bundle compressed, so the
+rig cannot rescan it, and `android.yml` refused anything but dev before printing that line. A STABLE (a production build)
+is refused first, an unknown build stays `unrecorded`, and a tester record carries no APK sha, so it
+never authorises a `--no-build` install.
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
@@ -409,7 +532,7 @@ used to get wrong on its own.
 | `chat.mjs` | Chat primitives shared by every check - `client`, `ensureChat`, `openConversation`, `send`, `clickBubbleAction`. The single definition of "a message arrived", so two checks cannot disagree for harness reasons. |
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
 | `srvlog.mjs` | The server observer, held to the same bar as the two clients: the whole window is classified, and it partitions by SUBJECT because production is shared. |
-| `deploy.mjs` | Whether production was REDEPLOYED under the run - the one cause of transport failure that is ours. The preflight waits for a deploy in flight; `gate()` turns an overlap into VACUOUS, never FAIL. |
+| `deploy.mjs` | Whether the estate was REDEPLOYED or RESTARTED under the run - the one cause of transport failure that is ours. Local: a container of the compose project started inside the window. Dev (R4): the CONFIGURED estate decides (the origin `site.mjs` registers), never a report's origin, and local docker is never asked about a dev run. Five witnesses: the build `/api/version` serves at each window's start (`watch()`, native clients included) against the build at `gate()`; windows that opened on different builds; any `release.yml` run whose TAG (`headBranch`) is not a stable version intersecting the window (a rerun of the same tag changes no build); a dev container that started or stopped in the window (`StartedAt` / `FinishedAt`, stopped containers included, the window widened by 5 s for the host clock), read over the dev ssh route in a child process; and a `dev-reset` dispatch of `scheduled.yml` whose reset job did not skip (the seed is restored with no build). The preflight waits for a release in flight and names dev's build; `gate()` turns an overlap into VACUOUS, never FAIL. An unreadable witness is a recorded blind spot - locally the verdict stands, ON DEV IT IS VACUOUS, never PASS. **No pre-release is cut while a campaign session is open** - the gate voids the rows it would hit, it cannot stop the gesture. |
 | `bundle.mjs` | Which bundle a client is actually EXECUTING, and the reload that fixes it - the other half of `deploy.mjs`'s question. A browser open across a deploy keeps the old code and looks identical to a fresh one, so the preflight compares `__sveltekit_<id>` in the page against the shell the origin serves. The web/phone split comes from `ORIGIN[device] === SITE`, because an APK is never on the deployment. |
 | `unread-communities.mjs` | **THE TEN-COMMUNITY UNREAD SCENARIO** - `setup --n 10` (communities, salons, the reader joins), then `run arrive|walk|gatewaydown|open|mobile`. Every step is read on THREE ends: the sidebar (rail dot, badge per salon), the server's `channel_members."readMarks"` against the newest message, and nginx's access log of the read endpoints. Built to answer "messages are marked read though I never opened the salon" (2026-10-08): nothing was marked, the badge was a live tally that a reload erased - [chat](../../docs/wiki/frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08). Local estate only; W1 posts, W2 reads. |
 | `sweep.mjs` | **DOES EVERY PAGE FIT, ON A CLIENT THAT IS ACTUALLY RENDERING** - `bun sweep.mjs --device A1`, or `--route /calendar` while fixing one. Three measurements per route, and they are not one question: whether the DOCUMENT scrolls sideways, whether any ELEMENT sticks out past the viewport (it can, without the document scrolling, because an ancestor clips it - the shape three of the four 2026-09-14 defects had), and which text is clipped by its own box. The last is printed as a READING and never failed on: a title ending in an ellipsis in a narrow bar is correct, and only a reader can say which truncation is a defect. Routes are reached by clicking an injected anchor, which is what a user does and what the router is written for; a hard navigation per route would re-boot the WASM client fifty times and measure a first paint instead of a page. A route a link cannot reach is reported UNREACHED, never worked around. |
@@ -426,6 +549,7 @@ used to get wrong on its own.
 | `pingate.mjs` | The PIN gate as a LIBRARY, for a check that has to re-unlock mid-run. `unlockClient` types the PIN and then RE-READS the client to say whether it got through - see below. |
 | `phone.mjs` | The device, as a check sees it - and `forwardIdpBrowser`, which finds the browser holding the identity-provider page instead of assuming Chrome. This phone is LineageOS and the OIDC hop lands in `org.lineageos.jelly`; the forward `login.mjs` needed had never been created at all, so every phone login typed nothing and showed only "Redirection...". |
 | `net.mjs` | The radios. `armCut`/`cutHard` exist because CDP offline emulation leaves an already-established WebSocket alone - the plain cut could never produce a receiver-side disconnection, so MSG-9 had never once measured the thing it was named for. |
+| `fault.mjs` | **The response-stage fault (R3, 2026-10-24)**: over CDP `Fetch`, per URL substring/RegExp and method, `lose-answer` (the server ran it, the page sees a transport failure - the case commit settlement exists for), `status N` (the server ran it, the page sees N), `status-unsent N` (the server never saw it), `delay MS`, `hold` (stopped before the server, `release()` lets two clients' commits go together) and `hold-answer` (the server ran it, the page waits); each with `once`/`xN`. Every action is recorded with its CDP `requestId`/`networkId`, method, URL, the real status and timestamps, so a row can join it to the server's log line; `disarm()` reports a rule that never fired as `vacuous`. A dedicated Worker's fetch IS intercepted (measured). `archive/fault-selftest.mjs` (CI) drives it against a stub connection; `archive/fault-live-selftest.mjs` (`make test-harness-device`) measures every mode from both ends against a throwaway server and a headless Chrome on a temporary profile - no estate. |
 | `a1.py` | Native Android surfaces via `uiautomator2`, for what the WebView cannot see. |
 | `a1apk.mjs` | **The A1 build, install and reverse, as one gesture** - and the assertions that each happened. The SDK and the NDK are DISCOVERED (the README's hardcoded `ndk/26.1.10909125` had rotted), `BUILD_WEB` is deleted from the child environment so Tauri gets its adapter-static shape, the seven `VITE_*_URL` travel as environment rather than an edit to the shared `frontend/.env`, and the packaged bundle is grepped for `SITE` - an APK silently pointing at production fails a row for a reason nobody can see. Importable as `armA1`. |
 | `syncrows.mjs` | The sidebar's readiness, read off `data-ready` / `data-removed` on `[data-conversation-tile]` and NEVER off the translated "Sync" badge - plus `whoAmI`, `navigationCost` and the server-side counterpart (`active`, `tombstoned`, `dismissed`, `dismissedStillMember`). Every HEAL row's numbers come from here, which is why one gate before the rung asks whether the hook is in the SERVED artefact. |
@@ -771,7 +895,7 @@ next one's symptom names the wrong cause.
   which `bun run dev` shares and needs same-origin; and the packaged bundle is then GREPPED for
   `SITE`, because an APK silently pointing at production fails a row for a reason nobody can see.
 
-- **A1 MUST STAY A LOCAL `--debug` BUILD, and the CI artefact cannot replace it (measured
+- **A1 MUST STAY A `--debug` BUILD (local or dev), and the CI artefact cannot replace it (measured
   2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
   keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
   uninstall - which destroys the very data a footprint row measures. And **`run-as` needs
@@ -905,6 +1029,219 @@ estate for the three exit codes.
 **Its sibling guards the build**: `frontend/scripts/check-wasm-no-unsupported.mjs`, wired into
 `bun run wasm:build`. Both are needed - a build can be fixed while an estate still serves the old
 image, which is exactly the state production was in for the twenty minutes after the fix was merged.
+
+### `invariant.mjs` - the five things every MLS row asserts besides its own question (R8)
+
+```sh
+bun invariant.mjs --group <uuid> --device W1,W2 --to "<conversation>" --from-epoch 7 --since <ISO> --reload
+```
+
+Section 4.0 of the 1.4.1 campaign plan (`docs/wiki/cross-client-campaign-1-4-1.md`): one tree
+(every member at the server's epoch, no `[FORK]`/`[INTEGRITY]` line), no stage left and the commit
+log holding exactly one row per epoch the row moved, two messages sent AFTER the event reaching every
+member once, in order, from the right author, no forbidden line (`ACCEPTED AND NOT HELD`, `ERASES`,
+`UNREADABLE`, `[ADMISSION]` at ERROR, `is ABSENT from the state this foreground keeps`, a 5xx) and no
+logout, and the roster agreeing with the tree. `--reload` judges it all again after a reload of every
+web client, which is what proves the state was SAVED. Written once: a runner calls `checkInvariant()`
+with its own `watch()` results, so the console of the whole row is judged, not only the probe's.
+
+The verdict is `invariantverdict.mjs`, pure, pinned by `archive/invariant-selftest.mjs` in `make
+test-harness`. **It reports APPROXIMATIONS beside failures**, because three readings have no window
+hook on the current build: the epoch FINGERPRINT (epoch equality plus no fork line stand in), a
+client's `pending_submission` (the commit log stands in), and the tree's LEAVES (the server's active
+device seats stand in). A collector that can read one passes it and the approximation goes away. It
+WRITES two messages into `--to`, so on dev it is pointed at a campaign-owned conversation only.
+`--to` may also be one name per device (a DM shows each side the other person).
+
+### The 1.4.1 row runners - `mlsrow.mjs`, `rowkit.mjs`, one table per group
+
+```sh
+bun archive/floor.mjs --row 1    # FLOOR-1, W1 W2
+bun archive/floor.mjs --row 2    # FLOOR-2, W1 W2 W4 W5 - a fresh FLOOR2-<mark> group, ONE bulk Add
+bun archive/floor.mjs --row 3    # FLOOR-3, + A1 I1, on FLOOR-2's last group (or --group <uuid>)
+bun archive/run.mjs FLOOR --repeat 5   # FLOOR-1 and FLOOR-2, five draws, through the preflight
+```
+
+A runner per row GROUP of section 4.2 (`archive/floor.mjs` first), each one table and one action per
+row. Everything else is shared: `mlsrow.mjs` opens and watches the seats a row names, mints the row's
+own group (`<GROUP><n>-<mark>`, recorded in the ledger with its id and swept by `debris.mjs`),
+asserts R5 ownership of every conversation the row writes in, and reads the server's view;
+`rowkit.mjs` (pure) composes the verdict - `INVALID` when the premise could not be built, `VACUOUS`
+when an armed fault never fired, `FAIL` on any own assertion or invariant, else `PASS` - and
+`recordObserved` then gates it on every seat's window, the deploy exclusion (R4) and the server window
+judged by the row id (R6). The invariant (R8) runs after every row, with its reload. A row's own
+judgements live in `<group>rows.mjs` (`floorrows.mjs`, `ccrows.mjs`, `settlerows.mjs`, `gaprows.mjs`, `offlinerows.mjs`, `killrows.mjs`, `admitrows.mjs`, `devicerows.mjs`, `salonrows.mjs`, `bigrows.mjs`), pinned by
+`archive/<group>-selftest.mjs`.
+
+```sh
+bun archive/cc.mjs --row 1|2|3|4         # CC-1..4: two commits at one epoch, released together
+bun archive/run.mjs CC --repeat 5        # the set of five the plan's verdict is
+```
+
+**A race** is `mlsrow.mjs` `raceCommits`: each racing seat's `POST /api/mls/commit` is held before
+the server (`fault.mjs` `hold once`, so a rebuilt retry passes), the gestures start together, and
+once every seat holds its request they are released in one `Promise.all`. A seat whose request
+never arrived makes the row `VACUOUS`. The evidence is the gate's own `[COMMIT]` lines since the
+release (`ACCEPT`, `REJECT epoch_mismatch`, `REJECT concurrent_commit`) - a refusal is answered `201
+{accepted: false}`, so no client network log can tell it from an acceptance. **CC-4 arms the leaf
+refresh on the device** (`armLeafRefresh`: the refresh ledger is the device's own `localStorage`,
+backdated eight days on a leaf its own commit produced), inside the race so no earlier frame spends
+it. **CC-5 is BLOCKED-ON-ACCOUNT** - it needs a fifth campaign account (`ccrows.mjs` `CC5_PREMISE`).
+The contract is the OUTCOME: one winner, the loser refused with either race refusal and rebuilt;
+which code it met is recorded in the detail (`refusalCodes`), never judged.
+
+```sh
+bun archive/settle.mjs --row DUP-1|DUP-2|DUP-4|DUP-5|DUP-6|OFF-1|OFF-2|TOK-1|TOK-2
+bun archive/settle.mjs --row DUP-3       # records SKIPPED with the plan's reason (Q2)
+bun archive/settle.mjs --row TOK-3       # 61 min with the socket open - run alone, unattended
+bun archive/run.mjs SETTLE               # every settlement row but TOK-3
+```
+
+**A settlement row** arms a fault on W1's commit POST (`fault.mjs`), then Adds the row's subject:
+the answer lost (`lose-answer`), refused (`status 409` with the `SEAT_CLAIM_OVERTAKEN` body the
+client types by - `status` takes a `body` since this runner), answered `503`, held past the write
+deadline (`hold-answer`), or failed under a cut (`hold` / `hold-answer` then `fail()` once
+`net.mjs` `cutHard` is in place). Every step after waits on a FACT: the fault firing, the client's
+own `[COMMIT] <group>... resubmission of the commit from epoch N: <verdict>` line, the gateway's
+reconnection. The evidence is the gate's log IN ORDER (`settlerows.mjs` `commitSequence`):
+one `ACCEPT`, the resubmissions `DUPLICATE`, nothing refused - a kept commit is settled, never
+rebuilt. **What a fault provokes is forgiven exactly, one line each**: `rowkit.mjs`
+`forgivingProvoked` takes the fault's records off W1's window (a transport failure included, which
+`ignoringExpectedRefusal` cannot match), and `checkInvariant({provoked})` forgives each provoked
+5xx once in invariant 4 and names it as an approximation. DUP-7 needs a new device and is played by
+the device runner.
+
+```sh
+bun archive/gap.mjs --row GAP-1|GAP-2   # frames ahead of their commits; past-epoch frames again
+bun archive/gap.mjs --row GAP-3         # 2100 sends, then a pull that starts past 2050 - run alone
+bun archive/gap.mjs --row GAP-4         # records SKIPPED (the shared-payload writer stays off)
+```
+
+**A GAP row acts on the PENDING PULL**, the one place a client-side rig can touch the order of a
+member's stream: no CDP tool reaches a socket frame, but what a seat drains on its return is an
+HTTP answer. So the row cuts W2 (`net.mjs` `cutHard`), lets the server queue what it misses, and
+rewrites the pull of its return with `fault.mjs` `rewrite` (the body, through the rule's
+`transform`) or `rewrite-url` (the url, through `url`): GAP-1 takes the group's commit rows out
+and holds rung 1's `GET /api/mls/commits/` while W1 sends live; GAP-2 captures a frame from one
+pull and puts it in front of a later one, three epochs on; GAP-3 starts the first page `after` the
+2050th queued frame. Rows left out are not ACKed, so nothing is deleted on the server. The
+transforms are `gaprows.mjs`, pinned by `archive/gap-selftest.mjs`.
+
+```sh
+bun archive/offline.mjs --row OFF-3|NET-1|NET-2|NET-3|RM-8   # browsers; NET-2 is five minutes
+bun archive/offline.mjs --row OFF-5                          # A1, class B: the radios go mid-Add
+```
+
+**AN OFFLINE ROW TAKES A SEAT'S LINK AWAY FOR A DURATION**, where a settle row loses one answer.
+OFF-3 holds W1's Add before the server, cuts W1 and fails the held request, then lets W2 move the
+group three epochs (an Add of W4, two refreshes of the leaf that Add dated); on the return the kept
+commit must be refused `epoch_mismatch`, cleared and re-issued. OFF-5 is OFF-2 on A1 with the radios
+(`svc wifi/data disable`, and the USB reverse on the local estate) as the cut. NET-1 uses `net.mjs`
+`degrade` (latency and both throughputs; CDP has no loss rate, and the record says so). NET-2 cuts
+W2's socket on every other 5 s tick for five minutes while W1 sends each tick and refreshes its
+leaf every 18. NET-3's portal answers every `/api/` call `200 text/html`, armed through
+`addMembers`' `beforeSubmit` so the picker's search is not what it breaks. RM-8 leaves under `cut()`
+and asks only that the server and W2 agree. Judgements in `offlinerows.mjs`, pinned by
+`archive/offline-selftest.mjs`.
+
+```sh
+bun archive/kill.mjs --row KILL-1|KILL-2|KILL-3|KILL-5|RM-3   # browsers: a tab closed, a browser killed
+bun archive/kill.mjs --row KILL-4                             # A1, class B: force-stopped
+```
+
+**A KILL ROW CHOOSES ITS SIDE OF THE SERVER, THEN DRAWS ONLY THE DELAY.** Each run's commit is a leaf
+refresh (`armLeafRefresh`, then a send), held by `fault.mjs` either before the server (`hold`) or
+after the accept (`hold-answer`); runs alternate the two, and the kill lands a drawn 0-800 ms into
+the hold. `archive/reopen.mjs` kills a seat and PROVES it dead (`killSeat`: the tab gone from the
+browser's list, the port quiet, the pid gone - a swipe that leaves the app alive throws), then
+revives it the user's way, PIN included, and replaces the seat's `cx` and `w` (`reviveSeat`). The
+outcome is read on the SERVER - merged once or cleared, the seat caught up, traffic both ways -
+because the settlement runs at the connection, before a `watch()` can attach to the new page.
+KILL-4 has no `[CHECKPOINT]` line to time on: one un-killed run measures the send-to-request window
+and each kill lands at a fraction of it. KILL-5 holds `POST /api/mls/welcome`; RM-3 holds the roster
+delete's answer and measures how long W4's seat outlives it. **A RUN OWNS ONLY THE COMMITS PAST
+THE EPOCH IT READ** (`runCommits`): its window opens before that read, and an accept naming an epoch
+the read already saw is a STRAY (`strayCommits`) - an own commit no run armed, which fails the run it
+preceded, as does one after the last run. Each run writes the killed seat's DYING and REVIVED
+consoles to `logs/consoles/` (`keepConsoles`), because the row's end keeps only the last page.
+Judgements in `killrows.mjs`, pinned by `archive/kill-selftest.mjs`.
+
+```sh
+bun archive/admit.mjs --row ADM-1|ADM-2|ADM-3|ADM-4|ADM-8   # browsers
+bun archive/admit.mjs --row ADM-5|ADM-6|ADM-7               # A1 on the v1.4.0 APK, installed first
+```
+
+**AN ADMISSION ROW FOLLOWS A GROUP LINK AND ANSWERS ITS ASK.** `archive/grouplink.mjs` mints the link
+from the panel, follows it as the joiner (the page must say the request was SENT), and reads and
+answers the ask on its own row (`[data-join-request]`, matched by person, never position) or sees
+it in the banner. ADM-3 holds the Add's commit on one member and the Decline's request on the other
+and releases them together. ADM-4 calls every member route from the waiting seat's page (the table
+is `admitrows.mjs` `memberRoutes`); each must answer `409 awaiting_admission`. ADM-5..7 REFUSE a phone
+not on the `v1.4.0` build (its own `/_app/version.json` against the tag's commit), and ask the server
+from the phone with `chat.mjs` `apiAt` - a phone's page is `tauri.localhost`, not the estate. **A1
+signs in as the owner**, so ADM-5 and ADM-7 run in a group of W2's and W4's. The link's token is never
+recorded, only its length. Judgements in `admitrows.mjs`, pinned by `archive/admit-selftest.mjs`.
+
+```sh
+bun archive/devrows.mjs --row DEV-1|DEV-2|DEV-3|DEV-4|DEV-6|DUP-7   # browsers; mints on W3 (and W6)
+bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale     # A1 swiped away
+```
+
+**A DEVICE ROW MINTS IN ITS OWN PROCESS.** `newdevice.mjs` binds its device from `--device` at import,
+so each mint is `archive/mintdevice.mjs`, which prints one `MINTED {json}` line and records nothing;
+DEV-4 starts two at once. The minted seat is opened and watched BEFORE the mint, so its whole join is
+in the row's window. A revoke is `purge-devices.mjs` from W1 (its allowlist is the campaign ledger).
+DEV-3 installs the socket patch before the mint (`net.mjs` `armCutOnNextLoad`), so the mint's own load
+carries it. DUP-7 and DEV-7 pick ONE group's request on a shared route with `fault.mjs` `bodyIncludes`:
+a new device makes its owner commit in every group at once. **W6 is the owner's second scratch
+profile**: it must be declared in `names.mjs` (owner account) and signed in once by a human. DEV-5 is
+played with CORRUPT-8. Judgements in `devicerows.mjs`, pinned by `archive/devrows-selftest.mjs`.
+
+```sh
+bun archive/salon.mjs --row RM-4|RM-4b|RM-5|RM-6
+```
+
+**RM-4 RACES TWO GRANTS, RM-4b TWO REVOKES, because the panel sends them down different routes.**
+A grant (and the visibility toggle, and the write policy) is the access PATCH, whose locked
+re-read refuses `409 CHANNEL_ACCESS_CHANGED`; the trash beside a member is
+`DELETE /api/channels/:id/members/:userId`, which strips one user under the lock, so two revokes of
+two members both stand. RM-4 held a revoke's PATCH until 2026-10-25, a request the panel never sent.
+
+**A SALON ROW MINTS ITS OWN COMMUNITY.** W1 creates it, the other seats join by its link, and it is
+deleted once the verdict is on disk, so the roles, the private salon and the kicked member are the
+campaign's alone. Every gesture is the panel's own (`comm.mjs`); a race holds both requests and
+releases them together, and each answer is read from the page's own Network events
+(`salonrows.mjs` `statusesIn`). RM-6's moderator is left holding `channel.manage` alone through
+W1's permission grid. **A salon is not a sidebar conversation**, so section 4.0's message probe is
+replaced by the salon's own invariant: every user the server entitles holds an active seat in the
+salon's group, and nobody else does (`salonEntitlement`). Judgements in `salonrows.mjs`, pinned by
+`archive/salon-selftest.mjs`.
+
+```sh
+bun archive/big.mjs --row BIG-1|BIG-2|BIG-3   # every seat: W1-W8, A1, I1 (class B, run by hand)
+```
+
+**THE LARGE ROWS USE EVERY SEAT.** The owner is on W1, W3, W6, A1 and I1, the peer on W2 and **W7**,
+the third account on W4 and **W8**, the fourth on W5. W7 and W8 must be declared in `names.mjs` and
+signed in once by a human. BIG-1 and BIG-2 mint a group and add the three other accounts in ONE bulk
+Add. BIG-1 reads each phone's `[MLS] Encrypted state checkpoint persisted. (N ms)` line, recorded
+with the phone's build. BIG-2's two commits are W1 leaf refreshes armed inside its own burst. BIG-3
+mints a community under `joined` history, removes the third account, then admits the fourth, and
+reads each sender's Graine sessions per phase from `channel_messages`. Its invariant is the
+community's membership (`communityEntitlement`). There is no `checks.mjs` phase: the rows need both
+phones. Judgements in `bigrows.mjs`, pinned by `archive/big-selftest.mjs`.
+
+```sh
+bun archive/handrow.mjs --row LIFE-5|CALL-12|CALL-13 --verdict PASS|FAIL|INCONCLUSIVE|SKIPPED --what "<observed>" --since <ISO>
+```
+
+**A ROW ONLY A PERSON CAN PLAY IS RECORDED, NEVER WATCHED.** The `O` rows of the plan's section 4.3
+need a gesture no tool performs, so the person's observation goes in `handObserved` and the client
+side is `unobservable`; no `clean` key is written. The rig reads the one observer it still has, the
+server window from `--since` (the start the lead gives), and a window that is dirty or unreadable
+demotes a PASS to `PASS-DIRTY`. `SKIPPED` takes no `--since` and records the reason. TOK-3 is not a
+hand row: `settle.mjs` runs it unattended. Judgements in `handrows.mjs`, pinned by
+`archive/handrow-selftest.mjs`.
 
 ## Rules that make a result trustworthy
 

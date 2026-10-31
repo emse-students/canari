@@ -41,7 +41,8 @@ export class TransportFailureError extends TypeError {
 
 /**
  * True when `error` is the ABSENCE of an answer rather than an answer: a {@link TransportFailureError}
- * (and every class extending it: `DeliveryUnreachableError`, `UploadNetworkError`) or a deadline that
+ * (and every class extending it: `DeliveryUnreachableError`, `UploadNetworkError`, `NotFromApiError` -
+ * a 2xx a captive portal answered in the API's place, `apiJson.ts`) or a deadline that
  * expired before the response head ({@link RequestDeadlineError}).
  *
  * Decided by TYPE ONLY, and by the NARROW type. A bare `TypeError` is NOT a transport failure: a

@@ -37,6 +37,7 @@
  */
 import { APP_TAB, client } from "./chat.mjs";
 import { evaluate, realClick, until } from "./cdp.mjs";
+import { assertCampaignOwned } from "./campaign.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -64,6 +65,10 @@ if (tooShort.length) {
   );
 }
 const expect = opt("expect", null) === null ? null : Number(opt("expect"));
+
+// AND ON DEV, EVERY NAMED DEVICE MUST BE ONE THE CAMPAIGN ENROLLED (R5) - by its FULL id, which is
+// what the ledger holds: a prefix is a family on a shared estate, and the family may be a tester's.
+for (const id of only) assertCampaignOwned({ kind: "device", id }, "purge-devices");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const T0 = Date.now();
@@ -137,10 +142,13 @@ const TAG_BY_ID = (id) => `(function () {
 const cx = await client(port, APP_TAB);
 stage(`attached on ${port}`);
 
-// Straight to /settings. A pushState would leave the router's data untouched on this route.
-await evaluate(cx, `location.href = '/settings'`);
+// Straight to the SECURITY section. A pushState would leave the router's data untouched on this
+// route. `/settings` has been a hub of route sections since #1699, and the device card lives on
+// `/settings/security` alone: this tool kept opening the hub, found no "Gérer", and every DEV revoke
+// exited 1 before touching the panel (DEV-2, 2026-10-25).
+await evaluate(cx, `location.href = '/settings/security'`);
 await sleep(6_000);
-await until(cx, `location.pathname === '/settings'`, 30_000);
+await until(cx, `location.pathname === '/settings/security'`, 30_000);
 stage(`on ${await evaluate(cx, "location.pathname")}`);
 
 // The card is behind `session.isLoggedIn`, i.e. behind the PIN. If the panel never opens, that is the

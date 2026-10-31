@@ -714,8 +714,14 @@ describe('CallsService', () => {
 
       const sent = (token: string) =>
         fcmSend.mock.calls.map((c) => c[0]).find((m) => m.token === token);
-      // Android keeps the names its native layer reads.
-      expect(sent('fcm-a').data).toHaveProperty('callerName');
+      // Android is handed ids only: its ring names the caller from the phone's own copy (decision 6).
+      expect(sent('fcm-a').data).toEqual({
+        type: 'call_ring',
+        groupId: 'group-1',
+        callId: 'call-1',
+        callerId: 'caller',
+        hasVideo: 'false',
+      });
       // The iPhone is told only that a call is coming, in its own language (base locale when unknown).
       expect(sent('fcm-c').apns.payload.aps.alert).toEqual({
         title: 'Canari',
@@ -739,7 +745,7 @@ describe('CallsService', () => {
       // Android's ttl is the same window and carries no APNs header.
       expect(sent('fcm-a').android.ttl).toBe(60_000);
       // Neither the data nor the APNs payload keys carry a name: FCM merges the first into the second.
-      for (const token of ['fcm-c', 'fcm-d']) {
+      for (const token of ['fcm-a', 'fcm-c', 'fcm-d']) {
         const message = sent(token);
         for (const key of ['callerName', 'senderName', 'groupName']) {
           expect(message.data).not.toHaveProperty(key);
@@ -1015,6 +1021,48 @@ describe('CallsService', () => {
       );
 
       now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000 + 1);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
+    });
+
+    /**
+     * A ring `ring-end` recorded as over refuses an answer INSIDE the window: a native answer whose
+     * intent outlived its call (cancelled by the caller, declined, taken by a sibling) must not join.
+     */
+    it.each(['cancelled', 'answered', 'ended'] as const)(
+      'answers 410 once ring-end recorded the ring %s, inside the window',
+      async (reason) => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+        const { roomId } = await service.initiateCall('caller', 'group-1');
+        await ring(roomId);
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+          'roomToken'
+        );
+
+        await service.endRing('caller', 'group-1', roomId, reason);
+
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+          GoneException
+        );
+        expect(captured(log)).toContain(`the ring ended (${reason})`);
+      }
+    );
+
+    /** The answering device asks for its token before its own `ring-end answered`: never refused. */
+    it('gives the answering device its token before its own ring-end, and its sibling none after', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      await ring(roomId);
+
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+      await service.endRing('callee', 'group-1', roomId, 'answered');
       await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
         GoneException
       );

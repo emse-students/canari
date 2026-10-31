@@ -10,6 +10,7 @@ import {
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { AuthController } from './auth.controller';
+import { UserRowGoneError } from '../users/user-write';
 import type { AuthSessionsService, RotateResult } from './auth-sessions.service';
 
 const JWT_SECRET = 'test-secret-not-the-production-one';
@@ -91,7 +92,14 @@ describe('AuthController sessions', () => {
   let sessions: jest.Mocked<
     Pick<
       AuthSessionsService,
-      'create' | 'rotate' | 'revoke' | 'revokeOwned' | 'revokeOthers' | 'listForUser' | 'bindDevice'
+      | 'create'
+      | 'rotate'
+      | 'revoke'
+      | 'revokeOwned'
+      | 'revokeOthers'
+      | 'listForUser'
+      | 'bindDevice'
+      | 'isLive'
     >
   >;
 
@@ -114,10 +122,12 @@ describe('AuthController sessions', () => {
       revokeOthers: jest.fn().mockResolvedValue(2),
       listForUser: jest.fn().mockResolvedValue([]),
       bindDevice: jest.fn().mockResolvedValue(true),
+      isLive: jest.fn().mockResolvedValue(true),
     } as never;
 
     const users = {
       findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+      isUserAdmin: jest.fn().mockResolvedValue(false),
     };
     const platform = {
       getConfig: jest.fn().mockResolvedValue({}),
@@ -298,6 +308,36 @@ describe('AuthController sessions', () => {
       await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
       expect(out.cleared).toContain('canari_refresh');
       expect(out.cookies['canari_refresh']).toBeUndefined();
+    });
+
+    // The device answers THIS refusal with a full local reset, so the cause travels as a code - and
+    // inside Nest's envelope, so a client older than the code reads the 401 it always read.
+    it("refuses a session its owner's device revocation ended with the typed DEVICE_REVOKED_BY_OWNER", async () => {
+      sessions.rotate.mockResolvedValue({
+        status: 'device-revoked',
+        userId: 'user-1',
+        deviceId: 'phone-1',
+      });
+
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'x' }),
+        },
+      });
+      const out = makeRes();
+
+      const refusal = await controller.refreshToken(req, out.res).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(UnauthorizedException);
+      expect((refusal as UnauthorizedException).getResponse()).toEqual(
+        expect.objectContaining({
+          statusCode: 401,
+          code: 'DEVICE_REVOKED_BY_OWNER',
+          // WHICH device and account: a client resets only when both are its own.
+          userId: 'user-1',
+          deviceId: 'phone-1',
+        })
+      );
+      expect(out.cleared).toContain('canari_refresh');
     });
 
     it('refuses a token whose session no longer exists', async () => {
@@ -530,10 +570,18 @@ describe('AuthController sessions', () => {
     let fetchSpy: jest.SpyInstance;
 
     function callbackController(
-      erasure: { before: string; after: string } = { before: 'none', after: 'none' },
-      users = {
+      erasure: { before: string; after: string; during?: string } = {
+        before: 'none',
+        after: 'none',
+      },
+      users: {
+        findOrCreateFromOidc: jest.Mock;
+        claimLegacyCotisations: jest.Mock;
+        isUserAdmin?: jest.Mock;
+      } = {
         findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
         claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
       }
     ): AuthController {
       process.env.AUTHENTIK_BASE_URL = 'https://auth.example';
@@ -549,7 +597,12 @@ describe('AuthController sessions', () => {
         sessions as unknown as AuthSessionsService,
         { enabled: false } as never,
         {
-          erasureState: jest.fn().mockResolvedValue(erasure.before),
+          // The first read is the check before the upsert; any later one (the upsert found its row
+          // gone) answers `during`, which defaults to the first.
+          erasureState: jest
+            .fn()
+            .mockResolvedValueOnce(erasure.before)
+            .mockResolvedValue(erasure.during ?? erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
         } as never,
         {} as never // RestoreCredentialsService: no restore route here
@@ -660,6 +713,65 @@ describe('AuthController sessions', () => {
       expect((err as ForbiddenException).getResponse()).toMatchObject({
         code: 'ACCOUNT_ERASURE_PENDING',
       });
+      expect(cookies).toEqual({});
+      warn.mockRestore();
+    });
+
+    /**
+     * A role change that commits between the upsert's read of the row and the session's creation:
+     * the token is signed from the flag as it stands once the session exists, never from that read.
+     */
+    it('signs the admin flag read after the session exists, not the one the upsert read', async () => {
+      authentikAnswers('h.idtoken.s');
+      let adminNow = true;
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: true }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn(async () => adminNow),
+      };
+      // The change commits while the session is being opened.
+      sessions.create.mockImplementationOnce(async () => {
+        adminNow = false;
+        return { sessionId: 'sid-new', tokenId: 'jti-new', expiresAt: new Date(Date.now() + 1000) };
+      });
+      const body = await callbackController(undefined, users).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      const access = jwt.verify(body.access_token, JWT_SECRET) as { admin?: boolean };
+      expect(access.admin).toBe(false);
+      expect(body.user.admin).toBe(false);
+      expect(users.isUserAdmin).toHaveBeenCalledWith('user-1');
+    });
+
+    /**
+     * The user row was read, then deleted by an erasure before the upsert's update landed: the
+     * upsert refuses, typed, and the callback answers with the erasure's own refusal - no session.
+     */
+    it('answers a row gone during the upsert with the erasure refusal, and opens no session', async () => {
+      authentikAnswers('h.idtoken.s');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockRejectedValue(new UserRowGoneError('user-1')),
+        claimLegacyCotisations: jest.fn(),
+      };
+      const { res, cookies } = makeRes();
+      const err = await callbackController(
+        { before: 'none', during: 'pending', after: 'pending' },
+        users
+      )
+        .oidcCallback(
+          { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          res
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: 'ACCOUNT_ERASURE_PENDING',
+      });
+      expect(sessions.create).not.toHaveBeenCalled();
       expect(cookies).toEqual({});
       warn.mockRestore();
     });
@@ -958,6 +1070,32 @@ describe('AuthController sessions', () => {
       await expect(controller.listSessions(makeReq())).rejects.toThrow(UnauthorizedException);
     });
 
+    /**
+     * The session routes read the token themselves (`requireAccessToken`), so they apply the same
+     * liveness rule as `verify`: a token whose session has ended lists, revokes and binds nothing.
+     */
+    it('refuses a token whose session has ended, on every session route', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const bearer = jwt.sign(
+        { sub: 'user-1', type: 'access', sid: '0a0a0a0a-0000-4000-8000-0000000000a2' },
+        JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      const req = makeReq({ bearer });
+      await expect(controller.listSessions(req)).rejects.toThrow(UnauthorizedException);
+      await expect(controller.revokeSession('sid-other', req, makeRes().res)).rejects.toThrow(
+        UnauthorizedException
+      );
+      await expect(controller.revokeOtherSessions(req)).rejects.toThrow(UnauthorizedException);
+      await expect(
+        controller.bindCurrentSessionDevice(req, { deviceId: 'web-a-b' })
+      ).rejects.toThrow(UnauthorizedException);
+      expect(sessions.listForUser).not.toHaveBeenCalled();
+      expect(sessions.revokeOwned).not.toHaveBeenCalled();
+      expect(sessions.revokeOthers).not.toHaveBeenCalled();
+      expect(sessions.bindDevice).not.toHaveBeenCalled();
+    });
+
     it('scopes a single revocation to the calling user', async () => {
       const req = makeReq({ bearer: signAccess('user-1') });
       const out = makeRes();
@@ -1026,29 +1164,111 @@ describe('AuthController sessions', () => {
       expect(out.headers['X-User-Id']).toBe('');
     });
 
-    it('authenticates a genuine access token', async () => {
-      const req = makeReq({ bearer: signAccess('user-1', true) });
+    const SID = '0a0a0a0a-0000-4000-8000-0000000000a1';
+    const accessFor = (sid: string | undefined, admin = false): string =>
+      jwt.sign({ sub: 'user-1', admin, type: 'access', ...(sid ? { sid } : {}) }, JWT_SECRET, {
+        expiresIn: '1h',
+      });
+
+    it('authenticates a genuine access token whose session is live', async () => {
       const out = makeRes();
 
-      await controller.verify(req, out.res);
+      await controller.verify(makeReq({ bearer: accessFor(SID, true) }), out.res);
 
+      expect(sessions.isLive).toHaveBeenCalledWith(SID, 'user-1');
       expect(out.headers['X-Logged-In']).toBe('true');
       expect(out.headers['X-User-Id']).toBe('user-1');
       expect(out.headers['X-Global-Admin']).toBe('true');
+      expect(out.headers['X-Session-Id']).toBe(SID);
     });
 
-    it('hands nginx the session the access token names, and nothing for a token minted before the claim', async () => {
-      const withSid = makeRes();
-      await controller.verify(
-        makeReq({ bearer: jwt.sign({ sub: 'user-1', sid: 'sid-1' }, JWT_SECRET) }),
-        withSid.res
-      );
-      expect(withSid.headers['X-Session-Id']).toBe('sid-1');
+    /**
+     * THE CHOKE POINT FOR A SESSION THAT HAS ENDED: its access token authenticates nothing, from
+     * the moment the session row is gone. Every guarded route of every service reads `X-Logged-In`,
+     * so an anonymous answer here is a 401 everywhere.
+     */
+    it('answers anonymous for an access token whose session has ended', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const out = makeRes();
 
-      const withoutSid = makeRes();
-      await controller.verify(makeReq({ bearer: signAccess('user-1') }), withoutSid.res);
-      expect(withoutSid.headers['X-Logged-In']).toBe('true');
-      expect(withoutSid.headers['X-Session-Id']).toBe('');
+      await controller.verify(makeReq({ bearer: accessFor(SID) }), out.res);
+
+      expect(out.status()).toBe(200);
+      expect(out.headers['X-Logged-In']).toBe('false');
+      expect(out.headers['X-User-Id']).toBe('');
+      expect(out.headers['X-Session-Id']).toBe('');
+      expect(out.headers['X-Internal-Token']).toBeUndefined();
+    });
+
+    /**
+     * A TOKEN NAMING NO SESSION IS ACCEPTED, BY CONSTRUCTION: the one issuer always writes `sid`, so
+     * such a token was minted before the deploy and dies by its own `exp` within one token lifetime.
+     * No session is read for it, X-Session-Id stays empty, and the acceptance is said once per
+     * process, not per request.
+     */
+    it('accepts an unexpired access token that names no session, without a read, said once', async () => {
+      const said = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      try {
+        for (let i = 0; i < 3; i++) {
+          const out = makeRes();
+          await controller.verify(makeReq({ bearer: signAccess('user-1') }), out.res);
+          expect(out.headers['X-Logged-In']).toBe('true');
+          expect(out.headers['X-User-Id']).toBe('user-1');
+          expect(out.headers['X-Session-Id']).toBe('');
+        }
+        expect(sessions.isLive).not.toHaveBeenCalled();
+        const legacyLines = said.mock.calls.filter((c) =>
+          String(c[0]).includes('naming no session')
+        );
+        expect(legacyLines).toHaveLength(1);
+      } finally {
+        said.mockRestore();
+      }
+    });
+
+    it('answers anonymous for an expired access token, sid or not, without a read', async () => {
+      for (const sid of [SID, undefined]) {
+        const expired = jwt.sign(
+          {
+            sub: 'user-1',
+            type: 'access',
+            ...(sid ? { sid } : {}),
+            exp: Math.floor(Date.now() / 1000) - 60,
+          },
+          JWT_SECRET
+        );
+        const out = makeRes();
+        await controller.verify(makeReq({ bearer: expired }), out.res);
+        expect(out.headers['X-Logged-In']).toBe('false');
+        expect(out.headers['X-User-Id']).toBe('');
+      }
+      expect(sessions.isLive).not.toHaveBeenCalled();
+    });
+
+    it('says an ended session at warn once, not once per request', async () => {
+      sessions.isLive.mockResolvedValue(false);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        for (let i = 0; i < 3; i++) {
+          const out = makeRes();
+          await controller.verify(makeReq({ bearer: accessFor(SID) }), out.res);
+          expect(out.headers['X-Logged-In']).toBe('false');
+        }
+        const refusals = warn.mock.calls.filter((c) => String(c[0]).includes('Access refused'));
+        expect(refusals).toHaveLength(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('does not turn a failed session read into an answer: it propagates', async () => {
+      sessions.isLive.mockRejectedValue(new Error('database down'));
+      const out = makeRes();
+
+      await expect(controller.verify(makeReq({ bearer: accessFor(SID) }), out.res)).rejects.toThrow(
+        'database down'
+      );
+      expect(out.headers['X-Logged-In']).toBe('false');
     });
 
     it('names no session for a refresh token used as a bearer token', async () => {

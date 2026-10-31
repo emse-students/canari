@@ -875,7 +875,9 @@ async function row3() {
   let opened = null;
   let filled = null;
   if (unlocked.verdict === 'unlocked') {
-    await goto(w1, '/settings');
+    // `/settings/security`, never the hub: the change-PIN control lives in the security section alone
+    // since #1699, the same staleness that broke every DEV revoke (`purge-devices.mjs`, 2026-10-25).
+    await goto(w1, '/settings/security');
     await awaitAppReady(w1).catch(() => null);
     opened = (await pollFact(() => evaluate(w1, `!!document.querySelector('[data-change-pin]')`), {
       timeoutMs: 15000,

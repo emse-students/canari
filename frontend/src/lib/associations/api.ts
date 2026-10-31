@@ -9,6 +9,7 @@ import {
 } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -202,9 +203,17 @@ export interface Association {
   updatedAt: string;
 }
 
+/**
+ * The `code` of the creation refused because no free slug could be derived from the name
+ * (social-service `SLUG_EXHAUSTED`): a name with no Latin letter or digit folds to `asso`, and the
+ * server walks at most fifty suffixes. Read from `SocialApiError.code`, never from the message.
+ */
+export const ASSOCIATION_SLUG_EXHAUSTED = 'ASSOCIATION_SLUG_EXHAUSTED';
+
 export interface CreateAssociationPayload {
   name: string;
-  slug: string;
+  /** Never sent by the app: the server derives it from the name (a technical id is never typed). */
+  slug?: string;
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
@@ -418,11 +427,37 @@ export class SocialApiError extends ApiRefusalError {
      * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
      * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
      */
-    readonly amountBounds: AmountBounds | null = null
+    readonly amountBounds: AmountBounds | null = null,
+    /**
+     * How many people still hold the cotisation tier a `TIER_HAS_HOLDERS` refusal would not delete
+     * ({@link holderCountOf}), so the screen words the number itself.
+     */
+    readonly holderCount: number | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier people still
+ * hold: its `holderCount` rides beside it. They are moved to another tier (or revoked) first.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier while one of its
+ * payments may still land (at most about 35 minutes after it was opened).
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
+export function holderCountOf(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const { holderCount } = body as Record<string, unknown>;
+  return typeof holderCount === 'number' && Number.isInteger(holderCount) && holderCount > 0
+    ? holderCount
+    : null;
 }
 
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
@@ -458,6 +493,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let message = raw || res.statusText;
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
+  let holderCount: number | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -479,10 +515,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     }
     // An amount refusal carries its allowed range beside the code, as numbers.
     amountBounds = amountBoundsOf(parsed);
+    // A tier delete refused for its holders carries how many, as a number.
+    holderCount = holderCountOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds);
+  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -1642,6 +1680,12 @@ export interface CotisationOptions {
    * add needs, because a form that grants a cotisation on payment does the same thing.
    */
   mayGrant: boolean;
+  /**
+   * CAPABILITY: this social-service derives a new tier's key from its label (`deriveVariantKey`).
+   * Absent on an older server, which would strip the flag and create a BASE tier instead - so the
+   * admin screen offers tier creation only when this is `true` (`mayCreateTier`).
+   */
+  tierKeyFromLabel?: boolean;
 }
 
 /**
@@ -1744,6 +1788,33 @@ export interface AssociationProduct {
    */
   viewerActiveTier?: string | null;
   /**
+   * Where this cotisation tier stands against the tier the viewer holds ACTIVE for the same
+   * association: `none` (not a tier, or nothing held - buyable), `higher` (a rise - buyable),
+   * `held` (that very tier - refused, `PRODUCT_ALREADY_PURCHASED`), `lower` (same or lower product
+   * price - refused, `TIER_NOT_A_RISE`), `unranked` (a tier is held and one of the two has no fixed
+   * price - refused, `TIER_NOT_RANKABLE`). Set by the shop and per-association listings.
+   */
+  viewerTierRelation?: 'none' | 'higher' | 'held' | 'lower' | 'unranked';
+  /**
+   * Cents a checkout would charge THIS viewer now - the admin's preferential price
+   * (`amountCentsMember`) when the viewer qualifies, else the full price, or the grid's cell. Null
+   * when the product is not buyable at a price the server can name (a refused tier, a grid that does
+   * not sell this combination, a free amount). Display it; never recompute money client-side.
+   * Purchase caps and tag gates are NOT folded in. Set by the shop and per-association listings.
+   */
+  viewerDueCents?: number | null;
+  /**
+   * A membership product whose association's cotisations are disabled: the checkout refuses it
+   * (`COTISATION_DISABLED`). Set by the shop and per-association listings.
+   */
+  cotisationDisabled?: boolean;
+  /**
+   * The `variantKey` of the tier `memberPriceTag` names, as the server reads the tag - what a
+   * preferential price is worded "for holders of". Absent when there is no tag, when it names no
+   * tier, or when the server did not read the viewer's tiers. Never re-derived from the tag here.
+   */
+  memberPriceTierKey?: string | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *
@@ -1824,7 +1895,46 @@ export interface AssociationPurchase {
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
+  /**
+   * Money received for something NOT delivered: a boutique tier the settlement did not grant (no
+   * longer a rise over the tier held), a product deleted or a buyer erased before the payment
+   * landed, or a paid form that grants a tier and did not grant it. A refund or a manual grant is
+   * owed.
+   */
+  notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable'
+  | 'held-tier-deleted';
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1843,6 +1953,11 @@ export interface CreateProductPayload {
   amountCentsMember?: number;
   /** Named cotisation tier (e.g. "avec-alcool"); only meaningful for `type: 'membership'`. */
   variantKey?: string;
+  /**
+   * Membership only: let the server derive a new named tier's `variantKey` from `name`. The admin
+   * screen sends this and never a key - the key is a technical id no person types (cotisations.md).
+   */
+  deriveVariantKey?: boolean;
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
   variantLevel?: number;
   /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
@@ -1924,8 +2039,35 @@ export async function listAssociationProductsForManage(
 
 export interface GrantProductPurchasePayload {
   userId: string;
-  /** Amount in cents; required when the product has no fixed price. */
+  /**
+   * Amount in cents; required when the product has no price for this beneficiary (a free amount,
+   * a grid that closes their combination). Otherwise it overrides the quoted default.
+   */
   amountCents?: number;
+}
+
+/**
+ * What a cash sale records when the cashier types no amount: `priced` (the beneficiary's grid cell
+ * or fixed price, `preferential` when it is the member price), `typed` (a free amount: one must be
+ * typed), `not-sold` (the grid closes this beneficiary's combination: one must be typed).
+ */
+export type CashSaleQuote =
+  | { kind: 'priced'; amountCents: number; preferential: boolean }
+  | { kind: 'typed' }
+  | { kind: 'not-sold' };
+
+/**
+ * The amount a cash sale of `productId` to `userId` records when no amount is typed - the same
+ * server computation the sale itself runs. Requires MANAGE_PRODUCTS.
+ */
+export async function quoteCashSale(
+  associationId: string,
+  productId: string,
+  userId: string
+): Promise<CashSaleQuote> {
+  return request<CashSaleQuote>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/grant-quote?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 /**
@@ -1942,6 +2084,26 @@ export async function grantProductPurchase(
     { method: 'POST', body: JSON.stringify(payload) }
   );
   return row;
+}
+
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
+): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
 }
 
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */
@@ -2291,6 +2453,33 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
+  responsable?: LydiaResponsable | null;
+  /** The last readiness change and its cause; null when none was ever recorded. */
+  readiness?: { cause: LydiaReadinessCause; at: string } | null;
+  /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
+  enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
+}
+
+/** The cause of the last readiness change of a Lydia Business. */
+export type LydiaReadinessCause =
+  | 'webhook-validated'
+  | 'admin'
+  | 'request-refused'
+  | 'request-blocked';
+
+/** The person recorded as the Lydia cashier of an association: the last 2 phone digits only. */
+export interface LydiaResponsable {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -2302,31 +2491,6 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
-  );
-}
-
-/**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 
@@ -2366,6 +2530,41 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
+/**
+ * Adds (`add`, also "resend the SMS") or records (`record`: an already-linked Business, read-only at
+ * Lydia, no SMS) the Responsable of the association's Lydia Business. A refusal is a
+ * {@link SocialApiError} typed at the throw: its `code` (`lydiaResponsableRefusal.ts`) is what a
+ * screen reads. `phone` is E.164.
+ */
+export async function setLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string; mode: 'add' | 'record' }
+): Promise<LydiaResponsable> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-responsable/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-responsable')) as {
+    responsable: LydiaResponsable;
+  };
+  return body.responsable;
+}
+
+/**
+ * Clears the in-flight enrolment marker (global admin only), after an admin checked with Lydia that
+ * no Business was created - or linked the one that was.
+ */
+export async function clearLydiaEnrolmentInFlight(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-enrolment-clear/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
@@ -2394,7 +2593,18 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
+/**
+ * How long the onboarding waits for its answer. core bounds its whole chain at 55 s and nginx gives
+ * up at 60 s (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`, core `lydia-payment-provider.ts`), so 75 s is above
+ * both: the screen always receives core's TYPED answer, or nginx's own, before giving up itself.
+ */
+export const LYDIA_ONBOARDING_DEADLINE_MS = 75_000;
+
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2403,11 +2613,15 @@ export async function startLydiaOnboarding(
   const res = await apiFetch(`${base}/api/payments/onboarding`, {
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
+    deadlineMs: LYDIA_ONBOARDING_DEADLINE_MS,
   });
-  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw await socialRefusal(res);
+  // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };

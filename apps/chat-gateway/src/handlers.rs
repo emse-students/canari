@@ -263,10 +263,9 @@ pub async fn ws_handler(
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
             // What the code behind this socket declared (history-answer-addressing, rule 6).
-            let addressed_history =
-                crate::addressing::declares_addressed_history(params.caps.as_deref());
+            let declared = crate::addressing::SessionCaps::from_query(params.caps.as_deref());
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, claims.sub, device_id, addressed_history)
+                handle_socket(socket, state, claims.sub, device_id, declared)
             })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
@@ -301,13 +300,14 @@ async fn handle_socket(
     state: Arc<AppState>,
     user_id: String,
     device_id: String,
-    addressed_history: bool,
+    declared: crate::addressing::SessionCaps,
 ) {
     tracing::info!(
-        "New WebSocket connection: User={}, Device={}, addressed-history={}",
+        "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}",
         user_id,
         device_id,
-        addressed_history
+        declared.addressed_history,
+        declared.join_ask
     );
 
     let (mut ws_sender, mut receiver) = socket.split();
@@ -319,6 +319,15 @@ async fn handle_socket(
     // race with abort() on the send task.
     let conn_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
 
+    // THE DUPLICATE-CONNECTION RULE: A NEW SOCKET FOR A DEVICE IS ADDED BESIDE ITS SIBLINGS, NEVER
+    // REPLACES OR REFUSES THEM. Several sessions of one device id are legitimate - two tabs of one
+    // browser share it (a leadership hand-over overlaps them), a reconnect overlaps its
+    // predecessor's close, a deploy overlap spreads them over two processes - and each is a field of the shared sessions hash (crate::addressing), so
+    // this process could not see, let alone close, a sibling held by another. Replacing would also
+    // turn two live tabs into a reconnect duel. What this rule costs: a socket its client forgot
+    // keeps answering pings and keeps the device online, so the CLIENT owns releasing every socket
+    // it opened (`BaseMlsService.destroy`, docs/wiki/frontend/modules/auth.md). The count below is
+    // the reading that shows one.
     {
         let mut map = state.connected_users.lock().unwrap();
         map.entry(conn_key.clone())
@@ -326,7 +335,7 @@ async fn handle_socket(
             .insert(conn_id, tx.clone());
         // Recorded while the map lock is held, so the pub/sub loop never sees this session without
         // its declaration (the edge filter, `crate::addressing::addressed_recipients`).
-        state.note_session_caps(conn_id, addressed_history);
+        state.note_session_caps(conn_id, declared);
         tracing::info!(
             "Registered connection key: {} (conn_id={}, {} active)",
             conn_key,
@@ -368,7 +377,7 @@ async fn handle_socket(
                 &mut con,
                 &conn_key,
                 &field,
-                addressed_history,
+                declared,
                 PRESENCE_TTL_SECS,
             )
             .await
@@ -517,7 +526,7 @@ async fn handle_socket(
                             &state,
                             &conn_key_recv,
                             &field_recv,
-                            addressed_history,
+                            declared,
                         )
                         .await;
                         continue;
@@ -531,7 +540,7 @@ async fn handle_socket(
                             &state,
                             &conn_key_recv,
                             &field_recv,
-                            addressed_history,
+                            declared,
                         )
                         .await;
 
@@ -668,7 +677,7 @@ async fn refresh_presence(
     state: &Arc<AppState>,
     conn_key: &str,
     field: &str,
-    declared: bool,
+    declared: crate::addressing::SessionCaps,
 ) {
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {

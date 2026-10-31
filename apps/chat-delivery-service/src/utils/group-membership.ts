@@ -1,12 +1,20 @@
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
+import { RefusalCode, refusalBody } from './refusal-codes';
 import { In, IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
+import { canonicalUserId } from './sanitize';
 import { RepeatCounter, cutUserId } from './log-repeat';
-import { heldKeyPackages, takeSharedSeatLock, withSeatLock } from './seat-eviction';
+import {
+  bumpSeatGeneration,
+  heldKeyPackages,
+  takeSeatLock,
+  takeSharedSeatLock,
+  withSeatLock,
+} from './seat-eviction';
 
 const seatsLogger = new Logger('GroupMembership');
 
@@ -128,8 +136,20 @@ export async function ensureGroupMember(
   }
 }
 
-/** What {@link writePendingSeats} did: the seats written, or why none was. */
-export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
+/**
+ * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
+ * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
+ * admission. `roster_taken` and `not_creator` only for a `'creator'` enrolment, and nothing was
+ * written: someone else is already on the roster, or the group's recorded creator (`Group.createdBy`)
+ * is not this person - none recorded included.
+ */
+export type PendingSeatsOutcome =
+  | 'written'
+  | 'group_gone'
+  | 'not_on_roster'
+  | 'not_admitted'
+  | 'roster_taken'
+  | 'not_creator';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -142,10 +162,22 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
  * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
  * read finds no row - or waits, then deletes what this wrote.
  *
- * @param enrol true for an invite acceptance, which writes the roster row itself in the same
- *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
- *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
- *   which writes seats only where its owner is ALREADY on the roster.
+ * @param enrol how the roster row is written, in the same transaction ({@link ensureGroupMember}):
+ *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
+ *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
+ *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
+ *   admitted - and ONLY for the group's recorded creator (`Group.createdBy`, else `not_creator`) while
+ *   the roster is empty, both re-read here under the seat lock taken EXCLUSIVE:
+ *   the route's own "empty roster" read is unlocked, so two callers who both read it empty were both
+ *   enrolled admitted (review of #2585). Exclusive, two creators run one after the other, and the
+ *   second finds the first's committed row and gets `roster_taken`. The caller's own row does not
+ *   count: a creator's retry stays the no-op it was; false for a device registration, which writes seats only where its owner is ALREADY
+ *   on the roster.
+ * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
+ *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
+ *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
+ *   the same lock and row lock as the roster row, so a Decline (which takes the seat lock exclusive)
+ *   is wholly before this read or waits for this transaction.
  * @param manager a NON-transactional manager - this opens the transaction itself.
  */
 export async function writePendingSeats(
@@ -153,24 +185,54 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean
+  enrol: false | 'awaiting_admission' | 'creator',
+  opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
-    await takeSharedSeatLock(m, groupId);
+    // A creator decides who the group's first member is: exclusive, so no second creator reads the
+    // roster empty beside it. Every other writer only adds seats beside an existing one: shared.
+    if (enrol === 'creator') await takeSeatLock(m, groupId);
+    else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
-      select: { id: true, deletedAt: true },
+      select: { id: true, deletedAt: true, createdBy: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
+    if (enrol === 'creator') {
+      // THE CREATOR ALONE, read here under the lock as the roster is. The creation bootstrap enrols
+      // the group's recorded creator (`createdBy`) and nobody else; a group with no recorded creator
+      // is bootstrapped by nobody. Compared in canonical form ({@link canonicalUserId}).
+      if (!group.createdBy || group.createdBy !== canonicalUserId(userId)) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED not_creator group=${groupId} user=${cutUserId(userId)} ` +
+            `creator=${group.createdBy ? cutUserId(group.createdBy) : 'none'} - nothing written`
+        );
+        return 'not_creator';
+      }
+      const other = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId: Not(userId) },
+        select: { id: true, userId: true },
+      });
+      if (other) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED roster_taken group=${groupId} user=${cutUserId(userId)} ` +
+            `- enrolling as the creator, but ${cutUserId(other.userId)} is already on the roster; nothing written`
+        );
+        return 'roster_taken';
+      }
+    }
     if (enrol) {
-      await ensureGroupMember(m, groupId, userId, { awaitingAdmission: true });
+      await ensureGroupMember(m, groupId, userId, {
+        awaitingAdmission: enrol === 'awaiting_admission',
+      });
     } else {
       const seat = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId },
         lock: { mode: 'pessimistic_read' },
       });
       if (!seat) return 'not_on_roster';
+      if (opts.requireAdmitted === true && seat.awaitingAdmission === true) return 'not_admitted';
     }
     // Each row only beside its device's key package, read `FOR SHARE` under the lock
     // ({@link heldKeyPackages}): a device of an account being erased gets none.
@@ -236,12 +298,17 @@ function requireId(value: unknown, field: string): string {
  * device is owed.
  *
  * @param manager pass the transaction's manager, so the rows and the queue go together.
+ * @param rows `'not-active'` ends only rows that are not `active` (a member ending another user's
+ *        pending invitation); the queue is deleted all the same, so a caller that refuses an
+ *        active row it finds left behind throws and lets the transaction's rollback restore it.
+ *        The statement order is unchanged either way.
  * @returns how many device rows and queued rows were deleted, for the caller's log line.
  */
 export async function endDeviceMemberships(
   manager: EntityManager,
   scope: DepartureScope,
-  queue: 'welcomes' | 'all'
+  queue: 'welcomes' | 'all',
+  rows: 'any' | 'not-active' = 'any'
 ): Promise<{ memberships: number; queued: number }> {
   // A DELETE IS ONLY AS NARROW AS ITS FILTER, so every column the caller names must be a real id.
   // An absent `userId`, or a named `deviceId`/`groupId` that is empty, undefined or null, is a
@@ -262,7 +329,7 @@ export async function endDeviceMemberships(
   });
   const memberships = await manager
     .getRepository(DeviceGroupMembership)
-    .delete({ userId, ...narrowing });
+    .delete({ userId, ...narrowing, ...(rows === 'not-active' ? { status: Not('active') } : {}) });
   return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
 }
 
@@ -284,9 +351,18 @@ export async function endGroupMembership(
   userId: string
 ): Promise<{ deleted: number; closed: number }> {
   const del = await manager.getRepository(GroupMember).delete({ groupId, userId });
-  const upd = await manager
-    .getRepository(GroupMembershipInterval)
-    .update({ groupId, userId, leftAt: IsNull() }, { leftAt: new Date() });
+  // THE GENERATION THIS REMOVAL MOVED THE GROUP TO (its caller bumped it first, under the seat lock):
+  // the counter an Add built before this departure is ordered by (`Group.epochSeatGeneration`).
+  const [row] = (await manager.query(`SELECT "seatGeneration" FROM dm_groups WHERE id = $1`, [
+    groupId,
+  ])) as Array<{ seatGeneration: number | string }>;
+  const upd = await manager.getRepository(GroupMembershipInterval).update(
+    { groupId, userId, leftAt: IsNull() },
+    {
+      leftAt: new Date(),
+      leftAtSeatGeneration: row ? Number(row.seatGeneration) : null,
+    }
+  );
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
 }
 
@@ -316,29 +392,65 @@ export type AwaitingSeatWithdrawal =
  * commit's transaction, under the same lock) is wholly before, and this answers `already-admitted`
  * and touches nothing, or wholly after, and finds no seat to Welcome into.
  *
- * NOT A REMOVAL. The person was never in: no eviction is recorded, no exclusion interval is closed -
- * the interval the link opened is DELETED, so a later admission does not read a past stretch that
- * never was - and no commit is owed. The one order of `utils/seat-eviction.ts`: the roster row, the
- * queued Welcomes, the device rows.
+ * NOT A REMOVAL. The person was never in: no exclusion interval is closed - the interval the link
+ * opened is DELETED, so a later admission does not read a past stretch that never was - and no
+ * commit is owed.
+ *
+ * A DECLINE IS A DEPARTURE THE COMMIT GATE MUST STILL SEE (review of #2419). It makes no commit, so
+ * an Add a member built while the ask was open can land afterwards at the same epoch, and the gate's
+ * enrolment would undo the Decline. So a `declined` withdrawal moves the group's seat generation
+ * ({@link bumpSeatGeneration}) and records the generation it moved to in the person's
+ * `dm_seat_evictions` row (`declinedAtSeatGeneration`), the counter `enrolAdmittedPeople` orders a
+ * departure against the commit's base epoch by - never a clock. The deleted interval cannot carry
+ * it: a closed one would read as a gap and withhold its span from every history answer.
+ *
+ * AN EXPIRY RECORDS NOTHING: it is no member's decision, only the absence of one, and a member's Add
+ * built while the ask was open IS the answer it waited for - refusing that Add because a timer ran
+ * would let a clock decide an admission.
+ *
+ * The one order of `utils/seat-eviction.ts`: the `dm_groups` row (the bump), the roster row and its
+ * interval, the queued Welcomes, the device rows, `dm_seat_evictions` last.
+ *
+ * @returns the outcome, and the seat's id (`askId`, the identity every member's screen settles the
+ *   ask by - `utils/join-ask-announce.ts`), or `null` when there was no seat.
  */
 export async function withdrawAwaitingSeat(
   m: EntityManager,
   groupId: string,
-  userId: string
-): Promise<AwaitingSeatWithdrawal> {
+  userId: string,
+  cause: 'declined' | 'expired'
+): Promise<{ outcome: AwaitingSeatWithdrawal; askId: string | null }> {
   const seat = await m.getRepository(GroupMember).findOne({
     where: { groupId, userId },
     select: { id: true, awaitingAdmission: true },
     lock: { mode: 'pessimistic_write' },
   });
-  if (!seat) return 'gone';
+  if (!seat) return { outcome: 'gone', askId: null };
   if (!seat.awaitingAdmission) {
-    return (await holdsAdmissionTrace(m, groupId, userId)) ? 'already-admitted' : 'not-awaiting';
+    const admitted = await holdsAdmissionTrace(m, groupId, userId);
+    return { outcome: admitted ? 'already-admitted' : 'not-awaiting', askId: seat.id };
   }
+  if (cause === 'declined') await bumpSeatGeneration(m, groupId);
   await m.getRepository(GroupMember).delete({ groupId, userId });
-  await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
   await m.getRepository(GroupMembershipInterval).delete({ groupId, userId, leftAt: IsNull() });
-  return 'withdrawn';
+  await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
+  if (cause === 'declined') await recordDecline(m, groupId, userId);
+  return { outcome: 'withdrawn', askId: seat.id };
+}
+
+/**
+ * Writes the generation a Decline moved `groupId` to into `userId`'s `dm_seat_evictions` row -
+ * created if absent, the rest of the row left as it is. Under the seat lock (`m` must hold it),
+ * after the bump. Deleted with the group and with the account, as the row is.
+ */
+async function recordDecline(m: EntityManager, groupId: string, userId: string): Promise<void> {
+  await m.query(
+    `INSERT INTO dm_seat_evictions ("groupId", "userId", "declinedAtSeatGeneration", "updatedAt")
+     SELECT $1::uuid, $2::varchar, g."seatGeneration", now() FROM dm_groups g WHERE g.id = $1::uuid
+     ON CONFLICT ("groupId", "userId") DO UPDATE
+       SET "declinedAtSeatGeneration" = EXCLUDED."declinedAtSeatGeneration", "updatedAt" = now()`,
+    [groupId, userId]
+  );
 }
 
 /**
@@ -464,6 +576,97 @@ export function refuseAwaitingSeat(
   return awaitingAdmissionRefusal();
 }
 
+/** The three tables a caller's standing on a group of either kind is read from. */
+export type GroupStandingRepos = {
+  groups: Pick<Repository<Group>, 'findOne'>;
+  seats: Pick<Repository<GroupMember>, 'findOne'>;
+  devices: Pick<Repository<DeviceGroupMembership>, 'findOne'>;
+};
+
+/**
+ * Where `userId` stands on `groupId`, asked of the table that records membership for the group's
+ * KIND: a key-distribution group (`distributionWorkspaceId` or `distributionChannelId` set) is
+ * recorded per DEVICE and never on the user roster, so it answers `admitted` from an ACTIVE device
+ * row and has no `awaiting` state; every other group answers {@link callerSeatStanding}.
+ *
+ * THE ONE KIND-AWARE READ: `MessagingService.memberOfGroupKind` and
+ * {@link assertCallerActsOnGroup} both go through it, so the two cannot disagree about a key group.
+ *
+ * @param group the `dm_groups` row when the caller already read it, `null` when it is absent.
+ */
+export async function standingOnGroupOfKind(
+  repos: Pick<GroupStandingRepos, 'seats' | 'devices'>,
+  group: Pick<Group, 'distributionWorkspaceId' | 'distributionChannelId'> | null,
+  groupId: string,
+  userId: string
+): Promise<SeatStanding | null> {
+  if (isKeyDistributionGroup(group)) {
+    const device = await repos.devices.findOne({ where: { groupId, userId, status: 'active' } });
+    return device ? 'admitted' : null;
+  }
+  return callerSeatStanding(repos.seats, groupId, userId);
+}
+
+/** The columns of a `dm_groups` row that say which KIND of group it is. */
+export type GroupKindRow = Pick<Group, 'id' | 'distributionWorkspaceId' | 'distributionChannelId'>;
+
+/**
+ * Whether `group` is a key-distribution group: its roster is a community's (or salon's), held by
+ * social-service, and its whole lifecycle belongs to the internal `mls/distribution-groups` routes.
+ */
+export function isKeyDistributionGroup(
+  group: Pick<Group, 'distributionWorkspaceId' | 'distributionChannelId'> | null
+): boolean {
+  return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+}
+
+/** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
+const notAMemberRepeats = new RepeatCounter();
+
+/**
+ * THE AUTHORIZATION OF A ROUTE THAT ACTS ON ONE GROUP BY ITS ID: the caller must be an ADMITTED
+ * member of it. Authentication (`HeaderAuthGuard`, or a PushSecret bound to a user and device) says
+ * WHO is asking; this says whether that person may touch THIS group.
+ *
+ * - no seat - never a member, removed, departed, or the group is absent or tombstoned - is the 403
+ *   `NOT_A_MEMBER`, the SAME answer for an unknown and a known group, so the route is no oracle of
+ *   which ids exist. A tombstoned group is read as absent HERE, by its `deletedAt`, never trusted to
+ *   have lost every seat: a seat a purge left behind is not a member of a conversation that ended.
+ *   A client replaying an owed exit reads that 403 as "already done" (`pendingGroupExits`) and stops
+ *   owing it.
+ * - a seat still awaiting a member's admission is the 409 `awaiting_admission`
+ *   ({@link refuseAwaitingSeat}), never a 403 its client would retire the conversation on.
+ *
+ * Every refusal logs, at 1, 10, 100... per (route, group, caller), so a retrying client is one line.
+ *
+ * @returns the group's row as read for the check - its kind included - so a route that also rules
+ *          on the kind ({@link isKeyDistributionGroup}) does not read it a second time.
+ */
+export async function assertCallerActsOnGroup(
+  repos: GroupStandingRepos,
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string
+): Promise<GroupKindRow> {
+  const group = await repos.groups.findOne({
+    where: { id: groupId, deletedAt: IsNull() },
+    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+  });
+  const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
+  if (group && standing === 'admitted') return group;
+  if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
+  const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
+  if (nth !== null) {
+    log.warn(
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)} groupFound=${group !== null} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
+    );
+  }
+  throw new ForbiddenException(
+    refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
+  );
+}
+
 /** The key {@link expireUnansweredAsks} names a person's seat in a group by. */
 export function seatKey(groupId: string, userId: string): string {
   return `${groupId}\0${userId}`;
@@ -482,23 +685,29 @@ export function seatKey(groupId: string, userId: string): string {
  * Per seat, in a transaction of its own, so one failure costs that seat alone, logged.
  *
  * @returns the seats that await a member ({@link seatKey}) - every one of them, withdrawn or not,
- *   whose device rows the purge must therefore leave alone - and what was done with each.
+ *   whose device rows the purge must therefore leave alone - what was done with each, and the asks
+ *   that EXPIRED (group, person, seat id), for the caller to announce once each has committed.
  */
 export async function expireUnansweredAsks(
   manager: EntityManager,
   stale: readonly { groupId: string; userId: string }[],
   expiry: Date
-): Promise<{ awaiting: Set<string>; outcomes: Record<string, number> }> {
+): Promise<{
+  awaiting: Set<string>;
+  outcomes: Record<string, number>;
+  expired: Array<{ groupId: string; userId: string; askId: string }>;
+}> {
   const people = [...new Map(stale.map((s) => [seatKey(s.groupId, s.userId), s])).values()];
-  if (people.length === 0) return { awaiting: new Set(), outcomes: {} };
+  if (people.length === 0) return { awaiting: new Set(), outcomes: {}, expired: [] };
   const seats = await manager.getRepository(GroupMember).find({
     where: people.map((p) => ({ groupId: p.groupId, userId: p.userId, awaitingAdmission: true })),
     select: { groupId: true, userId: true },
   });
   const outcomes: Record<string, number> = {};
+  const expired: Array<{ groupId: string; userId: string; askId: string }> = [];
   for (const seat of seats) {
     try {
-      const outcome = await withSeatLock(manager, seat.groupId, async (m) => {
+      const { outcome, askId } = await withSeatLock(manager, seat.groupId, async (m) => {
         const live = await m
           .getRepository(DeviceGroupMembership)
           .createQueryBuilder('d')
@@ -508,16 +717,25 @@ export async function expireUnansweredAsks(
           })
           .andWhere(`(d.status = 'active' OR d."pendingSince" >= :expiry)`, { expiry })
           .getCount();
-        return live > 0 ? 'still-live' : withdrawAwaitingSeat(m, seat.groupId, seat.userId);
+        return live > 0
+          ? { outcome: 'still-live' as const, askId: null }
+          : withdrawAwaitingSeat(m, seat.groupId, seat.userId, 'expired');
       });
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      if (outcome === 'withdrawn' && askId !== null) {
+        expired.push({ groupId: seat.groupId, userId: seat.userId, askId });
+      }
     } catch (e) {
       logger.error(
         `[ASK_EXPIRY] group=${seat.groupId} user=${seat.userId.slice(0, 8)} not withdrawn: ${String(e)}`
       );
     }
   }
-  return { awaiting: new Set(seats.map((s) => seatKey(s.groupId, s.userId))), outcomes };
+  return {
+    awaiting: new Set(seats.map((s) => seatKey(s.groupId, s.userId))),
+    outcomes,
+    expired,
+  };
 }
 
 /**

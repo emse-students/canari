@@ -8,7 +8,8 @@ export type TabMessageEvent =
       type: 'message_added';
       conversationId: string;
       message: ChatMessage;
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
       unreadCount: number;
       /**
        * The client UUID sealed inside an OWN salon message: the tab that composed it is showing an
@@ -20,7 +21,8 @@ export type TabMessageEvent =
       type: 'messages_batch';
       conversationId: string;
       messages: ChatMessage[];
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
       unreadCount: number;
     }
   /**
@@ -41,7 +43,8 @@ export type TabMessageEvent =
       type: 'own_message_composed';
       conversationId: string;
       message: ChatMessage;
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
     }
   /**
    * This tab just marked a conversation read, announced to every other tab of this account.

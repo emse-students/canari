@@ -7,6 +7,8 @@ import type {
   MessageReaction,
 } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
+import type { AnnouncedJoinAsk } from '$lib/utils/chat/actions';
+import type { SettledJoinAsk } from '$lib/utils/chat/joinRequests.svelte';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -69,8 +71,24 @@ export interface MessageHandlerDeps {
     /** The user being removed. Compare with the local user id before touching any state. */
     kickedUserId: string;
     kickedBy?: string;
+    /** The actor's device that commits the key-group Remove itself, when the actor named one. */
+    actorDeviceId?: string;
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
+  }) => void;
+  /**
+   * The actor of a removal RELEASED the key-group Remove it claimed and did not commit
+   * (`channel.member.removal-released`): this scope's remaining members elect a committer. An empty
+   * `channelId` is the community's key group.
+   */
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+    /** The actor who released it - never elected for it. */
+    releasedBy: string;
+    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
+    releasedByDevice: string;
   }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
@@ -109,6 +127,14 @@ export interface MessageHandlerDeps {
     messageId: string;
     deletedBy?: string;
   }) => void;
+  /**
+   * A new person's ask the server announced to every online admitted member (`group.join_ask`),
+   * raised before this device's member once its own tree says the person holds no leaf
+   * (`raiseAnnouncedJoinAsk`).
+   */
+  onJoinAsk?: (ask: AnnouncedJoinAsk) => void;
+  /** An ask answered, by whichever member, as the server holds it (`group.join_ask.settled`). */
+  onJoinAskSettled?: (settled: SettledJoinAsk) => void;
   /** A participant's read watermark moved forward - `at` is how far they have now read. */
   onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;

@@ -1,5 +1,6 @@
 /**
- * Launching and killing the two test browsers.
+ * Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5
+ * (third/fourth accounts, plan section 4.1 of `docs/wiki/cross-client-campaign-1-4-1.md`).
  *
  * The flags are not decoration. Without
  * `--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows`
@@ -16,7 +17,7 @@
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
 import { connect, listTargets } from "./cdp.mjs";
-import { refuseForeignPage } from "./estate-target.mjs";
+import { EstateRefusedError, refuseForeignPage } from "./estate-target.mjs";
 import { STATE_DIR } from "./names.mjs";
 import { SITE } from "./site.mjs";
 
@@ -40,6 +41,15 @@ export const BROWSERS = {
   w1: { port: 9224, profile: join(STATE_DIR, "chrome-w1") },
   w2: { port: 9223, profile: join(STATE_DIR, "chrome-w2") },
   w3: { port: 9225, profile: join(STATE_DIR, "chrome-w3") },
+  // The third and fourth accounts' seats (1.4.1 campaign plan, section 4.1): `campaign-fixtures.mjs`
+  // seats them on W4/W5 and refuses without a web seat, so the profiles must be launchable.
+  w4: { port: 9226, profile: join(STATE_DIR, "chrome-w4") },
+  w5: { port: 9227, profile: join(STATE_DIR, "chrome-w5") },
+  // The owner's second scratch device (1.4.1 campaign, DEV-4 and DEV-6): wiped like W3.
+  w6: { port: 9228, profile: join(STATE_DIR, "chrome-w6") },
+  // Second seats of the peer and the third account (1.4.1 campaign, BIG-1..3).
+  w7: { port: 9229, profile: join(STATE_DIR, "chrome-w7") },
+  w8: { port: 9230, profile: join(STATE_DIR, "chrome-w8") },
 };
 
 /** True when something still answers on that debugging port. */
@@ -194,7 +204,17 @@ export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) 
       // AND EVERY PAGE THE PROFILE CAME BACK WITH: a profile can restore the tabs it last had, one
       // of them on production. `listTargets` throws on any page off the allowlist - outside the
       // `try` above, so a refusal is never read as "not up yet".
-      await listTargets(port);
+      // AND A REFUSED BROWSER IS KILLED, not left running on the page it was refused for (R1 low
+      // finding): the refusal stops this run, and the restored tab would otherwise sit there, live.
+      try {
+        await listTargets(port);
+      } catch (e) {
+        if (e instanceof EstateRefusedError) {
+          console.log(`[launch] ${which} restored a refused page - killing it: ${e.message}`);
+          await killBrowser(which);
+        }
+        throw e;
+      }
       return Date.now() - t0;
     }
     await new Promise((r) => setTimeout(r, 250));
@@ -212,7 +232,7 @@ if (process.argv[1] && process.argv[1].endsWith("launch.mjs")) {
   } else if (action === "start") {
     console.log(`${which} up in ${await startBrowser(which)}ms`);
   } else {
-    console.log("usage: bun launch.mjs kill|close|start w1|w2");
+    console.log(`usage: bun launch.mjs kill|close|start ${Object.keys(BROWSERS).join("|")}`);
   }
   process.exit(0);
 }

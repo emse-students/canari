@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('$app/paths', () => ({ base: '/canari' }));
+vi.mock('$app/paths', () => ({ resolve: (pathname: string) => `/canari/${pathname}` }));
 
 import {
   appPathFromPathname,
@@ -45,16 +45,61 @@ describe('loginAfterSessionExpiry', () => {
 });
 
 describe('safeInternalPath', () => {
-  it('keeps an in-app path and falls back on everything else', () => {
-    expect(safeInternalPath('/forms/3?x=1', '/posts')).toBe('/forms/3?x=1');
+  const BS = String.fromCharCode(92);
+  const TAB = String.fromCharCode(9);
+  const LF = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+
+  it('keeps every in-app path unchanged: query, hash and encoded characters included', () => {
+    for (const good of [
+      '/',
+      '/forms/3?x=1',
+      '/posts#comments',
+      '/c/abc/a1?tab=a%20b#m-2',
+      '/search?q=%C3%A9t%C3%A9',
+      '/login?returnTo=%2Fchat',
+      '/%09/x.example',
+      '/%2F%2Fx.example',
+      '/%5Cx.example',
+      '/forms/été',
+    ]) {
+      expect(safeInternalPath(good, '/posts')).toBe(good);
+    }
+  });
+
+  it('falls back on an empty, relative or absolute value', () => {
     for (const bad of [
-      'foo',
       '',
       null,
       undefined,
-      '//evil.com',
-      `/${String.fromCharCode(92)}evil.com`,
-      'https://x.y',
+      'foo',
+      ' /posts',
+      'https://x.example',
+      'HTTPS://x.example/posts',
+      'javascript:void(0)',
+      'data:text/html,x',
+      'mailto:a@x.example',
+    ]) {
+      expect(safeInternalPath(bad, '/posts')).toBe('/posts');
+    }
+  });
+
+  it('falls back on a value that resolves to another origin', () => {
+    for (const bad of ['//x.example', '//x.example/posts', '///x.example', `/${BS}x.example`]) {
+      expect(safeInternalPath(bad, '/posts')).toBe('/posts');
+    }
+  });
+
+  it('falls back on a control character or a backslash at any position', () => {
+    for (const bad of [
+      `/${TAB}/x.example/p`,
+      `/${LF}/x.example`,
+      `/${CR}/x.example`,
+      `/${TAB}${BS}x.example`,
+      // Same-origin once parsed, so only the character check refuses these two.
+      `/forms${TAB}/3`,
+      `/forms${BS}3`,
+      `/posts${String.fromCharCode(0)}`,
     ]) {
       expect(safeInternalPath(bad, '/posts')).toBe('/posts');
     }

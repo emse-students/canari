@@ -74,11 +74,22 @@ to an account. So biometric templates exist for members who never opted in and f
 Ordered by the risk they lower. Each is a backlog line
 ([backlog](../backlog.md#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16)).
 
-1. **R1** - decide between: disabling facial recognition in Immich except for opted-in members'
-   reference faces; or deleting every unnamed cluster on a schedule; or stopping face recognition.
-   Until then, inform at events (a notice where photographs are taken) and publish a page for
-   non-members with an objection channel (`bureau@mitv.fr`).
-2. **R2** - unlinking and account deletion delete the Immich person, its faces and embeddings.
+1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller), not built.** Face
+   recognition leaves Immich: MiGallery computes, per photograph, the embeddings of the faces it
+   contains, in its own worker through a pinned machine-learning image, and stores them in its OWN
+   encrypted store (not in Immich). **No clustering and no "person" object**: a member's photographs
+   are found by matching their own reference against the per-photo store at the time of the search.
+   The embeddings live as long as the photograph exists and are **excluded from backups** (they are
+   recomputed from the photograph). **No work package is written before a comparison of the
+   candidate models** (accuracy on the archive, and what each computes). The owner takes
+   responsibility for the Art. 9 question this leaves: the embeddings of non-members are still
+   computed and kept while their photograph exists, but they are never grouped into an identity, so
+   no one can be followed across the archive without a reference of them. Until it is built, inform
+   at events (a notice where photographs are taken) and publish a page for non-members with an
+   objection channel (`bureau@mitv.fr`).
+2. **R2** - unlinking and account deletion delete the member's reference; under option C there is
+   no person to delete, and Immich's own faces, persons and embeddings are deleted when recognition
+   leaves it.
 3. **R3** - audit who can read person and face data through MiGallery's routes and its Immich
    proxy; restrict to the person concerned and to whom they granted.
 4. **R4** - delete the selfie server-side (or never store it as an asset).
@@ -94,10 +105,13 @@ Ordered by the risk they lower. Each is a backlog line
 
 With measures 1 to 3 applied, the residual risk is **medium** (R5, R6). Without measure 1, R1 stays
 **high**, and Art. 36 then requires consulting the CNIL before continuing the processing as it is.
-**Decision owed by the controller (MiTV), after the DPO's opinion** ([dso-dossier](dso-dossier.md)).
+**Measure 1 is decided as option C (2026-10-24) and waits for the model comparison before any
+build**; option C removes clustering (R1's identity grouping, R5's tracking) but not the computation
+of non-members' embeddings, which the owner accepts for the controller. The DPO's opinion is still
+asked ([dso-dossier](dso-dossier.md)).
 
 | Date | Who (role) | Decision |
 | --- | --- | --- |
 | 2026-10-16 | Rootz (author of the draft) | draft written |
-| - | MiTV bureau | to decide |
+| 2026-10-24 | the owner, for the controller | measure 1 = option C: a per-photo embedding store in MiGallery's own encrypted store, no clustering, no persons, kept as long as the photograph, out of backups; no build before the model comparison; the Art. 9 question accepted |
 | - | the school's DPO | opinion to give |

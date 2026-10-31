@@ -18,70 +18,98 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-85 scripts.
+116 scripts.
 
 | script | what it is |
 |---|---|
-| `a1apk.mjs` | BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
+| `a1apk.mjs` | BUILD THE A1 APK AGAINST THE ESTATE `SITE` NAMES (LOCAL OR DEV), INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
+| `a1plan.mjs` | WHAT AN A1 APK BUILD MUST BE FOR THE ESTATE `SITE` NAMES - the decisions of `a1apk.mjs`, pure. |
+| `a1tester.mjs` | RECORDS THE PROVENANCE OF A PLAY TESTER BUILD ON A1, so `pin.mjs` can accept it as a dev build. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
+| `admitrows.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - ADM-1..10 - their table, the waiting seat's route table, |
 | `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to the estate's database (local or dev; production is refused by R1), and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
+| `bigrows.mjs` | THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - BIG-1..3 - their table and judges. |
 | `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
 | `callpeer.mjs` | A desktop Chrome as the OTHER END of a phone call, and the receiver's numbers read from it. |
+| `callrows.mjs` | CALL-WEB-1..8 - IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS (2026-10-26). |
+| `campaign-fixtures.mjs` | THE CAMPAIGN'S FIXTURES ON THE ESTATE `SITE` NAMES, BUILT THROUGH THE PRODUCT AND RECORDED AS OWNED. |
+| `campaign-ledger.mjs` | WHAT THE CAMPAIGN OWNS ON AN ESTATE, AND WHETHER A DESTRUCTIVE GESTURE MAY TOUCH A THING - pure. |
+| `campaign.mjs` | THE CAMPAIGN LEDGER ON DISK, AND THE ONE GUARD EVERY DESTRUCTIVE GESTURE CALLS. |
+| `ccrows.mjs` | THE CC ROWS OF THE 1.4.1 CAMPAIGN (concurrent commits) - their table and their own judgements, pure. |
 | `cdp.mjs` | Dependency-free Chrome DevTools Protocol driver for the cross-client test campaign |
 | `chat.mjs` | Chat primitives shared by every check in the campaign. |
 | `checks.mjs` | THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful. |
 | `cleanup.mjs` | Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on THE ESTATE |
 | `comm.mjs` | The vocabulary the COMM phase is written in: communities, channels, invitations, roles. |
+| `commitreport.mjs` | THE HOURLY COMMIT-LOG REPORT, READ ONCE PER CAMPAIGN RUN AND NEVER IN A ROW'S WINDOW. |
 | `consoleorigin.mjs` | WHICH ORIGIN EMITTED A CONSOLE LINE - so the browser report can call a foreign one foreign. |
 | `debris.mjs` | THE ONE ALLOWLIST OF THROWAWAY GROUP NAMES, shared by every sweep that may delete one. |
-| `deploy.mjs` | WAS PRODUCTION REDEPLOYED WHILE THE CHECK WAS RUNNING? - the one cause of transport failure that |
+| `deploy.mjs` | WAS THE ESTATE REDEPLOYED OR RESTARTED WHILE THE CHECK WAS RUNNING? - the one cause of transport |
 | `deployed-wasm-check.mjs` | Asks a DEPLOYED estate whether the `mls-core` WebAssembly it serves can panic on the target it |
 | `device-census.mjs` | THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
+| `devicenotice.mjs` | THE "NOUVEL APPAREIL" NOTICES A MINTING ROW LEAVES ON THE OWNER'S SEATS, DISMISSED THE WAY THE |
+| `devicerows.mjs` | THE DEVICE ROWS OF THE 1.4.1 CAMPAIGN - DEV-1..4, DEV-6, DEV-7 and DUP-7 - their table and judges. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `epochfork.mjs` | IS THIS DEVICE AT THE GROUP'S EPOCH - the predicate no row asked, as a pure comparison. |
 | `estate-origins.mjs` | WHICH ESTATE A RUNNING CLIENT IS ACTUALLY TALKING TO, as a pure function of what it fetched. |
 | `estate-target.mjs` | WHICH ESTATES THIS RIG MAY ADDRESS - THE LOCAL ONE AND DEV - AND THE REFUSAL OF EVERY OTHER, PRODUCTION FIRST. |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
 | `expectations.mjs` | THE PURE HALF OF A ROW'S VERDICT BOOKKEEPING: naming the expectations and preconditions it did not |
+| `fault.mjs` | MAKES A REQUEST LAND AND ITS ANSWER VANISH - the response-stage fault atom, over CDP `Fetch`. |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
+| `floorrows.mjs` | THE FLOOR ROWS OF THE 1.4.1 CAMPAIGN - their table and their own judgements, pure. |
+| `gaprows.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - frames that arrive ahead of their commits, frames delivered |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev). |
+| `grantpanel.mjs` | THE SALON ACCESS PANEL'S OWN "ADD" BUTTON, FOUND FROM ITS SEARCH FIELD - a page-side snippet. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
+| `handrows.mjs` | THE ROWS ONLY A PERSON CAN PLAY, AND HOW THEIR WORD IS WRITTEN - `archive/handrow.mjs`'s pure half. |
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
 | `idpform.mjs` | The identity provider's sign-in stages as the rig sees them: which one is on screen, and what answers it. |
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
+| `invariant.mjs` | THE INVARIANT PROBE EVERY MLS ROW RUNS AFTER ITS ACTION, ON EVERY CLIENT IN PLAY (R8). |
+| `invariantverdict.mjs` | THE FIVE INVARIANTS OF EVERY MLS ROW, JUDGED BY ONE PURE FUNCTION (R8). |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
 | `iosbench.mjs` | Asks a BENCH iPhone build about its own native stores - the `bench_native_store` command, invoked in |
-| `launch.mjs` | Launching and killing the two test browsers. |
+| `killrows.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - KILL-1..5 and RM-3 - their table and their judges. |
+| `launch.mjs` | Launching and killing the test browsers - W1/W2 (owner/peer), the W3 scratch device, and W4/W5 |
+| `listracerows.mjs` | LIST-RACE-1 - A SALON HEARD OF LIVE WHILE ITS COMMUNITY'S LISTING IS IN FLIGHT (2026-10-26). |
+| `liverows.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE BROADCAST FROM THE MI 9T, WATCHED FROM THE WEB (2026-10-27). |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
 | `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `messages.mjs` | THE APP'S OWN FRENCH, READ FROM ITS MESSAGE FILE - and nothing else. |
+| `mlsrow.mjs` | THE KERNEL EVERY 1.4.1 ROW RUNNER STANDS ON - seats, ownership, the group a row mints, the reads. |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
 | `namesderive.mjs` | THE DERIVATIONS OVER THE MACHINE-LOCAL VALUES - committed, so they are reviewable and testable. |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
 | `navstack.mjs` | What the BACK button has left to go back to - the one reading a screenshot cannot give. |
 | `newgroup.mjs` | Creates a group conversation, and reports the surface that adds a member to it. |
 | `notif-bodies.mjs` | The exact bodies the native push code renders when it could NOT decrypt - one list for BOTH phones. |
+| `offlinerows.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS OF THE 1.4.1 CAMPAIGN - OFF-3, OFF-5, NET-1..3, RM-8 - their |
 | `overlay-probe.mjs` | THE ONE EXPRESSION THAT ANSWERS "what is covering the screen right now" - page source, kept PURE. |
 | `ownedpaths.mjs` | THE SET OF PATHS THE APPLICATION OWNS, READ FROM THE TREE, AND THE 404 RULE THAT FOLLOWS FROM IT. |
 | `phone-any.mjs` | THE PHONE A ROW DRIVES, CHOSEN BY `CANARI_PHONE` - `phone.mjs` (Android, the default) or |
 | `phone-ios.mjs` | The iPhone, as seen from a check - `phone.mjs`'s interface, name for name and sync for sync, over |
 | `phone-platform.mjs` | WHICH PHONE PLATFORM A RUN DRIVES - `CANARI_PHONE=android` (the default) or `CANARI_PHONE=ios`. |
 | `phone.mjs` | The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
+| `phonefocus.mjs` | WHICH WINDOW HAS THE PHONE'S FOCUS, READ FROM `dumpsys window` - and "cannot tell" as an answer. |
 | `picker.mjs` | THE IN-APP PICKER AS THE RIG SEES IT: how to find its trigger, read what its open list offers, and |
 | `pin.mjs` | Enters the encryption PIN in the web unlock modal, over CDP. |
 | `pinspawn.mjs` | Unlocks a PHONE's encryption PIN by spawning `pin.mjs` - the one implementation both phone modules |
 | `purge-devices.mjs` | Deletes NAMED devices of an account, through the real UI. |
 | `recv.mjs` | Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
+| `removalrows.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - A REMOVAL IS COMMITTED, NOT ONLY UNROUTED. |
 | `results.mjs` | Append-only result log for the campaign. |
+| `rowkit.mjs` | THE PURE HALF OF EVERY 1.4.1 ROW RUNNER - the names a row mints, and how its verdict is composed. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
+| `salonrows.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - RM-4..6, the removal bound (#2284) - their table and judges. |
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `seed-bench.mjs` | Tops the LOCAL estate up with what the verification rows need to look at: a feed long enough to |
 | `seedargs.mjs` | The argument grammar of `seed-bench.mjs`, kept pure so `archive/seedargs-selftest.mjs` can hold it. |
@@ -90,15 +118,18 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `sendtrace.mjs` | WHETHER THE SERVER TOOK ONE DEVICE'S SEND, read off chat-delivery's own trace - for a client whose |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `serverwindow.mjs` | THE SERVER HALF OF A ROW'S WINDOW, CONDENSED FOR THE LEDGER AND FOLDED INTO ITS VERDICT. |
+| `settlerows.mjs` | THE SETTLEMENT ROWS OF THE 1.4.1 CAMPAIGN - DUP, OFF-1/-2, TOK - their table and their judges. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
 | `site.mjs` | THE ONLY DOOR TO `SITE` AND `ORIGIN`, AND IT REFUSES PRODUCTION BEFORE ANYTHING READS THEM. |
 | `srcscan.mjs` | READING A SCRIPT AS CODE RATHER THAN AS TEXT. |
 | `srvlog.mjs` | THE THIRD OBSERVER: the estate's own server logs (local or dev), classified the way the browser's are. |
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES A REMOTE HOST - and its one caller is `estate.mjs`, for DEV. |
+| `stale-devices.mjs` | PURGES THE BROWSER DEVICES THE RIG MINTED AND ABANDONED - part of the campaign preflight. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
 | `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
 | `sweep.mjs` | THE GRAPHICAL PASS, ON A CLIENT THAT IS ACTUALLY RENDERING - every route, one instrument. |
+| `testerbuild.mjs` | WHETHER THE APP A PHONE GOT FROM THE PLAY TESTER PROGRAMME IS THE PRE-RELEASE IT CLAIMS TO BE, AND |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `unread-communities.mjs` | THE TEN-COMMUNITY UNREAD SCENARIO - what a reader's badges, read marks and receipts do while the |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
@@ -123,10 +154,14 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-80 scripts.
+95 scripts.
 
 | script | what it is |
 |---|---|
+| `archive/admit.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - a group link, the ask it raises, and who may answer it. |
+| `archive/big.mjs` | THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - every seat the rig has, in one conversation. |
+| `archive/callweb.mjs` | CALL-WEB-1..8 - IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS, ONE ROW PER PROCESS. |
+| `archive/cc.mjs` | CC-1..4 OF THE 1.4.1 CAMPAIGN - two commits built on the SAME epoch, released together. |
 | `archive/comm1.mjs` | COMM-1: a community, a channel, a message - and both peers converge on it. |
 | `archive/comm11.mjs` | COMM-11: kicked from a community, and taken out of every private salon inside it. |
 | `archive/comm12.mjs` | COMM-12: re-invited after a removal - what comes next arrives, what was missed does not come back. |
@@ -157,11 +192,15 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/corrupt6.mjs` | CORRUPT-6 - a DAMAGED device-key vault: recover or fail loudly, never a decrypt loop. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
 | `archive/del1.mjs` | DEL-1 - the peer deletes a group while the other side is awaiting its history. |
+| `archive/devrows.mjs` | THE DEVICE ROWS OF THE 1.4.1 CAMPAIGN - a new device of the owner, seated, revoked, raced, and |
+| `archive/floor.mjs` | FLOOR-1..3 OF THE 1.4.1 CAMPAIGN - the floor re-proved on dev, before any other MLS row. |
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
 | `archive/fwd345.mjs` | FWD-3, FWD-4, FWD-5 - the three forward shapes WP-FWD-1 has not been tried against. |
 | `archive/fwd5.mjs` | FWD-5, isolated and repeated - the shape that just lost a forward. |
+| `archive/gap.mjs` | THE GAP ROWS OF THE 1.4.1 CAMPAIGN - a member whose frames do not arrive in the order they were made. |
 | `archive/graineauth.mjs` | GRAINE-AUTH-1..3 - a salon row the SERVER tampers with is REFUSED by the reader, with its line. |
 | `archive/grp.mjs` | GRP-1..10 - group membership: the roster, the TWO different departures, the invitation link, and |
+| `archive/handrow.mjs` | RECORDS A ROW A PERSON PLAYED - the `O` rows of the 1.4.1 plan, section 4.3. |
 | `archive/heal-a1.mjs` | HEAL on the PHONE - the ANDROID half of WP-LOSS-1, which is what is still owed. |
 | `archive/heal-w2.mjs` | HEAL-W2 - the UNKNOWN-GROUP path on the browser. |
 | `archive/heal-web.mjs` | HEAL on the BROWSER: a group broken by a deliberate ratchet rewind - does it repair itself, and |
@@ -169,7 +208,10 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/healnew.mjs` | THE NEW-DEVICE HEAL ROWS - one runner, one row per invocation. |
 | `archive/healrevoke.mjs` | THE REVOKED DEVICE THAT COMES BACK AFTER THE WORLD MOVED - one runner, one row per invocation. |
 | `archive/k.mjs` | NOTIF-6c - the notification QUICK REPLY from a merely BACKGROUNDED app (WP-NOTIF-1). |
+| `archive/kill.mjs` | THE KILL ROWS OF THE 1.4.1 CAMPAIGN - a process that dies with a commit in flight. |
 | `archive/life.mjs` | LIFE-1..8 - the phone in every state an OS can put it in, one check per run. |
+| `archive/listrace.mjs` | LIST-RACE-1: a salon heard of live while its community's listing is held - listed after the release? |
+| `archive/liveweb.mjs` | LIVE-WEB-2 AND LIVE-STALL-1 - A LIVE FROM THE MI 9T, WATCHED FROM THE WEB, ONE ROW PER PROCESS. |
 | `archive/mention.mjs` | MENTION-1..6 - the @mention composer, the cleartext `mentionedUserIds` routing hint it produces |
 | `archive/msg1.mjs` | MSG-1: W1 -> W2, both foreground, DM, plain text. One copy, correct author, and it STAYS. |
 | `archive/msg10.mjs` | MSG-10 - the SENDER is offline. |
@@ -195,11 +237,15 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/notif20.mjs` | NOTIF-20 - the seed travels with the message: a dead phone draws a salon message in clear on the |
 | `archive/notif21.mjs` | NOTIF-21 - whoever admits a newcomer Welcomes them: a phone invited to a community while it is |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
+| `archive/offline.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS OF THE 1.4.1 CAMPAIGN - a seat without a working link, for a while. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
 | `archive/reel.mjs` | REEL-1 and REEL-2 on the phone: the camera tab opens a live PORTRAIT preview from a real swipe |
+| `archive/removals.mjs` | KICK-COMMIT, SALON-REVOKE-COMMIT, DEVREVOKE-KEYGROUP - a removal is COMMITTED, not only unrouted. |
 | `archive/roster.mjs` | THE MEMBERSHIP TABLE ITSELF - the four rows nothing on this board could have caught. |
+| `archive/salon.mjs` | THE SALON ROWS OF THE 1.4.1 CAMPAIGN - the removal bound (#2284) on a salon's access list. |
 | `archive/search.mjs` | SEARCH-1..6 - the two searches this app has (in-conversation full-history, and the sidebar |
+| `archive/settle.mjs` | THE SETTLEMENT ROWS OF THE 1.4.1 CAMPAIGN - a commit whose ANSWER is lost, refused or late. |
 | `archive/tab1.mjs` | TAB-1 - the OS notification for a message, and the silence that must precede it. |
 | `archive/tab236.mjs` | TAB-2, TAB-3 and TAB-6 - the three ways a client goes away and comes back. |
 | `archive/tab3b.mjs` | TAB-3b - five cold starts, and what each one spent its time on. |
@@ -212,48 +258,75 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-42 scripts.
+69 scripts.
 
 | script | what it is |
 |---|---|
+| `archive/a1plan-selftest.mjs` | THE A1 APK IS BUILT FOR THE ESTATE `SITE` NAMES, AND NEVER FOR PRODUCTION. |
+| `archive/admit-selftest.mjs` | THE ADMISSION ROWS' OWN JUDGEMENTS AND THE WAITING SEAT'S ROUTE TABLE, PINNED (`admitrows.mjs`). |
+| `archive/big-selftest.mjs` | THE LARGE-GROUP ROWS' OWN JUDGEMENTS, PINNED (`bigrows.mjs`). |
+| `archive/callweb-selftest.mjs` | THE CALL-WEB ROWS' OWN JUDGEMENTS AND NARRATION, PINNED (`callrows.mjs`). |
+| `archive/campaign-selftest.mjs` | ON DEV, A DESTRUCTIVE GESTURE TOUCHES ONLY WHAT THE CAMPAIGN CREATED - pinned (R5, 2026-10-24). |
 | `archive/caption-selftest.mjs` | EVERY PARAGLIDE KEY THE RIG NAMES MUST STILL RESOLVE THROUGH THE HELPER THAT NAMES IT. |
+| `archive/cc-selftest.mjs` | THE CC ROWS' OWN JUDGEMENTS, PINNED (`ccrows.mjs`). |
 | `archive/checks-selftest.mjs` | Asserts that every phase DECLARES the devices its scripts actually drive. |
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/commitreport-selftest.mjs` | Pins `commitreport.mjs`: the run's one read of the hourly commit report - campaign-owned groups |
 | `archive/consoleorigin-selftest.mjs` | Pins `consoleorigin.mjs` and its use in `report()`: a console line another origin emitted (the |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
+| `archive/deploy-selftest.mjs` | A ROW DEV WAS REDEPLOYED UNDER IS ABSENT, NOT FAILING - AND THE GATE ASKS DEV, NOT DOCKER. |
 | `archive/deployed-wasm-selftest.mjs` | THE POST-DEPLOY WASM CHECK MUST REFUSE WHAT IT IS MEANT TO REFUSE, AND ONLY THAT. |
+| `archive/devicenotice-selftest.mjs` | THE "NOUVEL APPAREIL" DISMISSAL'S ALLOWLIST, PINNED (`devicenotice.mjs`). |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
+| `archive/devrows-selftest.mjs` | THE DEVICE ROWS' OWN JUDGEMENTS, PINNED (`devicerows.mjs`). |
 | `archive/epochfork-selftest.mjs` | Pins `epochfork.mjs`: the comparison that tells a healthy conversation from an epoch-forked one, |
 | `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
 | `archive/expectations-selftest.mjs` | Pins `expectations.mjs`: an unarmed row (COMM-9/10's `VACUOUS` with `failures: []`) names every |
+| `archive/fault-live-selftest.mjs` | WHAT CHROME DOES WITH EACH FAULT, MEASURED AGAINST A SERVER THAT COUNTS - AND NO ESTATE AT ALL. |
+| `archive/fault-selftest.mjs` | THE RESPONSE-STAGE FAULT ATOM DECIDES WHAT IT SHOULD, AGAINST A FAKE CDP CONNECTION. |
+| `archive/floor-selftest.mjs` | THE FLOOR ROWS' OWN JUDGEMENTS AND THE VERDICT COMPOSITION EVERY 1.4.1 ROW SHARES, PINNED. |
+| `archive/gap-selftest.mjs` | THE GAP ROWS' PULL REWRITES AND JUDGEMENTS, PINNED (`gaprows.mjs`). |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
+| `archive/grantpanel-selftest.mjs` | THE GRANT CLICKS THE PANEL'S OWN "ADD", NEVER A JOIN-REQUEST BANNER'S (`grantpanel.mjs`). |
+| `archive/handrow-selftest.mjs` | THE HAND ROWS' RECORDING, PINNED (`handrows.mjs`). |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/idpform-selftest.mjs` | The rig's sign-in reads the MiConnect terms page as a stage it answers, not as a stall. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
+| `archive/invariant-selftest.mjs` | THE FIVE INVARIANTS EVERY MLS ROW ASSERTS, PINNED (R8, `invariantverdict.mjs`). |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
+| `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
+| `archive/listrace-selftest.mjs` | LIST-RACE-1'S TABLE AND JUDGE, PINNED (`listracerows.mjs`). |
+| `archive/liveweb-selftest.mjs` | THE LIVE ROWS' OWN JUDGEMENTS AND NARRATION, PINNED (`liverows.mjs`). |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
 | `archive/names-selftest.mjs` | Pins `namesderive.mjs`: the counterpart helper answers for the pair and THROWS for anyone else. |
+| `archive/offline-selftest.mjs` | THE OFFLINE AND DEGRADED-LINK ROWS' OWN JUDGEMENTS, PINNED (`offlinerows.mjs`), AND THE TWO RIG |
 | `archive/origin-selftest.mjs` | NO CHECK MAY SPELL THE APPLICATION'S ORIGIN. `SITE` IS WHERE THE ESTATE IS NAMED. |
 | `archive/ownedpaths-selftest.mjs` | Pins `ownedpaths.mjs`: a 404 outside the application's route/static set is a scanner's guess, a 404 |
 | `archive/phone-ios-selftest.mjs` | THE iPHONE ADAPTER KEEPS THE ANDROID PHONE'S CONTRACT - pinned with no phone, no WDA and no names.mjs. |
+| `archive/phonefocus-selftest.mjs` | Pins `focusOf` (phonefocus.mjs): the app in front, the app behind, and the dump that says neither - |
 | `archive/picker-selftest.mjs` | THE RIG CHOOSES AN OPTION OF THE IN-APP PICKER BY ITS DRAWN LABEL, AND REFUSES WITH A REASON. |
 | `archive/ports-selftest.mjs` | A RUNNER MUST SAY WHICH DEVICE IT IS ABOUT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
+| `archive/removals-selftest.mjs` | THE REMOVAL ROWS' JUDGE, PINNED (`removalrows.mjs`): a clean measurement passes, each fact broken |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
+| `archive/salon-selftest.mjs` | THE SALON ROWS' OWN JUDGEMENTS, PINNED (`salonrows.mjs`). |
 | `archive/seedargs-selftest.mjs` | THE SEEDER'S GRAMMAR REFUSES WHAT IT DOES NOT KNOW, AND THIS HOLDS IT TO THAT. |
 | `archive/selector-selftest.mjs` | EVERY UI STRING THE RIG CLICKS MUST STILL EXIST IN THE APP. |
 | `archive/sendtrace-selftest.mjs` | Pins `sendsByDevice` and `mobileNavOrder` - the two readers the iPhone needs because what the |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
 | `archive/serverwindow-selftest.mjs` | Pins `serverwindow.mjs`: the server's window reaches the ledger row, a dirty one demotes a PASS, |
+| `archive/settle-selftest.mjs` | THE SETTLEMENT ROWS' OWN JUDGEMENTS, PINNED (`settlerows.mjs`), AND THE FORGIVENESS OF WHAT THEIR |
 | `archive/sourcestamp-selftest.mjs` | THE GATE THAT WOULD HAVE SAVED GRP-3 AND GRP-8, pinned on both sides. |
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
+| `archive/ssh-selftest.mjs` | WHICH `ssh` FAILURES ARE RETRIED, PINNED (`ssh.mjs` `transportFailure`): the transport's own (255, |
 | `archive/staleness-selftest.mjs` | A ROW MEASURED ON A BUNDLE THE ESTATE NO LONGER SERVES IS ABSENT, NOT FAILING. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
+| `archive/testerbuild-selftest.mjs` | THE PLAY TESTER BUILD'S PROVENANCE, PINNED (`testerbuild.mjs`). |
 | `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
 | `archive/verdict-selftest.mjs` | ONE VOCABULARY, READ BY THE RECORDER AND BY THE RECONCILER, OR BY NEITHER. |
@@ -263,7 +336,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-42 scripts.
+46 scripts.
 
 | script | what it is |
 |---|---|
@@ -280,10 +353,13 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/footprint.mjs` | What is LEFT on a device, read off the device instead of out of its own log. |
 | `archive/gateway.mjs` | Proves that each client's GATEWAY SOCKET is up - the pre-flight gate the campaign was missing. |
 | `archive/grainestore.mjs` | The Graine seed store as the CLIENT holds it, read from the browser's own IndexedDB. |
+| `archive/grouplink.mjs` | THE GROUP LINK AND ITS ASK - the gestures of the admission rows (`archive/admit.mjs`). |
+| `archive/hourlyread.mjs` | THE RUN'S ONE READ OF THE HOURLY COMMIT REPORT - once per campaign run, after its last row. |
 | `archive/idb.mjs` | Reading the app's OWN IndexedDB from outside it - one implementation of the awkward part. |
 | `archive/idcheck.mjs` | Does anything STAGED carry a real identity? Run it before every commit that touches this rig. |
 | `archive/identity.mjs` | Fingerprints each client's IDENTITY - the pre-flight gate that says the two Chrome profiles are |
 | `archive/ladder.mjs` | WP-RECONNECT-1's owed PROSPECTIVE proof: the reconnect ladder no longer terminates on a count. |
+| `archive/mintdevice.mjs` | ONE NEW DEVICE, MINTED IN ITS OWN PROCESS, AND ITS RESULT AS ONE JSON LINE - for DEV-4, which needs |
 | `archive/mlsdb.mjs` | Snapshot / restore of the browser's MLS state, which is what makes the HEAL phase possible at all. |
 | `archive/nav.mjs` | Client-side navigation to a route, for clients that may be sitting anywhere. |
 | `archive/navclose.mjs` | Does a navigation produce EXACTLY one socket close, and is the document replacement observable? |
@@ -297,6 +373,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/ready-probe.mjs` | THE ONE ANSWER TO "can this client be asked a question yet", and the repair that gets it there. |
 | `archive/ready-repair.mjs` | BRINGING ONE DEVICE TO A NAMED STARTING POINT - the half of the readiness probe that acts. |
 | `archive/recon.mjs` | Reconciles what two clients hold for the conversations they SHARE, message id by message id. |
+| `archive/reopen.mjs` | A SEAT KILLED AND BROUGHT BACK - the two halves every KILL row is made of (`archive/kill.mjs`). |
 | `archive/run.mjs` | THE ONE WAY TO RUN THE CAMPAIGN. |
 | `archive/servable.mjs` | WHICH ROWS A GIVEN RESPONDER COULD ACTUALLY HAVE SERVED - the predicate, with nothing attached. |
 | `archive/synboot.mjs` | WP-BANNER-1's positive check: does the synchronisation banner rise AT STARTUP? |
@@ -312,4 +389,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-251 scripts in total.
+328 scripts in total.

@@ -325,7 +325,7 @@ export async function uploadResumable(
       );
       transport?.onProgress?.({ loaded: held, total: totalBytes });
       let reread = false;
-      for (let i = 0; i < parts && !reread; i++) {
+      for (let i = 0; i < parts; i++) {
         if (received.has(i)) continue;
         const start = i * partBytes;
         const end = Math.min(totalBytes, start + partBytes);

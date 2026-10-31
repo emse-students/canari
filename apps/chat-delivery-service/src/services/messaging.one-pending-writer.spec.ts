@@ -30,7 +30,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
  * | `kickStaleDevice` | written | set | no |
  * | `kickStaleUser` | **never written** | set | no |
  * | `detectStaleDevices` (cron) | written | left as is | no |
- * | `updateInvitationStatus` demotion | **never written** | left as is | yes |
+ * | `updateInvitationStatus` demotion | **never written** | left as is | yes - none of the four since 2026-10-25 |
  *
  * THE TWO MISSING SREMS DO NOT HEAL. Nothing removes an extra entry from
  * `group:members:{groupId}`: the SEND reconciliation only `sadd`s, so an entry naming a device
@@ -63,7 +63,7 @@ describe('the ONE writer of a pending membership', () => {
   };
   const deviceGroupRepo = {
     findOne: jest.fn().mockResolvedValue(null),
-    upsert: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
     find: jest.fn().mockResolvedValue([]),
   };
 
@@ -78,6 +78,7 @@ describe('the ONE writer of a pending membership', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     redis.srem.mockResolvedValue(1);
+    deviceGroupRepo.update.mockResolvedValue({ affected: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,16 +98,24 @@ describe('the ONE writer of a pending membership', () => {
     }).compile();
 
     service = module.get(MessagingService);
-    const holder = service as unknown as { logger: { log: (m: string) => void } };
+    const holder = service as unknown as {
+      logger: { log: (m: string) => void; warn: (m: string) => void };
+    };
     jest.spyOn(holder.logger, 'log').mockImplementation(() => {});
+    jest.spyOn(holder.logger, 'warn').mockImplementation(() => {});
   });
 
-  it('writes the row AND removes from the routing set - the two facts an unroutable device needs', async () => {
-    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
+  /** The values the demotion's UPDATE wrote, from its one call. */
+  const written = () => deviceGroupRepo.update.mock.calls[0][1] as Record<string, unknown>;
 
-    expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'u1', deviceId: 'd1', groupId: 'g1', status: 'pending' }),
-      expect.anything()
+  it('writes the row AND removes from the routing set - the two facts an unroutable device needs', async () => {
+    await expect(
+      service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null })
+    ).resolves.toBe(true);
+
+    expect(deviceGroupRepo.update).toHaveBeenCalledWith(
+      { userId: 'u1', deviceId: 'd1', groupId: 'g1' },
+      expect.objectContaining({ status: 'pending' })
     );
     expect(redis.srem).toHaveBeenCalledWith('group:members:g1', 'u1:d1');
   });
@@ -116,19 +125,16 @@ describe('the ONE writer of a pending membership', () => {
 
     await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: at });
 
-    expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ kickedAt: at }),
-      expect.anything()
-    );
+    expect(written()).toMatchObject({ kickedAt: at });
   });
 
   it('LEAVES `kickedAt` alone when nobody removed the leaf, rather than clearing it', async () => {
     await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
 
-    // The distinction the whole column exists for. TypeORM builds `DO UPDATE SET` from the keys of
-    // this object, so spelling `kickedAt: null` would erase the proof of a kick on every cron
-    // demotion - the opposite of what the stranded report needs. Absence is what preserves it.
-    expect(deviceGroupRepo.upsert.mock.calls[0][0]).not.toHaveProperty('kickedAt');
+    // The distinction the whole column exists for. The UPDATE's SET list is the keys of this
+    // object, so spelling `kickedAt: null` would erase the proof of a kick on every cron demotion -
+    // the opposite of what the stranded report needs. Absence is what preserves it.
+    expect(written()).not.toHaveProperty('kickedAt');
   });
 
   it('RESTARTS the seat clock, because a demotion restarts the wait', async () => {
@@ -141,23 +147,20 @@ describe('the ONE writer of a pending membership', () => {
     await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
     const after = Date.now();
 
-    const written = deviceGroupRepo.upsert.mock.calls[0][0] as { pendingSince: Date };
-    expect(written.pendingSince).toBeInstanceOf(Date);
-    expect(written.pendingSince.getTime()).toBeGreaterThanOrEqual(before);
-    expect(written.pendingSince.getTime()).toBeLessThanOrEqual(after);
+    const { pendingSince } = written() as { pendingSince: Date };
+    expect(pendingSince).toBeInstanceOf(Date);
+    expect(pendingSince.getTime()).toBeGreaterThanOrEqual(before);
+    expect(pendingSince.getTime()).toBeLessThanOrEqual(after);
   });
 
   it('restarts it on a KICK too - the device is waiting on a re-add either way', async () => {
     await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: new Date(0) });
 
-    const written = deviceGroupRepo.upsert.mock.calls[0][0] as {
-      pendingSince: Date;
-      kickedAt: Date;
-    };
+    const { pendingSince, kickedAt } = written() as { pendingSince: Date; kickedAt: Date };
     // The two clocks answer different questions and must not be confused: one says when the wait
     // started, the other whether a kick promised an Add.
-    expect(written.kickedAt).toEqual(new Date(0));
-    expect(written.pendingSince.getTime()).toBeGreaterThan(0);
+    expect(kickedAt).toEqual(new Date(0));
+    expect(pendingSince.getTime()).toBeGreaterThan(0);
   });
 
   it('completes even when Redis throws - the row is the truth and a demotion must always land', async () => {
@@ -165,16 +168,24 @@ describe('the ONE writer of a pending membership', () => {
 
     await expect(
       service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null })
-    ).resolves.toBeUndefined();
-    expect(deviceGroupRepo.upsert).toHaveBeenCalled();
+    ).resolves.toBe(true);
+    expect(deviceGroupRepo.update).toHaveBeenCalled();
+    // Swallowed, never silent: the route it leaves is what an erasure later finds unseated.
+    const holder = service as unknown as { logger: { warn: jest.Mock } };
+    expect(holder.logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/route NOT removed group=g1 .*connection lost/)
+    );
   });
 
-  it('is an UPSERT, so a device reporting loss of state for a row it has not got still gets one', async () => {
-    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
+  it('never creates a seat: with no row it writes nothing, still drops the route, and says so', async () => {
+    deviceGroupRepo.update.mockResolvedValue({ affected: 0 });
 
-    expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(expect.anything(), {
-      conflictPaths: ['deviceId', 'groupId'],
-    });
+    await expect(
+      service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null })
+    ).resolves.toBe(false);
+    // An UPDATE, never an insert: a seat a departure deleted stays deleted.
+    expect(deviceGroupRepo).not.toHaveProperty('upsert');
+    expect(redis.srem).toHaveBeenCalledWith('group:members:g1', 'u1:d1');
   });
 });
 
@@ -182,7 +193,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
   let controller: InvitationsController;
   const messaging = {
     activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
-    deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined),
+    deactivateDeviceMembership: jest.fn().mockResolvedValue(true),
     deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
   };
   const deviceGroupRepo = {
@@ -207,6 +218,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
     jest.clearAllMocks();
     deviceGroupRepo.findOne.mockResolvedValue(null);
     deviceGroupRepo.find.mockResolvedValue([]);
+    messaging.deactivateDeviceMembership.mockResolvedValue(true);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InvitationsController],
@@ -267,6 +279,37 @@ describe('the KICK and INVITATION_STATUS doors', () => {
     expect(deviceGroupRepo.save).not.toHaveBeenCalled();
   });
 
+  it('the kicks name the row they read, and count only what was demoted', async () => {
+    deviceGroupRepo.find.mockResolvedValue([
+      { id: 's1', userId: 'u1', deviceId: 'd1', groupId: 'g1' },
+      { id: 's2', userId: 'u1', deviceId: 'd2', groupId: 'g1' },
+    ]);
+    // d2's row was deleted between the read and the write.
+    messaging.deactivateDeviceMembership.mockImplementation(
+      async (_u: string, d: string) => d === 'd1'
+    );
+
+    const user = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1', 'true');
+
+    expect(user).toMatchObject({ affected: 1, devices: [{ deviceId: 'd1', groupId: 'g1' }] });
+    expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
+      'u1',
+      'd2',
+      'g1',
+      expect.objectContaining({ seatId: 's2' })
+    );
+
+    deviceGroupRepo.findOne.mockResolvedValue({
+      id: 's2',
+      userId: 'u1',
+      deviceId: 'd2',
+      groupId: 'g1',
+    });
+    await expect(
+      controller.kickStaleDevice({ deviceId: 'd2', userId: 'u1', groupId: 'g1' }, 'u1', 'true')
+    ).resolves.toEqual({ status: 'not_found', affected: 0 });
+  });
+
   it('kick-stale-device still writes nothing for a membership that does not exist', async () => {
     deviceGroupRepo.findOne.mockResolvedValue(null);
 
@@ -297,11 +340,26 @@ describe('the KICK and INVITATION_STATUS doors', () => {
     expect(deviceGroupRepo.save).not.toHaveBeenCalled();
     expect(answer).toEqual({ status: 'pending' });
   });
+
+  it('the self-reported demotion of a seat that does not exist is the no_seat refusal', async () => {
+    messaging.deactivateDeviceMembership.mockResolvedValue(false);
+
+    const refusal = (await controller
+      .updateInvitationStatus(
+        { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
+        'u1',
+        'false'
+      )
+      .catch((e: unknown) => e)) as { getStatus(): number; getResponse(): unknown };
+
+    expect(refusal.getStatus()).toBe(403);
+    expect(refusal.getResponse()).toMatchObject({ code: 'NOT_A_MEMBER', reason: 'no_seat' });
+  });
 });
 
 describe('the CRON door', () => {
   let appController: AppController;
-  const messaging = { deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined) };
+  const messaging = { deactivateDeviceMembership: jest.fn().mockResolvedValue(true) };
   const redis = { srem: jest.fn().mockResolvedValue(1) };
 
   const STALE = {
