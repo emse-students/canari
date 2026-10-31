@@ -93,9 +93,7 @@ export class FakeUploader {
 export const LIMITS: LiveLimits = {
   segmentMaxBytes: 4 * 1024 * 1024,
   reconnectWindowMs: 60_000,
-  maxDurationMs: 3_600_000,
   manifestWindow: 10,
-  byteBudget: 1_687_500_000,
   segmentMinDurationMs: 1000,
   segmentBurst: 15,
   startsPerHour: 6,

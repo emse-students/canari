@@ -16,6 +16,7 @@
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { responseOrigin } from '$lib/utils/apiRefusal';
 import { trackedFetch } from '$lib/utils/trackedFetch';
@@ -131,9 +132,9 @@ export function classifyLiveRefusal(
 const LIVE_END_REASONS: ReadonlySet<string> = new Set<LiveEndReason>([
   'broadcaster',
   'dropped',
-  'max_duration',
   'erased',
   'cut',
+  'max_duration',
 ]);
 
 /** A refusal body's `endReason` when it is one this build knows, else null (never a guess). */
@@ -194,9 +195,24 @@ function livePath(liveId: string): string {
   return `${livesBase()}/${encodeURIComponent(liveId)}`;
 }
 
+/**
+ * The header every lives call carries so the server can answer a build below `1.5.4` like a
+ * switched-off estate (`LiveEnabledGuard`, docs/wiki/legacy-compatibility.md). Absent on a build
+ * that predates it - which is the evidence the server reads.
+ */
+export const LIVE_CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+
+/** `init` with the client-version header added. */
+function withClientVersion(init: ApiFetchOptions = {}): ApiFetchOptions {
+  return {
+    ...init,
+    headers: { ...init.headers, [LIVE_CLIENT_VERSION_HEADER]: getClientAppVersion() },
+  };
+}
+
 /** Runs one authenticated lives call and returns its JSON, or throws the typed refusal. */
 async function liveJson<T>(url: string, what: string, init: ApiFetchOptions = {}): Promise<T> {
-  const res = await apiFetch(url, init);
+  const res = await apiFetch(url, withClientVersion(init));
   if (!res.ok) throw await liveRefusal(res, what);
   return (await res.json()) as T;
 }
@@ -431,7 +447,7 @@ export async function withdrawBroadcaster(
  */
 export async function leaveLiveSeat(liveId: string): Promise<void> {
   console.debug(`[LIVE] leave ${liveId}`);
-  const res = await apiFetch(`${livePath(liveId)}/seat`, { method: 'DELETE' });
+  const res = await apiFetch(`${livePath(liveId)}/seat`, withClientVersion({ method: 'DELETE' }));
   if (!res.ok) throw await liveRefusal(res, 'Live leave');
 }
 

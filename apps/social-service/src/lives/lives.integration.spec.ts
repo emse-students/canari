@@ -36,10 +36,11 @@ import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
-import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
+import type { LivePurgeResult, LiveSegmentStore, LiveTrimResult } from './live-segment-store';
 import {
-  LIVE_BYTE_BUDGET,
   LIVE_INGEST_MAX_CONCURRENT,
+  LIVE_MANIFEST_WINDOW,
+  LIVE_RETAINED_SEGMENTS,
   LIVE_SEGMENT_BURST,
   LIVE_RULES_VERSION,
   LIVE_SEAT_LEASE_MS,
@@ -107,6 +108,10 @@ class MemoryStore implements LiveSegmentStore {
   failPurge = false;
   /** The purge ANSWERS, but with a store that refused some deletes (the media service's `failed`). */
   refuseDeletes = false;
+  /** The trim call fails in transport (it throws). */
+  failTrim = false;
+  /** The trim ANSWERS, but the store refused every delete. */
+  refuseTrimDeletes = false;
   private hold: { entered: () => void; release: Promise<void> } | null = null;
   private gate: { entered: number; release: Promise<void> } | null = null;
 
@@ -157,6 +162,13 @@ class MemoryStore implements LiveSegmentStore {
     if (this.refuseDeletes) return { deleted: 0, failed: keys.length, remaining: keys.length };
     for (const k of keys) this.objects.delete(k);
     return { deleted: keys.length, failed: 0, remaining: 0 };
+  }
+
+  async deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult> {
+    if (this.failTrim) throw Object.assign(new Error('store down'), { code: 'ECONNREFUSED' });
+    if (this.refuseTrimDeletes) return { deleted: [], failed: names };
+    for (const name of names) this.objects.delete(`live/${liveId}/${name}`);
+    return { deleted: names, failed: [] };
   }
 
   async listLives(): Promise<string[]> {
@@ -1281,24 +1293,101 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     });
   });
 
-  describe('what one broadcaster may store (P2-2)', () => {
-    it('refuses a segment that would cross the byte budget: 413, nothing recorded', async () => {
+  describe('the trim: a running live keeps only its newest window (owner, 2026-10-31)', () => {
+    /** Ingests segments 0..count-1 of a live whose start is moved back so the rate guard allows them. */
+    async function ingestMany(id: string, count: number, from = 0) {
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [id]);
+      for (let i = from; i < count; i++) {
+        await lives.ingest(ALICE, id, i, segment(i));
+        // The trim runs after the answer: settled here so the next pass sees this one's work.
+        await lives.trimsSettled();
+      }
+    }
+    const rowCount = async (id: string) =>
+      Number((await q(`SELECT count(*) AS n FROM live_segments WHERE "liveId" = $1`, [id]))[0].n);
+
+    it('deletes the segments behind the window while the live is ON, in the store, the rows and storedBytes', async () => {
       const live = await start();
-      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
-        live.id,
-        LIVE_BYTE_BUDGET - segment(0).length + 1,
+      const total = LIVE_RETAINED_SEGMENTS + 7;
+      await ingestMany(live.id, total);
+      expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      let kept = 0;
+      for (let i = total - LIVE_RETAINED_SEGMENTS; i < total; i++) kept += segment(i).length;
+      expect(await q(`SELECT "storedBytes" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { storedBytes: String(kept) },
       ]);
-      expect(await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).toEqual({
-        status: HttpStatus.PAYLOAD_TOO_LARGE,
-        code: 'LIVE_BUDGET_EXHAUSTED',
-      });
-      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
-        live.id,
-        LIVE_BYTE_BUDGET - segment(0).length,
+      expect(await q(`SELECT "endedAt" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endedAt: null },
       ]);
+    });
+
+    it('a viewer at the window edge still gets every segment its manifest names, and one fetched just before a trim', async () => {
+      const live = await start();
+      await ingestMany(live.id, LIVE_RETAINED_SEGMENTS + 3);
+      const manifest = await lives.manifest(CAROL, live.id);
+      expect(manifest.segments).toHaveLength(LIVE_MANIFEST_WINDOW);
+      for (const seg of manifest.segments) {
+        expect(store.objects.has(`live/${live.id}/${seg.name}`)).toBe(true);
+      }
+      // The viewer holds this manifest while the broadcaster sends LIVE_MANIFEST_WINDOW more
+      // segments (each one trims): the oldest segment it was told of is still in the store.
+      const oldest = manifest.segments[0];
+      await ingestMany(
+        live.id,
+        LIVE_RETAINED_SEGMENTS + 3 + LIVE_MANIFEST_WINDOW,
+        LIVE_RETAINED_SEGMENTS + 3
+      );
+      expect(store.objects.has(`live/${live.id}/${oldest.name}`)).toBe(true);
+    });
+
+    it('converges after a failed or crashed pass: the rows stay until the store proved the delete', async () => {
+      const live = await start();
+      store.failTrim = true;
+      await ingestMany(live.id, LIVE_RETAINED_SEGMENTS + 5);
+      // The ingests succeeded, nothing was trimmed, every row is still there.
+      expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS + 5);
+      store.failTrim = false;
+      store.refuseTrimDeletes = true;
+      await lives.ingest(
+        ALICE,
+        live.id,
+        LIVE_RETAINED_SEGMENTS + 5,
+        segment(LIVE_RETAINED_SEGMENTS + 5)
+      );
+      await lives.trimsSettled();
+      expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS + 6);
+      store.refuseTrimDeletes = false;
+      // A crash AFTER the store deleted and BEFORE the rows did: objects gone, rows kept.
+      for (const key of [...store.objects.keys()].slice(0, 3)) store.objects.delete(key);
+      await lives.ingest(
+        ALICE,
+        live.id,
+        LIVE_RETAINED_SEGMENTS + 6,
+        segment(LIVE_RETAINED_SEGMENTS + 6)
+      );
+      await lives.trimsSettled();
+      expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+    });
+
+    it('the end still purges everything, trimmed or not, and the row goes', async () => {
+      const live = await start();
+      await ingestMany(live.id, LIVE_RETAINED_SEGMENTS + 4);
+      await lives.end(ALICE, live.id);
+      await sweeper.sweepOnce();
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT id FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
+  });
+
+  describe('what one broadcaster may store (P2-2)', () => {
+    it('has NO total byte budget (owner, 2026-10-31): storedBytes counts what is held and refuses nothing', async () => {
+      const live = await start();
+      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [live.id, 5_000_000_000]);
       await lives.ingest(ALICE, live.id, 0, segment(0));
       expect(await q(`SELECT "storedBytes" FROM lives WHERE id = $1`, [live.id])).toEqual([
-        { storedBytes: String(LIVE_BYTE_BUDGET) },
+        { storedBytes: String(5_000_000_000 + segment(0).length) },
       ]);
     });
 
@@ -1416,26 +1505,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       });
     });
 
-    it('ends a live past its hour, from the sweep or from the ingest that finds it', async () => {
-      const bySweep = await start(ALICE);
-      const byIngest = await start(BOB);
+    it('has NO longest duration (owner, 2026-10-31): a live many hours old, still sending, is neither ended by the sweep nor refused', async () => {
+      const live = await start(ALICE);
       await q(
-        `UPDATE lives SET "startedAt" = now() - interval '61 minutes', "lastSegmentAt" = now()
-          WHERE id = ANY($1::uuid[])`,
-        [[bySweep.id, byIngest.id]]
+        `UPDATE lives SET "startedAt" = now() - interval '14 hours', "lastSegmentAt" = now() WHERE id = $1`,
+        [live.id]
       );
-      store.failPurge = true;
-      expect((await refusal(lives.ingest(BOB, byIngest.id, 0, segment(0)))).status).toBe(
-        HttpStatus.GONE
-      );
-      await sweeper.sweepOnce();
-      const reasons = await q(`SELECT id, "endReason" FROM lives ORDER BY "endReason"`);
-      expect(reasons).toEqual(
-        expect.arrayContaining([
-          { id: bySweep.id, endReason: 'max_duration' },
-          { id: byIngest.id, endReason: 'max_duration' },
-        ])
-      );
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ ended: 0 });
+      await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
+        nextIndex: 1,
+      });
+      expect(await q(`SELECT "endedAt" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endedAt: null },
+      ]);
     });
 
     it('EVERYTHING IS GONE AFTER THE SWEEP: a purge refused at the end is finished by the next run', async () => {

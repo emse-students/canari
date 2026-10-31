@@ -25,7 +25,6 @@
     ShieldCheck,
     SwitchCamera,
     Video,
-    Timer,
     WifiOff,
     X,
   } from '@lucide/svelte';
@@ -388,12 +387,6 @@
           {m.live_rule_moderation()}
         </li>
         {#if broadcast.limits}
-          <li class="flex items-start gap-2.5">
-            <Timer size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
-            {m.live_rule_duration({
-              minutes: Math.floor(broadcast.limits.maxDurationMs / 60_000),
-            })}
-          </li>
           <li class="flex items-start gap-2.5">
             <CameraOff size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
             {m.live_rule_background({

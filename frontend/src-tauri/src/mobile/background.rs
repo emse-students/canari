@@ -72,6 +72,7 @@ fn refused_by_mls(error: &mls_core::MlsError) -> serde_json::Value {
         | K::PastEpochApplication
         | K::OwnMessage
         | K::Evicted
+        | K::AdmissionRefused
         | K::SameEpochRefusal
         | K::Unrecoverable => "mls-refused-for-good",
     };

@@ -7,7 +7,7 @@ const BATCH = 50;
 
 /** What one run did, returned for the test and summarised in the log. */
 export interface LiveSweepReport {
-  /** Open lives this run ended (`dropped` or `max_duration`). */
+  /** Open lives this run ended (`dropped`). */
   ended: number;
   /** Ended lives whose segments and row were deleted. */
   deleted: number;
@@ -30,8 +30,8 @@ export interface LiveSweepReport {
  *
  * 0. SEALS every live key still stored in the clear (`LivesService.sealPlaintextKeys`, the backfill
  *    of migration 110) - first, so a live this run purges is not left for it.
- * 1. ENDS the open lives whose broadcaster stopped sending for the reconnect window, or whose hour
- *    is up - writing the end as the row's durable state (`LivesService.endDue`).
+ * 1. ENDS the open lives whose broadcaster stopped sending for the reconnect window (a live has no
+ *    longest duration) - writing the end as the row's durable state (`LivesService.endDue`).
  * 2. DELETES every ended live: its segments from the store, then its row, the row only once the
  *    store proves the live's prefix empty (`LivesService.purgeEnded`).
  * 3. REAPS every segment folder with no live row behind it - a store that outlived its own timeout
@@ -44,8 +44,7 @@ export interface LiveSweepReport {
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
  * prefix the next run finds empty, and the row goes then. It also catches every end that did not
- * purge at once (the broadcaster's end with the store down, a `max_duration` written by an ingest,
- * an account erasure).
+ * purge at once (the broadcaster's end with the store down, an account erasure).
  *
  * ISOLATION: a `try` per live, and a live kept by this run is excluded from its own next query, so
  * one live the store refuses neither stops the batch nor spins the loop.
