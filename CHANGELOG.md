@@ -14,6 +14,124 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-10-31
+
+### Changed - the identity provider's PostgreSQL 16 volume is retired
+
+The rollback volume of the 2026-10-31 move to PostgreSQL 18 was removed the same day on the owner's decision, after production was re-checked; the way back is the kept dump ([authentik](docs/wiki/infrastructure/authentik.md#postgresql-16---18-2026-10-31)).
+
+### Changed - the identity provider's database runs PostgreSQL 18
+
+MiConnect's PostgreSQL moved from 16 to 18 by a dump and restore onto a new volume, rehearsed on a copy first; the compose file carries the 18 image and its new mount, and the 16 volume is kept as the rollback ([authentik](docs/wiki/infrastructure/authentik.md#postgresql-16---18-2026-10-31)).
+
+### Changed - a new backlog entry is its own file, so pull requests stop conflicting on `backlog.md`
+
+New entries go to `docs/wiki/backlog.d/`, one file each, and `backlog-fragments.test.mjs` refuses a new heading in `backlog.md` ([backlog.d](docs/wiki/backlog.d/README.md)).
+
+### Fixed - a booking crosses the midnight between two open days
+
+A space open all day on consecutive days is one continuous opening: a booking from 22:00 to 02:00 (or over several days, when the space allows it) is accepted, and the editor's warning saying otherwise is gone ([bookings](docs/wiki/bookings-chantier.md#wp-b2-as-built-2026-10-17)).
+
+### Changed - a simpler booking space dashboard
+
+The dashboard keeps one counter, "Réservations cette semaine": the "Heures occupées" and "Blocages" chips and the "Une seule colonne" card are gone (a column is added in "Réglages") ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - a refused booking start retires every earlier start
+
+The booking view kept each refused start apart, so a device clock behind the server's meant one refusal per unit. It now keeps the latest refused start and offers none at or before it ([bookings-chantier](docs/wiki/bookings-chantier.md)).
+
+### Changed - a slot that cannot be booked now is no longer offered
+
+A past, too-soon or too-far slot is greyed and cannot be tapped, so the booking sheet never opens on it with a note about the device's clock; a late refusal reads "Ce créneau n'est plus disponible" ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - changing the week of a booking space no longer scrolls the page to the top
+
+The grid stays drawn while the next week loads, and the focus stays on the arrow or on "Aujourd'hui" ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Changed - booking links say "Salles et rendez-vous", and a missing space says so plainly
+
+The Reservations description no longer names instruments, and a booking link to a space that does not exist (or not on this estate) shows "Cet espace n'existe pas ou n'est plus disponible" with a button back to Reservations instead of a red error. See [mobile](docs/wiki/frontend/mobile.md).
+
+### Fixed - the Canari name and tagline are centred on the app icon
+
+The text block of the brand lockup sat about 2 px low; its cap top and baseline now line up with the icon's edges ([design-reference](docs/wiki/frontend/design-reference.md#the-brand-lockup-is-centred-on-its-icon-by-trimming-the-line-boxes-2026-10-31)).
+
+### Fixed - a call to an app open at the PIN gate rings
+
+The native ring stood back whenever the app was in front, but a page at the PIN gate holds no gateway socket and never gets the caller's invite, so nothing rang. The native ring now stands back only while the page holds that socket, on Android and on the iPhone ([calls](docs/wiki/frontend/modules/calls.md#an-open-app-at-the-pin-gate-rang-nothing-153-2026-10-31)).
+
+### Fixed - the iPhone keeps a CallKit ring the page does not ring, and ends one the page does
+
+The handover ends an unanswered CallKit ring only when the page rings that very call, a page that starts ringing a call while active ends its CallKit twin, a statement from a previous page is ignored, an answered call ended before the handover leaves no record, and the ring's deadline no longer ends an answered call as `Unanswered` (reasoned, not observed, that it filed it as missed) ([calls](docs/wiki/frontend/modules/calls.md#the-handover-ends-an-unanswered-ring-only-when-the-page-rings-that-call-2026-10-31)).
+
+### Changed - the calls page and the queue say what production runs: in-app audio calls are live, video and the native ring ride 1.5.2
+
+The top of [calls](docs/wiki/frontend/modules/calls.md) still described calling as held off (`CALLS_COMPILED = false`); it now states the live audio state, the server's `calls_mode` switch, and what 1.5.2 adds. CLAUDE.md queue item 18 follows.
+
+### Fixed - a CI self-test that failed at random
+
+`grep | grep -q` and `| head` under `set -o pipefail` died of SIGPIPE whenever the reader quit first (`local-copy-guards.test.sh` printed "Broken pipe" then failed). The sibling self-tests now drain the pipe: `grep ... >/dev/null`, `sed -n 1p` ([cicd](docs/wiki/cicd.md)).
+
+### Changed - `CLAUDE.md` is an index again: one headline and one link per queue item, under a ~250-line cap
+
+What left it now lives on the page each item links to, mostly [backlog](docs/wiki/backlog.md).
+
+### Fixed - a comment that is only a GIF shows in the feed, and its like is one tap away
+
+The collapsed comment under a post drew only the text, so a GIF-only comment was an empty bubble; it now shows the picture as a small thumbnail, with the heart and its count to like or unlike without opening the thread ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Fixed - the feed no longer downloads every comment GIF at once
+
+The collapsed comment's picture (#2801) was fetched and decrypted for every card the feed mounted; it now waits until the card is near the viewport, as a post's own attachments do ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Added - the external profile tells an association, a campaign list and an institution apart
+
+`GET /api/external/profile/:sub` rows now carry `type` and `promo` (and `slug` on former rows), so Sky can group them and hide a past campaign list ([associations](docs/wiki/frontend/modules/associations.md#the-external-profile-projection)).
+
+### Changed - the feed's filter row is one floating glass pill
+
+The grey band behind "Associations / Suivis / Tout" is gone: the three tabs form one glass segmented control and the CanaReels button a matching round glass button, with the same side gutters as the cards ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Added - Lydia enrolment lot 2: the Responsable, readiness from Lydia, one enrolment at a time
+
+A payout manager names the member Lydia adds as a cashier of the association's Business (phone sealed at rest); `BUSINESS_VALIDATED` marks the Business ready and error 5 / 2701 on a real request reverts it; a second `business/create` or Responsable step is refused while one is in flight, the Responsable's number is locked (an add Lydia answered but did not confirm is kept as unconfirmed), and every revert is a bell row for the global admins ([payments](docs/wiki/frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).
+
+### Added - an association refunds a Lydia payment from Canari, in full or in part
+
+A payout manager refunds from the purchases list; a full refund withdraws what the payment bought, except a Cercle top-up, and an unconfirmed refund is checked by hand before any new one. A statement of payments and refunds downloads as CSV ([payments](docs/wiki/frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4)).
+
+### Fixed - a Lydia Responsable with every right was recorded as unconfirmed
+
+The rights read-back looked for `access_*` at the top of Lydia's answer, while Lydia returns them under `data`, so 13 granted rights read as 0 ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - a member's new device is added, never put up for approval
+
+A new device of someone already in a conversation used to show "Nouvel appareil de X - Ajouter / Refuser", in a 1:1 too, and that line became every conversation's preview. It is now added automatically, also from a push on Android, and everyone sees "X a ajouté un appareil", never as the preview; only a new person is still asked about ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+
+### Fixed - a new member of a group conversation is served nothing from before a member added them
+
+A link joiner's arrival is dated at the member's Add rather than at their ask, and the history stream no longer serves a newcomer the past's ciphertexts; a boot check accuses a process and a database that disagree on the time zone ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Changed - a device waiting to be added no longer shows its key
+
+The notice says in plain words what to do; and the rule that user-visible text never shows technical internals is written down ([design-reference](docs/wiki/frontend/design-reference.md#user-visible-text-shows-outcomes-never-internals-owner-2026-10-31)).
+
+### Fixed - a message sent while this device is being re-admitted to a group is held, not lost
+
+A send in the seconds between the Remove and the Welcome of the device's own re-admission was failed as an eviction, which retired the conversation; it is now held and sent the moment the Welcome or an external join makes the group ready, and failed visibly if the server proves the seat is gone ([chat](docs/wiki/frontend/modules/chat.md#a-group-becoming-ready-resumes-what-was-held-for-it-and-a-re-admission-holds-2026-10-31)).
+
+### Changed - who voted on a poll
+
+Hover shows at most 10 names then "+ N"; an info button on each option opens the full list in a sheet (phone) or dialog (desktop), tap-safe and never voting. Same card for posts and conversations ([posts](docs/wiki/frontend/modules/posts.md#who-voted-a-capped-hover-and-an-info-button-that-opens-the-full-list-2026-10-24)).
+
+### Fixed - the profile's "Mes associations" row counts by kind
+
+The row counted lists and institutions as associations and still counted finished campaign lists the section hides; it now reads "7 associations · 1 liste · 1 institution", zero parts omitted ([associations](docs/wiki/frontend/modules/associations.md)).
+
+### Changed - the store reviewers' accounts are a cohort that is a space of its own
+
+`SERVICE_ACCOUNT_USER_ID` now names a list of review accounts, and nothing crosses the cohort's boundary in either direction: search, profiles, posts, lives, follows, mentions, conversations, calls, the shop, booking spaces, communities and association rosters; an entry that is not a user id stops the service at boot ([profiles-and-access](docs/wiki/profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)).
+
 ## [1.5.2] - 2026-10-31
 
 ### Changed - a pull request now compiles the Android app module, so Gradle bumps there can be judged
