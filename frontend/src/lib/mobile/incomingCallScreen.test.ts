@@ -289,20 +289,20 @@ describe('the native answer is a private intent carrying every fact the join nee
     );
     expect(tell).toContain('fileExistsAtPath:');
     expect(tell).toContain("new CustomEvent('canari:call-accept')");
-    // The page drains on that event.
+    // The page subscribes for its whole life (the drain itself: pendingCallAccept.test.ts).
     const service = readFileSync(
       resolve(here, '../components/layout/ChatBackgroundService.svelte'),
       'utf8'
     );
-    expect(service).toMatch(
-      /const handleNativeCallAccept = \(\) => \{[\s\S]*?void drainNativePendingCallAccept\(\);/
-    );
-    expect(service).toContain(
-      "window.addEventListener('canari:call-accept', handleNativeCallAccept);"
-    );
-    expect(service).toContain(
-      "window.removeEventListener('canari:call-accept', handleNativeCallAccept);"
-    );
+    expect(service).toContain('const stopNativeCallAccept = listenForNativeCallAccept();');
+    expect(service).toContain('stopNativeCallAccept();');
+  });
+
+  it('Android: an answer intent taken by MainActivity tells a live page', () => {
+    const main = read('android/app/src/main/java/fr/emse/canari/MainActivity.kt');
+    expect(main).toContain('if (CallRingAnswer.takeAnswer(this, intent)) pushCallAccept()');
+    const push = between(main, 'private fun pushCallAccept() {', '\n    }\n', 'pushCallAccept');
+    expect(push).toContain("new CustomEvent('canari:call-accept')");
   });
 });
 

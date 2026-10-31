@@ -806,8 +806,12 @@ visibility change only when the app, having been active, left (`1 -> 0` at 02:55
 - **The native side tells the page at the handover.** The `didBecomeActive` observer that ends every
   CallKit call `AnsweredElsewhere` then queues, on the same main queue, `CanariTellPageOfPendingCallAccept`:
   if the file exists (a stat), the page gets `canari:call-accept` and drains it
-  (`ChatBackgroundService`); a page not loaded yet drains it at mount. NOT at the Answer: until the
-  app is active a CallKit End may still cancel the answer, and the page must not hold it then.
+  (`listenForNativeCallAccept`, `pendingCallAccept.ts`; a repeated event reads an emptied file); a
+  page not loaded yet drains it at mount. NOT at the Answer: until the app is active a CallKit End
+  may still cancel the answer, and the page must not hold it then. "The page was told" is logged in
+  the completion handler, once the page ran the dispatch. Android tells a live page the same way
+  when `MainActivity.onNewIntent` takes an answer (`pushCallAccept`): a warm activity already
+  visible at the PIN gate sees no visibility change either.
 - **The heartbeat holds the guard only over a loaded manager** (`heartbeat_foreground_guard`,
   `concurrency.rs`). The guard protects the state a foreground manager holds in memory; before a
   login there is none, and the login's read marks the guard itself first. Whether a manager is
@@ -824,11 +828,22 @@ and the PIN - an unbounded human step - and an action left unfulfilled is failed
 own deadline, which would end the call under the user; the screen is the callee's own, the caller's
 ring is true, and the handover ends the CallKit call the moment the app is in front.
 
-**Named limitation.** A page that MOUNTS between the Answer and the activation (a launch slower
-than the ring) drains the file at mount, so an End in that window removes the file but not the held
-answer. Not observed: the page mounted 1.5 s after each launch.
+**Named limitations.**
+- A page that MOUNTS between the Answer and the activation (a launch slower than the ring) drains
+  the file at mount, so an End in that window removes the file but not the held answer. Not
+  observed: the page mounted 1.5 s after each launch.
+- **A launch that signs in by itself still refuses the Decline.** Biometrics with no prompt due, or
+  "stay signed in" on a hardware-held key, load a manager in the background; that page holds the
+  guard, correctly, and the hangup's write is refused (`ok=false (... foreground active ...)`). The
+  fix is to send the decline through the loaded manager
+  ([backlog](../../backlog.md#p2---a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in-by-itself-review-of-2782-2026-10-31)).
+  And with the guard released at the PIN gate, an old-PIN recovery's blind install can erase a
+  background write made during its PIN check
+  ([backlog](../../backlog.md#p2---an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-with-no-compare-under-the-lock-review-of-2782-2026-10-31)).
 
-**Owed on the iPhone** (TestFlight with this change, against dev): K7 and K8 join after the PIN -
+**Owed on the iPhone** (TestFlight with this change, against dev, **the app unlocked by its PIN -
+neither biometrics nor "stay signed in"**, which sign in in the background and are the limitation
+above; one more Decline reading with each of those names it): K7 and K8 join after the PIN -
 `[CanariCallKit] an answer waits - the page was told`, then a room token for the call and the
 call-service socket on the server; the Decline of a killed app ends the caller's ring at once -
 `decline call=... sent=1` and the caller's record `declined`; the End right after an Answer joins

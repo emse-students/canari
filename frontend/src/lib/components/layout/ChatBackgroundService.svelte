@@ -133,7 +133,10 @@
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
-  import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import {
+    drainNativePendingCallAccept,
+    listenForNativeCallAccept,
+  } from '$lib/stores/pendingCallAccept';
   import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
@@ -1919,21 +1922,12 @@
       void globalSession.resumeConnection(sessionCb());
     };
 
-    /**
-     * The native side says a CallKit answer waits (`canari:call-accept`, sent at the handover by
-     * `CanariTellPageOfPendingCallAccept`). On an iPhone the answer brings to the front an app
-     * PushKit launched in the background, whose page WKWebView already holds `visible`: no
-     * `visibilitychange` follows, so the drain above never runs (1.5.2-alpha.2, K7/K8). Held now,
-     * logged in or at the PIN gate, it is joined once the socket has caught up.
-     */
-    const handleNativeCallAccept = () => {
-      appendLog('[CallAccept] the native side says an answer waits - draining it');
-      void drainNativePendingCallAccept();
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnlineResume);
-    window.addEventListener('canari:call-accept', handleNativeCallAccept);
+    // The native side says an answer waits (`canari:call-accept`): a page that sees no
+    // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
+    // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
+    const stopNativeCallAccept = listenForNativeCallAccept();
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1972,7 +1966,7 @@
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
-      window.removeEventListener('canari:call-accept', handleNativeCallAccept);
+      stopNativeCallAccept();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);

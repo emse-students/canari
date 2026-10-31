@@ -2825,13 +2825,15 @@ static void CanariTellPageOfPendingCallAccept(void) {
   }
   [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:call-accept'));"
             completionHandler:^(__unused id result, NSError *error) {
+              // Said once the page ran the dispatch, never before: either line is a fact.
               if (error != nil) {
                 NSLog(@"[CanariCallKit] ERROR the page was not told of the answer (%@): it drains "
                       @"at its next mount or resume",
                       CanariErrorReason(error));
+                return;
               }
+              NSLog(@"[CanariCallKit] an answer waits - the page was told");
             }];
-  NSLog(@"[CanariCallKit] an answer waits - the page was told");
 }
 
 @interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
