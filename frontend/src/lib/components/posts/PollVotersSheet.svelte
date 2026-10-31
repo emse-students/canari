@@ -40,7 +40,7 @@
     <div
       role="group"
       aria-label={m.post_poll_voters_options_label()}
-      class="-mx-2 mb-3 flex gap-2 overflow-x-auto px-2 pb-1"
+      class="no-scrollbar -mx-2 mb-3 flex gap-2 overflow-x-auto px-2 pb-1"
     >
       {#each options as opt (opt.id)}
         <button
