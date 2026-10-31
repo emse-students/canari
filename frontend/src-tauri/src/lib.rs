@@ -7,6 +7,7 @@ mod concurrency;
 mod happy_eyeballs;
 mod keystore_bridge;
 mod native_cache;
+mod page_ring;
 mod state;
 
 // `test` is in the gate so the shared background logic - the outbox batch drain in particular -
@@ -329,6 +330,23 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
         log::error!("[FCM_CACHE] sealed line not returned: {e}");
         null()
     })
+}
+
+/// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
+/// ring of a `call_ring` push stands back only when this is true AND the app is in front.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativePageRingsInApp<
+    'a,
+>(
+    _env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+) -> jni::sys::jboolean {
+    if page_ring::page_rings_in_app() {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
 }
 
 /// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
@@ -1590,6 +1608,13 @@ pub fn run() {
 
             Ok(())
         })
+        // A new document holds no gateway socket: whatever the previous page said about ringing a
+        // call itself is void from here (`page_ring`).
+        .on_page_load(|_webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                page_ring::forget_on_page_load();
+            }
+        })
         .on_window_event(|window, event| {
             #[cfg(mobile)]
             let _ = (window, event);
@@ -1668,6 +1693,7 @@ pub fn run() {
             save_mls_state,
             recharger_mls_au_resume,
             mls_foreground_heartbeat,
+            page_ring::set_page_gateway_socket,
             pause_mls_foreground,
             terminer_session_mls,
             load_mls_state,

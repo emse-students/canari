@@ -2836,6 +2836,30 @@ static void CanariTellPageOfPendingCallAccept(void) {
             }];
 }
 
+/// Whether the open app rings this call itself, so CallKit stands back: the app is in front AND
+/// the page holds the gateway socket the caller's invite arrives on (Rust `page_ring`). In front at
+/// the PIN gate the page holds none, the server skips the invite, and CallKit is the only ring -
+/// standing back there rang nothing at all (the Android reading of 1.5.2-alpha.3, same shape).
+static BOOL CanariForegroundPageRings(void) {
+  return canari_ios_is_in_foreground() && canari_ios_page_rings_in_app();
+}
+
+/// THE HANDOVER: once the app is active, the page owns the call. Every CallKit call still open is
+/// ended `AnsweredElsewhere` (a session left open would show a dangling green bar), THEN the page is
+/// told an answer waits - queued on the main queue behind those ends, so it runs once no CallKit End
+/// can remove the file any more. Run on `didBecomeActive`, and at an Answer made while the app is
+/// already active (the PIN gate in front), which no activation follows. Idempotent: a second run
+/// finds no CallKit call, and a drained file is not there to tell.
+static void CanariHandOverCallsToPage(NSString *why) {
+  NSLog(@"[CanariCallKit] handover to the page (%@)", why);
+  for (NSString *callId in [g_ringingCalls.allKeys copy]) {
+    CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CanariTellPageOfPendingCallAccept();
+  });
+}
+
 @interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
 @end
 
@@ -2884,6 +2908,15 @@ static void CanariTellPageOfPendingCallAccept(void) {
            atomically:YES];
   }
   [action fulfill];
+
+  // ANSWERED WITH THE APP ALREADY ACTIVE (the PIN gate in front, rung by CallKit because the page
+  // held no socket): no `didBecomeActive` will follow, so the handover runs now - after the file is
+  // written, so the page is told of an answer that exists.
+  if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      CanariHandOverCallsToPage(@"answered with the app already active");
+    });
+  }
 
   // Best-effort foreground: works when the app is unlocked/active contexts allow it; from the
   // lock screen the user lands in the app via the CallKit UI's app button instead.
@@ -3067,14 +3100,18 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
     // report is still made, because the contract holds whatever this build believes.
     NSLog(@"[CanariCallKit] ERROR voip push on a build without the native ring - reported and ended");
     ringUntilMs = 0;
-  } else if (canari_ios_is_in_foreground()) {
-    // AN OPEN APP ALREADY RINGS: the in-app overlay got the invite over the socket. CallKit on top
-    // would ring the same call twice. Apple still requires the report, so it is reported and ended
-    // at once - the past-deadline branch below, the one thing the contract allows.
-    NSLog(@"[CanariCallKit] call=%@ voip push with the app in the foreground - the in-app overlay "
+  } else if (CanariForegroundPageRings()) {
+    // AN OPEN, SIGNED-IN APP ALREADY RINGS: the in-app overlay got the invite over the socket.
+    // CallKit on top would ring the same call twice. Apple still requires the report, so it is
+    // reported and ended at once - the past-deadline branch below, the one thing the contract allows.
+    NSLog(@"[CanariCallKit] call=%@ voip push with the page holding the socket - the in-app overlay "
           @"rings; reported and ended",
           callId);
     ringUntilMs = 0;
+  } else if (canari_ios_is_in_foreground()) {
+    NSLog(@"[CanariCallKit] call=%@ voip push with the app in front and no socket (PIN gate) - "
+          @"CallKit is the only ring",
+          callId);
   }
   NSUUID *existing = g_ringingCalls[callId];
   NSUUID *uuid = existing ?: [NSUUID UUID];
@@ -3270,16 +3307,7 @@ static void CanariCallKitSetup(void) {
                   object:nil
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
-                // Handover: the webview (post-unlock) rings/joins via WS; a CallKit session left
-                // open would show a dangling green bar. AnsweredElsewhere keeps call history sane.
-                for (NSString *callId in [g_ringingCalls.allKeys copy]) {
-                  CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
-                }
-                // THEN the page is told an answer waits: queued on the main queue behind the ends
-                // above, so it runs once no CallKit End can remove the file any more.
-                dispatch_async(dispatch_get_main_queue(), ^{
-                  CanariTellPageOfPendingCallAccept();
-                });
+                CanariHandOverCallsToPage(@"the app became active");
               }];
   NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }
@@ -3537,10 +3565,11 @@ static void CanariHandleFcmData(NSDictionary *data) {
 
   // `call_ring_end` is a background frame (calls.service), so `CanariHandleBackgroundFrame` owns it.
   // `call_ring` normally arrives as an APNs VoIP push (PushKit path); a legacy-registered device
-  // (no voipToken yet) receives it via FCM instead. Foreground rings in-app via WS -> skip.
+  // (no voipToken yet) receives it via FCM instead. A page in front holding the socket rings
+  // in-app -> skip; at the PIN gate it holds none, and CallKit is the only ring.
   if ([msgType isEqualToString:@"call_ring"]) {
-    if (canari_ios_is_in_foreground()) {
-      NSLog(@"[CanariPush] call_ring in foreground - the in-app overlay is already ringing");
+    if (CanariForegroundPageRings()) {
+      NSLog(@"[CanariPush] call_ring with the page holding the socket - the in-app overlay rings");
       return;
     }
     NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
