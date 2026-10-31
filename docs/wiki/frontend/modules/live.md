@@ -1086,3 +1086,63 @@ exactness, what happens when Redis does not answer) is
 - The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
 - The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
   never draws under the iOS status bar (`LiveBroadcaster.svelte`).
+
+## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
+
+"Cet appareil ne peut pas diffuser en direct" had ONE cause in the code: `liveRecordingSupported()`
+(`liveRecorder.ts`) is `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)` and nothing else. The camera
+facing (L-F5) is fixed (ideal facing first, `cameraFacing.ts`) and a camera that cannot open has its OWN
+text (`CAMERA_FAULT_TEXT`), so neither can produce it. **The owner's browser is Firefox**, whose
+`MediaRecorder` records WebM (VP8/VP9 + Opus), never MP4/H.264.
+
+| Browser | Records `video/mp4;codecs=avc1.42E01F,mp4a.40.2` | Source |
+| --- | --- | --- |
+| Chrome 156, Windows | **yes** (also `avc1.42E01E`, bare `avc1`, `video/mp4`, WebM) | MEASURED 2026-10-31, `isTypeSupported` in the rig's Chrome |
+| Edge (Chromium) | yes from 126, same engine as Chrome | not run here; Chromium shares the recorder |
+| Chrome / Edge before 126 | **no** (no MP4 in `MediaRecorder`) | documented behaviour, not run here |
+| Firefox (any) | **no** (WebM and Ogg only) | documented behaviour and the owner's report; not run here |
+| Safari 14.1+ (macOS, iOS) | yes - the iPhone 12 bench used exactly this string | iPhone bench (WP-L1) |
+| Chromium on Linux without H.264 | depends on the build | not run here |
+
+**The format is not too strict where MP4 is recorded at all**: Chrome accepts any `avc1.*`, so a looser
+recorder string would not admit one more browser. The VIEWER is the strict side: MSE needs the codec
+string quoted in full (`avc1.42E01F,mp4a.40.2` plays, bare `avc1` and `video/mp4` do NOT, measured the
+same day), and iOS plays through `ManagedMediaSource` on the same string. So the recorder string stays.
+
+The sheet now says why, by cause (`classifyRecordingGap`, a user-agent read, tested): Firefox is named,
+a Chromium before 126 is told to update, anything else gets the generic text; all three point at Chrome,
+Edge or the app.
+
+### Supporting Firefox - options, costs, recommendation (NOT BUILT)
+
+1. **A WebM recording path** (Firefox's MediaRecorder records WebM natively). Costs: the segment shape
+   (every segment self-contained: init + one fragment, "The segment seal format") is built on fMP4;
+   WebM segments cut by MediaRecorder are not independently decodable (only the first has the header,
+   later chunks are clusters), so the "join on the newest two segments" playback breaks. And iOS Safari
+   plays WebM through MSE only from 17.4 on some devices, not reliably through `ManagedMediaSource`.
+   A server-side remux means media-service touches the media path it does not touch today. **Costly and
+   risky: not recommended.**
+2. **WebCodecs in the broadcaster** (`VideoEncoder` H.264 + `AudioEncoder` AAC, then a small fMP4 muxer in
+   JS). It would give every browser the SAME container the viewers already play, and would also remove
+   the dependence on `MediaRecorder`'s chunking quirks (L-F1). Costs: a muxer to write and test, a
+   keyframe/segment cutter of our own, CPU on the main thread or a worker, and a new class of bug on a
+   path now proven on phones. **Support in Firefox is NOT verified here**: its WebCodecs shipped on desktop
+   in 130, but H.264 ENCODE depends on the platform codecs and **AAC encode is, to my knowledge, not
+   offered by Firefox** (Opus is) - which would leave Firefox with H.264 video and no AAC audio, so the
+   MP4 would need Opus-in-MP4, which iOS cannot play. Owed before any design: a probe of
+   `VideoEncoder.isConfigSupported({codec:'avc1.42E01F'})` and `AudioEncoder.isConfigSupported({codec:'mp4a.40.2'})`
+   in a real Firefox.
+3. **Do nothing for Firefox** (the shipped answer): name it, point at Chrome, Edge and the app. Desktop
+   broadcasting is a minority path; the phones (the audience of lives) are unaffected.
+
+**Recommendation: option 3 now, and run the two `isConfigSupported` probes in Firefox before spending
+anything on option 2.** If AAC encode is absent, option 2 is dead for Firefox and the answer stays 3.
+
+## The switch-camera button needs two cameras (2026-10-31)
+
+`CameraSession.canSwitch` (`cameraCount >= 2`) gates the button of the live sheet and of the CanaReels
+camera (`CameraScreen`, which also stands the double-tap flip down). The count is
+`enumerateDevices()` filtered on `videoinput`, read AFTER the camera is open (labels and devices can be
+hidden before the grant) and again on `devicechange`, the listener removed on `stop()`. A list that cannot
+be read offers no switch and logs a `warn`. Video calls had it already: `CallService.refreshCameraCount`
+offers the switch from two cameras (`canSwitchCamera`) and was left as it was.

@@ -4,7 +4,8 @@
  * the three refusals with its own sentence and a retry, and the live preview with its lens controls.
  * The session's opener is injected, so the order of events is the test's, never a clock's.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubCameraCount } from '../../../test/cameraDevices';
 import { flushSync, mount, unmount } from 'svelte';
 import CameraScreen from './CameraScreen.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
@@ -34,7 +35,13 @@ vi.mock('$lib/reels/gallery', () => ({
 
 const mounted: Record<string, unknown>[] = [];
 
+let unstubCameras = () => {};
+beforeEach(() => {
+  unstubCameras = stubCameraCount(2);
+});
+
 afterEach(() => {
+  unstubCameras();
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   nativeApp = false;
@@ -163,6 +170,15 @@ describe('CameraScreen', () => {
 
     const dark = await render(() => Promise.resolve(stream(false)));
     expect(dark.target.querySelector(`[aria-label="${m.reels_camera_torch_on()}"]`)).toBeNull();
+  });
+
+  it('offers no switch on a device with one camera (owner, 2026-10-31)', async () => {
+    unstubCameras();
+    unstubCameras = stubCameraCount(1);
+    const one = await render(() => Promise.resolve(stream(false)));
+    await vi.waitFor(() => expect(one.session.cameraCount).toBe(1));
+    flushSync();
+    expect(one.target.querySelector(`[aria-label="${m.reels_camera_switch()}"]`)).toBeNull();
   });
 
   describe('between the track and the first frame', () => {

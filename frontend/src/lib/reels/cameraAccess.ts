@@ -196,6 +196,16 @@ export function postCameraOpener(): (
   };
 }
 
+/**
+ * How many cameras this device has: its `videoinput` devices. READ AFTER A CAMERA IS OPEN - before
+ * the grant a browser may list none, or hide the labels - and again on `devicechange`. THROWS when
+ * the device list cannot be read; the caller decides (and logs) what a missing answer means.
+ */
+export async function countVideoInputs(): Promise<number> {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter((d) => d.kind === 'videoinput').length;
+}
+
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
 export function releaseCamera(stream: MediaStream | null): void {
   if (!stream) return;

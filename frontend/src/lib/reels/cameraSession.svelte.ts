@@ -18,6 +18,7 @@
 
 import {
   CameraAccessError,
+  countVideoInputs,
   openPhotoCamera,
   openReelCamera,
   releaseCamera,
@@ -90,9 +91,49 @@ export class CameraSession {
   /** Opens a LENS ALONE, no microphone: a flip during a take keeps the take's microphone. */
   readonly #openLens: CameraOpener;
 
-  constructor(open: CameraOpener = openReelCamera, openLens: CameraOpener = openPhotoCamera) {
+  /**
+   * How many cameras the device has, read once a camera is OPEN and again on `devicechange`; 0 until
+   * known. The switch button is offered only from two (owner, 2026-10-31): one lens has nothing to
+   * switch to.
+   */
+  cameraCount = $state(0);
+  /** Whether there is another lens to switch to. */
+  canSwitch = $derived(this.cameraCount >= 2);
+  /** Aborts the `devicechange` listener; set while the session watches the device list. */
+  #deviceWatch: AbortController | null = null;
+  readonly #countCameras: () => Promise<number>;
+
+  constructor(
+    open: CameraOpener = openReelCamera,
+    openLens: CameraOpener = openPhotoCamera,
+    countCameras: () => Promise<number> = countVideoInputs
+  ) {
     this.#open = open;
     this.#openLens = openLens;
+    this.#countCameras = countCameras;
+  }
+
+  /** Reads the camera count now; a list that cannot be read is logged and offers no switch. */
+  async #refreshCameraCount(): Promise<void> {
+    try {
+      const count = await this.#countCameras();
+      if (count !== this.cameraCount) console.debug(`[camera-session] ${count} camera(s)`);
+      this.cameraCount = count;
+    } catch (err) {
+      console.warn('[camera-session] the camera list could not be read - no switch offered', err);
+      this.cameraCount = 0;
+    }
+  }
+
+  /** Counts the cameras now and on every `devicechange` until {@link stop}; one listener at most. */
+  #watchCameras(): void {
+    void this.#refreshCameraCount();
+    if (this.#deviceWatch || typeof navigator === 'undefined' || !navigator.mediaDevices) return;
+    const watch = new AbortController();
+    this.#deviceWatch = watch;
+    navigator.mediaDevices.addEventListener('devicechange', () => void this.#refreshCameraCount(), {
+      signal: watch.signal,
+    });
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */
@@ -125,6 +166,7 @@ export class CameraSession {
       this.stream = stream;
       this.#install(stream, generation);
       this.phase = 'live';
+      this.#watchCameras();
     } catch (err) {
       if (generation !== this.#generation) return;
       const away = this.#suspended;
@@ -400,6 +442,8 @@ export class CameraSession {
     ++this.#generation;
     this.#suspended = false;
     console.debug('[camera-session] stop');
+    this.#deviceWatch?.abort();
+    this.#deviceWatch = null;
     this.#releaseCurrent();
     this.phase = 'stopped';
   }

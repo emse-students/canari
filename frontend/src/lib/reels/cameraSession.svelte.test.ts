@@ -459,3 +459,57 @@ describe('CameraSession - zoom (user, 2026-10-22)', () => {
     expect(String(zoomLines[0][0])).toContain('digital');
   });
 });
+
+describe('CameraSession - the switch needs a second camera (owner, 2026-10-31)', () => {
+  it('offers no switch with one camera, and offers it from two', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open, open, async () => 1);
+    expect(session.canSwitch).toBe(false);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await vi.waitFor(() => expect(session.cameraCount).toBe(1));
+    expect(session.canSwitch).toBe(false);
+
+    const two = new CameraSession(open, open, async () => 2);
+    void two.start();
+    calls[1].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(two.canSwitch).toBe(true));
+  });
+
+  it('recounts on devicechange while open, and stops listening once stopped', async () => {
+    const { open, calls } = deferredOpener();
+    const target = new EventTarget();
+    vi.stubGlobal('navigator', { mediaDevices: target });
+    let count = 1;
+    const session = new CameraSession(open, open, async () => count);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await vi.waitFor(() => expect(session.cameraCount).toBe(1));
+
+    count = 2;
+    target.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(session.canSwitch).toBe(true));
+
+    session.stop();
+    count = 1;
+    target.dispatchEvent(new Event('devicechange'));
+    await Promise.resolve();
+    expect(session.cameraCount).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('offers no switch when the device list cannot be read', async () => {
+    const { open, calls } = deferredOpener();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const session = new CameraSession(open, open, async () => {
+      throw new Error('no list');
+    });
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await Promise.resolve();
+    expect(session.canSwitch).toBe(false);
+  });
+});
