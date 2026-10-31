@@ -437,6 +437,7 @@ describe('EditAchatsTab, Lydia refunds', () => {
           reason: 'r',
           state: 'unconfirmed',
           refusal: null,
+          lateAnswer: null,
           sideEffect: null,
           requestedAt: '2026-10-30T10:00:00.000Z',
           answeredAt: null,
@@ -473,6 +474,7 @@ describe('EditAchatsTab, Lydia refunds', () => {
           reason: 'r',
           state: 'unrecorded',
           refusal: null,
+          lateAnswer: null,
           sideEffect: null,
           requestedAt: '2026-10-30T10:00:00.000Z',
           answeredAt: '2026-10-30T10:00:05.000Z',
@@ -490,6 +492,32 @@ describe('EditAchatsTab, Lydia refunds', () => {
     const dialog = document.querySelector('[data-testid="refund-check-dialog"]')!;
     expect(dialog.querySelector('[data-testid="refund-record"]')).not.toBeNull();
     expect(dialog.querySelector('[data-testid="refund-check-no"]')).toBeNull();
+  });
+
+  it('warns, in plain words, when Lydia answered a refund later against how it was settled', async () => {
+    state.refunds.mockResolvedValue({
+      standings: [standing({ refundedCents: 0 })],
+      refunds: [
+        {
+          id: 'ref-4',
+          purchaseRecordId: 'rec-9',
+          kind: 'partial',
+          amountCents: 500,
+          reason: 'r',
+          state: 'refused',
+          refusal: 'declared-not-refunded',
+          lateAnswer: 'refunded',
+          sideEffect: null,
+          requestedAt: '2026-10-30T10:00:00.000Z',
+          answeredAt: null,
+          resolvedAt: '2026-10-30T10:05:00.000Z',
+        },
+      ],
+    });
+    const target = await render([paid]);
+    expect(target.querySelector('[data-testid="refund-late"]')!.textContent).toBe(
+      m.asso_refund_late_refunded()
+    );
   });
 
   it('says why a payment Canari cannot trace has no refund', async () => {

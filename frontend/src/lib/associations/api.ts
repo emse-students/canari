@@ -2161,6 +2161,11 @@ export interface AssociationRefund {
   state: RefundState;
   /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
   refusal: string | null;
+  /**
+   * Lydia's answer when it came AFTER the refund was settled and contradicts it (`refunded` on one
+   * settled as not refunded, `refused` on one settled as refunded); null otherwise.
+   */
+  lateAnswer: 'refunded' | 'refused' | null;
   sideEffect: string | null;
   requestedAt: string;
   answeredAt: string | null;

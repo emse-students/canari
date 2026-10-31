@@ -24,7 +24,7 @@ import { AssociationProduct } from '../entities/association-product.entity';
 import { Submission } from '../../forms/entities/submission.entity';
 import { Association } from '../entities/association.entity';
 import { LydiaRefund } from './lydia-refund.entity';
-import { REFUND_CALL_LOCK_KEY, RefundsService } from './refunds.service';
+import { REFUND_CALL_BOUND_MS, REFUND_CALL_LOCK_KEY, RefundsService } from './refunds.service';
 import { ERASURE_STATEMENTS, erasureParams } from '../../internal/account-erasure';
 import {
   CORE_REFUND_CODES,
@@ -605,14 +605,27 @@ maybe('Lydia refunds against PostgreSQL', () => {
     const error = jest.spyOn(Logger.prototype, 'error');
     error.mockClear();
     await (
-      service as unknown as { settle(id: string, o: unknown, by: null): Promise<unknown> }
-    ).settle(row.id, { status: 'confirmed', outcome: 'refunded' }, null);
+      service as unknown as {
+        settle(m: unknown, id: string, o: unknown, by: null): Promise<unknown>;
+      }
+    ).settle(ds.manager, row.id, { status: 'confirmed', outcome: 'refunded' }, null);
     expect((await refundOf(record.id))[0]).toMatchObject({
       status: 'refused',
       outcome: 'declared-not-refunded',
       lateOutcome: 'refunded',
     });
     expect(error.mock.calls.map(String).join(' | ')).toContain('AFTER the refund was settled');
+    // Surfaced: on the managers' view, and in the hourly report's count.
+    const { refunds } = await service.describe(ASSO);
+    expect(refunds.find((r) => r.id === row.id)?.lateAnswer).toBe('refunded');
+    expect(await service.countContradicted()).toBeGreaterThanOrEqual(1);
+    const before = await service.countContradicted();
+    await ds.query(
+      `UPDATE lydia_refunds SET "lateOutcome" = 'LYDIA_REFUND_REJECTED' WHERE id = $1`,
+      [row.id]
+    );
+    // A late answer AGREEING with the settlement is no contradiction.
+    expect(await service.countContradicted()).toBe(before - 1);
   });
 
   it('Lydia refunded and the recording failed: unrecorded, blocking, then recorded by a manager', async () => {
@@ -694,6 +707,108 @@ maybe('Lydia refunds against PostgreSQL', () => {
       service.refund(ASSO, record.id, MANAGER, partial(100, key))
     ).resolves.toMatchObject({ state: 'refused', refusal: 'LYDIA_REFUND_REJECTED' });
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('ONE refund holds ONE connection: it completes on a pool of one', async () => {
+    const { record } = await boutiquePayment('membership');
+    const narrow = new DataSource({
+      ...options(false, [
+        PurchaseRecord,
+        UserTag,
+        ProductCheckout,
+        AssociationProduct,
+        Submission,
+        LydiaRefund,
+        Association,
+      ]),
+      extra: {
+        options: `-c search_path=${schema},public`,
+        max: 1,
+        connectionTimeoutMillis: 2_000,
+      },
+    });
+    await narrow.initialize();
+    try {
+      const single = Object.assign(Object.create(RefundsService.prototype) as object, {
+        logger: new Logger('RefundsService'),
+        refundRepo: narrow.getRepository(LydiaRefund),
+        associations: { canManagePayoutAccount: jest.fn() },
+        notifier,
+      }) as unknown as RefundsService;
+      // A second connection asked by the settle path would wait for the only one, and time out.
+      await expect(single.refund(ASSO, record.id, MANAGER, total())).resolves.toMatchObject({
+        state: 'refunded',
+      });
+      expect((await refundOf(record.id))[0]).toMatchObject({
+        status: 'confirmed',
+        sideEffect: 'cotisation-revoked',
+      });
+    } finally {
+      await narrow.destroy();
+    }
+  });
+
+  it("the settle path runs on the refund's own connection, the one holding its call lock", async () => {
+    const { record } = await boutiquePayment('other');
+    const create = jest.spyOn(ds, 'createQueryRunner');
+    const settle = jest.spyOn(service as unknown as { settle: () => Promise<unknown> }, 'settle');
+    try {
+      await service.refund(ASSO, record.id, MANAGER, partial(100));
+      const runner = create.mock.results[0].value as { manager: unknown };
+      expect((settle.mock.calls[0] as unknown[])[0]).toBe(runner.manager);
+    } finally {
+      create.mockRestore();
+      settle.mockRestore();
+    }
+  });
+
+  it('a call is swept only once its lock is free AND its start is past the bound on the database clock', async () => {
+    const { record } = await boutiquePayment('other');
+    const [row] = (await ds.query(
+      `INSERT INTO lydia_refunds ("purchaseRecordId", "associationId", "vendorToken", "orderRef", kind,
+         "amountCents", reason, "idempotencyKey", "requestedByUserId", "calledAt")
+       VALUES ($1, $2, $3, 'product:x:y', 'partial', 100, 'r', $4, $5, now()) RETURNING id`,
+      [record.id, ASSO, VENDOR, randomUUID(), MANAGER]
+    )) as { id: string }[];
+    // Lock free (its connection lost) but the call started just now: it may still be running.
+    await service.sweepAbandoned();
+    expect((await refundOf(record.id))[0].outcome).toBeNull();
+    const { standings } = await service.describe(ASSO);
+    expect(standings.find((s) => s.purchaseRecordId === record.id)?.openRefund?.state).toBe(
+      'in-progress'
+    );
+    // Past the bound: it has ended.
+    await ds.query(
+      `UPDATE lydia_refunds SET "calledAt" = now() - make_interval(secs => $2::double precision / 1000 + 1) WHERE id = $1`,
+      [row.id, REFUND_CALL_BOUND_MS]
+    );
+    await service.sweepAbandoned();
+    expect((await refundOf(record.id))[0].outcome).toBe('no-answer');
+  });
+
+  it('the call start is stamped on the database before core is asked', async () => {
+    const { record } = await boutiquePayment('other');
+    let stamped: Date | null | undefined;
+    post.mockImplementation(async () => {
+      stamped = (await refundOf(record.id))[0].calledAt;
+      return { data: { ok: true } };
+    });
+    await service.refund(ASSO, record.id, MANAGER, partial(100));
+    expect(stamped).toBeInstanceOf(Date);
+  });
+
+  it('a connection whose call lock cannot be released is destroyed, never pooled with the lock', async () => {
+    const { record } = await boutiquePayment('other');
+    const unlock = jest
+      .spyOn(service as unknown as { unlockCall: () => Promise<boolean> }, 'unlockCall')
+      .mockResolvedValueOnce(false);
+    try {
+      await service.refund(ASSO, record.id, MANAGER, partial(100));
+    } finally {
+      unlock.mockRestore();
+    }
+    // The destroyed connection took its session lock with it.
+    expect(await callLockFree((await refundOf(record.id))[0].id)).toBe(true);
   });
 
   it("an erased manager's refunds stay, their name on them anonymised", async () => {

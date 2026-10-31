@@ -3113,6 +3113,8 @@
   "asso_refund_state_refunded": "Refunded",
   "asso_refund_state_partly": "Partly refunded ({amount})",
   "asso_refund_state_unconfirmed": "Refund not confirmed by Lydia",
+  "asso_refund_late_refunded": "Lydia answered later: refund made, to be checked",
+  "asso_refund_late_refused": "Lydia answered later: refund refused, to be checked",
   "asso_refund_record_done": "Refund saved.",
   "asso_refund_record_confirm": "Save the refund",
   "asso_refund_record_body": "Lydia confirmed the refund of {amount} to {buyer}, but Canari could not save it. Save it to update the purchase.",

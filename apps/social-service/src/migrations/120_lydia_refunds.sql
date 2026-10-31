@@ -8,7 +8,9 @@
 --     the manager's text) and what Lydia answered (`outcome`: `refunded`, the refusal's typed
 --     code, `no-answer`, `not-sent`, `refunded-unrecorded` (Lydia confirmed, Canari failed to record
 --     it), or a manager's declaration after checking Lydia; NULL while the call runs). `lateOutcome`:
---     Lydia's answer when it arrived after the refund was already settled, kept beside it. `status`:
+--     Lydia's answer when it arrived after the refund was already settled, kept beside it.
+--     `calledAt`: when the call to Lydia started (database clock), the start of the termination bound
+--     the sweep of abandoned calls waits out. `status`:
 --     pending -> confirmed | refused. `sideEffect` says what a confirmed TOTAL refund withdrew.
 --     `resolvedByUserId` / `resolvedAt`: the manager who settled a refund Lydia never confirmed.
 --     `vendorToken` / `orderRef`: the Business and the transaction the refund was sent to, snapshotted.
@@ -52,7 +54,6 @@ CREATE TABLE IF NOT EXISTS lydia_refunds (
   status varchar(16) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'confirmed', 'refused')),
   "outcome" varchar(64) NULL,
-  "lateOutcome" varchar(64) NULL,
   "sideEffect" varchar(64) NULL,
   "requestedByUserId" varchar(255) NOT NULL,
   "requestedAt" timestamptz NOT NULL DEFAULT now(),
@@ -68,6 +69,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS lydia_refunds_one_pending
   ON lydia_refunds ("purchaseRecordId") WHERE status = 'pending';
 
 CREATE INDEX IF NOT EXISTS lydia_refunds_association ON lydia_refunds ("associationId");
+
+-- Separate statements, so a local database that ran an earlier draft of this migration converges.
+ALTER TABLE lydia_refunds ADD COLUMN IF NOT EXISTS "lateOutcome" varchar(64) NULL;
+ALTER TABLE lydia_refunds ADD COLUMN IF NOT EXISTS "calledAt" timestamptz NULL;
 
 ALTER TABLE purchase_records ADD COLUMN IF NOT EXISTS "submissionId" uuid NULL;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "lydiaOrderRef" varchar(64) NULL;

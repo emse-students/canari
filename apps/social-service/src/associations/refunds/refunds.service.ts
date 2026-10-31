@@ -49,6 +49,16 @@ export const CORE_REFUND_TIMEOUT_MS = 90_000;
  */
 export const REFUND_CALL_LOCK_KEY = `hashtextextended('lydia-refund-call:' || $1::text, 0)`;
 
+/**
+ * THE TERMINATION BOUND of a refund call: no call can still run once this long has passed since its
+ * `calledAt` (stamped, on the database clock, just before core is asked). It is the bound
+ * `askLydia` itself enforces on core (`CORE_REFUND_TIMEOUT_MS`, axios `timeout`), which is over core's
+ * own bound on Lydia (`LYDIA_CALL_TIMEOUT_MS`, 60 s, core's `postForm`). `sweepAbandoned` sweeps only
+ * past it: a free lock alone is no proof, since a connection lost while its process lives frees the
+ * lock with the call still running.
+ */
+export const REFUND_CALL_BOUND_MS = CORE_REFUND_TIMEOUT_MS;
+
 /** What a refund Lydia confirmed but Canari failed to record is marked (`markUnrecorded`). */
 export const REFUNDED_UNRECORDED = 'refunded-unrecorded';
 
@@ -76,6 +86,12 @@ export interface RefundView {
   state: RefundViewState;
   /** The typed code of a refusal, so the screen words it; null otherwise. */
   refusal: string | null;
+  /**
+   * Lydia's own answer when it arrived AFTER the refund was settled and CONTRADICTS how it was
+   * settled (`refunded` on a refund settled as not refunded, `refused` on one settled as refunded):
+   * a manager must look at Lydia's statement again. Null otherwise.
+   */
+  lateAnswer: 'refunded' | 'refused' | null;
   sideEffect: string | null;
   requestedAt: string;
   answeredAt: string | null;
@@ -261,10 +277,10 @@ export class RefundsService implements OnApplicationBootstrap {
         message: 'A refund needs a kind, a reason and, when partial, a positive amount in cents',
       });
     }
-    // ONE connection carries the whole refund: the claim's transaction runs on it, and the call lock
-    // taken INSIDE that transaction - session level, so it outlives the commit - is held on it until
-    // the outcome is written. A committed `pending` row with no outcome therefore always has its lock
-    // held by a live call, or is abandoned (`sweepAbandoned`): there is no window between the two.
+    // ONE connection carries the whole refund - the claim, the call stamp, the outcome and its
+    // fallback mark - so a refund never waits on a second pool connection while holding this one. The
+    // call lock taken INSIDE the claim's transaction (session level, so it outlives the commit) is
+    // held on it until the outcome is written.
     const runner = this.refundRepo.manager.connection.createQueryRunner();
     await runner.connect();
     let locked: string | null = null;
@@ -296,11 +312,24 @@ export class RefundsService implements OnApplicationBootstrap {
         );
         return toView(claim.replay);
       }
+      // The start of the call, on the DATABASE clock and on this connection: what the sweep's
+      // termination bound counts from. If it cannot be written, nothing is sent.
+      await runner.query(`UPDATE lydia_refunds SET "calledAt" = now() WHERE id = $1`, [
+        claim.row.id,
+      ]);
       const outcome = await this.askLydia(claim.row);
-      return answerOf(await this.record(claim.row, outcome));
+      return answerOf(await this.record(runner.manager, claim.row, outcome));
     } finally {
-      if (locked) await this.unlockCall(runner, locked);
-      await runner.release();
+      const unlocked = locked ? await this.unlockCall(runner, locked) : true;
+      if (unlocked) {
+        await runner.release();
+      } else {
+        // A connection whose lock could not be released is DESTROYED, never handed back to the
+        // pool still holding it (pg-pool discards a client released with an error).
+        await (
+          runner as unknown as { releasePostgresConnection(err: Error): Promise<void> }
+        ).releasePostgresConnection(new Error('lydia refund call lock not released'));
+      }
     }
   }
 
@@ -469,6 +498,7 @@ export class RefundsService implements OnApplicationBootstrap {
         `(was ${row.outcome})`
     );
     const settled = await this.settle(
+      this.refundRepo.manager,
       refundId,
       refunded
         ? { status: 'confirmed', outcome: 'refunded' }
@@ -542,9 +572,13 @@ export class RefundsService implements OnApplicationBootstrap {
    * managers a refund to record. Any other failed write rethrows: the row keeps no outcome, and once
    * the call lock is released `sweepAbandoned` makes it a refund to check.
    */
-  private async record(row: LydiaRefund, outcome: CallOutcome): Promise<LydiaRefund> {
+  private async record(
+    manager: EntityManager,
+    row: LydiaRefund,
+    outcome: CallOutcome
+  ): Promise<LydiaRefund> {
     try {
-      return await this.settle(row.id, outcome, null);
+      return await this.settle(manager, row.id, outcome, null);
     } catch (err: unknown) {
       if (outcome.status !== 'confirmed') {
         this.logger.error(
@@ -556,15 +590,16 @@ export class RefundsService implements OnApplicationBootstrap {
         `[LYDIA-REFUND] ${row.id}: Lydia refunded, recording failed: ${errorText(err)} - marked ` +
           `${REFUNDED_UNRECORDED}, every new refund of payment ${row.purchaseRecordId} is blocked`
       );
-      return this.markUnrecorded(row);
+      return this.markUnrecorded(manager, row);
     }
   }
 
   /** `record`'s mark of a refund Lydia confirmed that Canari failed to record. */
-  private async markUnrecorded(row: LydiaRefund): Promise<LydiaRefund> {
+  private async markUnrecorded(manager: EntityManager, row: LydiaRefund): Promise<LydiaRefund> {
     const answeredAt = new Date();
     try {
-      await this.refundRepo.update(
+      await manager.update(
+        LydiaRefund,
         { id: row.id, status: 'pending' },
         { outcome: REFUNDED_UNRECORDED, answeredAt }
       );
@@ -578,8 +613,11 @@ export class RefundsService implements OnApplicationBootstrap {
     return { ...row, outcome: REFUNDED_UNRECORDED, answeredAt };
   }
 
-  /** Releases `refund`'s call lock; a failure is logged, never thrown over the refund's answer. */
-  private async unlockCall(runner: QueryRunner, refundId: string): Promise<void> {
+  /**
+   * Releases `refund`'s call lock: true when released, false when the query failed (the caller
+   * then destroys the connection). A failure is logged, never thrown over the refund's answer.
+   */
+  private async unlockCall(runner: QueryRunner, refundId: string): Promise<boolean> {
     try {
       const [row] = (await runner.query(
         `SELECT pg_advisory_unlock(${REFUND_CALL_LOCK_KEY}) AS freed`,
@@ -588,25 +626,32 @@ export class RefundsService implements OnApplicationBootstrap {
       if (!row?.freed) {
         this.logger.error(`[LYDIA-REFUND] ${refundId}: the call lock was not held at release`);
       }
+      return true;
     } catch (err: unknown) {
       this.logger.error(
-        `[LYDIA-REFUND] ${refundId}: releasing the call lock failed: ${errorText(err)}`
+        `[LYDIA-REFUND] ${refundId}: releasing the call lock failed: ${errorText(err)} - the ` +
+          'connection is destroyed, not returned to the pool'
       );
+      return false;
     }
   }
 
   /**
    * THE SWEEP OF ABANDONED CALLS. A `pending` row with no outcome is a call in flight - or one whose
-   * process died before writing anything. The call lock tells them apart (`REFUND_CALL_LOCK_KEY`):
-   * taken before the row committed and held until its outcome is written, it is free only when no
-   * call holds it, on this replica or any other (a deploy runs two side by side). Each such row is
-   * marked `no-answer` - Lydia MAY have refunded - so a manager can check it. Run at boot, and before
-   * the refunds are read or checked, so an abandoned row never waits for the next deploy.
+   * process died, or lost its connection, before writing anything. Two facts together prove it over:
+   * its call lock (`REFUND_CALL_LOCK_KEY`) is FREE - no live connection holds it, on this replica or
+   * the other one a deploy runs beside it - AND its call started (`calledAt`, the database clock)
+   * more than `REFUND_CALL_BOUND_MS` ago, or never started at all (no `calledAt`: nothing was sent).
+   * The lock alone is not enough: a connection lost while its process lives frees it with the call
+   * still running, and that call can no longer write its answer anyway (its connection is the one
+   * that died) - past the bound it has ended. Each such row is marked `no-answer` - Lydia MAY have
+   * refunded - so a manager can check it. Run at boot, and before the refunds are read or checked.
    */
   async sweepAbandoned(): Promise<number> {
     const manager = this.refundRepo.manager;
     const open = (await manager.query(
-      `SELECT id FROM lydia_refunds WHERE status = 'pending' AND "outcome" IS NULL`
+      `SELECT id FROM lydia_refunds WHERE status = 'pending' AND "outcome" IS NULL AND ${CALL_OVER_SQL}`,
+      [REFUND_CALL_BOUND_MS]
     )) as { id: string }[];
     let swept = 0;
     for (const { id } of open) {
@@ -619,8 +664,9 @@ export class RefundsService implements OnApplicationBootstrap {
           if (!lock?.free) return false;
           const rows: unknown[] = await tx.query(
             `UPDATE lydia_refunds SET "outcome" = 'no-answer'
-              WHERE id = $1 AND status = 'pending' AND "outcome" IS NULL RETURNING id`,
-            [id]
+              WHERE id = $1 AND status = 'pending' AND "outcome" IS NULL AND ${CALL_OVER_SQL.replace('$1', '$2')}
+              RETURNING id`,
+            [id, REFUND_CALL_BOUND_MS]
           );
           return (Array.isArray(rows[0]) ? (rows[0] as unknown[]) : rows).length > 0;
         });
@@ -641,6 +687,19 @@ export class RefundsService implements OnApplicationBootstrap {
     return swept;
   }
 
+  /**
+   * How many refunds Lydia answered LATE in contradiction of how they were settled
+   * (`CONTRADICTED_SQL`): read by the hourly report (`PaidNotGrantedScheduler`). Nothing closes
+   * them: each stays counted, because a refund settled against Lydia's own answer stays wrong until
+   * someone looks at Lydia's statement and acts outside Canari.
+   */
+  async countContradicted(): Promise<number> {
+    const [row] = (await this.refundRepo.manager.query(
+      `SELECT count(*)::int AS n FROM lydia_refunds WHERE ${CONTRADICTED_SQL}`
+    )) as { n: number }[];
+    return row?.n ?? 0;
+  }
+
   /** The sweep at boot: a call this process was making when it died is abandoned now. */
   async onApplicationBootstrap(): Promise<void> {
     try {
@@ -656,11 +715,12 @@ export class RefundsService implements OnApplicationBootstrap {
    * `resolvedBy` names the manager of a declaration; null for Lydia's own answer.
    */
   private async settle(
+    on: EntityManager,
     refundId: string,
     outcome: CallOutcome,
     resolvedBy: string | null
   ): Promise<LydiaRefund> {
-    const result = await this.refundRepo.manager.transaction('READ COMMITTED', async (manager) => {
+    const result = await on.transaction('READ COMMITTED', async (manager) => {
       const head = await manager.findOne(LydiaRefund, { where: { id: refundId } });
       if (!head) throw new NotFoundException('Refund not found');
       const record = await manager.findOne(PurchaseRecord, {
@@ -717,7 +777,7 @@ export class RefundsService implements OnApplicationBootstrap {
       return { row: { ...row, ...patch } as LydiaRefund, changed: true, payerId: record?.userId };
     });
     if (result.changed && result.row.status === 'confirmed') {
-      const name = await this.associationName(result.row.associationId);
+      const name = await this.associationName(on, result.row.associationId);
       await this.notifier.tell({ id: result.row.associationId, name }, result.payerId ?? null);
     }
     return result.row;
@@ -916,11 +976,10 @@ export class RefundsService implements OnApplicationBootstrap {
     return row.lydiaAccountId?.trim() || null;
   }
 
-  private async associationName(associationId: string): Promise<string> {
-    const [row] = (await this.refundRepo.manager.query(
-      `SELECT name FROM associations WHERE id = $1`,
-      [associationId]
-    )) as { name: string }[];
+  private async associationName(on: EntityManager, associationId: string): Promise<string> {
+    const [row] = (await on.query(`SELECT name FROM associations WHERE id = $1`, [
+      associationId,
+    ])) as { name: string }[];
     return row?.name ?? '';
   }
 
@@ -1032,12 +1091,32 @@ function toView(row: LydiaRefund): RefundView {
     reason: row.reason,
     state: viewStateOf(row),
     refusal: row.status === 'refused' ? row.outcome : null,
+    lateAnswer: lateAnswerOf(row),
     sideEffect: row.sideEffect ?? null,
     requestedAt: new Date(row.requestedAt).toISOString(),
     answeredAt: row.answeredAt ? new Date(row.answeredAt).toISOString() : null,
     resolvedAt: row.resolvedAt ? new Date(row.resolvedAt).toISOString() : null,
   };
 }
+
+/**
+ * Lydia's late answer when it contradicts how the refund was settled (`RefundView.lateAnswer`); the
+ * SQL twin is `CONTRADICTED_SQL`, which the hourly report counts.
+ */
+export function lateAnswerOf(
+  row: Pick<LydiaRefund, 'status' | 'lateOutcome'>
+): 'refunded' | 'refused' | null {
+  if (!row.lateOutcome) return null;
+  const late = row.lateOutcome === 'refunded' ? 'refunded' : 'refused';
+  return (late === 'refunded') === (row.status === 'confirmed') ? null : late;
+}
+
+/** A call whose start is past the bound `$1` (ms) on the database clock, or that never started. */
+const CALL_OVER_SQL = `("calledAt" IS NULL OR "calledAt" < now() - make_interval(secs => $1::double precision / 1000))`;
+
+/** The refunds whose late Lydia answer contradicts their settlement (`lateAnswerOf`, in SQL). */
+export const CONTRADICTED_SQL = `"lateOutcome" IS NOT NULL
+  AND (("lateOutcome" = 'refunded') <> (status = 'confirmed'))`;
 
 /** Where a refund row stands, as a screen words it (`RefundViewState`). */
 export function viewStateOf(row: Pick<LydiaRefund, 'status' | 'outcome'>): RefundViewState {

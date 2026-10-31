@@ -77,6 +77,13 @@ export class LydiaRefund {
   @Column({ type: 'varchar', length: 64, nullable: true })
   lateOutcome: string | null;
 
+  /**
+   * When the call to Lydia started, on the database clock (written just before core is asked): what
+   * the sweep's termination bound counts from (`REFUND_CALL_BOUND_MS`). Null when nothing was sent.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  calledAt: Date | null;
+
   /** What a confirmed TOTAL refund withdrew (`RefundSideEffect`); null otherwise. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   sideEffect: string | null;

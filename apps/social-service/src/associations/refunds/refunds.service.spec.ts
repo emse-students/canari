@@ -231,6 +231,7 @@ describe('RefundsService - the manager check and the recording of an answer', ()
     const { service, settle } = withRow(pending('no-answer'));
     await service.resolve('a1', 'r1', 'u1', false);
     expect(settle).toHaveBeenCalledWith(
+      expect.anything(),
       'r1',
       { status: 'refused', outcome: 'declared-not-refunded' },
       'u1'
@@ -244,7 +245,12 @@ describe('RefundsService - the manager check and the recording of an answer', ()
       response: { code: LYDIA_REFUND_NOT_PENDING },
     });
     await service.resolve('a1', 'r1', 'u1', true);
-    expect(settle).toHaveBeenCalledWith('r1', { status: 'confirmed', outcome: 'refunded' }, 'u1');
+    expect(settle).toHaveBeenCalledWith(
+      expect.anything(),
+      'r1',
+      { status: 'confirmed', outcome: 'refunded' },
+      'u1'
+    );
   });
 
   it('a refund of another association is not found, and says so in the log', async () => {
@@ -254,18 +260,26 @@ describe('RefundsService - the manager check and the recording of an answer', ()
     expect(warn.mock.calls.map(String).join(' | ')).toContain('not found');
   });
 
-  it('Lydia confirmed and the write failed: marked refunded-unrecorded on its own, logged ERROR', async () => {
+  it('Lydia confirmed and the write failed: marked refunded-unrecorded on its own, on the SAME connection, logged ERROR', async () => {
     const { service, refundRepo, settle } = withRow(pending(null));
     settle.mockRejectedValueOnce(new Error('deadlock'));
     const error = jest.spyOn(Logger.prototype, 'error');
+    // The refund's own connection: the settle and the fallback mark both go through it, never
+    // through the repository's pool.
+    const runnerManager = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
     const recorded = await (
-      service as unknown as { record(r: unknown, o: unknown): Promise<{ outcome: string }> }
-    ).record(pending(null), { status: 'confirmed', outcome: 'refunded' });
+      service as unknown as {
+        record(m: unknown, r: unknown, o: unknown): Promise<{ outcome: string }>;
+      }
+    ).record(runnerManager, pending(null), { status: 'confirmed', outcome: 'refunded' });
     expect(recorded.outcome).toBe('refunded-unrecorded');
-    expect(refundRepo.update).toHaveBeenCalledWith(
+    expect((settle.mock.calls[0] as unknown[])[0]).toBe(runnerManager);
+    expect(runnerManager.update).toHaveBeenCalledWith(
+      expect.anything(),
       { id: 'r1', status: 'pending' },
       expect.objectContaining({ outcome: 'refunded-unrecorded' })
     );
+    expect(refundRepo.update).not.toHaveBeenCalled();
     expect(error.mock.calls.map(String).join(' | ')).toContain('Lydia refunded, recording failed');
   });
 
@@ -273,10 +287,12 @@ describe('RefundsService - the manager check and the recording of an answer', ()
     const { service, refundRepo, settle } = withRow(pending(null));
     settle.mockRejectedValueOnce(new Error('deadlock'));
     await expect(
-      (service as unknown as { record(r: unknown, o: unknown): Promise<unknown> }).record(
-        pending(null),
-        { status: 'refused', outcome: 'LYDIA_REFUND_REJECTED' }
-      )
+      (
+        service as unknown as { record(m: unknown, r: unknown, o: unknown): Promise<unknown> }
+      ).record({ update: refundRepo.update }, pending(null), {
+        status: 'refused',
+        outcome: 'LYDIA_REFUND_REJECTED',
+      })
     ).rejects.toThrow('deadlock');
     expect(refundRepo.update).not.toHaveBeenCalled();
   });

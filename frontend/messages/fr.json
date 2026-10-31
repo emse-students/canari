@@ -3145,6 +3145,8 @@
   "asso_refund_state_refunded": "Remboursé",
   "asso_refund_state_partly": "Remboursé en partie ({amount})",
   "asso_refund_state_unconfirmed": "Remboursement non confirmé par Lydia",
+  "asso_refund_late_refunded": "Lydia a répondu plus tard : remboursement effectué, à vérifier",
+  "asso_refund_late_refused": "Lydia a répondu plus tard : remboursement refusé, à vérifier",
   "asso_refund_record_done": "Remboursement enregistré.",
   "asso_refund_record_confirm": "Enregistrer le remboursement",
   "asso_refund_record_body": "Lydia a confirmé le remboursement de {amount} à {buyer}, mais Canari n'a pas pu l'enregistrer. Enregistrez-le pour mettre l'achat à jour.",

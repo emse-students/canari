@@ -35,6 +35,7 @@
   import RefundDialog from './RefundDialog.svelte';
   import RefundCheckDialog from './RefundCheckDialog.svelte';
   import {
+    lateAnswerNotice,
     notRefundableHint,
     refundStateLabel,
     refundAwaitingManager,
@@ -539,10 +540,17 @@
                   {@const stateLabel = refundStateLabel(standing)}
                   {@const waiting = refundAwaitingManager(standing, refundView.refunds)}
                   {@const hint = notRefundableHint(standing)}
+                  {@const late = lateAnswerNotice(purchase.id, refundView.refunds)}
                   {#if stateLabel}
                     <span
                       class="text-text-muted mt-1 block text-xs font-semibold"
                       data-testid="refund-state">{stateLabel}</span
+                    >
+                  {/if}
+                  {#if late}
+                    <span
+                      class="text-red-err mt-1 block text-xs font-semibold"
+                      data-testid="refund-late">{late}</span
                     >
                   {/if}
                   {#if waiting}

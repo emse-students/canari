@@ -2,9 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
+import { RefundsService } from './refunds/refunds.service';
 
 const TAG = '[PAID_NOT_GRANTED]';
 const ORPHAN_TAG = '[ORPHAN_TIER_TAGS]';
+const REFUND_TAG = '[LYDIA_REFUND_CONTRADICTED]';
 
 /**
  * THE TIERS PAID FOR AND NOT GRANTED, AND THE TAGS OF DELETED TIERS, REPORTED
@@ -27,6 +29,11 @@ const ORPHAN_TAG = '[ORPHAN_TIER_TAGS]';
  * non-zero count is a WARN naming work owed - and it is said here once an hour, never once per
  * request that reads such a tag.
  *
+ * The same hour counts the Lydia refunds whose LATE answer contradicts how they were settled
+ * (`RefundsService.countContradicted`): money that went back on a refund settled as not refunded,
+ * or the reverse - an ERROR while any exists, since the purchases list then says something Lydia
+ * does not.
+ *
  * NO USER DATA in the lines: counts only. On zero they still print, because that line is the
  * report's own liveness proof - without it, a report that stopped running would read like an empty
  * count.
@@ -37,7 +44,8 @@ export class PaidNotGrantedScheduler {
 
   constructor(
     private readonly purchases: PurchaseRecordService,
-    private readonly tags: UserTagService
+    private readonly tags: UserTagService,
+    private readonly refunds: RefundsService
   ) {}
 
   /** Hourly, at :29 - off the minutes the other hourly jobs of this service use (:00, :23, :37, :41, :47, :53). */
@@ -59,6 +67,30 @@ export class PaidNotGrantedScheduler {
         `${ORPHAN_TAG} could not count the tags of deleted tiers - unwatched this hour: ${String(e)}`
       );
     }
+    try {
+      await this.reportContradictedRefundsOnce();
+    } catch (e) {
+      this.logger.error(
+        `${REFUND_TAG} could not count the refunds Lydia contradicted - unwatched this hour: ${String(e)}`
+      );
+    }
+  }
+
+  /** The contradicted Lydia refunds reading and its line. */
+  async reportContradictedRefundsOnce(): Promise<number> {
+    this.logger.debug(
+      `${REFUND_TAG} counting the refunds Lydia answered late against their settlement`
+    );
+    const count = await this.refunds.countContradicted();
+    if (count === 0) {
+      this.logger.log(`${REFUND_TAG} count=0`);
+      return count;
+    }
+    this.logger.error(
+      `${REFUND_TAG} count=${count}: refund(s) whose late Lydia answer contradicts how they were ` +
+        "settled - read the association's Lydia statement and correct the payment by hand"
+    );
+    return count;
   }
 
   /** One reading and its line, separated so a test can call it without a scheduler. */

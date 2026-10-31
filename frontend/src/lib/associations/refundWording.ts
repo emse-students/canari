@@ -170,6 +170,21 @@ export function refundStateLabel(standing: RefundStanding | undefined): string |
 }
 
 /**
+ * The warning a payment shows when Lydia answered one of its refunds LATE, against how it was
+ * settled - a manager reads Lydia's statement again. Null when no refund of it is contradicted.
+ */
+export function lateAnswerNotice(
+  purchaseRecordId: string,
+  refunds: AssociationRefund[]
+): string | null {
+  const late = refunds.find((r) => r.purchaseRecordId === purchaseRecordId && r.lateAnswer);
+  if (!late) return null;
+  return late.lateAnswer === 'refunded'
+    ? m.asso_refund_late_refunded()
+    : m.asso_refund_late_refused();
+}
+
+/**
  * Why a payment shows no "Refund" button, when the reason is worth a sentence: a payment Canari
  * cannot trace, or one received on another Lydia account. Cash, unpaid and already-refunded rows
  * just show no button.

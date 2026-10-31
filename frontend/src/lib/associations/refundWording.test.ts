@@ -13,6 +13,7 @@ import {
   refundStateLabel,
   statementCsv,
   csvCell,
+  lateAnswerNotice,
 } from './refundWording';
 
 const standing = (over: Partial<RefundStanding> = {}): RefundStanding => ({
@@ -80,6 +81,17 @@ describe('an answered refund, read by its state and never by the HTTP status', (
 
   it('a 200 with no state it knows is unknown, never a refund', () => {
     expect(refundAttemptOfView({} as never)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe("a late Lydia answer against a refund's settlement", () => {
+  const refund = (lateAnswer: 'refunded' | 'refused' | null) =>
+    ({ purchaseRecordId: 'p1', lateAnswer }) as never;
+  it('is worded for the payment it concerns, and only for it', () => {
+    expect(lateAnswerNotice('p1', [refund('refunded')])).toBe(m.asso_refund_late_refunded());
+    expect(lateAnswerNotice('p1', [refund('refused')])).toBe(m.asso_refund_late_refused());
+    expect(lateAnswerNotice('p2', [refund('refunded')])).toBeNull();
+    expect(lateAnswerNotice('p1', [refund(null)])).toBeNull();
   });
 });
 

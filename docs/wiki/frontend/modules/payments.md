@@ -1058,22 +1058,38 @@ with who and when. Only then can a new refund of the payment be asked.
 **In progress is not unconfirmed.** While the call runs the row is `pending` with NO outcome: the
 screen says "Remboursement en cours", offers no check, and `resolve` answers `LYDIA_REFUND_IN_FLIGHT`
 - declaring a refund still being asked "not refunded" would free the payment for a second refund that
-could overtake the first. Only `no-answer` is checkable. **What tells a running call from a dead one
-is a lock, never a clock**: the refund takes a session-level advisory lock on its row
-(`REFUND_CALL_LOCK_KEY`) INSIDE the transaction that writes the row, so the lock exists before the
-row is visible, and holds it on the same connection until the outcome is written. A process that
-dies loses its connection and the lock with it. `sweepAbandoned` marks every `pending` row with no
-outcome whose lock is FREE as `no-answer` (an ERROR line each) - at boot, and before the refunds are
-read or checked. **Replicas:** social-service is `overlap` (a deploy runs the old and the new replica
-side by side, [cicd](../../cicd.md)), so a boot sweep that took "I just started" as proof would mark
-the old replica's live call; the lock is held by whichever replica makes the call, so the sweep is
-right on any of them. Residual, logged and not healed: a connection lost while its process lives
-frees the lock early, and the row can then be checked while the call still runs - Lydia's answer
-arriving after a declaration is kept as below.
+could overtake the first. Only `no-answer` is checkable.
 
-**A late answer is kept, never dropped.** When Lydia's own answer reaches a row already settled (a
-manager declared it first), it is logged at ERROR naming both outcomes and stored in `lateOutcome`
-beside the first, which it does not overwrite.
+**One refund, one connection.** The claim, the call stamp, the outcome and its fallback mark all run
+on the refund's own query runner (`runner.manager` is passed down to `settle` and `markUnrecorded`):
+a refund that held one pool connection while asking for a second (pool max 10, 10 s connect timeout,
+`app.module.ts`) starved the service at about ten concurrent refunds, and a confirmed refund could
+then not even be marked unrecorded. Proven by an integration spec that refunds on a pool of ONE.
+
+**A running call is told from a dead one by a lock AND a termination bound.** The refund takes a
+session-level advisory lock on its row (`REFUND_CALL_LOCK_KEY`) INSIDE the transaction that writes
+the row, holds it on the same connection until the outcome is written, and stamps `calledAt` (the
+DATABASE clock) on that connection just before core is asked - nothing is sent if the stamp fails.
+`sweepAbandoned` marks a `pending` row with no outcome `no-answer` (an ERROR line each) only when its
+lock is FREE **and** its call never started or started more than `REFUND_CALL_BOUND_MS` ago, read
+with the database's `now()`. The bound is a termination proof, not a guess: it is the timeout
+`askLydia` puts on core (`CORE_REFUND_TIMEOUT_MS`, 90 s, axios `timeout`), itself over core's own
+bound on Lydia (`LYDIA_CALL_TIMEOUT_MS`, 60 s). The lock alone was not enough: a connection lost
+while its process lives frees it with the call still running. Such a call can no longer write its
+answer either - its connection is the one that died - so once the bound has passed it is over, and
+the row is checked against Lydia like any unanswered one. The sweep runs at boot, and before the
+refunds are read or checked. **Replicas:** social-service is `overlap` (a deploy runs the old and the
+new replica side by side, [cicd](../../cicd.md)); the lock is held by whichever replica makes the
+call and the bound counts on the database clock, so the sweep is right on either. A connection whose
+lock cannot be released is DESTROYED (`releasePostgresConnection(err)`), never returned to the pool
+still holding it.
+
+**A late answer is kept and shown, never dropped.** When Lydia's own answer reaches a row already
+settled, it is logged at ERROR naming both outcomes and stored in `lateOutcome` beside the first.
+When it CONTRADICTS the settlement (`lateAnswerOf` / `CONTRADICTED_SQL`), the managers' view says so
+in plain words ("Lydia a répondu plus tard : remboursement effectué, à vérifier") and the hourly
+report counts it: `[LYDIA_REFUND_CONTRADICTED] count=N` at ERROR in `PaidNotGrantedScheduler`, the
+job that already reports payments not delivered. Nothing closes such a row: it stays counted.
 
 **Lydia refunded and Canari failed to record it** (the transaction writing the outcome threw): the
 row is marked `outcome = 'refunded-unrecorded'` in a transaction of its own, still `pending` - it
