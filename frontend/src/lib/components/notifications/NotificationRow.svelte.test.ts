@@ -362,6 +362,36 @@ describe('NotificationRow for a payment over capacity', () => {
   });
 });
 
+/**
+ * AN ASSOCIATION'S LYDIA PAYMENTS BECAME ACTIVE OR WERE PAUSED. The row stores the association's name;
+ * the whole sentence is built here and no actor name precedes it.
+ */
+describe('NotificationRow for the Lydia payments notices', () => {
+  const row = (type: string): PostNotification => ({
+    id: 'n-lydia',
+    type,
+    postId: 'asso-1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'BDE',
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  it('says the payments are active, naming the association, and the row opens', () => {
+    const target = renderRow(row('lydia_payments_active'));
+    expect(target.textContent).toContain(m.notif_lydia_payments_active_text({ name: 'BDE' }));
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+
+  it('says the payments are paused', () => {
+    const target = renderRow(row('lydia_payments_paused'));
+    expect(target.textContent).toContain(m.notif_lydia_payments_paused_text({ name: 'BDE' }));
+  });
+});
+
 describe('NotificationRow with a type this build does not know', () => {
   const unknown: PostNotification = {
     id: 'n-unk',

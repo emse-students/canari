@@ -11,10 +11,23 @@ import {
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
   LYDIA_ORPHAN_LOG_TAG,
   LYDIA_ORPHAN_SUSPECT_LOG_TAG,
+  LydiaCashierAddedUnconfirmedException,
   LydiaPaymentProvider,
   PAYMENTS_PROXY_READ_TIMEOUT_MS,
   PAYMENT_PROVIDER_REFUSED,
+  LYDIA_BUSINESS_BLOCKED,
+  LYDIA_BUSINESS_NOT_VALIDATED,
+  LYDIA_BUSINESS_TOKEN_REJECTED,
+  LYDIA_CASHIER_NOT_CONFIGURED,
+  LYDIA_CASHIER_PERMISSIONS,
+  LYDIA_CASHIER_PERMISSIONS_INVALID,
+  LYDIA_CASHIER_PHONE_INVALID,
+  LYDIA_CASHIER_RIGHTS_INCOMPLETE,
+  LYDIA_SIGNATURE_REFUSED,
+  LYDIA_UNREACHABLE,
+  redactForLog,
 } from './lydia-payment-provider';
+import { signLydiaRequest } from './lydia-signature';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -457,12 +470,19 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
       .mockResolvedValueOnce({ data: { status: 'ok' } });
 
     const provider = makeProvider();
+    const order: string[] = [];
+    const onBusinessCreated = jest.fn(async (token: string) => {
+      order.push(`pending:${token}:${mockedAxios.post.mock.calls.length}`);
+    });
     const result = await provider.createOnboarding({
       associationId: 'assoc-1',
       refreshUrl: 'r',
       returnUrl: 'u',
       legalProfile,
+      onBusinessCreated,
     });
+    // The vendor token is handed over after business/create and BEFORE the key check.
+    expect(order).toEqual(['pending:vendor-token-xyz:1']);
 
     expect(result).toEqual({
       url: 'https://lydia-app.com/console/xyz',
@@ -531,7 +551,7 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
         })
       ).rejects.toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
       const logged = error.mock.calls.flat().map(String).join(' | ');
-      // The durable record of the orphan: its tag, the association and the PUBLIC vendor token.
+      // The durable record of the orphan: its tag, the association and the vendor token.
       expect(logged).toContain(LYDIA_ORPHAN_LOG_TAG);
       expect(logged).toContain('assoc-1');
       expect(logged).toContain('vendor_token=vendor-token-xyz');
@@ -738,13 +758,13 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
 
   it('throws a TYPED refusal carrying Lydia readable message, not a bare string', async () => {
     mockedAxios.post.mockResolvedValue({
-      data: { error: '5', message: "Ce lieu d'activite est temporairement bloque" },
+      data: { error: '104', message: "Ce lieu d'activite est temporairement bloque" },
     });
     await expect(makeProvider().createCheckoutSession(request)).rejects.toMatchObject({
       status: 400,
       response: {
         code: PAYMENT_PROVIDER_REFUSED,
-        providerCode: '5',
+        providerCode: '104',
         message: "Ce lieu d'activite est temporairement bloque",
       },
     });
@@ -766,6 +786,24 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     // CONTROL: redaction is by key, not a blanket mute - the other fields are still diagnosable.
     expect(logged).toContain('REQ-VISIBLE');
     expect(logged).not.toContain('SIGNATURESECRET');
+  });
+
+  it('redacts personal fields at ANY depth of an answer: a nested phone never reaches the log', () => {
+    const redacted = redactForLog({
+      error: '0',
+      data: {
+        cashier_phone: '+33612345678',
+        cashiers: [{ phone: '+33600000099', firstname: 'Ada', lastname: 'L', name: 'Ada L' }],
+        access_cashier: '1',
+      },
+    });
+    const text = JSON.stringify(redacted);
+    expect(text).not.toContain('612345678');
+    expect(text).not.toContain('600000099');
+    expect(text).not.toContain('Ada');
+    // CONTROL: redaction is by key, the rest stays diagnosable.
+    expect(text).toContain('access_cashier');
+    expect(redacted.error).toBe('0');
   });
 
   it('never logs the api_token_id nor a vendor_id echo (the private token) of a freshly created business', async () => {
@@ -799,7 +837,188 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     });
     const logged = lines.join(' | ');
     expect(logged).toContain('business/create');
-    // The private token never; the vendor token is public (lydia-api.md section 1) and may be logged.
+    // The private token never; the vendor token may be logged.
     expect(logged).not.toContain('PRIVATESECRET');
+  });
+});
+
+describe('LydiaPaymentProvider - a request/do refused on the Business itself (lot 2)', () => {
+  beforeEach(() => mockedAxios.post.mockReset());
+  afterEach(() => jest.restoreAllMocks());
+
+  const request = {
+    lineItems: [{ productName: 'x', unitAmountCents: 100, quantity: 1, currency: 'eur' }],
+    successUrl: 's',
+    cancelUrl: 'c',
+    connectAccountId: 'vendor-token-abc',
+    payerRecipient: { value: 'user@example.com', type: 'email' as const },
+  };
+
+  it.each([
+    ['5', LYDIA_BUSINESS_NOT_VALIDATED],
+    ['2701', LYDIA_BUSINESS_BLOCKED],
+  ])('error %s is the typed %s, and no payer URL exists', async (providerCode, code) => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    mockedAxios.post.mockResolvedValue({ data: { error: providerCode, message: 'refused' } });
+    const outcome = makeProvider().createCheckoutSession(request);
+    await expect(outcome).rejects.toBeInstanceOf(BadRequestException);
+    await expect(outcome).rejects.toMatchObject({
+      status: 400,
+      response: { code, providerCode },
+    });
+    // THE REVIEWER'S CONDITION: no request was issued - the answer carries no mobile_url and the
+    // method resolved nothing a payer could open.
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
+  });
+
+  it('any other code keeps the generic typed refusal, unchanged', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    mockedAxios.post.mockResolvedValue({ data: { error: '104', message: 'Provider inconnu' } });
+    await expect(makeProvider().createCheckoutSession(request)).rejects.toMatchObject({
+      response: { code: PAYMENT_PROVIDER_REFUSED, providerCode: '104' },
+    });
+  });
+});
+
+describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () => {
+  const PRIVATE = 'provider-private';
+  const PHONE = '+33612345678';
+  const allRights = Object.fromEntries(LYDIA_CASHIER_PERMISSIONS.map((n) => [n, '1']));
+
+  function withKey() {
+    return new LydiaPaymentProvider({
+      LYDIA_ENV: 'homologation',
+      LYDIA_PROVIDER_TOKEN: 'provider-token',
+      LYDIA_PROVIDER_PRIVATE_TOKEN: PRIVATE,
+    });
+  }
+
+  beforeEach(() => {
+    mockedAxios.post.mockReset();
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockedAxios.post.mockReset();
+  });
+
+  it('signs the ENCODED cashier_phone and permissions ARRAY, asks for the SMS, then reads back', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0', ...allRights } });
+    await withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE);
+    expect(mockedAxios.post.mock.calls).toHaveLength(2);
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toMatch(/\/api\/business\/addcashier\.json$/);
+    const sent = new URLSearchParams(body as string);
+    expect(JSON.parse(sent.get('permissions') ?? '')).toEqual([...LYDIA_CASHIER_PERMISSIONS]);
+    expect(sent.get('notify')).toBe('yes');
+    expect(sent.get('vendor_token')).toBe('vendor-1');
+    expect(sent.get('cashier_phone')).toBe(PHONE);
+    expect(sent.get('signature')).toBe(
+      signLydiaRequest(
+        { cashier_phone: PHONE, permissions: sent.get('permissions') ?? '' },
+        PRIVATE
+      )
+    );
+    expect(mockedAxios.post.mock.calls[1][0]).toMatch(/\/api\/business\/getpermission\.json$/);
+  });
+
+  it('no Provider key: 503 LYDIA_CASHIER_NOT_CONFIGURED and NO call', async () => {
+    await expect(
+      makeProvider().addBusinessHolder('asso-1', 'vendor-1', PHONE)
+    ).rejects.toMatchObject({
+      status: 503,
+      response: { code: LYDIA_CASHIER_NOT_CONFIGURED },
+    });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('a phone that is not E.164: 400 and NO call', async () => {
+    await expect(
+      withKey().addBusinessHolder('asso-1', 'vendor-1', '0612345678')
+    ).rejects.toMatchObject({
+      status: 400,
+      response: { code: LYDIA_CASHIER_PHONE_INVALID },
+    });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['444', 502, LYDIA_SIGNATURE_REFUSED],
+    ['3', 502, LYDIA_CASHIER_PERMISSIONS_INVALID],
+    ['102', 502, LYDIA_BUSINESS_TOKEN_REJECTED],
+    ['103', 502, LYDIA_BUSINESS_TOKEN_REJECTED],
+  ])('error %s is %s %s', async (providerCode, status, code) => {
+    mockedAxios.post.mockResolvedValue({ data: { error: providerCode, message: 'x' } });
+    await expect(withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE)).rejects.toMatchObject({
+      status,
+      response: { code },
+    });
+  });
+
+  it('an HTML 500 or no answer is 503 LYDIA_UNREACHABLE (a retry is safe)', async () => {
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: '<html>' },
+      })
+    );
+    await expect(withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE)).rejects.toMatchObject({
+      status: 503,
+      response: { code: LYDIA_UNREACHABLE },
+    });
+  });
+
+  it('a read-back short of every right is ADDED-UNCONFIRMED, never counted as confirmed', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0', ...allRights, access_fee: '0' } });
+    const err = await withKey()
+      .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+    expect(err).toMatchObject({ status: 502, response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE } });
+  });
+
+  it.each([
+    ['a typed refusal of the read-back', { data: { error: '444', message: 'x' } }, 502],
+    ['no usable answer to the read-back', new Error('socket hang up'), 503],
+  ])(
+    '%s after the add answered is ADDED-UNCONFIRMED, its status kept',
+    async (_, second, status) => {
+      mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } });
+      if (second instanceof Error) mockedAxios.post.mockRejectedValueOnce(second);
+      else mockedAxios.post.mockResolvedValueOnce(second);
+      const err = await withKey()
+        .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+      expect(err).toMatchObject({ status });
+    }
+  );
+
+  it('a refusal of the ADD itself is never added-unconfirmed', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '444', message: 'x' } });
+    const err = await withKey()
+      .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+  });
+
+  it('never logs the phone, only its last two digits', async () => {
+    const lines: string[] = [];
+    const sink = (m: unknown) => void lines.push(String(m));
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(sink);
+    mockedAxios.post
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0', ...allRights } });
+    await withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE);
+    // `postForm` logs Lydia's answer; neither answer echoes the phone, and no line of ours names it.
+    expect(lines.join(' | ')).not.toContain('612345678');
+    expect(lines.join(' | ')).toContain('78');
   });
 });

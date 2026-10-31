@@ -686,6 +686,18 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
         [NSString stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity.body"), arg];
     return;
   }
+  // An association's Lydia payments became active / were paused, to its payout managers: `arg` is
+  // the association's name only.
+  if ([key isEqualToString:@"lydia_payments_active"]) {
+    *title = CanariLocalized(@"notif.lydia_payments_active.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.lydia_payments_active.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"lydia_payments_paused"]) {
+    *title = CanariLocalized(@"notif.lydia_payments_paused.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.lydia_payments_paused.body"), arg];
+    return;
+  }
   // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
   if ([key isEqualToString:@"event_proposed"]) {
     *title = CanariLocalized(@"notif.event.proposed.title");

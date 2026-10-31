@@ -78,6 +78,15 @@ export function internalLydiaBusinessOfVendorTokenUrl(): string {
   return socialUrl('internal/associations/lydia-business-of-vendor-token');
 }
 
+/**
+ * Internal route marking the holder of a `vendor_token` ready on Lydia's (unsigned)
+ * `BUSINESS_VALIDATED` (`InternalLydiaEnrolmentController.lydiaReadiness`): it accepts ONLY
+ * `{ vendorToken, ready: true, cause: 'webhook-validated' }`. The token travels in the body.
+ */
+export function internalLydiaReadinessUrl(): string {
+  return socialUrl('internal/associations/lydia-readiness');
+}
+
 /** Internal route releasing the products withheld while payments were disabled (provider switched on). */
 export function providerActivatedUrl(): string {
   return socialUrl('internal/payments/provider-activated');

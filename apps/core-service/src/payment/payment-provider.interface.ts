@@ -55,6 +55,11 @@ export interface OnboardingParams {
   returnUrl: string;
   existingAccountId?: string;
   legalProfile?: BusinessLegalProfile;
+  /**
+   * Called with the new Business's vendor token as soon as the provider answers it, BEFORE the key
+   * check and the link, so a validation webhook racing the link is recognised. Must not throw.
+   */
+  onBusinessCreated?: (vendorToken: string) => Promise<void>;
 }
 
 export interface OnboardingResult {

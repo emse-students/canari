@@ -2,9 +2,12 @@ import {
   BadGatewayException,
   BadRequestException,
   GatewayTimeoutException,
+  HttpException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import axios from 'axios';
+import { signLydiaRequest } from './lydia-signature';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
@@ -140,8 +143,7 @@ export function businessCreateUnconfirmed(
 }
 
 /**
- * Logs an orphan Business at ERROR - association, `vendor_token` (public, see `LYDIA_LOG_REDACT_KEYS`)
- * and why - and returns the typed `LYDIA_BUSINESS_CREATED_UNLINKED` 502 to throw. The private token
+ * Logs an orphan Business at ERROR - association, `vendor_token` and why - and returns the typed `LYDIA_BUSINESS_CREATED_UNLINKED` 502 to throw. The private token
  * never reaches this line.
  */
 export function businessCreatedUnlinked(
@@ -160,6 +162,88 @@ export function businessCreatedUnlinked(
     message: 'The Lydia Business was created but could not be linked; do not retry',
   });
 }
+
+/**
+ * The `code` (400) of a `request/do` Lydia answered with error 5: the Business is not validated (yet,
+ * or any more). Measured: error 5 answers BEFORE any request exists (sandbox 2026-10-27, lydia-api.md
+ * section 2), so there is no `mobile_url` and nothing a payer could pay. social-service reads this
+ * code to revert the holder's readiness (`setLydiaReadiness`). Mirrored in
+ * `libs/contracts/lydia-refusal-codes.json`.
+ */
+export const LYDIA_BUSINESS_NOT_VALIDATED = 'LYDIA_BUSINESS_NOT_VALIDATED';
+
+/** The `code` (400) of a `request/do` Lydia answered with error 2701, a blocked Business. */
+export const LYDIA_BUSINESS_BLOCKED = 'LYDIA_BUSINESS_BLOCKED';
+
+/** Lydia's `request/do` error codes that name the BUSINESS, not the request, and their typed code. */
+const LYDIA_BUSINESS_STATE_ERRORS: Readonly<Record<string, string>> = {
+  '5': LYDIA_BUSINESS_NOT_VALIDATED,
+  '2701': LYDIA_BUSINESS_BLOCKED,
+};
+
+/** The `code` (502) of a cashier call whose signature Lydia refused (error 444). */
+export const LYDIA_SIGNATURE_REFUSED = 'LYDIA_SIGNATURE_REFUSED';
+/** The `code` (502) of a cashier call whose permission list Lydia refused (error 3). */
+export const LYDIA_CASHIER_PERMISSIONS_INVALID = 'LYDIA_CASHIER_PERMISSIONS_INVALID';
+/** The `code` (502) of a cashier call Lydia refused on the Business's vendor token (102, 103). */
+export const LYDIA_BUSINESS_TOKEN_REJECTED = 'LYDIA_BUSINESS_TOKEN_REJECTED';
+/** The `code` (503) when no Provider private token is configured: nothing is sent to Lydia. */
+export const LYDIA_CASHIER_NOT_CONFIGURED = 'LYDIA_CASHIER_NOT_CONFIGURED';
+/** The `code` (503) of no usable answer from Lydia (a transport failure, an HTML 500): a retry is safe. */
+export const LYDIA_UNREACHABLE = 'LYDIA_UNREACHABLE';
+/** The `code` (502) of an add Lydia accepted but whose read-back does not show every right. */
+export const LYDIA_CASHIER_RIGHTS_INCOMPLETE = 'LYDIA_CASHIER_RIGHTS_INCOMPLETE';
+
+/**
+ * Thrown by `addBusinessHolder` when `business/addcashier` ANSWERED (Lydia now holds the cashier)
+ * and what followed - the rights read-back, or rights short of the full set - did not confirm it.
+ * Carries the original status and body (`LYDIA_CASHIER_RIGHTS_INCOMPLETE`, a typed 502, or 503
+ * `LYDIA_UNREACHABLE` for an error that was not one), so the answer to the browser is unchanged;
+ * the TYPE is what tells the caller to record the person as unconfirmed.
+ */
+export class LydiaCashierAddedUnconfirmedException extends HttpException {
+  constructor(cause: unknown) {
+    super(
+      cause instanceof HttpException
+        ? cause.getResponse()
+        : { code: LYDIA_UNREACHABLE, message: 'Lydia did not answer the rights read-back' },
+      cause instanceof HttpException ? cause.getStatus() : 503,
+      { cause }
+    );
+  }
+}
+
+/** The `code` (400) of a cashier phone that is not E.164: refused before any call. */
+export const LYDIA_CASHIER_PHONE_INVALID = 'LYDIA_CASHIER_PHONE_INVALID';
+
+/**
+ * Every right a Lydia cashier can hold (lydia-api.md section 5b, homologation 2026-10-30): the
+ * Responsable is added with ALL of them, and the add counts only when `business/getpermission`
+ * reads every one back as 1.
+ */
+export const LYDIA_CASHIER_PERMISSIONS = [
+  'access_collect',
+  'access_allreceipt',
+  'access_checkout',
+  'access_statement',
+  'access_feedback',
+  'access_cashier',
+  'access_voucher',
+  'access_marketing',
+  'access_fee',
+  'access_cancelrequest',
+  'access_canceltransaction',
+  'access_manage_collects',
+  'access_easeofpayment',
+] as const;
+
+/** A cashier phone as Lydia takes it: E.164, `+` and 8 to 15 digits (`+33...`, accepted 2026-10-30). */
+export const LYDIA_CASHIER_PHONE_RE = /^\+[1-9]\d{7,14}$/;
+
+/** What `business/getpermission` read for one cashier: every right, true when it reads 1. */
+export type LydiaCashierRights = Readonly<
+  Record<(typeof LYDIA_CASHIER_PERMISSIONS)[number], boolean>
+>;
 
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
@@ -186,23 +270,43 @@ const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> =
  * token (`auth/vendortoken`, homologation 2026-10-30; `createOnboarding` stores it encrypted) and
  * `vendor_id` is the name `auth/vendortoken` gives the same value, and
  * `signature` is the value Lydia's `request/state` answers with (and the callbacks carry): the proof
- * the whole confirmation rests on. `api_token`, the Business's `vendor_token`, is NOT secret - it
- * travels in every `request/do` and names the Business in every callback (lydia-api.md section 1) -
- * so a server log may carry it; it is what identifies an orphan Business to Lydia's support.
+ * the whole confirmation rests on. `api_token`, the Business's `vendor_token`, is not in this set:
+ * it is what identifies an orphan Business to Lydia's support.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'vendor_id', 'signature']);
+const LYDIA_LOG_REDACT_KEYS = new Set([
+  'api_token_id',
+  'vendor_id',
+  'signature',
+  // Personal data an answer may echo (a cashier call's, a payer's): never in a log line.
+  'cashier_phone',
+  'phone',
+  'firstname',
+  'lastname',
+  'name',
+]);
 
 /** The public origin Lydia calls back on: nginx, the single entry point, from `FRONTEND_URL`. */
 function publicApiBase(): string {
   return (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
 }
 
-function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) =>
-      LYDIA_LOG_REDACT_KEYS.has(key) ? [key, '[redacted]'] : [key, value]
-    )
-  );
+/**
+ * A copy of a Lydia answer fit for a log line: every `LYDIA_LOG_REDACT_KEYS` field replaced, at ANY
+ * depth (an answer nests `data`, `permissions` or a list of cashiers), the rest kept as is.
+ */
+export function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, inner]) =>
+          LYDIA_LOG_REDACT_KEYS.has(key) ? [key, '[redacted]'] : [key, walk(inner)]
+        )
+      );
+    }
+    return value;
+  };
+  return walk(data) as Record<string, unknown>;
 }
 
 /**
@@ -216,8 +320,9 @@ function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
  * - Account/balance status (`getAccountStatus`, `getConnectAccountStatus`, `getConnectBalance`,
  *   `createConnectDashboardLink`) has no live-poll equivalent: Lydia pushes a `BUSINESS_VALIDATED`
  *   webhook event once, it does not expose a "retrieve current status" call. The webhook is
- *   received (`lydia-business-webhook`) but it is UNSIGNED and `vendor_token` is PUBLIC, so it is
- *   logged as a hint and decides nothing: a global admin still validates by hand.
+ *   received (`lydia-business-webhook`): an UNSIGNED `BUSINESS_VALIDATED` marks the holder ready
+ *   (risk accepted by the owner, 2026-10-30), `BUSINESS_UNVALIDATED` changes nothing; Lydia's
+ *   error 5 / 2701 on a real `request/do` reverts it (`typedBusinessStateRefusal`).
  * - There are no saved payment methods: every purchase is its own `request/do` with payer
  *   interaction, there is no server-side vaulted instrument.
  * - `createCheckoutSession` requires `payerRecipient`: the payment controller builds it from the
@@ -229,12 +334,20 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private readonly baseUrl: string;
   private readonly providerToken: string | undefined;
 
-  constructor(env: { LYDIA_ENV?: string; LYDIA_PROVIDER_TOKEN?: string }) {
+  /** The Provider PRIVATE token: it signs the cashier calls (`signLydiaRequest`). Never logged. */
+  private readonly providerPrivateToken: string | undefined;
+
+  constructor(env: {
+    LYDIA_ENV?: string;
+    LYDIA_PROVIDER_TOKEN?: string;
+    LYDIA_PROVIDER_PRIVATE_TOKEN?: string;
+  }) {
     this.baseUrl =
       (env.LYDIA_ENV || '').trim().toLowerCase() === 'production'
         ? PRODUCTION_BASE_URL
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
+    this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN?.trim() || undefined;
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
   }
 
@@ -419,11 +532,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
       fields.expire_time = String(params.expireAfterSeconds);
     }
 
-    const data = await this.postForm<{
-      request_id?: string | number;
-      request_uuid: string;
-      mobile_url: string;
-    }>('/api/request/do', fields);
+    let data: { request_id?: string | number; request_uuid: string; mobile_url: string };
+    try {
+      data = await this.postForm<{
+        request_id?: string | number;
+        request_uuid: string;
+        mobile_url: string;
+      }>('/api/request/do', fields);
+    } catch (err: unknown) {
+      throw this.typedBusinessStateRefusal(err);
+    }
     // `request_id` (numeric) is the id Lydia's callbacks and its cancel call carry; `request_uuid`
     // is the one `request/state` reads. Both are kept, because neither replaces the other.
     const requestId =
@@ -432,6 +550,203 @@ export class LydiaPaymentProvider implements PaymentProvider {
       this.logger.warn(`request/do answered without a request_id for ${data.request_uuid}`);
     }
     return { id: data.request_uuid, url: data.mobile_url, requestId };
+  }
+
+  /**
+   * A `request/do` refusal that names the BUSINESS (error 5, not validated; 2701, blocked) becomes
+   * its own typed 400 - `LYDIA_BUSINESS_NOT_VALIDATED` / `LYDIA_BUSINESS_BLOCKED`, `providerCode`
+   * kept - so social-service reverts the holder's readiness on a CODE, never Lydia's sentence. Every
+   * other failure is returned unchanged.
+   */
+  private typedBusinessStateRefusal(err: unknown): unknown {
+    if (!(err instanceof BadRequestException)) return err;
+    const body = err.getResponse() as { code?: unknown; providerCode?: unknown; message?: unknown };
+    const providerCode = typeof body?.providerCode === 'string' ? body.providerCode : '';
+    if (
+      body?.code !== PAYMENT_PROVIDER_REFUSED ||
+      !Object.hasOwn(LYDIA_BUSINESS_STATE_ERRORS, providerCode)
+    ) {
+      return err;
+    }
+    const code = LYDIA_BUSINESS_STATE_ERRORS[providerCode];
+    this.logger.warn(
+      `request/do refused by Lydia on the Business itself: error ${providerCode} -> ${code}`
+    );
+    return new BadRequestException({
+      code,
+      provider: 'lydia',
+      providerCode,
+      message: typeof body.message === 'string' ? body.message : `Lydia error ${providerCode}`,
+    });
+  }
+
+  /**
+   * Adds `phone` as a cashier of the Business `vendorToken` with EVERY right
+   * (`LYDIA_CASHIER_PERMISSIONS`), Lydia's SMS on (`notify=yes`), through `business/addcashier`
+   * signed over the URL-encoded `cashier_phone` and `permissions` with the Provider private token
+   * (`signLydiaRequest`, homologation 2026-10-30). `permissions` is a JSON ARRAY of names. A repeat
+   * add replaces the rights, so a retry is safe. Then reads the rights back (`readCashierRights`)
+   * and counts success ONLY when all of them read 1.
+   *
+   * Typed, before anything is sent: no Provider key -> 503 `LYDIA_CASHIER_NOT_CONFIGURED`; a phone
+   * that is not E.164 -> 400 `LYDIA_CASHIER_PHONE_INVALID`. After: 444 -> 502
+   * `LYDIA_SIGNATURE_REFUSED`, 3 -> 502 `LYDIA_CASHIER_PERMISSIONS_INVALID`, 102/103 -> 502
+   * `LYDIA_BUSINESS_TOKEN_REJECTED` (ERROR, naming the association), no usable answer -> 503
+   * `LYDIA_UNREACHABLE`, a read-back short of every right -> 502 `LYDIA_CASHIER_RIGHTS_INCOMPLETE`.
+   * The phone is never logged, only its last two digits.
+   */
+  async addBusinessHolder(
+    associationId: string,
+    vendorToken: string,
+    phone: string
+  ): Promise<void> {
+    const key = this.cashierKeyOrThrow(associationId, phone);
+    const signed: Record<string, string> = {
+      cashier_phone: phone,
+      permissions: JSON.stringify(LYDIA_CASHIER_PERMISSIONS),
+    };
+    const signature = signLydiaRequest(signed, key);
+    this.logger.log(
+      `[LYDIA-CASHIER] association ${associationId}: adding the Responsable (phone ending ${phone.slice(-2)})`
+    );
+    await this.cashierCall(associationId, 'business/addcashier', {
+      provider_token: this.providerToken ?? '',
+      vendor_token: vendorToken,
+      ...signed,
+      notify: 'yes',
+      signature,
+    });
+    // From here Lydia holds the cashier: whatever fails next is "added, unconfirmed", never a
+    // refusal, so the caller records the person rather than forgetting a cashier Lydia lists.
+    try {
+      const rights = await this.readCashierRights(associationId, vendorToken, phone);
+      const missing = LYDIA_CASHIER_PERMISSIONS.filter((name) => !rights[name]);
+      if (missing.length > 0) {
+        this.logger.error(
+          `[LYDIA-CASHIER] association ${associationId}: business/addcashier answered 0 but the ` +
+            `read-back lacks ${missing.length} right(s): ${missing.join(',')} - added, UNCONFIRMED`
+        );
+        throw new BadGatewayException({
+          code: LYDIA_CASHIER_RIGHTS_INCOMPLETE,
+          message: 'Lydia did not confirm every right of the Responsable',
+        });
+      }
+    } catch (err) {
+      throw new LydiaCashierAddedUnconfirmedException(err);
+    }
+    this.logger.log(
+      `[LYDIA-CASHIER] association ${associationId}: Responsable confirmed with all ` +
+        `${LYDIA_CASHIER_PERMISSIONS.length} rights`
+    );
+  }
+
+  /**
+   * Reads one cashier's rights on the Business (`business/getpermission`): each `access_*` as
+   * `"0"`/`"1"`; a right absent from the answer reads false.
+   * Errors are typed like `addBusinessHolder`'s. Read-only: no SMS, no change at Lydia.
+   */
+  async readCashierRights(
+    associationId: string,
+    vendorToken: string,
+    phone: string
+  ): Promise<LydiaCashierRights> {
+    this.cashierKeyOrThrow(associationId, phone);
+    const data = await this.cashierCall(associationId, 'business/getpermission', {
+      vendor_token: vendorToken,
+      cashier_phone: phone,
+    });
+    const source =
+      data.permissions && typeof data.permissions === 'object'
+        ? (data.permissions as Record<string, unknown>)
+        : data;
+    const rights = Object.fromEntries(
+      LYDIA_CASHIER_PERMISSIONS.map((name) => [name, String(source[name] ?? '0') === '1'])
+    ) as LydiaCashierRights;
+    this.logger.debug(
+      `[LYDIA-CASHIER] association ${associationId}: phone ending ${phone.slice(-2)} holds ` +
+        `${Object.values(rights).filter(Boolean).length}/${LYDIA_CASHIER_PERMISSIONS.length} rights`
+    );
+    return rights;
+  }
+
+  /** The Provider private token, after the checks every cashier call makes BEFORE contacting Lydia. */
+  private cashierKeyOrThrow(associationId: string, phone: string): string {
+    if (!this.providerToken || !this.providerPrivateToken) {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${associationId}: refused before any call - ` +
+          `LYDIA_PROVIDER_TOKEN / LYDIA_PROVIDER_PRIVATE_TOKEN not configured`
+      );
+      throw new ServiceUnavailableException({
+        code: LYDIA_CASHIER_NOT_CONFIGURED,
+        message: 'Lydia cashiers cannot be managed: the Provider key is not configured',
+      });
+    }
+    if (!LYDIA_CASHIER_PHONE_RE.test(phone)) {
+      this.logger.warn(`[LYDIA-CASHIER] association ${associationId}: refused, phone is not E.164`);
+      throw new BadRequestException({
+        code: LYDIA_CASHIER_PHONE_INVALID,
+        message: 'The phone number must be written +33...',
+      });
+    }
+    return this.providerPrivateToken;
+  }
+
+  /** One cashier call through `postForm`, its failures typed (see `addBusinessHolder`). */
+  private async cashierCall(
+    associationId: string,
+    path: 'business/addcashier' | 'business/getpermission',
+    fields: Record<string, string>
+  ): Promise<Record<string, unknown>> {
+    try {
+      return await this.postForm<Record<string, unknown>>(`/api/${path}`, fields);
+    } catch (err: unknown) {
+      if (err instanceof HttpException && !(err instanceof BadRequestException)) throw err;
+      const providerCode =
+        err instanceof BadRequestException
+          ? String((err.getResponse() as { providerCode?: unknown })?.providerCode ?? '')
+          : '';
+      const tag = `[LYDIA-CASHIER] association ${associationId}: ${path}`;
+      if (providerCode === '444') {
+        this.logger.error(`${tag} refused the signature (444)`);
+        throw new BadGatewayException({
+          code: LYDIA_SIGNATURE_REFUSED,
+          message: 'Lydia refused the signature',
+        });
+      }
+      if (providerCode === '3') {
+        this.logger.error(`${tag} refused the permissions (3)`);
+        throw new BadGatewayException({
+          code: LYDIA_CASHIER_PERMISSIONS_INVALID,
+          message: 'Lydia refused the permission list',
+        });
+      }
+      if (providerCode === '102' || providerCode === '103') {
+        this.logger.error(
+          `${tag} refused the Business's vendor token (${providerCode}) - the linked Business ` +
+            `is not one Lydia knows for this Provider`
+        );
+        throw new BadGatewayException({
+          code: LYDIA_BUSINESS_TOKEN_REJECTED,
+          message: 'Lydia does not recognise this Business',
+        });
+      }
+      if (providerCode && !providerCode.startsWith('http-')) {
+        // Another Lydia code: an answer, but not one this call knows. Said, never guessed.
+        this.logger.error(`${tag} refused with error ${providerCode}`);
+        throw new BadGatewayException({
+          code: PAYMENT_PROVIDER_REFUSED,
+          providerCode,
+          message: `Lydia refused the call (error ${providerCode})`,
+        });
+      }
+      // No usable answer (transport, a timeout, a 5xx or an HTML 500, a 4xx): a retry is safe,
+      // since a repeat add replaces the rights.
+      this.logger.error(`${tag} got no usable answer`);
+      throw new ServiceUnavailableException({
+        code: LYDIA_UNREACHABLE,
+        message: 'Lydia could not be reached; trying again is safe',
+      });
+    }
   }
 
   /**
@@ -588,6 +903,9 @@ export class LydiaPaymentProvider implements PaymentProvider {
       throw unconfirmed('a 200 with no error and no api_token - see the raw response logged above');
     }
     const vendorToken = data.api_token;
+    // Recorded BEFORE anything else can fail, so a BUSINESS_VALIDATED naming it before the link is
+    // retried rather than dropped. The callback reports its own failure and never throws.
+    await params.onBusinessCreated?.(vendorToken);
     // A Business that answered its vendor token but no dashboard URL exists and cannot be handed to
     // the association as Lydia meant it to: an orphan, recorded like any other.
     if (typeof data.dashboard_url !== 'string' || !data.dashboard_url) {

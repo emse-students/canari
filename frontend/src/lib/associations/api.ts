@@ -2453,6 +2453,33 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
+  responsable?: LydiaResponsable | null;
+  /** The last readiness change and its cause; null when none was ever recorded. */
+  readiness?: { cause: LydiaReadinessCause; at: string } | null;
+  /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
+  enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
+}
+
+/** The cause of the last readiness change of a Lydia Business. */
+export type LydiaReadinessCause =
+  | 'webhook-validated'
+  | 'admin'
+  | 'request-refused'
+  | 'request-blocked';
+
+/** The person recorded as the Lydia cashier of an association: the last 2 phone digits only. */
+export interface LydiaResponsable {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -2501,6 +2528,41 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
       (body as { message?: string })?.message || `Lydia validation failed (${res.status})`
     );
   }
+}
+
+/**
+ * Adds (`add`, also "resend the SMS") or records (`record`: an already-linked Business, read-only at
+ * Lydia, no SMS) the Responsable of the association's Lydia Business. A refusal is a
+ * {@link SocialApiError} typed at the throw: its `code` (`lydiaResponsableRefusal.ts`) is what a
+ * screen reads. `phone` is E.164.
+ */
+export async function setLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string; mode: 'add' | 'record' }
+): Promise<LydiaResponsable> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-responsable/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-responsable')) as {
+    responsable: LydiaResponsable;
+  };
+  return body.responsable;
+}
+
+/**
+ * Clears the in-flight enrolment marker (global admin only), after an admin checked with Lydia that
+ * no Business was created - or linked the one that was.
+ */
+export async function clearLydiaEnrolmentInFlight(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-enrolment-clear/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await socialRefusal(res);
 }
 
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
