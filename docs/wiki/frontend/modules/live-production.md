@@ -219,18 +219,21 @@ to the owner as it is.
 ## Lives come back with `1.5.4`, and what an older client would do (owner, 2026-10-31)
 
 Lives are switched OFF in production (`lives_mode` `off`) by the owner and return only with `1.5.4`,
-which carries the removal of the duration cap and the trim. **No per-feature client-version gate
-exists** (checked): the only version gate is the global `minClientVersion` floor, which refuses a build
-for EVERY feature and moves only when both stores serve the target, and `lives_mode` is a global
-switch published by `/api/version`. So none was invented, and the old-client answer was dropped, not
-shimmed (`maxDurationMs` is no longer served, no row in legacy-compatibility).
+which carries the removal of the duration cap and the trim. **A per-client gate was built, on a
+header that did not exist** (review, 2026-10-31): no request to social-service carried the client's
+version (`?clientVersion=` rides only `/auth/refresh` and the announcement; `deviceAppVersion` is a
+device-registration body field), and `minClientVersion` is global - it would refuse a build for EVERY
+feature. So every lives call now sends `X-Canari-Client-Version` (`live/api.ts`), and
+`LiveEnabledGuard` answers the same 404 as `lives_mode` off to a request naming a build below
+`1.5.4`. **A request with NO header is refused too**: that is exactly what a `1.5.1`-`1.5.3` build
+sends, the only evidence there is - web is current and sends it. The rig and `tools/live-bench` name
+`1.5.4` explicitly. Removal condition: [legacy-compatibility](../../legacy-compatibility.md).
 
-What a `1.5.1`-`1.5.3` client does against the new `limits` answer: **while `lives_mode` is off** it
-hides the feature (`/api/version` says so) and `GET /api/lives/limits` answers `404` anyway, so it
-never sees the new shape. **Once lives are switched back on**, its sheet computes
-`floor(undefined / 60000)` and prints "NaN minutes au plus" - cosmetic, nothing breaks (it still
-broadcasts, and a viewer is unaffected). So the order is: ship `1.5.4`, let the stores take it, switch
-`lives_mode` on; an older build left on a phone sees a wrong line, not a refusal.
+What a `1.5.1`-`1.5.3` client therefore does once lives are switched back on: every lives route is a
+404, which those builds classify as `disabled` and handle cleanly (broadcaster `limitsProblem`,
+viewer `unavailable/disabled`, `openLives`) - no "NaN minutes" sheet, no half-working live. The
+order stays: ship `1.5.4`, let the stores take it, switch `lives_mode` on; an older build left on a
+phone shows no live surface at all.
 
 ## See also
 

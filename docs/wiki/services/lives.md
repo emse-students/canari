@@ -128,7 +128,7 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer, `503 LIVE_KEY_UNAVAILABLE` when the stored key does not open ([the key at rest](#the-live-key-at-rest)) |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
-| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
+| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 | `POST /api/lives/:id/cut` `{ reason, details? }` | a content moderator (`isContentModerator`) | `{ liveId, broadcasterId, reason, cutAt, endReason, newlyCut, priorCuts, strike, consequence, standing }`, idempotent ([the ladder](#the-strike-ladder-wp-l8b)). `403 LIVE_CUT_FORBIDDEN` (asked before the live is read), `400 LIVE_CUT_REASON_INVALID` (`spam`/`harassment`/`inappropriate`/`other`), `400 LIVE_CUT_DETAILS_INVALID` (over 500 characters), `404 LIVE_NOT_FOUND` ([moderation](#moderation-wp-l8-server-half)) |
@@ -593,6 +593,13 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
     segment(s) (a..b), B`; a refusal or an unreachable store is a `warn` and never fails the segment
     just stored. The end's purge is unchanged (it deletes the whole prefix, trimmed or not), so
     correctness never rests on the trim; only the bound does.
+  - **The trim runs AFTER the segment's answer**, one per live at a time in the process
+    (`trimInBackground`): the ingest's slot (`LIVE_INGEST_MAX_CONCURRENT`) never waits for up to 50
+    store deletes. A second ask while one runs is dropped and loses nothing - the rows are
+    re-selected from durable state by the next segment.
+  - **nginx cache**: the `live_segments` cache (`proxy_cache_valid 200 2m`) may serve a segment
+    that was just trimmed for about two more minutes. The manifest window (10) sits inside the
+    retained 20, so only a viewer far behind can ask for one, and it jumps to the newest anyway.
   - **Two edges**: a retry of a segment more than 20 behind the newest meets a trimmed row (409
     `LIVE_SEGMENT_CONFLICT`; the uploader only ever retries the last one); a manifest asked `from` an
     index older than the oldest kept row answers from the oldest kept.

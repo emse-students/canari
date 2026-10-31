@@ -248,6 +248,8 @@ export class LivesService implements OnModuleDestroy {
   private ingestsInFlight = 0;
   /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
   private readonly announcements = new Set<Promise<void>>();
+  /** The trim running for each live right now: at most ONE per live in this process. */
+  private readonly trimming = new Map<string, Promise<void>>();
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -544,14 +546,38 @@ export class LivesService implements OnModuleDestroy {
     // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
     // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
     if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
-    await this.trim(liveId);
+    this.trimInBackground(liveId);
     return outcome.result;
+  }
+
+  /**
+   * Starts the trim of a live AFTER the segment that asked for it has been answered: the ingest's
+   * slot (`LIVE_INGEST_MAX_CONCURRENT`) and its latency never wait for a store delete of up to
+   * {@link LIVE_TRIM_BATCH} objects. AT MOST ONE PER LIVE AT A TIME, in this process: a second ask
+   * while one runs is dropped, which loses nothing - the rows to trim are re-selected from durable
+   * state, so the very next segment (or the running pass's own next batch) finds whatever is left.
+   * Two passes over the same rows would only race to delete the same objects.
+   */
+  private trimInBackground(liveId: string): void {
+    if (this.trimming.has(liveId)) {
+      this.logger.debug(
+        `[LIVE_TRIM] ${liveId}: a trim is already running, the next segment asks again`
+      );
+      return;
+    }
+    const pending = this.trim(liveId).finally(() => this.trimming.delete(liveId));
+    this.trimming.set(liveId, pending);
+  }
+
+  /** Resolves once every trim started so far has settled - a PROOF of completion for tests and shutdown. */
+  async trimsSettled(): Promise<void> {
+    while (this.trimming.size > 0) await Promise.all(this.trimming.values());
   }
 
   /**
    * THE TRIM: a running live keeps only its newest {@link LIVE_RETAINED_SEGMENTS} segments, so what
    * it stores never depends on how long it lasts (owner, 2026-10-31). Run after each confirmed
-   * segment.
+   * segment, AFTER its answer (see {@link trimInBackground}).
    *
    * IDEMPOTENT FROM DURABLE STATE, NOT FROM A CLOCK: the segments to trim are the `live_segments`
    * rows with `index < nextIndex - retained`, and a row is deleted only AFTER the store proved its
@@ -633,9 +659,10 @@ export class LivesService implements OnModuleDestroy {
     while (this.announcements.size > 0) await Promise.all(this.announcements);
   }
 
-  /** Waits for the announcements in flight before the module goes away. */
+  /** Waits for the announcements and trims in flight before the module goes away. */
   async onModuleDestroy(): Promise<void> {
     await this.announcementsSettled();
+    await this.trimsSettled();
   }
 
   /**
@@ -690,7 +717,15 @@ export class LivesService implements OnModuleDestroy {
             result: { index, name: prior[0].name, nextIndex: row.nextIndex },
           };
         }
-        this.logger.warn(`[LIVE] segment ${index} of ${liveId} repeated with DIFFERENT bytes`);
+        if (!prior[0]) {
+          // The row was trimmed behind the window: a retry of an index that is gone, never a conflict
+          // about bytes. The answer stays the conflict (the segment cannot be stored again).
+          this.logger.debug(
+            `[LIVE] segment ${index} of ${liveId} already trimmed (index below the window)`
+          );
+        } else {
+          this.logger.warn(`[LIVE] segment ${index} of ${liveId} repeated with DIFFERENT bytes`);
+        }
         throw new ConflictException({ code: 'LIVE_SEGMENT_CONFLICT', nextIndex: row.nextIndex });
       }
       if (index > row.nextIndex) {

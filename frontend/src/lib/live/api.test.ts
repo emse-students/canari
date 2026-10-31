@@ -9,8 +9,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const apiFetch = vi.hoisted(() => vi.fn());
+/** The client-version header of each call, taken off BEFORE the route assertions below compare the rest. */
+const sentVersions = vi.hoisted(() => [] as (string | undefined)[]);
 const trackedFetch = vi.hoisted(() => vi.fn());
-vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
+vi.mock('$lib/utils/apiFetch', () => ({
+  apiFetch: (url: string, init: { headers?: Record<string, string> } = {}) => {
+    const { headers = {}, ...rest } = init;
+    const { 'X-Canari-Client-Version': version, ...others } = headers;
+    sentVersions.push(version);
+    return apiFetch(url, Object.keys(others).length ? { ...rest, headers: others } : rest);
+  },
+}));
 vi.mock('$lib/utils/trackedFetch', () => ({ trackedFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({
   socialUrl: () => 'https://social.test',
@@ -68,12 +77,22 @@ async function refusal(p: Promise<unknown>): Promise<LiveRefusalError> {
 beforeEach(() => {
   apiFetch.mockReset();
   trackedFetch.mockReset();
+  sentVersions.length = 0;
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 describe('the routes', () => {
+  it('every lives call names the build, which is how the server keeps a build below 1.5.4 out', async () => {
+    apiFetch.mockImplementation(async () => json(200, { viewerCap: 24 }));
+    await fetchLiveLimits();
+    await listOpenLives();
+    await leaveLiveSeat(LIVE);
+    expect(sentVersions).toHaveLength(3);
+    for (const version of sentVersions) expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it('limits and list are GETs on /api/lives', async () => {
     apiFetch.mockResolvedValueOnce(json(200, { viewerCap: 24, seatLeaseMs: 30000 }));
     expect((await fetchLiveLimits()).viewerCap).toBe(24);
@@ -302,7 +321,6 @@ describe('refusals, typed at the throw', () => {
     [503, 'LIVE_STORE_UNAVAILABLE', 'retry-segment'],
     [503, 'LIVE_INGEST_BUSY', 'retry-segment'],
     [409, 'LIVE_SEGMENT_CONFLICT', 'refused'],
-    [413, 'LIVE_BUDGET_EXHAUSTED', 'refused'],
     [429, 'LIVE_SEGMENT_TOO_FAST', 'rate-limited'],
     [400, 'LIVE_SEGMENT_EMPTY', 'refused'],
     [410, 'LIVE_ENDED', 'ended'],

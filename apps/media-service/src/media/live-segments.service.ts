@@ -149,12 +149,14 @@ export class LiveSegmentsService {
    * window, lives.md "What a live stores"). A refusal is counted and logged, never thrown, so the
    * caller keeps the rows of exactly the names that remain. Idempotent: deleting an absent object is
    * not a failure, so a pass repeated after a crash converges. Names are checked as uuids by
-   * {@link LiveSegmentsService.key}.
+   * {@link LiveSegmentsService.key} - ALL of them BEFORE the first delete, so a bad name rejects
+   * the whole call (400) and leaves the store untouched, never half-applied.
    */
   async deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult> {
+    const keys = names.map((name) => LiveSegmentsService.key(liveId, name));
     const result: LiveTrimResult = { deleted: [], failed: [] };
-    for (const name of names) {
-      const key = LiveSegmentsService.key(liveId, name);
+    for (const [i, name] of names.entries()) {
+      const key = keys[i];
       try {
         await this.storage.delete(key);
         result.deleted.push(name);

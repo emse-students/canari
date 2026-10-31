@@ -129,6 +129,13 @@ describe('LiveSegmentsService', () => {
     await expect(svc.deleteSegments(LIVE, ['not-a-uuid'])).rejects.toThrow(/uuid/);
   });
 
+  it('validates EVERY name before deleting any: a bad name last leaves the good ones in place', async () => {
+    const { svc, objects } = bucket();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    await expect(svc.deleteSegments(LIVE, [SEG_A, 'not-a-uuid'])).rejects.toThrow(/uuid/);
+    expect([...objects.keys()]).toEqual([`live/${LIVE}/${SEG_A}`]);
+  });
+
   it('lists one id per live folder, and leaves a folder that is not a live alone', async () => {
     const { svc, objects } = bucket();
     await svc.store(LIVE, SEG_A, Buffer.from('a'));

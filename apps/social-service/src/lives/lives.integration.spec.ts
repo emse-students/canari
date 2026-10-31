@@ -1297,7 +1297,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     /** Ingests segments 0..count-1 of a live whose start is moved back so the rate guard allows them. */
     async function ingestMany(id: string, count: number, from = 0) {
       await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [id]);
-      for (let i = from; i < count; i++) await lives.ingest(ALICE, id, i, segment(i));
+      for (let i = from; i < count; i++) {
+        await lives.ingest(ALICE, id, i, segment(i));
+        // The trim runs after the answer: settled here so the next pass sees this one's work.
+        await lives.trimsSettled();
+      }
     }
     const rowCount = async (id: string) =>
       Number((await q(`SELECT count(*) AS n FROM live_segments WHERE "liveId" = $1`, [id]))[0].n);
@@ -1351,6 +1355,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         LIVE_RETAINED_SEGMENTS + 5,
         segment(LIVE_RETAINED_SEGMENTS + 5)
       );
+      await lives.trimsSettled();
       expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS + 6);
       store.refuseTrimDeletes = false;
       // A crash AFTER the store deleted and BEFORE the rows did: objects gone, rows kept.
@@ -1361,6 +1366,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         LIVE_RETAINED_SEGMENTS + 6,
         segment(LIVE_RETAINED_SEGMENTS + 6)
       );
+      await lives.trimsSettled();
       expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
       expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
     });
