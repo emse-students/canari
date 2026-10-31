@@ -1,6 +1,7 @@
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationStartedAtStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   outboxServerErrorsStatement,
@@ -135,6 +136,43 @@ describe('conversationAwaitingAdmissionStatement (v15)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationAwaitingAdmissionStatement(['id', 'name', 'awaiting_admission'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(15);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(15);
+  });
+});
+
+/**
+ * v15 -> v16 on a REAL in-memory SQLite: the group's start was declared persisted and SQLite dropped
+ * it on every save. A stored conversation reads NULL - unknown until the next group sweep - and a
+ * rerun does nothing.
+ */
+describe('conversationStartedAtStatement (v16)', () => {
+  const columnsOf = (engine: any): string[] =>
+    engine
+      .prepare('PRAGMA table_info(conversations)')
+      .all()
+      .map((c: { name: string }) => c.name);
+
+  it('adds the column to an existing conversations table, NULL on every row', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT, awaiting_admission INTEGER)'
+    );
+    engine.exec("INSERT INTO conversations (id, name, lifecycle) VALUES ('g1', 'Group', 'active')");
+
+    const sql = conversationStartedAtStatement(columnsOf(engine));
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT started_at, lifecycle FROM conversations').get()).toEqual({
+      started_at: null,
+      lifecycle: 'active',
+    });
+    expect(conversationStartedAtStatement(columnsOf(engine))).toBeNull();
+  });
+
+  it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
+    expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
+    expect(SCHEMA_VERSION).toBe(16);
   });
 });

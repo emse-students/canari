@@ -930,6 +930,29 @@ export async function historyRangeStartFor(
 }
 
 /**
+ * The server's record of when `groupId` was created, as this device stored it, or `undefined` when
+ * it is not known (no store, no row, a row written before the start was learned, or a failed read).
+ *
+ * Read from the conversation ROW, the same source as the floor, so an asker and an answerer reason
+ * from one kind of fact. Unknown is the safe answer here: it keeps every shortfall a shortfall (see
+ * `coverageFallsShort`), so the worst a failed read costs is the walk this value exists to avoid.
+ */
+export async function historyGroupStartFor(
+  groupId: string,
+  storage: IStorage | null
+): Promise<number | undefined> {
+  if (!storage) return undefined;
+  try {
+    return (await storage.getConversation(groupId))?.startedAt;
+  } catch (e) {
+    console.warn(
+      `[HISTORY_WINDOW] conversation row unreadable for ${groupId.slice(0, 8)}… - the group's start is unknown: ${String(e).slice(0, 120)}`
+    );
+    return undefined;
+  }
+}
+
+/**
  * Sends the full local history of `groupId` to active group members, encrypted under the
  * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *

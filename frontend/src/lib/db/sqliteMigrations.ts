@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -86,4 +86,20 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
   return columns.includes('awaiting_admission')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN awaiting_admission INTEGER';
+}
+
+/**
+ * The v15 -> v16 step: the conversation row gains `started_at`, the server's record of the group's
+ * creation (`ConversationMeta.startedAt`). It was declared as persisted and was not on this backend:
+ * IndexedDB stores the whole object, SQLite only its named columns, so a phone forgot it on every
+ * reload until the next group sweep. History reconciliation reads it to tell a coverage shortfall
+ * that predates the group from a real one. NULL on arrival, which reads as unknown - the next sweep
+ * fills it (`recordGroupStart`). Returns `null` when the column is there, so the step is a no-op twice.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationStartedAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('started_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
 }

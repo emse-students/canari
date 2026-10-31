@@ -42,6 +42,7 @@ import {
   takeAddressedAsk,
 } from '$lib/utils/chat/historyAddressing';
 import {
+  historyGroupStartFor,
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
@@ -413,11 +414,14 @@ export async function handleSystemEvent(
     // echo is what the peer compared against, which is one round trip old and, either side of
     // midnight, a different day.
     const since = await historyRangeStartFor(convoKey, storage);
+    // AND WHERE THE GROUP BEGAN, a fact this device holds about its own row: a shortfall below it
+    // is a past nobody can hold, and walking the membership for it was 8 elections on BIG-1.
+    const startedAt = await historyGroupStartFor(convoKey, storage);
     void noteCoverageShortfall(
       mlsService,
       convoKey,
       from,
-      { since, coveredFrom: Math.floor(coveredFrom) },
+      { since, coveredFrom: Math.floor(coveredFrom), startedAt },
       log
     ).catch((e) =>
       log(
