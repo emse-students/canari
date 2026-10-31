@@ -289,12 +289,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
       );
     });
 
-    it('refuses a hidden post (404) and a promo list as the republisher (400)', async () => {
+    it('refuses a hidden post (404); a campaign list is a valid republisher since 2026-10-31', async () => {
       await expect(republications.republish(P(4), A2, 'eSe', false)).rejects.toBeInstanceOf(
         NotFoundException
-      );
-      await expect(republications.republish(P(5), L, 'lister', false)).rejects.toBeInstanceOf(
-        BadRequestException
       );
     });
 
@@ -318,12 +315,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
   });
 
   describe('the push: a proposal the other association decides', () => {
-    it('only the post publishers propose (403), never to a list (400) nor to itself (400)', async () => {
+    it('only the post publishers propose (403), never to its own association (400)', async () => {
       await expect(republications.propose(P(5), A2, 'dSe', false)).rejects.toBeInstanceOf(
         ForbiddenException
-      );
-      await expect(republications.propose(P(5), L, 'aSe', false)).rejects.toBeInstanceOf(
-        BadRequestException
       );
       await expect(republications.propose(P(5), A1, 'aSe', false)).rejects.toBeInstanceOf(
         BadRequestException

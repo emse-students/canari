@@ -1,11 +1,12 @@
 <script lang="ts">
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import type { AssociationMember } from '$lib/associations/api';
+  import type { Association, AssociationMember } from '$lib/associations/api';
   import {
     AssociationPermissionFlag,
     BDE_ONLY_FLAGS,
     hasPermissionFlag,
   } from '$lib/associations/api';
+  import { kindOffersFlag } from '$lib/associations/editSections';
   import { Trash2, ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -16,6 +17,12 @@
     manage?: boolean;
     /** When false, BDE-only flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE) are hidden. */
     isBDE?: boolean;
+    /**
+     * The kind of entity the member belongs to: the editor offers only the rights its sections
+     * need (`kindOffersFlag`). A bit the kind does not offer is neither shown nor cleared - the
+     * server ignores it there, and a toggle edits its own bit alone, so a save never strips it.
+     */
+    kind?: Association['type'];
     /** `permissions` is omitted for a role-only rename, which leaves the bitmask untouched. */
     onRoleChange?: (userId: string, role: string, permissions?: number) => void | Promise<void>;
     onRemove?: (userId: string) => void | Promise<void>;
@@ -26,6 +33,7 @@
     displayName,
     manage = false,
     isBDE = false,
+    kind = 'association',
     onRoleChange,
     onRemove,
   }: Props = $props();
@@ -57,7 +65,9 @@
       { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
       { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
-    ].filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
+    ]
+      .filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
+      .filter(({ flag }) => BDE_ONLY_FLAGS.has(flag) || kindOffersFlag(kind, flag))
   );
 
   /**
