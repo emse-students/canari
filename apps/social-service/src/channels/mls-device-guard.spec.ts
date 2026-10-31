@@ -231,6 +231,32 @@ describe('the MLS device guard on an invitation', () => {
       expect(memberRepo.save).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['a member inviting a review account', TARGET],
+      ['a review account inviting a member', ACTOR],
+    ])(
+      'refuses %s with REVIEW_COHORT_BOUNDARY, asks no device, adds nobody',
+      async (_case, reviewer) => {
+        const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+        process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+        try {
+          const { service, memberRepo } = makeService();
+          global.fetch = delivery(200, { count: 1 }) as never;
+          const err = await service
+            .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })
+            .catch((e: unknown) => e);
+          expect((err as ForbiddenException).getResponse()).toMatchObject({
+            code: 'REVIEW_COHORT_BOUNDARY',
+          });
+          expect(global.fetch).not.toHaveBeenCalled();
+          expect(memberRepo.save).not.toHaveBeenCalled();
+        } finally {
+          if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+          else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+        }
+      }
+    );
+
     it('asks about the block in BOTH directions, so the blocker cannot invite either', async () => {
       const { service, blockQuery } = makeService([{ '?column?': 1 }]);
       global.fetch = delivery(200, { count: 1 }) as never;

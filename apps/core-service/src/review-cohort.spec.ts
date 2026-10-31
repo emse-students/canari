@@ -35,8 +35,8 @@ describe('review cohort', () => {
     expect(parseReviewCohort(` ${A} `)).toEqual([A]);
   });
 
-  it('reads a list, case kept, ignoring blank entries and repeats', () => {
-    expect(parseReviewCohort(`${A}, ${B},,${A}`)).toEqual([A, B]);
+  it('reads a list lower-cased, ignoring blank entries and repeats - a repeat in another case too', () => {
+    expect(parseReviewCohort(`${A}, ${B},,${A},BB-02`)).toEqual([A, 'bb-02']);
   });
 
   it("accepts every id the mint rule accepts, quotes included (user-id.ts), but ',' and ':'", () => {
@@ -63,9 +63,11 @@ describe('review cohort', () => {
     process.env[REVIEW_COHORT_ENV] = A;
     expect(reviewCohort()).toEqual([A]);
     process.env[REVIEW_COHORT_ENV] = `${A},${B}`;
-    expect(reviewCohort()).toEqual([A, B]);
+    expect(reviewCohort()).toEqual([A, 'bb-02']);
+    // Compared lower-cased on both sides, as every service compares a user id.
     expect(isInReviewCohort(B)).toBe(true);
-    expect(isInReviewCohort('bb-02')).toBe(false);
+    expect(isInReviewCohort('bb-02')).toBe(true);
+    expect(isInReviewCohort('BB-02')).toBe(true);
     expect(isInReviewCohort(undefined)).toBe(false);
   });
 

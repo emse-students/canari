@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { ReviewCohortBoundaryException, isInReviewCohort } from '../review-cohort';
+import { ReviewCohortBoundaryException, isInReviewCohort, reviewCohort } from '../review-cohort';
 
 const logger = new Logger('ReviewCohortReach');
 
@@ -49,4 +49,31 @@ export async function assertReviewerReachesAssociation(
     `[REVIEW_COHORT] ${what} refused: review account ${userId?.slice(0, 8)} is not a member of association ${associationId.slice(0, 8)}`
   );
   throw new ReviewCohortBoundaryException();
+}
+
+/**
+ * Refuses (403 `REVIEW_COHORT_BOUNDARY`) making `userId` a member of association `associationId`
+ * when its roster already holds anybody on the other side of the cohort's boundary - so an officer
+ * can never make a review account a member of a real association, nor a member of the cohort's own.
+ * An empty roster refuses nobody: that is how the cohort's fictional association gets its first
+ * member.
+ */
+export async function assertRosterStaysOnOneSide(
+  manager: Pick<EntityManager, 'query'>,
+  associationId: string,
+  userId: string
+): Promise<void> {
+  const cohort = reviewCohort();
+  if (cohort.length === 0) return;
+  const rows: unknown[] = await manager.query(
+    isInReviewCohort(userId)
+      ? `SELECT 1 FROM association_members WHERE "associationId" = $1 AND NOT ("userId" = ANY($2::varchar[])) LIMIT 1`
+      : `SELECT 1 FROM association_members WHERE "associationId" = $1 AND "userId" = ANY($2::varchar[]) LIMIT 1`,
+    [associationId, [...cohort]]
+  );
+  if (rows.length === 0) return;
+  logger.log(
+    `[REVIEW_COHORT] member add refused: association ${associationId.slice(0, 8)} holds the other side of the boundary`
+  );
+  throw new ReviewCohortBoundaryException('This person cannot be added.');
 }

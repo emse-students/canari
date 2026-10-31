@@ -61,16 +61,18 @@ export class ReviewCohortBoundaryException extends ForbiddenException {
 }
 
 /**
- * The cohort a raw `SERVICE_ACCOUNT_USER_ID` value names: distinct ids, in the order given, case
- * kept. Blank entries around commas are ignored; any other entry outside the grammar throws, naming
- * its POSITION and never its text (the value is a secret).
+ * The cohort a raw `SERVICE_ACCOUNT_USER_ID` value names: distinct ids, in the order given,
+ * LOWER-CASED - every service compares a user id lower-cased (the header, the roster rows), so an
+ * entry pasted in upper case must still name its account. Blank entries around commas are ignored;
+ * any other entry outside the grammar throws, naming its POSITION and never its text (the value is
+ * a secret).
  */
 export function parseReviewCohort(raw: string | undefined): readonly string[] {
   const trimmed = raw?.trim() ?? '';
   if (trimmed === '') return [];
   const ids: string[] = [];
   trimmed.split(',').forEach((entry, index) => {
-    const id = entry.trim();
+    const id = entry.trim().toLowerCase();
     if (id === '') return;
     if (!ENTRY.test(id)) {
       throw new ReviewCohortConfigError(
@@ -95,9 +97,9 @@ export function assertReviewCohortConfigured(): number {
   return reviewCohort().length;
 }
 
-/** Whether `userId` is a review account. An absent id is not. */
+/** Whether `userId` is a review account, compared lower-cased. An absent id is not. */
 export function isInReviewCohort(userId: string | undefined | null): boolean {
-  return !!userId && reviewCohort().includes(userId);
+  return !!userId && reviewCohort().includes(userId.trim().toLowerCase());
 }
 
 /**
@@ -106,6 +108,16 @@ export function isInReviewCohort(userId: string | undefined | null): boolean {
  */
 export function sameSideOfReviewCohort(a: string, b: string): boolean {
   return isInReviewCohort(a) === isInReviewCohort(b);
+}
+
+/**
+ * Whether what a profile shows of `targetId` (its memberships, its roles) may be served to
+ * `viewerId`: on the same side of the boundary; with no session (`viewerId` absent - a public
+ * read), whenever the target is not a review account, which has no public identity.
+ */
+export function profileOpenAcrossCohort(viewerId: string | undefined, targetId: string): boolean {
+  if (viewerId) return sameSideOfReviewCohort(viewerId, targetId);
+  return !isInReviewCohort(targetId);
 }
 
 /**

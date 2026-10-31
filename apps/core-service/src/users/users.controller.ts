@@ -38,6 +38,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
+import { isInReviewCohort } from '../review-cohort';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -306,6 +307,15 @@ export class UsersController {
   async getAvatar(@Param('id') userId: string, @Req() req: Request, @Res() res: Response) {
     // ONE `[AVATAR]` LINE PER REQUEST, whatever the outcome - see `logAvatar`.
     const startedAt = Date.now();
+    // A review account has no public face (review-cohort.ts). An `<img>` carries no session, so the
+    // viewer is unknown here: the answer is the same 404 for everybody, and never cached, so it is
+    // not a fact an edge could keep about the id.
+    if (isInReviewCohort(userId)) {
+      this.logAvatar('absent', 404, startedAt, userId);
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(404).end();
+      return;
+    }
     let outcome: Awaited<ReturnType<AvatarService['fetchUserAvatar']>>;
     try {
       outcome = await this.avatarService.fetchUserAvatar(userId);

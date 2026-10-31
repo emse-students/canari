@@ -1405,32 +1405,42 @@ review account. A READ across the boundary returns nothing, as for anything outs
 | --- | --- | --- |
 | Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
 | A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
+| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles read with no session are empty for a review account | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
+| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - the member's name in the head, nothing more | core `users.controller.ts`, `internal-users.controller.ts` |
 | Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
 | Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
 | The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |
 | Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `reviewCohortAuthorFilterSql`, `spaces/reader-spaces.ts` |
 | Comments, reactions, mentions | no notice crosses (post author, parent author, mention), and a mention across is not sent at creation or at an edit | `post-interactions.service.ts`, `posts.service.ts` |
-| Follow requests | an ask, and an acceptance of one written before the rule, refused both ways | `recordFollowRequest`, `follow-requests.service.ts` |
-| The shop, partnerships, an association's roster, its forms | a review account sees, buys, claims, submits and reads the roster of only the associations it is a member of - none real; nobody but an admin sees a review account on a roster; a personal form is not answered across | `review-cohort-reach.ts`, `products` / `partnerships` / `forms.service.ts`, `listMembers` |
+| Follow requests | an ask, and an acceptance of one written before the rule, refused both ways; a row written before the rule is left out of the inbox, the followers, the sent requests and the bell | `recordFollowRequest`, `follow-requests.service.ts`, `sameSideOfReviewCohortSql` |
+| Communities | no invitation link or salon invitation seats one side among the other; a roster row across the community creator's side (written before the rule) entitles nothing in its key group, so it cannot be used to join | `review-cohort-community.ts`, `channel.service.ts` |
+| The shop, partnerships, an association's roster, its forms | a review account sees, buys, claims, submits and reads the roster of only the associations it is a member of - none real; nobody but an admin sees a review account on a roster, and the public roster never lists one; a personal form is not answered across | `review-cohort-reach.ts`, `products` / `partnerships` / `forms.service.ts`, `listMembers`, `listMembersPublic` |
+| Association membership and read grants | an officer cannot add a review account to a roster holding a member, nor a member to the cohort's; a read grant never opens a real association to a review account | `assertRosterStaysOnOneSide`, `readGrantReachesAssociationSql` |
+| The Minesweeper board | each side ranks among its own; a member never sees a review account on the board | `minesweeper.service.ts` |
 | Conversations and calls | no Add, invitation link or admission puts the two sides in one conversation, and no call or ring crosses | chat-delivery `utils/review-cohort-groups.ts`, `enrolAdmittedPeople`, `calls.service.ts` |
-| Booking spaces (the Reservations page) | a review account lists only spaces a review account owns, and nobody else lists those | `listedSpaces`, `bookings.service.ts` |
+| Booking spaces (the Reservations page, and a space reached by its link) | a review account lists and uses only spaces a review account created, and nobody else lists or uses those - a link reaches the space, never across; nobody books for, or names as a participant, someone across | `listedSpaces`, `assertSameSideAsSpace`, `bookings.service.ts` |
 
 **AN ADMIN BROWSES LIKE ANY READER, AND THE COHORT IS NOT ONE OF THEIR SPACES.** The house rule holds:
 browsing the feed, the "Live now" list or the agenda, a platform admin sees their own spaces and
 nothing of the cohort. An admin reaches the cohort only by an id: a post opened by its id
 (`adminSeesAll`), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
-`assertMayWatch` only)** - no admin ever shares the cohort's space, so without it a reported live of
-the cohort could be judged by nobody.
+`get` and `manifest` only)** - no admin ever shares the cohort's space, so without it a reported live
+of the cohort could be judged by nobody. It opens the key and the manifest and nothing else: the
+admin's chat lines and reactions on that live are refused (`mayWatch`).
 
-**What it does not close:** a page reached by its link, and a conversation or follow written BEFORE
-the rule - those are closed by the operator, the way the app closes one (leaving, unfollowing), never
-by a raw delete. An association post or event reaches a review account only by membership, so **a
-review account is never made a member of a real association**.
+**Rows written before the rule close themselves:** a follow (pending or accepted) or a bell row
+across the boundary is left out of every list and the bell; a community roster row across its
+creator's side entitles nothing in its key group. What the operator still does is the review
+account's OWN history - its conversation with a member is left the way the app leaves one, never by a
+raw delete. An officer cannot make a review account a member of a real association (the add is
+refused while the roster holds a member), so an association reaches a review account only when it is
+the cohort's own.
 
 **Where the cohort comes from:** `SERVICE_ACCOUNT_USER_ID` (dev `DEV_SERVICE_ACCOUNT_USER_ID`), a
 comma-separated list of user ids, read by `review-cohort.ts` - one module, byte-identical in
 core-service, social-service and chat-delivery-service (declared duplicate). An entry follows the
-user-id grammar (`users/user-id.ts`: visible ASCII, no `:`; case kept) minus `,`. **An entry outside
+user-id grammar (`users/user-id.ts`: visible ASCII, no `:`) minus `,`, and is read lower-cased, as
+every service compares a user id. **An entry outside
 it stops each of the three services at boot** (`assertReviewCohortConfigured`): dropping it would
 leave that account visible with no sign of it. The three are replaced `overlap`
 ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)), so a new replica that never
@@ -1443,6 +1453,15 @@ block of `users.service.spec.ts` (core-service); `review-cohort.integration.spec
 and the cohort cases of the products, partnerships, forms, roster, posts and comment specs
 (social-service); `add-enrolment.integration.spec.ts`, `members.controller.blocks.spec.ts`,
 `refusal-codes.spec.ts` and `calls.service.spec.ts` (chat-delivery-service).
+
+**THE SECRET CHANGES IN THREE STEPS, IN THIS ORDER** (2026-10-31): (1) ship the release carrying
+the cohort code with the CURRENT one-id value - the rule runs with a one-member cohort; (2) change the
+secret to the full list (and its `DEV_` twin); (3) redeploy that same release (a rerun of its deploy
+is a redeploy). Never the list before the code: a value the running code reads differently is a
+second change hidden in the first. **One window is accepted:** step 3 replaces the three services
+one after another, so for a few seconds one may read the old list and another the new one - the
+account being added is outside the cohort in one and inside it in the other, and that account is
+fictional, holds no relationship and has posted nothing anybody can see.
 
 **What it does not do:** it changes no account. The cohort's own content (a few fictional posts, a
 conversation, a link-only booking space) is seeded by an operator BEFORE the deploy - with the

@@ -21,6 +21,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { ReviewCohortBoundaryException } from '../review-cohort';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -196,5 +197,51 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     expect(await usesOf(id)).toBe(2);
     const joined = await Promise.all(joiners.map(isMember));
     expect(joined.filter(Boolean)).toHaveLength(2);
+  });
+
+  /**
+   * THE REVIEW COHORT (review-cohort.ts): a link never seats one side among the other, and a roster
+   * row across the boundary from the community's creator - one written before the rule - entitles
+   * nothing in its key group.
+   */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    afterEach(async () => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      await q(`DELETE FROM channel_members WHERE "userId" LIKE 'rev-%'`);
+    });
+
+    it('refuses a review account a link into a community of members, typed, writing nothing', async () => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'rev-1';
+      const { id, token } = await link(null);
+      const err = await service.acceptWorkspaceInvite(token, 'rev-1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await isMember('rev-1')).toBe(false);
+      expect(await usesOf(id)).toBe(0);
+    });
+
+    it('refuses a member a link into a community holding a review account', async () => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'rev-2';
+      const members = ds.getRepository(ChannelMember);
+      await members.save(members.create({ workspaceId: WS, userId: 'rev-2', roleIds: [] }));
+      const { token } = await link(null);
+      const err = await service.acceptWorkspaceInvite(token, 'member-x').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await isMember('member-x')).toBe(false);
+    });
+
+    it("entitles nobody across the creator's side to the key group, and keeps the creator's side entitled", async () => {
+      // A review account's row written before the rule, in a community a member created.
+      const members = ds.getRepository(ChannelMember);
+      await members.save(members.create({ workspaceId: WS, userId: 'rev-3', roleIds: [] }));
+      process.env.SERVICE_ACCOUNT_USER_ID = 'rev-3';
+      expect(await service.isDistributionGroupEntitled('workspace', WS, 'rev-3')).toBe(false);
+      expect(await service.isDistributionGroupEntitled('workspace', WS, 'owner')).toBe(true);
+      // The other way: the creator a review account, a member's row written before the rule.
+      process.env.SERVICE_ACCOUNT_USER_ID = 'owner';
+      expect(await service.isDistributionGroupEntitled('workspace', WS, 'rev-3')).toBe(false);
+      expect(await service.isDistributionGroupEntitled('workspace', WS, 'owner')).toBe(true);
+    });
   });
 });

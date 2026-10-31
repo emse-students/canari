@@ -9,6 +9,7 @@ import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-targe
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService, short } from './follows.service';
+import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
 /** The bell row a request writes for the person asked, and the one an acceptance writes back. */
 export const FOLLOW_REQUEST_NOTIFICATION = 'follow_request';
@@ -121,6 +122,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."createdAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]
@@ -134,7 +136,8 @@ export class FollowRequestsService {
     const rows: { n: string }[] = await this.dataSource.query(
       `SELECT count(*) AS n FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}`,
+          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}`,
       [userId, FOLLOW_PENDING]
     );
     return { pending: Number(rows[0]?.n ?? 0) };
@@ -210,6 +213,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."acceptedAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_ACCEPTED, clampLimit(limit), Math.max(0, offset)]
@@ -264,6 +268,7 @@ export class FollowRequestsService {
          FROM user_follows f
         WHERE f."followerUserId" = $1 AND f.status = $2
           AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
         ORDER BY f."createdAt" DESC, f.id
         LIMIT $3 OFFSET $4`,
       [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]

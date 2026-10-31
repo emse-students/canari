@@ -24,6 +24,11 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { sanitizeLog } from '../common/log.utils';
 import { isBlockedBetween } from '../common/user-blocks';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
+import {
+  communityCrossesReviewCohortFor,
+  communityIsAcrossReviewCohortFor,
+} from './review-cohort-community';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
@@ -1905,6 +1910,10 @@ export class ChannelService implements OnApplicationBootstrap {
       }
       return { workspaceSlug: ws.slug, alreadyMember: true };
     }
+    // A link never seats a review account among members, nor a member among review accounts.
+    if (await this.communityCrossesCohortLogged(ws.id, userId)) {
+      throw new ReviewCohortBoundaryException('This community cannot be joined.');
+    }
 
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
     const baseRole = this.baseMemberRole(roles);
@@ -2166,9 +2175,42 @@ export class ChannelService implements OnApplicationBootstrap {
     return workspace;
   }
 
-  /** The membership half of {@link assertWorkspaceMember}, shared with {@link isDistributionGroupEntitled}. */
+  /**
+   * The membership half of {@link assertWorkspaceMember}, shared with {@link isDistributionGroupEntitled}.
+   * A row across the review cohort's boundary from the community's creator entitles nothing: a row
+   * written before the rule must not open the key group (`review-cohort-community.ts`).
+   */
   private async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
-    return !!(await this.memberRepo.findOne({ where: { workspaceId, userId } }));
+    if (!(await this.memberRepo.findOne({ where: { workspaceId, userId } }))) return false;
+    return !(await this.acrossCommunityCreatorLogged(workspaceId, userId));
+  }
+
+  /** {@link communityIsAcrossReviewCohortFor}, logged when it refuses. */
+  private async acrossCommunityCreatorLogged(
+    workspaceId: string,
+    userId: string
+  ): Promise<boolean> {
+    if (!(await communityIsAcrossReviewCohortFor(this.memberRepo.manager, workspaceId, userId))) {
+      return false;
+    }
+    this.logger.warn(
+      `[REVIEW_COHORT] workspace=${workspaceId} user=${userId.slice(0, 8)}: a roster row across the review cohort's boundary entitles nothing`
+    );
+    return true;
+  }
+
+  /** {@link communityCrossesReviewCohortFor}, logged when it refuses. */
+  private async communityCrossesCohortLogged(
+    workspaceId: string,
+    userId: string
+  ): Promise<boolean> {
+    if (!(await communityCrossesReviewCohortFor(this.memberRepo.manager, workspaceId, userId))) {
+      return false;
+    }
+    this.logger.log(
+      `[REVIEW_COHORT] workspace=${workspaceId} user=${userId.slice(0, 8)}: across the review cohort's boundary`
+    );
+    return true;
   }
 
   /** The access half of {@link assertChannelReader}, shared with {@link isDistributionGroupEntitled}. */
@@ -2176,7 +2218,8 @@ export class ChannelService implements OnApplicationBootstrap {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    return !!member && this.canAccessChannel(channel, member, userId);
+    if (!member || !this.canAccessChannel(channel, member, userId)) return false;
+    return !(await this.acrossCommunityCreatorLogged(channel.workspaceId, userId));
   }
 
   /**
@@ -3875,6 +3918,16 @@ export class ChannelService implements OnApplicationBootstrap {
         code: 'USER_BLOCKED',
         message: 'This person cannot be added.',
       });
+    }
+
+    // Nor across the review cohort's boundary, either way (review-cohort.ts): neither the inviter
+    // and the invitee, nor the invitee and anybody already in the community.
+    if (
+      !sameSideOfReviewCohort(input.actorUserId, input.targetUserId) ||
+      (await this.communityCrossesCohortLogged(channel.workspaceId, input.targetUserId))
+    ) {
+      this.logger.log(`[INVITE] refused across the review cohort's boundary channel=${channelId}`);
+      throw new ReviewCohortBoundaryException('This person cannot be added.');
     }
 
     // Reject early if the invitee has no MLS device - the key DM could never be delivered.

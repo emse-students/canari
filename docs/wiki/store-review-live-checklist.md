@@ -110,6 +110,7 @@ form)_, so the UGC statement goes in an attachment and the Notes point at it.
 4. The build the reviewer gets: an external TestFlight pre-release (Beta App Review, the exposure of the 2.5.4 refusal, [mobile](frontend/mobile.md)) or a stable with lives flipped on.
 5. A private link for the video, and a look at every frame.
 6. Confirmation that the broadcaster's strike screens and the live-chat report control are in the review build.
+7. The review cohort's secret changed in its order: the release ships with the CURRENT value, then the secret becomes the full list, then the same release is redeployed ([profiles-and-access](profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)). The counterpart's posts are seeded before any of it.
 
 ## See also
 

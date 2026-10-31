@@ -3,7 +3,11 @@ import { REVIEW_A, REVIEW_B } from './review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
-import { associationsReachedByReviewer } from '../associations/review-cohort-reach';
+import {
+  assertRosterStaysOnOneSide,
+  associationsReachedByReviewer,
+} from '../associations/review-cohort-reach';
+import { ReviewCohortBoundaryException } from '../review-cohort';
 import {
   IN_FEED_AUDIENCE_SQL,
   READER_SPACES_SQL,
@@ -270,6 +274,61 @@ maybe('the review cohort against PostgreSQL', () => {
         A1,
         A2,
       ]);
+    }
+  });
+
+  it('never makes a review account a member of a real association, nor a member of the cohort one', async () => {
+    const A3 = '00000000-0000-4000-8000-0000000000a3';
+    const manager = {
+      query: async (sql: string, params?: unknown[]) => (await client.query(sql, params)).rows,
+    };
+    await client.query(
+      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`,
+      [A1, MEMBER]
+    );
+    try {
+      await expect(assertRosterStaysOnOneSide(manager, A1, REVIEW_A)).rejects.toBeInstanceOf(
+        ReviewCohortBoundaryException
+      );
+      await expect(assertRosterStaysOnOneSide(manager, A1, ADMIN)).resolves.toBeUndefined();
+      // An empty roster takes its first member, whichever side: the cohort's association starts so.
+      await expect(assertRosterStaysOnOneSide(manager, A3, REVIEW_B)).resolves.toBeUndefined();
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`,
+        [A3, REVIEW_B]
+      );
+      await expect(assertRosterStaysOnOneSide(manager, A3, MEMBER)).rejects.toBeInstanceOf(
+        ReviewCohortBoundaryException
+      );
+      await expect(assertRosterStaysOnOneSide(manager, A3, REVIEW_A)).resolves.toBeUndefined();
+    } finally {
+      await client.query(`DELETE FROM association_members WHERE "associationId" IN ($1, $2)`, [
+        A1,
+        A3,
+      ]);
+    }
+  });
+
+  it('never opens a real association to a review account by a read grant', async () => {
+    const assoPost = POSTS[3];
+    await client.query(
+      `INSERT INTO read_grants (user_id, campus, formation, granted_by)
+       VALUES ($1, 'saint-etienne', NULL, $2), ($3, 'saint-etienne', NULL, $2)`,
+      [REVIEW_B, ADMIN, ADMIN]
+    );
+    try {
+      const visible = async (viewer: string) =>
+        (
+          await client.query(
+            `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible FROM posts WHERE posts.id = $1`,
+            [assoPost.id, viewer]
+          )
+        ).rows[0].visible;
+      expect(await visible(REVIEW_B)).toBe(false);
+      // The same grant still opens it to the admin outside the cohort - the grant itself works.
+      expect(await visible(ADMIN)).toBe(true);
+    } finally {
+      await client.query(`DELETE FROM read_grants`);
     }
   });
 });

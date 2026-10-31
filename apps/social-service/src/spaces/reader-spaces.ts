@@ -123,12 +123,23 @@ function isAdminSql(user: string): string {
  * personal post), and only on READ paths - see `ReadOpts`.
  */
 export function readGrantReachesAssociationSql(association: string, user: string): string {
+  // A grant never carries a review account across the cohort's boundary (review-cohort.ts): it
+  // reads an association by a grant only when the association is the cohort's own (a review
+  // account on its roster). With no cohort the clause is `NOT false`, and changes nothing.
+  const cohortReader = inReviewCohortSql(`${user}.id`);
+  const cohortGate =
+    cohortReader === 'false'
+      ? ''
+      : `
+      AND (NOT ${cohortReader} OR EXISTS (SELECT 1 FROM association_members rg_cohort
+        WHERE rg_cohort."associationId" = ${association}
+          AND ${inReviewCohortSql('rg_cohort."userId"')}))`;
   return `EXISTS (SELECT 1 FROM read_grants rg_grant
     JOIN spaces rg_space ON rg_space.campus = rg_grant.campus
       AND (rg_grant.formation IS NULL OR rg_grant.formation = rg_space.formation)
     JOIN association_audiences rg_rule ON rg_rule."associationId" = ${association}
       AND ${ruleReachesSpaceSql('rg_rule', 'rg_space')}
-    WHERE rg_grant.user_id = ${user}.id)`;
+    WHERE rg_grant.user_id = ${user}.id${cohortGate})`;
 }
 
 /**
@@ -308,6 +319,17 @@ export function postVisibleToViewerSql(
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: opts.readGrants ?? true })})`;
+}
+
+/**
+ * A SQL boolean: the user ids the expressions `a` and `b` yield stand on the same side of the
+ * review cohort's boundary (`review-cohort.ts`). The constant `true` with no cohort configured. For
+ * a row written BEFORE the rule - a follow, a bell row - which every list then leaves out.
+ */
+export function sameSideOfReviewCohortSql(a: string, b: string): string {
+  const aIn = inReviewCohortSql(a);
+  if (aIn === 'false') return 'true';
+  return `(${aIn} = ${inReviewCohortSql(b)})`;
 }
 
 /**

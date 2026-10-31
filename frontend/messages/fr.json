@@ -3715,6 +3715,7 @@
   "refusal_not_a_member": "Vous ne faites pas partie de cette conversation.",
   "refusal_membership_not_allowed": "Vous ne pouvez pas modifier les membres de ce groupe.",
   "refusal_user_blocked": "Cette personne ne peut pas être ajoutée.",
+  "refusal_review_cohort_boundary": "Cette action n'est pas possible avec ce compte.",
   "refusal_invite_not_a_group": "Seules les conversations de groupe ont un lien d'invitation.",
   "refusal_no_active_device": "Aucun appareil actif : ouvrez Canari sur un appareil puis réessayez.",
   "refusal_pin_not_set": "Aucun PIN n'est enregistré pour ce compte.",

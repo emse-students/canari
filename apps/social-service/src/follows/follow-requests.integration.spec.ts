@@ -69,6 +69,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   let admin: Client;
   let ds: DataSource;
   let follows: FollowsService;
+  let notifications: PostNotificationsService;
   let requests: FollowRequestsService;
   const pushed: Pushed[] = [];
   /** The internal routes' secret for this file, set for its duration and restored after. */
@@ -164,7 +165,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     });
     await ds.initialize();
     follows = new FollowsService({} as never, ds.getRepository(UserFollow), {} as never);
-    const notifications = new PostNotificationsService(
+    notifications = new PostNotificationsService(
       ds.getRepository(PostNotification),
       { manager: ds.manager } as never,
       push as never,
@@ -324,6 +325,28 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       const err = await requests.accept('bob', 'ann').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
       expect(await statusOf('ann', 'bob')).toBe('pending');
+    });
+
+    it('leaves every row written before the rule out of the lists and the bell, both ways', async () => {
+      // ann -> bob accepted, cid -> bob pending, bob -> dan pending, and their bell rows: all
+      // written before bob became a review account.
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      await requests.ask('cid', 'bob');
+      await requests.ask('bob', 'dan');
+      expect((await notifications.getNotifications('bob')).length).toBeGreaterThan(0);
+      process.env.SERVICE_ACCOUNT_USER_ID = 'bob';
+      expect(await requests.followers('bob', 50, 0)).toEqual([]);
+      expect(await requests.incoming('bob', 50, 0)).toEqual([]);
+      expect(await requests.incomingCount('bob')).toEqual({ pending: 0 });
+      expect(await requests.outgoing('bob', 50, 0)).toEqual([]);
+      expect(await requests.incoming('dan', 50, 0)).toEqual([]);
+      expect(await notifications.getNotifications('bob')).toEqual([]);
+      expect(await notifications.getNotifications('dan')).toEqual([]);
+      expect(await notifications.getNotifications('ann')).toEqual([]);
+      // The rows are still there: lifting the cohort shows them again, nothing was deleted.
+      delete process.env.SERVICE_ACCOUNT_USER_ID;
+      expect((await requests.followers('bob', 50, 0)).map((r) => r.userId)).toEqual(['ann']);
     });
 
     it('lets two review accounts ask and accept each other', async () => {

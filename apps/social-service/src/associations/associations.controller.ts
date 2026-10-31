@@ -26,7 +26,7 @@ import type { Response } from 'express';
 import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { isInReviewCohort } from '../review-cohort';
+import { isInReviewCohort, profileOpenAcrossCohort } from '../review-cohort';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
 import {
@@ -255,15 +255,26 @@ export class AssociationsController {
     return this.pushMutes.listMuted(userId);
   }
 
-  /** Public - current association memberships for a user profile. */
+  /**
+   * Public - current association memberships for a user profile. Empty across the review cohort's
+   * boundary, and for a review account read with no session (`profileOpenAcrossCohort`).
+   */
   @Get('users/:userId/memberships')
-  listUserMemberships(@Param('userId') userId: string) {
+  async listUserMemberships(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId?: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public - past/honorary association roles for a user profile. */
+  /** Public - past/honorary association roles for a user profile, gated like the memberships. */
   @Get('users/:userId/role-history')
-  listUserRoleHistory(@Param('userId') userId: string) {
+  async listUserRoleHistory(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId?: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listRoleHistory(userId);
   }
 
