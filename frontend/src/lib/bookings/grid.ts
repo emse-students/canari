@@ -12,8 +12,9 @@
  * Saturday's column (it is a Saturday morning) while the read that holds it starts the day before
  * (`slotsReadRange`).
  *
- * The window check is `bookingWindowRefusal`, the server's own (`bookingWindow.ts`). It only
- * DRAWS: the device's clock may be wrong, so the screen never withholds a request on it.
+ * The window check is `bookingWindowRefusal`, the server's own (`bookingWindow.ts`), read on the
+ * device's clock. It decides what is OFFERED: a unit whose START it refuses is drawn greyed and is
+ * not a control. The server's clock decides every request, and its refusal is said plainly.
  */
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
@@ -131,8 +132,8 @@ export function zoneDiffersFromDevice(zone: string, nowMs: number): boolean {
 }
 
 /**
- * The server's window rule (`bookingWindow.ts`) for one start, on the DEVICE's clock: it draws a
- * unit as bookable or not, nothing more - the server answers every request on its own clock.
+ * The server's window rule (`bookingWindow.ts`) for one start, on the DEVICE's clock: a unit it
+ * refuses as a start is not offered. The server answers every request on its own clock.
  */
 export function windowRefusal(
   space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,

@@ -50,6 +50,8 @@
     onBlockInstead?: () => void;
     /** Re-reads the grid and the reader's bookings, the sheet staying open. */
     onReread: () => Promise<void>;
+    /** The server refused the START as over or too near (`started`, `notice`). */
+    onStartRefused?: (startMs: number) => void;
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
     onClose: (changed: boolean) => void;
   }
@@ -61,6 +63,7 @@
     initialCount = 1,
     onBlockInstead,
     onReread,
+    onStartRefused,
     onClose,
   }: Props = $props();
 
@@ -146,8 +149,17 @@
         return;
       }
       error = describeBookingRefusal(e, m.bookings_sheet_submit());
-      // The range was taken or closed meanwhile, or the questions changed: the grid is stale.
-      if (code === 'slot-taken' || code === 'blocked' || code === 'space-changed') {
+      // The start is over or too near on the server's clock: never offered again by this view.
+      if (code === 'started' || code === 'notice') onStartRefused?.(first.startMs);
+      // The range was taken or closed meanwhile, the questions changed, or the start is no longer
+      // bookable: the grid is stale.
+      if (
+        code === 'slot-taken' ||
+        code === 'blocked' ||
+        code === 'space-changed' ||
+        code === 'started' ||
+        code === 'notice'
+      ) {
         Log.i('BOOKINGS', `the sheet's range went stale: ${code}`);
         showToast(error, 'error');
         onClose(true);

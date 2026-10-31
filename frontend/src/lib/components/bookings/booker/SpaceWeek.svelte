@@ -52,7 +52,10 @@
    */
   interface Props {
     space: BookerSpace;
-    /** The device's clock, which only DRAWS (the server decides every request). */
+    /**
+     * The device's clock: it decides what is OFFERED (a unit whose start the booking window
+     * refuses is not), while the server's clock decides every request.
+     */
     nowMs: number;
     /** `block`: the organiser's dashboard, a free unit opens the block sheet (WP-R5). */
     mode?: 'book' | 'block';
@@ -89,6 +92,12 @@
   /** The column shown: a space with several columns shows one at a time (D44, D46). */
   let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
   let sheet = $state<Sheet | null>(null);
+  /**
+   * The starts the server refused as `started` or `notice` while the device's clock still took
+   * them. Time only moves forward, so such a start is never bookable again: it stays unoffered
+   * for the life of this view, whatever the device's clock says - no loop of the same refusal.
+   */
+  let refusedStarts = $state<ReadonlySet<number>>(new Set());
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
@@ -208,7 +217,10 @@
       sheet = { kind: 'detail', resource: picked, unit };
       return;
     }
-    if (mode !== 'block' && windowRefusal(space, unit.startMs, nowMs) !== null) {
+    if (
+      mode !== 'block' &&
+      (windowRefusal(space, unit.startMs, nowMs) !== null || refusedStarts.has(unit.startMs))
+    ) {
       Log.d('BOOKINGS', 'pick ignored: the unit is outside the booking window');
       return;
     }
@@ -284,7 +296,6 @@
       <div
         class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
         inert={!weekHeld}
-        aria-busy={!weekHeld}
         data-week-grid
       >
         {#if drawn.endMin === drawn.startMin}
@@ -299,6 +310,7 @@
             mode={narrow ? 'day' : 'week'}
             blockMode={mode === 'block'}
             {nowMs}
+            {refusedStarts}
             onPick={pick}
           />
         {/if}
@@ -322,6 +334,9 @@
       run={s.run}
       initialCount={s.initialCount}
       onReread={reread}
+      onStartRefused={(startMs) => {
+        refusedStarts = new Set([...refusedStarts, startMs]);
+      }}
       onBlockInstead={s.blockRun.length
         ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun, initialCount: 1 })
         : undefined}

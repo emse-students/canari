@@ -41,16 +41,16 @@ const mounted: (() => void)[] = [];
 const onPick = vi.fn();
 
 /** Mounts one day of `units` and returns its cells in time order. */
-async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false) {
+async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false, now = NOW) {
   const app = mount(SpaceGrid, {
     target: document.body,
     props: {
       space,
       resource,
-      layout: weekLayout(units, ['2026-11-02'], space, NOW),
+      layout: weekLayout(units, ['2026-11-02'], space, now),
       mode: 'day',
       blockMode,
-      nowMs: NOW,
+      nowMs: now,
       onPick,
     },
   });
@@ -128,6 +128,52 @@ describe('SpaceGrid - drag a range', () => {
     expect(cells[3].className).not.toContain('bg-cn-yellow/40');
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('drags DOWN past units the horizon refuses as starts: only the start is judged', async () => {
+    // A one-day horizon ending inside unit 2: units 2.. are refused AS STARTS, not as steps.
+    const space = { ...spaceOf(4), horizonDays: 1 } as BookerSpace;
+    const now = START - 24 * 3_600_000 + 1.5 * STEP;
+    const units = free(6);
+    const cells = await open(units, space, false, now);
+    expect((cells[2] as HTMLButtonElement).disabled).toBe(true);
+    pointer('pointerdown', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[1], 'mouse', 20, 3);
+    pointer('pointerup', cells[1], 'mouse', 20, 3);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 3);
+  });
+
+  it('stops an UPWARD drag before a unit the window refuses as a start', async () => {
+    // A 1 h notice from NOW (30 min before unit 0): unit 0 is too near to start a booking.
+    const space = { ...spaceOf(4), minNoticeMinutes: 60 } as BookerSpace;
+    const units = free(6);
+    const cells = await open(units, space);
+    pointer('pointerdown', cells[3], 'mouse', 0, 3);
+    pointer('pointermove', cells[3], 'mouse', 20, 0);
+    pointer('pointerup', cells[3], 'mouse', 20, 0);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 3);
+  });
+
+  it('never offers a start the server refused, whatever the device clock says', async () => {
+    const units = free(3);
+    const app = mount(SpaceGrid, {
+      target: document.body,
+      props: {
+        space: spaceOf(4),
+        resource,
+        layout: weekLayout(units, ['2026-11-02'], spaceOf(4), NOW),
+        mode: 'day',
+        nowMs: NOW,
+        refusedStarts: new Set([units[0].startMs]),
+        onPick,
+      },
+    });
+    mounted.push(() => unmount(app, { outro: false }));
+    flushSync();
+    await tick();
+    const cells = [...document.querySelectorAll<HTMLButtonElement>('[data-cell]')];
+    expect(cells[0].disabled).toBe(true);
+    expect(cells[1].disabled).toBe(false);
   });
 
   it('drags upward from the lower row, the first unit being the upper one', async () => {

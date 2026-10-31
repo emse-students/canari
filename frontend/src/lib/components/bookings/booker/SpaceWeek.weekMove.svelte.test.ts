@@ -3,8 +3,9 @@
  * MOVING THE WEEK KEEPS THE PAGE WHERE IT IS (owner, 2026-10-31: an arrow sent the page back to
  * the top). The week is component state, no navigation; what moved the page was the grid being
  * swapped for the one-line "nothing this week" while the next week loaded, which collapsed the page
- * and clamped its scroll. Pinned: while the read is in flight the last grid stays drawn (inert,
- * busy), the arrow keeps the focus, and the new week replaces it once read.
+ * and clamped its scroll. Pinned: while the read is in flight the last grid stays drawn (inert),
+ * the arrow keeps the focus, and the new week replaces it once read. A dimmed "Aujourd'hui" is
+ * aria-disabled, not disabled: pressing it moves nothing and keeps the focus.
  */
 import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick } from 'svelte';
@@ -86,7 +87,6 @@ it('keeps the grid drawn and the arrow focused while the next week loads', async
   expect(document.querySelectorAll('[data-cell]')).toHaveLength(1);
   expect(document.body.textContent).not.toContain(m.bookings_week_empty());
   expect(grid.hasAttribute('inert')).toBe(true);
-  expect(grid.getAttribute('aria-busy')).toBe('true');
   expect(document.activeElement).toBe(next);
 
   land(weekOf('2026-11-12'));
@@ -95,4 +95,24 @@ it('keeps the grid drawn and the arrow focused while the next week loads', async
   const cell = document.querySelector('[data-cell]')!;
   expect(cell.getAttribute('aria-label')).toContain('12');
   expect(document.activeElement).toBe(next);
+});
+
+it('a dimmed "Aujourd\'hui" moves nothing and keeps the focus when pressed', async () => {
+  api.getSlots.mockResolvedValue(weekOf('2026-11-05'));
+  mount(SpaceWeek, { target: document.body, props: { space: SPACE, nowMs: NOW } });
+  await settle();
+  const today = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === m.bookings_week_today()
+  )!;
+  expect(today.getAttribute('aria-disabled')).toBe('true');
+  const label = document.querySelector('h2')?.textContent;
+  const reads = api.getSlots.mock.calls.length;
+
+  today.focus();
+  today.click();
+  await settle();
+
+  expect(document.activeElement).toBe(today);
+  expect(document.querySelector('h2')?.textContent).toBe(label);
+  expect(api.getSlots.mock.calls.length).toBe(reads);
 });

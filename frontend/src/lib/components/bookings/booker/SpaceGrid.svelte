@@ -49,10 +49,24 @@
     /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
     blockMode?: boolean;
     nowMs: number;
+    /**
+     * Starts the server refused as `started` or `notice`: the device's clock still takes them, but
+     * time only moves forward, so they are never offered again.
+     */
+    refusedStarts?: ReadonlySet<number>;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
-  let { space, resource, layout, mode, blockMode = false, nowMs, onPick }: Props = $props();
+  let {
+    space,
+    resource,
+    layout,
+    mode,
+    blockMode = false,
+    nowMs,
+    refusedStarts = new Set<number>(),
+    onPick,
+  }: Props = $props();
 
   /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
   let coarse = $state(isCoarsePointerDevice());
@@ -102,8 +116,10 @@
     const current = selection;
     if (!current) return null;
     const cells = layout.days[current.day]?.cells ?? [];
-    // A unit not offered ends a drawn range as a taken one does: it is no cell of a booking.
-    const walk = cells.map((c) => (offered(c) ? c : null));
+    // Only a range's START is judged by the booking window, as the server does: a unit AFTER the
+    // anchor joins the range whatever the window says of it as a start, and a unit BEFORE the
+    // anchor would become the start, so it must be offered.
+    const walk = cells.map((c, i) => (i > current.anchor || offered(c) ? c : null));
     const { first, count } = dragRange(walk, current.anchor, current.current, unitLimit);
     if (count === 0) return null;
     return { day: current.day, first, last: first + count - 1, count, cells };
@@ -204,7 +220,12 @@
    * be booked now is drawn greyed and is not a control at all.
    */
   function offered(unit: SlotUnit): boolean {
-    return blockMode || unit.state !== 'free' || windowRefusal(space, unit.startMs, nowMs) === null;
+    return blockMode || unit.state !== 'free' || bookableStart(unit);
+  }
+
+  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it as a start. */
+  function bookableStart(unit: SlotUnit): boolean {
+    return windowRefusal(space, unit.startMs, nowMs) === null && !refusedStarts.has(unit.startMs);
   }
 
   /** What a cell says, and whether the booking window refuses it now. */
@@ -218,7 +239,7 @@
     if (unit.state === 'blocked') {
       return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
     }
-    if (windowRefusal(space, unit.startMs, nowMs) === null) {
+    if (bookableStart(unit)) {
       return { text: m.bookings_cell_free(), closed: false, past: false };
     }
     // A free unit already over keeps its name for a screen reader but is not written in the cell.

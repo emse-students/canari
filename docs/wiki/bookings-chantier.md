@@ -214,7 +214,7 @@ unchanged. `AvailabilityEditor` now reads: the four templates, the week to paint
 the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) was REMOVED on 2026-10-30** at the owner's request: it duplicated the painted week and was impractical. The painted week is the ONE editor of the week; what that makes impossible is below.
 
 - **One model: the editor's `rows`.** The painter, the templates and the dated lines all edit the
-  same `rows`, so they cannot disagree and the save, the dirty flag, the 24/7 warning and the D29
+  same `rows`, so they cannot disagree and the save, the dirty flag and the D29
   refusal (`StrandedBookings`, each booking with its cancel) are untouched. The painter reads
   `weekRunsOf(rows)` and writes `paintRows(...)`.
 - **RUNS, not cells** (`lib/bookings/availabilityPaint.ts`, pure): per weekday, the merged open
@@ -243,7 +243,7 @@ the dated lines apart, closures. **"En clair" (the weekly lines typed by hand) w
   `ui-icon-button--sm` at the run's top right: on touching 30-min slots it overlaps the next
   slot's, the later one winning, so a run that short is reached by keyboard or its upper part.
 - **Templates** replace the week (the dated lines stay, and it is still a draft until saved):
-  Toujours ouvert (24/7, which the existing warning names), Jours ouvres 8h-20h, Vide, and
+  Toujours ouvert (24/7), Jours ouvres 8h-20h, Vide, and
   Evenement ponctuel (an empty week plus one dated line to fill). A template wipes unsaved paint
   without a confirmation: nothing is saved until the button, and leaving warns.
 - **Dated lines have their own list** and the per-line "type" select is gone (a line is weekly or
@@ -833,12 +833,23 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
   slides with the clock);
 - `not-open-yet`: anything before `opensAt`.
 
+Each judges the START alone, so a booking starting inside the horizon may run up to `maxSteps` x
+the step past it - across midnight, or across several open days (see above).
+
+**The length bound comes before every window** (`rangeLengthRefusal`, review of #2789). It reads
+the settings alone: a step space takes at most `maxSteps` x `stepMinutes` (`too-many-steps`), a
+slots space at most 49 h, a slot crossing at most one midnight plus a fall-back hour
+(`outside-availability`). `book()` applies it before `datesAround`, and `checkRangeShape` and the
+D29 check put it first, so an over-long range is refused before any window is built and the work
+a range costs never grows with its length. `slots.spec.ts` pins a forty-year range.
+
 **Quotas (D17).** They count the person's LIVE bookings of the space, as holder or as a
 participant who has not withdrawn.
 
 - `active-bookings` counts the bookings not yet ENDED, so one in progress still counts.
 - `minutes-per-period` sums the bookings STARTING in the same local day, or the same ISO week
-  (keyed by its Monday).
+  (keyed by its Monday). A booking counts WHOLE in its START period: one crossing midnight or the
+  end of a week is never split between two periods.
 - The organiser booking on someone's behalf is exempt: the caller (WP-B3) does not run the check.
 
 **Withdrawal (D5), DECIDED BY THE USER ON 2026-10-17.** A PARTICIPANT may withdraw only until
@@ -1045,7 +1056,7 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 
 **Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
 signed-out preview route, not committed): no horizontal scroll, the night range folded, the 24/7
-warning, the date sheet. Not yet seen against a running API - the first organiser to use it on dev
+warning (deleted since, 2026-10-31), the date sheet. Not yet seen against a running API - the first organiser to use it on dev
 is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts` (the opening in the
 space's zone), `refusals.test.ts`, `stranded.test.ts`, `wallTime.test.ts` (both DST holes),
 `unsavedChanges.test.ts`, `editSections.test.ts`, `DateTimeField.svelte.test.ts`; on the server,
@@ -1166,20 +1177,28 @@ id to the organiser and the linked account, not to a booker.
 - **A UNIT THAT CANNOT BE BOOKED NOW IS NOT OFFERED** (owner, 2026-10-31, replacing "it still
   opens with a note"). A free unit outside the booking window on the device's clock (over, too
   soon, too far, not open yet) is drawn greyed, redrawn every minute and at the opening instant,
-  and is a DISABLED button on the booker's grid: no tap, no drag starts on it, a drag stops before
-  it, and `SpaceWeek.pick` opens nothing on it. The organiser's block grid keeps it a control. The
-  server's clock still decides: if it refuses at the send (`started`, `notice`...), the sheet says
-  the typed refusal in plain words ("Ce créneau n'est plus disponible"), never a word about a
-  device, a clock or a server. Like the server, only the START of a range is judged.
-  `SpaceGrid.past.svelte.test.ts` pins it. The same pass removed "encrypted on this device" from
+  and is a DISABLED button on the booker's grid: no tap, no drag starts on it, and
+  `SpaceWeek.pick` opens nothing on it. The organiser's block grid keeps it a control. **Like the
+  server, only the START is judged**: a drag DOWN from an offered unit runs on over units the
+  window refuses as starts (e.g. past the horizon), and only a drag UP, whose new first unit would
+  be the start, stops before one. The server's clock still decides: if it refuses at the send, the
+  sheet says the typed refusal in plain words ("Ce créneau n'est plus disponible"), never a word
+  about a device, a clock or a server. A `started` or `notice` refusal also closes the sheet and
+  puts that start in `SpaceWeek`'s `refusedStarts`, never offered again by that view: the read
+  carries no server time to correct the device's clock, and time only moves forward, so offering
+  it again would only replay the refusal. `SpaceGrid.past`, `SpaceGrid.drag` and `BookingSheet`
+  tests pin it. **Known, not done**: the sheet's run of free units stops at the edge of the week
+  read, so a booking running past the last loaded day is written by the server but not offered by
+  the screen. Before the screen offers it, `freeRunFrom` would need a read beyond the week. The same pass removed "encrypted on this device" from
   the two poster hints: the screens say what the reader needs, not how it is done.
 - **MOVING THE WEEK KEEPS THE PAGE WHERE IT IS** (owner, 2026-10-31). The week shown is
   `SpaceWeek` state, never the URL, so no `goto` is involved; what sent the page to the top was the
   grid being replaced by the one-line "nothing this week" while the moved-to week loaded, which
-  collapsed the page and clamped its scroll. The last grid read stays drawn, dimmed, `inert` and
-  `aria-busy`, until the new week lands. "Aujourd'hui" is dimmed with `aria-disabled`, never
-  `disabled`, which dropped the focus its own press put there. `SpaceWeek.weekMove.svelte.test.ts`
-  pins it (and fails on the old code). The phone strip, the column switch and the dashboard use the
+  collapsed the page and clamped its scroll. The last grid read stays drawn, dimmed and `inert`,
+  until the new week lands (no `aria-busy`: an inert subtree is not read, so it would say nothing).
+  "Aujourd'hui" is dimmed with `aria-disabled`, never `disabled`, which dropped the focus its own
+  press put there; pressed while dimmed it moves nothing. `SpaceWeek.weekMove.svelte.test.ts` pins
+  both (the first fails on the old code). The phone strip, the column switch and the dashboard use the
   same component; no bookings page navigates by URL for a view change.
 - **A NIGHT WINDOW STILL RUNNING AFTER MIDNIGHT STAYS IN VIEW** (review of #2035). The server
   keeps a unit in `spaceSlots(from, to)` when its WINDOW's date is in the range, so every read
