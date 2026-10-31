@@ -5,6 +5,7 @@ import { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
 import { UserRowGoneError } from './user-write';
+import { REVIEW_COHORT_BOUNDARY, ReviewCohortBoundaryException } from '../review-cohort';
 
 /**
  * Blocking is exercised by `user-blocks.service.spec.ts`; here it only has to be present. An
@@ -445,6 +446,36 @@ describe('UsersService review cohort', () => {
     const { service, where } = makeService(true);
     await service.directory({ campus: 'saint-etienne' }, 'dd04');
     expect(where.some(([sql]) => sql.includes('reviewCohort'))).toBe(false);
+  });
+
+  it('opens a profile on the same side, and refuses one across, both ways (403, typed)', async () => {
+    const member = makeService(false).service;
+    await expect(member.assertMayOpenProfile('aa01', 'bb02')).resolves.toBeUndefined();
+    await expect(member.assertMayOpenProfile('cc03', 'dd04')).resolves.toBeUndefined();
+    for (const [from, to] of [
+      ['aa01', 'cc03'],
+      ['cc03', 'aa01'],
+    ]) {
+      const refusal = await member.assertMayOpenProfile(from, to).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect((refusal as ReviewCohortBoundaryException).getResponse()).toEqual(
+        expect.objectContaining({ code: REVIEW_COHORT_BOUNDARY })
+      );
+    }
+  });
+
+  it('lets a global admin open a review account, and never lets a review account open an admin', async () => {
+    const asAdmin = makeService(true).service;
+    await expect(asAdmin.assertMayOpenProfile('ad01', 'aa01')).resolves.toBeUndefined();
+    await expect(asAdmin.assertMayOpenProfile('aa01', 'ad01')).rejects.toBeInstanceOf(
+      ReviewCohortBoundaryException
+    );
+  });
+
+  it('answers a batch with the ids on the same side only, both ways', async () => {
+    const { service } = makeService(false);
+    expect(await service.profilesOpenTo('aa01', ['bb02', 'cc03'])).toEqual(['bb02']);
+    expect(await service.profilesOpenTo('cc03', ['bb02', 'dd04'])).toEqual(['dd04']);
   });
 
   it('restricts nothing with no cohort configured', async () => {

@@ -3,6 +3,7 @@ import { REVIEW_A, REVIEW_B } from './review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { associationsReachedByReviewer } from '../associations/review-cohort-reach';
 import {
   IN_FEED_AUDIENCE_SQL,
   READER_SPACES_SQL,
@@ -10,6 +11,7 @@ import {
   liveVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
+  reviewCohortAuthorFilterSql,
   type SpacePair,
 } from './reader-spaces';
 
@@ -19,9 +21,9 @@ import {
  * only the cohort, and a member never reads the cohort, for posts, lives, the feed gate and the
  * announcements alike.
  *
- * The cast mirrors production on purpose: review account A still carries a real student profile
- * (ICM x saint-etienne), which is exactly the case the rule must hold for without anybody editing
- * it; B has no profile at all.
+ * Review account A carries a student profile naming a real space - the case the rule must hold for
+ * without anybody editing a profile - and B has none at all. The profile is the fixture's, the same
+ * one the member has, and says nothing about any real account.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reader-spaces.integration.spec.ts`, whose setup this
  * one trims to the tables these fragments read.
@@ -135,8 +137,9 @@ maybe('the review cohort against PostgreSQL', () => {
         JSON.stringify(u.cursus),
       ]);
     }
-    // Both A and the member follow B: only A may be told that B published.
-    await client.query(`INSERT INTO user_follows VALUES ($1, $2), ($3, $2)`, [
+    // Both A and the member follow B: only A may be told that B published. And A follows the
+    // member - a follow written before the rule, which must tell A nothing either.
+    await client.query(`INSERT INTO user_follows VALUES ($1, $2), ($3, $2), ($1, $3)`, [
       REVIEW_A,
       REVIEW_B,
       MEMBER,
@@ -209,5 +212,64 @@ maybe('the review cohort against PostgreSQL', () => {
   it("announces a review account's post to its followers in the cohort, never to a member", async () => {
     const { rows } = await client.query(announceRecipientsSql(true), [POSTS[0].id]);
     expect(rows.map((r: { id: string }) => r.id)).toEqual([REVIEW_A]);
+  });
+
+  it("announces a member's post to its followers outside the cohort, never to a review account", async () => {
+    const { rows } = await client.query(announceRecipientsSql(true), [POSTS[2].id]);
+    expect(rows.map((r: { id: string }) => r.id)).not.toContain(REVIEW_A);
+  });
+
+  it('lets an admin open a review account live by its id - moderation needs it - and nobody else', async () => {
+    const seen: string[] = [];
+    for (const id of EVERYONE) {
+      const { rows } = await client.query(
+        `SELECT ${liveVisibleToUserSql('lives', 'viewer', { adminSeesCohort: true })} AS visible
+           FROM lives JOIN users viewer ON viewer.id = $2 WHERE lives.id = $1`,
+        [LIVES[0].id, id]
+      );
+      if (rows[0].visible === true) seen.push(id);
+    }
+    expect(seen.sort()).toEqual([ADMIN, REVIEW_A, REVIEW_B].sort());
+  });
+
+  it("keeps a review account's posts out of a member's feed and search by author, not an admin's or the cohort's", async () => {
+    const shown = async (isAdmin: boolean, viewer: string) =>
+      (
+        await client.query(
+          `SELECT id FROM posts WHERE true ${reviewCohortAuthorFilterSql(isAdmin, viewer)}`
+        )
+      ).rows
+        .map((r: { id: string }) => r.id)
+        .sort();
+    const all = POSTS.map((p) => p.id).sort();
+    const members = POSTS.filter((p) => p.author === MEMBER)
+      .map((p) => p.id)
+      .sort();
+    expect(await shown(false, MEMBER)).toEqual(members);
+    expect(await shown(true, ADMIN)).toEqual(all);
+    expect(await shown(false, REVIEW_A)).toEqual(all);
+  });
+
+  it('closes every real association to a review account, and none to a member', async () => {
+    const A2 = '00000000-0000-4000-8000-0000000000a2';
+    const manager = {
+      query: async (sql: string, params?: unknown[]) => (await client.query(sql, params)).rows,
+    };
+    await client.query(
+      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2), ($3, $4)`,
+      [A1, MEMBER, A2, REVIEW_B]
+    );
+    try {
+      expect(await associationsReachedByReviewer(manager, REVIEW_B, [A1, A2])).toEqual(
+        new Set([A2])
+      );
+      expect(await associationsReachedByReviewer(manager, REVIEW_A, [A1, A2])).toEqual(new Set());
+      expect(await associationsReachedByReviewer(manager, MEMBER, [A1, A2])).toBeNull();
+    } finally {
+      await client.query(`DELETE FROM association_members WHERE "associationId" IN ($1, $2)`, [
+        A1,
+        A2,
+      ]);
+    }
   });
 });

@@ -205,7 +205,7 @@ export class UsersController {
    */
   @UseGuards(NginxAuthGuard)
   @Get('batch')
-  async findMany(@Query('ids') ids: string) {
+  async findMany(@Query('ids') ids: string, @Headers('x-user-id') requesterId: string) {
     // `ids` is TYPED string and Express can still hand over an array (`?ids=a&ids=b`) or an object
     // (`?ids[x]=1`) - the same runtime type confusion `search` re-checks for, and for the same
     // reason: the value flows into a SQL `IN (...)`.
@@ -224,7 +224,9 @@ export class UsersController {
         `too many ids (${requested.length} > ${MAX_PROFILE_BATCH}) - split the request`
       );
     }
-    const users = await this.usersService.findManyPublic(requested);
+    // Across the review cohort's boundary an id reads as an unknown one (`review-cohort.ts`).
+    const open = await this.usersService.profilesOpenTo(requesterId, requested);
+    const users = await this.usersService.findManyPublic(open);
     const found = new Set(users.map((u) => u.id));
     return { users, deleted: requested.filter((id) => !found.has(id)) };
   }
@@ -428,13 +430,17 @@ export class UsersController {
     return { key: await this.usersService.getOrCreateNotesKey(userId) };
   }
 
-  /** Returns the public profile of the requested user, resolving "me" to the caller. */
+  /**
+   * Returns the public profile of the requested user, resolving "me" to the caller. Refused (403
+   * `REVIEW_COHORT_BOUNDARY`) across the review cohort's boundary.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string, @Headers('x-user-id') requesterId: string) {
     if (id === 'me') {
       id = requesterId;
     }
+    await this.usersService.assertMayOpenProfile(requesterId, id);
     const user = await this.usersService.findOne(id);
     return this.usersService.toPublicDto(user);
   }

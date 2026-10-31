@@ -311,26 +311,59 @@ export function postVisibleToViewerSql(
 }
 
 /**
+ * A review account's posts are invisible to every reader outside the cohort but a platform admin
+ * (`review-cohort.ts`): an `AND ...` clause on `posts."authorId"`, or nothing. The visibility
+ * predicate already keeps them apart - the cohort is a space of its own - and this states it again
+ * on the author, so a post a review account writes AS an association it somehow joined still never
+ * reaches a member's feed or search. Spliced by the feed and the search of `PostsService`.
+ */
+export function reviewCohortAuthorFilterSql(
+  isAdmin: boolean,
+  viewerId: string | undefined
+): string {
+  if (isAdmin || isInReviewCohort(viewerId)) return '';
+  const authorInCohort = inReviewCohortSql('posts."authorId"');
+  return authorInCohort === 'false' ? '' : `AND NOT ${authorInCohort}`;
+}
+
+/**
  * Live row `live` (a `lives` row) is visible to user row `user`: THE RULE OF A POST BY THE SAME
  * BROADCASTER (WP-L7, decided 2026-10-19) - its broadcaster; a member's live, a user sharing a space
  * with the broadcaster; an association's live, a user who sees the association (a member, or its
  * rules reach one of their spaces, or - with `readGrants` - a nominative read grant). A live has no
  * republication, so that disjunct of the post rule has nothing to add. An admin is a reader like any
  * other, as when browsing posts.
+ *
+ * ONE EXCEPTION, `adminSeesCohort`, for opening ONE live by its id: a platform admin may watch a
+ * review account's live. No admin ever shares the review cohort's space (`review-cohort.ts`), so
+ * without it a reported live of the cohort could be judged by nobody - moderation needs it. The
+ * "Live now" list never passes it: browsing, an admin still sees only their own spaces.
  */
-export function liveVisibleToUserSql(live: string, user: string, opts: ReadOpts = {}): string {
-  return `(${live}."broadcasterId" = ${user}.id
+export function liveVisibleToUserSql(
+  live: string,
+  user: string,
+  opts: ReadOpts & { adminSeesCohort?: boolean } = {}
+): string {
+  const cohortClause = opts.adminSeesCohort
+    ? `
+    OR (${isAdminSql(user)} AND ${inReviewCohortSql(`${live}."broadcasterId"`)})`
+    : '';
+  return `(${live}."broadcasterId" = ${user}.id${cohortClause}
     OR (${live}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)})
-    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, opts)}))`;
+    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, { readGrants: opts.readGrants })}))`;
 }
 
 /**
  * Live row `live` is visible to the viewer whose id is the placeholder `viewer` - the watch paths
  * (the list, the key, the manifest), so read grants count as on every post READ path. An absent
- * viewer sees nothing.
+ * viewer sees nothing. `adminSeesCohort`: see {@link liveVisibleToUserSql}.
  */
-export function liveVisibleToViewerSql(live: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true })})`;
+export function liveVisibleToViewerSql(
+  live: string,
+  viewer: string,
+  opts: { adminSeesCohort?: boolean } = {}
+): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true, ...opts })})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */

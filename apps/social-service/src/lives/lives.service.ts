@@ -1586,7 +1586,7 @@ export class LivesService implements OnModuleDestroy {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
     const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
       `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
-              ${liveVisibleToViewerSql('lives', '$2')} AS visible
+              ${liveVisibleToViewerSql('lives', '$2', { adminSeesCohort: true })} AS visible
          FROM lives WHERE id = $1`,
       [liveId, viewerId]
     );

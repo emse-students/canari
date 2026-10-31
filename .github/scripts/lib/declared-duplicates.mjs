@@ -39,10 +39,14 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
-    what: 'the review cohort: which accounts are the store reviewers, and the SQL that names them',
+    what: 'the review cohort: which accounts are the store reviewers, the SQL that names them, and the refusal at its boundary',
     compare: 'exact',
-    why: 'core-service hides the cohort from search and the directory, social-service from posts, lives and booking spaces; the two must agree on who is in it, from one secret. No shared TS package, for the reason the CORS allowlist below gives; the file imports nothing, which is what lets the copies be identical. Its spec sits beside the core-service copy.',
-    files: ['apps/core-service/src/review-cohort.ts', 'apps/social-service/src/review-cohort.ts'],
+    why: 'core-service keeps the cohort apart in search, the directory and profiles; social-service in posts, lives, follows, mentions, the shop and booking spaces; chat-delivery-service in conversations and calls. The three must agree on who is in it, from one secret. No shared TS package, for the reason the CORS allowlist below gives; the file imports only @nestjs/common, which every copy resolves the same. Its spec sits beside the core-service copy.',
+    files: [
+      'apps/core-service/src/review-cohort.ts',
+      'apps/social-service/src/review-cohort.ts',
+      'apps/chat-delivery-service/src/review-cohort.ts',
+    ],
   },
   {
     what: 'the CORS origin allowlist every service applies',

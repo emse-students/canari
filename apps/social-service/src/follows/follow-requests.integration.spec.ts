@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
+import { ReviewCohortBoundaryException } from '../review-cohort';
 import { UserFollow } from './entities/user-follow.entity';
 import {
   FOLLOW_ASKS_PER_DAY,
@@ -292,6 +293,45 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await requests.accept('bob', 'ann');
     expect(pushed.map((x) => x.key)).toEqual(['social_follow_request', 'social_follow_accepted']);
     expect(await statusOf('ann', 'bob')).toBe('accepted');
+  });
+
+  /** The review cohort (review-cohort.ts): no ask and no acceptance crosses it, either way. */
+  describe('the review cohort', () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    });
+
+    it.each([
+      ['a review account asking a member', 'ann'],
+      ['a member asking a review account', 'bob'],
+    ])('refuses %s, typed, and writes and tells nothing', async (_case, reviewer) => {
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      const err = await requests.ask('ann', 'bob').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      expect(await bellOf('bob')).toEqual([]);
+      expect(pushed).toEqual([]);
+    });
+
+    it.each([
+      ['the asker is a review account', 'ann'],
+      ['the person asked is a review account', 'bob'],
+    ])('refuses an acceptance written before the rule when %s', async (_case, reviewer) => {
+      await requests.ask('ann', 'bob');
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      const err = await requests.accept('bob', 'ann').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewCohortBoundaryException);
+      expect(await statusOf('ann', 'bob')).toBe('pending');
+    });
+
+    it('lets two review accounts ask and accept each other', async () => {
+      process.env.SERVICE_ACCOUNT_USER_ID = 'ann,bob';
+      await requests.ask('ann', 'bob');
+      expect(await requests.accept('bob', 'ann')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
   });
 
   it('no acceptance across a block, even when the severing never ran', async () => {

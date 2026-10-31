@@ -24,7 +24,7 @@ import {
   type ConditionalItem,
 } from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
-import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
+import { reviewCohort } from '../review-cohort';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
@@ -400,7 +400,7 @@ export class BookingsService {
    */
   async listedSpaces(actor: Actor) {
     this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
-    const rows = await this.spaces
+    const listed = this.spaces
       .createQueryBuilder('s')
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
@@ -408,13 +408,17 @@ export class BookingsService {
         '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
         { me: actor.userId }
       )
-      .andWhere(
-        `${isInReviewCohort(actor.userId) ? '' : 'NOT '}${inReviewCohortSql('s."ownerId"')}`
-      )
       .orderBy('s.name', 'ASC')
       .addOrderBy('s.id', 'ASC')
-      .limit(LISTED_SPACES_LIMIT)
-      .getMany();
+      .limit(LISTED_SPACES_LIMIT);
+    const cohort = reviewCohort();
+    if (cohort.length > 0) {
+      const inCohort = cohort.includes(actor.userId);
+      listed.andWhere(`s.ownerId ${inCohort ? 'IN' : 'NOT IN'} (:...reviewCohort)`, {
+        reviewCohort: [...cohort],
+      });
+    }
+    const rows = await listed.getMany();
     if (rows.length === 0) return [];
 
     const associationIds = [

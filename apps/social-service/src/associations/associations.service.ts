@@ -34,6 +34,7 @@ import {
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import {
@@ -1039,6 +1040,19 @@ export class AssociationsService {
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
+
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) a review account reading the roster of an association it
+   * is not a member of (review-cohort-reach.ts). A no-op for anybody else.
+   */
+  async assertReviewerMayReadRoster(userId: string, associationId: string): Promise<void> {
+    await assertReviewerReachesAssociation(
+      this.memberRepo.manager,
+      userId,
+      associationId,
+      'member list'
+    );
+  }
 
   /**
    * Lists all members of an association.

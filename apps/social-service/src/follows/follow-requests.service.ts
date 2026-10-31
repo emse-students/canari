@@ -1,3 +1,4 @@
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
@@ -145,6 +146,14 @@ export class FollowRequestsService {
    * best-effort cross-service call, so the statement does not trust it to have run).
    */
   async accept(userId: string, followerUserId: string): Promise<{ ok: boolean }> {
+    // A request recorded across the review cohort's boundary before the rule existed is never
+    // accepted (review-cohort.ts).
+    if (!sameSideOfReviewCohort(userId, followerUserId)) {
+      this.logger.log(
+        `[FOLLOW-REQ] ${short(userId)} accept of ${short(followerUserId)}: refused, across the review cohort's boundary`
+      );
+      throw new ReviewCohortBoundaryException();
+    }
     const updated = returnedRows<{ id: string }>(
       await this.dataSource.query(
         `UPDATE user_follows f SET status = $3, "acceptedAt" = now()

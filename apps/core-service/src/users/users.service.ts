@@ -29,7 +29,13 @@ import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
 import { UserIdTakenError, UserRowGoneError, updateUserColumns } from './user-write';
-import { reviewCohort } from '../review-cohort';
+import {
+  assertReviewCohortConfigured,
+  isInReviewCohort,
+  reviewCohort,
+  sameSideOfReviewCohort,
+  ReviewCohortBoundaryException,
+} from '../review-cohort';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 /** Service managing user persistence and OIDC upsert logic. */
@@ -50,6 +56,8 @@ export class UsersService implements OnModuleInit {
    * matching) and `pg_trgm` (trigram similarity, for typo-tolerant fuzzy matching and ranking).
    */
   async onModuleInit(): Promise<void> {
+    // A bad SERVICE_ACCOUNT_USER_ID entry stops the boot HERE, before anything is served.
+    this.logger.log(`[REVIEW_COHORT] ${assertReviewCohortConfigured()} review account(s)`);
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS unaccent');
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
     this.logger.log('unaccent + pg_trgm extensions ready');
@@ -299,6 +307,35 @@ export class UsersService implements OnModuleInit {
   async setAdmin(targetId: string, admin: boolean): Promise<void> {
     this.logger.log(`[ADMIN] user=${targetId.slice(0, 8)} admin=${admin}`);
     await updateUserColumns(this.userRepository, targetId, { admin }, 'admin.set', this.logger);
+  }
+
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) a profile the requester may not open across the review
+   * cohort's boundary (`review-cohort.ts`): a review account opens only the cohort's, and anybody
+   * but a global admin never opens a review account's. Asked BEFORE the row is read, so the answer
+   * does not depend on whether the target exists.
+   */
+  async assertMayOpenProfile(requesterId: string, targetId: string): Promise<void> {
+    if (sameSideOfReviewCohort(requesterId, targetId)) return;
+    if (!isInReviewCohort(requesterId) && (await this.isUserAdmin(requesterId))) return;
+    this.logger.log(
+      `[REVIEW_COHORT] profile refused: requester=${requesterId.slice(0, 8)} target=${targetId.slice(0, 8)}`
+    );
+    throw new ReviewCohortBoundaryException();
+  }
+
+  /**
+   * The ids among `ids` whose profile `requesterId` may read across the review cohort's boundary -
+   * the batch form of {@link assertMayOpenProfile}. An id left out is answered like an unknown one.
+   */
+  async profilesOpenTo(requesterId: string, ids: string[]): Promise<string[]> {
+    if (ids.every((id) => sameSideOfReviewCohort(requesterId, id))) return ids;
+    if (!isInReviewCohort(requesterId) && (await this.isUserAdmin(requesterId))) return ids;
+    const open = ids.filter((id) => sameSideOfReviewCohort(requesterId, id));
+    this.logger.debug(
+      `[REVIEW_COHORT] batch for ${requesterId.slice(0, 8)}: ${ids.length - open.length} id(s) across the boundary left out`
+    );
+    return open;
   }
 
   /** Returns all users (id, displayName, admin) - admin-only listing. */

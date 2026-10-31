@@ -52,9 +52,10 @@ import {
 import {
   postVisibleToViewerSql,
   readInFeedAudience,
+  reviewCohortAuthorFilterSql,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
-import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
+import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
@@ -882,8 +883,11 @@ export class PostsService {
     // Extract mentions before saving so we can populate post.mentions
     const markdown: string = typeof data.markdown === 'string' ? data.markdown : '';
     const authorId: string = typeof data.authorId === 'string' ? data.authorId : '';
+    // A mention never crosses the review cohort's boundary: it is neither stored nor notified.
     const mentionedIds = markdown
-      ? this.notifications.resolveMentionedUserIds(markdown).filter((id) => id !== authorId)
+      ? this.notifications
+          .resolveMentionedUserIds(markdown)
+          .filter((id) => id !== authorId && sameSideOfReviewCohort(authorId, id))
       : [];
     if (mentionedIds.length > 0) {
       data.mentions = mentionedIds;
@@ -1021,7 +1025,7 @@ export class PostsService {
          ${promoSql}
          ${this.hiddenFilterSql(isAdmin)}
          ${this.liveReelFilterSql()}
-         ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
+         ${reviewCohortAuthorFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
        ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC
@@ -1150,18 +1154,6 @@ export class PostsService {
   }
 
   /**
-   * A review account's posts are invisible to every reader outside the cohort but a platform admin
-   * (`review-cohort.ts`). The visibility predicate already keeps them apart - the cohort is a space
-   * of its own - and this clause states it again on the author, so a post a review account writes
-   * AS an association it somehow joined still never reaches a member's feed or search.
-   */
-  private serviceAccountFilterSql(isAdmin: boolean, viewerId: string | undefined): string {
-    if (isAdmin || isInReviewCohort(viewerId)) return '';
-    const authorInCohort = inReviewCohortSql('posts."authorId"');
-    return authorInCohort === 'false' ? '' : `AND NOT ${authorInCohort}`;
-  }
-
-  /**
    * The clause that keeps a blocked account's posts out of one viewer's feed.
    *
    * IT COVERS ONLY A POST WHOSE AUTHOR THAT VIEWER COULD ALREADY SEE, and the exemption is the
@@ -1278,7 +1270,7 @@ export class PostsService {
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
     const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singlePhotos)}`;
-    const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
+    const serviceAccountFilter = reviewCohortAuthorFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
     const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
@@ -1813,7 +1805,7 @@ export class PostsService {
     const mentionedIds = post.markdown
       ? this.notifications
           .resolveMentionedUserIds(post.markdown)
-          .filter((id) => id !== post.authorId)
+          .filter((id) => id !== post.authorId && sameSideOfReviewCohort(post.authorId, id))
       : [];
     post.mentions = mentionedIds;
 

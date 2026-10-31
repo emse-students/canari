@@ -71,10 +71,11 @@ for **server deployment**:
 | Link safety (WP-SAFELINK-1, optional) | `GOOGLE_SAFE_BROWSING_API_KEY` (Google Cloud Safe Browsing API key, restricted to the deploy server's outbound IP; fails OPEN when unset - no lookup, no warning shown, no link ever blocked) |
 
 Secret: `SERVICE_ACCOUNT_USER_ID` (dev: `DEV_SERVICE_ACCOUNT_USER_ID`) names the **review cohort**,
-the Google/Apple reviewers' accounts: a COMMA-SEPARATED list of user ids (lower-case hex; one id is
-a one-member cohort). The cohort is a space of its own - its members find, read and list only each
-other, and no member ever finds, reads or lists one of them ([profiles-and-access](../docs/wiki/profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)).
-An entry that is not a user id stops core-service and social-service at boot, rather than leaving
+the Google/Apple reviewers' accounts: a COMMA-SEPARATED list of user ids (the user-id grammar:
+visible ASCII, no `:`, case kept; one id is a one-member cohort). The cohort is a space of its own -
+nothing crosses its boundary, in either direction ([profiles-and-access](../docs/wiki/profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)).
+Rendered into core-service, social-service and chat-delivery-service. An entry that is not a user id
+stops each of the three at boot (the deploy keeps the previous replica and fails), rather than leaving
 that account visible. If not defined, the deploy warns and there is no restriction: the ids are
 real accounts', so this public repository does not carry them as a template default.
 

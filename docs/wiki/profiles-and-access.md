@@ -1393,38 +1393,62 @@ Until then ONE review account was hidden from search, the directory and the feed
 real student profile, so it READ that space's posts and lives, and a live it started reached that
 space; a second account (a counterpart to call and to watch) had no rule at all.
 
-**The rule, stated in two places and nowhere else:** the review accounts are a COHORT that is a space
-of its own. A review account finds, reads and lists only the cohort; a member never finds, reads or
-lists a review account. It holds **whatever profile the identity provider hands the account**, so
-nobody has to keep a reviewer's profile empty.
+**The rule:** the review accounts are a COHORT that is a space of its own, and **nothing crosses its
+boundary in either direction** - "Tout fermer" (owner, 2026-10-31). A review account finds, reads,
+follows, messages, calls, mentions and buys only within the cohort; a member never does any of these
+with a review account. It holds **whatever profile the identity provider hands the account**, so
+nobody has to keep a reviewer's profile empty. Every refusal of an ACT is the same typed 403,
+`REVIEW_COHORT_BOUNDARY`, worded neutrally like a block's: it never says the other account is a
+review account. A READ across the boundary returns nothing, as for anything outside one's spaces.
 
 | Surface | Rule | Where |
 | --- | --- | --- |
-| Search and the people directory | a review account finds the cohort only (no member, no admin); anybody but a global admin never finds a review account; an admin finds everybody, so the team can reach them | `applyReviewCohortVisibility`, core-service `users.service.ts` |
-| Spaces | a review account has NO real space (`isReaderSpaceSql`, and its pure twin `readerSpaces`) | `spaces/reader-spaces.ts` |
+| Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
+| A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
+| Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
 | Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
 | The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |
-| Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `serviceAccountFilterSql`, `posts.service.ts` |
+| Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `reviewCohortAuthorFilterSql`, `spaces/reader-spaces.ts` |
+| Comments, reactions, mentions | no notice crosses (post author, parent author, mention), and a mention across is not sent at creation or at an edit | `post-interactions.service.ts`, `posts.service.ts` |
+| Follow requests | an ask, and an acceptance of one written before the rule, refused both ways | `recordFollowRequest`, `follow-requests.service.ts` |
+| The shop, partnerships, an association's roster, its forms | a review account sees, buys, claims, submits and reads the roster of only the associations it is a member of - none real; nobody but an admin sees a review account on a roster; a personal form is not answered across | `review-cohort-reach.ts`, `products` / `partnerships` / `forms.service.ts`, `listMembers` |
+| Conversations and calls | no Add, invitation link or admission puts the two sides in one conversation, and no call or ring crosses | chat-delivery `utils/review-cohort-groups.ts`, `enrolAdmittedPeople`, `calls.service.ts` |
 | Booking spaces (the Reservations page) | a review account lists only spaces a review account owns, and nobody else lists those | `listedSpaces`, `bookings.service.ts` |
 
-What a review account still reaches is what any account with no space and no membership reaches:
-messaging with someone whose id it already holds, and a page reached by its link. An association
-post or event reaches it only by membership, so **a review account is never made a member of a real
-association**.
+**AN ADMIN BROWSES LIKE ANY READER, AND THE COHORT IS NOT ONE OF THEIR SPACES.** The house rule holds:
+browsing the feed, the "Live now" list or the agenda, a platform admin sees their own spaces and
+nothing of the cohort. An admin reaches the cohort only by an id: a post opened by its id
+(`adminSeesAll`), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
+`assertMayWatch` only)** - no admin ever shares the cohort's space, so without it a reported live of
+the cohort could be judged by nobody.
+
+**What it does not close:** a page reached by its link, and a conversation or follow written BEFORE
+the rule - those are closed by the operator, the way the app closes one (leaving, unfollowing), never
+by a raw delete. An association post or event reaches a review account only by membership, so **a
+review account is never made a member of a real association**.
 
 **Where the cohort comes from:** `SERVICE_ACCOUNT_USER_ID` (dev `DEV_SERVICE_ACCOUNT_USER_ID`), a
 comma-separated list of user ids, read by `review-cohort.ts` - one module, byte-identical in
-core-service and social-service (declared duplicate). An entry that is not a lower-case hex id stops
-the service at boot: dropping it would leave that account visible with no sign of it. The ids, the
-accounts and their credentials are in the private operations notes, never here
-([MIGRATION](../../infrastructure/MIGRATION.md)). Pinned by `review-cohort.spec.ts` (core-service),
-`review-cohort.integration.spec.ts` (social-service, a reviewer still carrying a real student
-profile, against PostgreSQL), the cohort case of `bookings.service.integration.spec.ts` and the
-cohort block of `users.service.spec.ts`.
+core-service, social-service and chat-delivery-service (declared duplicate). An entry follows the
+user-id grammar (`users/user-id.ts`: visible ASCII, no `:`; case kept) minus `,`. **An entry outside
+it stops each of the three services at boot** (`assertReviewCohortConfigured`): dropping it would
+leave that account visible with no sign of it. The three are replaced `overlap`
+([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)), so a new replica that never
+becomes healthy is removed, the previous one keeps serving and the deploy fails red. An id is never
+written into SQL as text: bound as a parameter, or hex-encoded where a fragment has no parameter
+slot. The ids, the accounts and their credentials are in the private operations notes, never here
+([MIGRATION](../../infrastructure/MIGRATION.md)). Pinned by `review-cohort.spec.ts` and the cohort
+block of `users.service.spec.ts` (core-service); `review-cohort.integration.spec.ts`,
+`follow-requests.integration.spec.ts` and `bookings.service.integration.spec.ts` against PostgreSQL,
+and the cohort cases of the products, partnerships, forms, roster, posts and comment specs
+(social-service); `add-enrolment.integration.spec.ts`, `members.controller.blocks.spec.ts`,
+`refusal-codes.spec.ts` and `calls.service.spec.ts` (chat-delivery-service).
 
-**What it does not do:** it changes no account. Seeding the cohort's own content (a few fictional
-posts, a conversation, a link-only booking space) is an operator step after the deploy, and the
-review notes are on [store-review-live-checklist](store-review-live-checklist.md).
+**What it does not do:** it changes no account. The cohort's own content (a few fictional posts, a
+conversation, a link-only booking space) is seeded by an operator BEFORE the deploy - with the
+current code a review account shares no space with anyone, so what it posts is seen by nobody until
+the cohort reaches it - and the review notes are on
+[store-review-live-checklist](store-review-live-checklist.md).
 
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 
