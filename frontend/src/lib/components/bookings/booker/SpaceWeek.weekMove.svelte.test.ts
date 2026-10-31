@@ -46,6 +46,15 @@ const weekOf = (date: string): ResourceSlots[] => {
   ];
 };
 
+/** Whether every media query answers `phone`, and who listens for it to change. */
+let phone = false;
+const changeListeners = new Set<(e: { matches: boolean }) => void>();
+/** Resize across the phone breakpoint while the view stays mounted. */
+const setPhone = (next: boolean) => {
+  phone = next;
+  for (const listener of changeListeners) listener({ matches: next });
+};
+
 const settle = async () => {
   for (let i = 0; i < 5; i++) await tick();
   flushSync();
@@ -55,10 +64,16 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   vi.spyOn(console, 'debug').mockImplementation(() => {});
+  phone = false;
+  changeListeners.clear();
   window.matchMedia = (() => ({
-    matches: false,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    get matches() {
+      return phone;
+    },
+    addEventListener: (_type: string, listener: (e: { matches: boolean }) => void) =>
+      changeListeners.add(listener),
+    removeEventListener: (_type: string, listener: (e: { matches: boolean }) => void) =>
+      changeListeners.delete(listener),
   })) as unknown as typeof window.matchMedia;
 });
 afterEach(() => {
@@ -115,4 +130,34 @@ it('a dimmed "Aujourd\'hui" moves nothing and keeps the focus when pressed', asy
   expect(document.activeElement).toBe(today);
   expect(document.querySelector('h2')?.textContent).toBe(label);
   expect(api.getSlots.mock.calls.length).toBe(reads);
+});
+
+it('a dimmed "Aujourd\'hui" does not jump back to today even when today is not the chosen day', async () => {
+  // The phone's chosen day (Thursday) differs from today (Wednesday) while the desktop pill, which
+  // is dimmed for the whole week holding today, is the one pressed: only the `away &&` guard
+  // keeps that press from moving the chosen day.
+  phone = true;
+  api.getSlots.mockResolvedValue(weekOf('2026-11-05'));
+  mount(SpaceWeek, { target: document.body, props: { space: SPACE, nowMs: NOW } });
+  await settle();
+  const thursday = () =>
+    [...document.querySelectorAll('button[aria-pressed]')].find((b) =>
+      b.getAttribute('aria-label')?.includes('5 novembre')
+    ) as HTMLButtonElement;
+  thursday().click();
+  await settle();
+  expect(thursday().getAttribute('aria-pressed')).toBe('true');
+
+  setPhone(false);
+  await settle();
+  const today = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) => b.textContent?.trim() === m.bookings_week_today()
+  )!;
+  expect(today.getAttribute('aria-disabled')).toBe('true');
+  today.click();
+  await settle();
+
+  setPhone(true);
+  await settle();
+  expect(thursday().getAttribute('aria-pressed')).toBe('true');
 });

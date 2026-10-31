@@ -93,11 +93,12 @@
   let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
   let sheet = $state<Sheet | null>(null);
   /**
-   * The starts the server refused as `started` or `notice` while the device's clock still took
-   * them. Time only moves forward, so such a start is never bookable again: it stays unoffered
-   * for the life of this view, whatever the device's clock says - no loop of the same refusal.
+   * The LATEST start the server refused as `started` or `notice` while the device's clock still
+   * took it. Both refusals only grow with time, so every start at or before it is refused too: with
+   * a clock behind the server's, one refusal retires every earlier unit, not one refusal per unit.
+   * It holds for the life of this view, whatever the device's clock says.
    */
-  let refusedStarts = $state<ReadonlySet<number>>(new Set());
+  let lastRefusedStart = $state<number | null>(null);
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
@@ -219,7 +220,8 @@
     }
     if (
       mode !== 'block' &&
-      (windowRefusal(space, unit.startMs, nowMs) !== null || refusedStarts.has(unit.startMs))
+      (windowRefusal(space, unit.startMs, nowMs) !== null ||
+        (lastRefusedStart !== null && unit.startMs <= lastRefusedStart))
     ) {
       Log.d('BOOKINGS', 'pick ignored: the unit is outside the booking window');
       return;
@@ -310,7 +312,7 @@
             mode={narrow ? 'day' : 'week'}
             blockMode={mode === 'block'}
             {nowMs}
-            {refusedStarts}
+            {lastRefusedStart}
             onPick={pick}
           />
         {/if}
@@ -335,7 +337,7 @@
       initialCount={s.initialCount}
       onReread={reread}
       onStartRefused={(startMs) => {
-        refusedStarts = new Set([...refusedStarts, startMs]);
+        lastRefusedStart = Math.max(lastRefusedStart ?? startMs, startMs);
       }}
       onBlockInstead={s.blockRun.length
         ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun, initialCount: 1 })
