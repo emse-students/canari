@@ -39,6 +39,7 @@ describe('InternalController.listUserAssociations', () => {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
     {} as never
   );
 

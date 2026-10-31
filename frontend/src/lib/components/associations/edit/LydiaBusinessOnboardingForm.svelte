@@ -28,6 +28,8 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import Input from '$lib/components/ui/Input.svelte';
   import LydiaResponsableForm from './LydiaResponsableForm.svelte';
+  import LydiaCashiersSection from './LydiaCashiersSection.svelte';
+  import { responsableResendText } from '$lib/associations/lydiaCashiers';
 
   interface Props {
     asso: Association;
@@ -314,12 +316,12 @@
   {#snippet resendControl(responsable: LydiaResponsable)}
     <div class="space-y-2">
       {#if resending}
-        <p class="text-text-muted text-xs">{m.asso_lydia_resp_resend_hint()}</p>
+        <p class="text-text-muted text-xs">{responsableResendText().hint}</p>
         <LydiaResponsableForm
           associationId={asso.id}
           mode="add"
           fixedUserId={responsable.userId}
-          submitLabel={m.asso_lydia_resp_resend_button()}
+          submitLabel={responsableResendText().button}
           onDone={() => onResponsableDone(true)}
           onRefused={loadAccount}
         />
@@ -332,7 +334,7 @@
           }}
           class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold"
         >
-          {m.asso_lydia_resp_resend_button()}
+          {responsableResendText().button}
         </button>
       {/if}
       {#if resent}
@@ -378,6 +380,7 @@
         />
       </div>
     {/if}
+    <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
     {@render adminClear()}
     {@render adminAndDisconnect(false)}
   {:else}
@@ -515,6 +518,7 @@
         </li>
       {/each}
     </ol>
+    <LydiaCashiersSection associationId={asso.id} {account} reload={loadAccount} />
     {@render adminClear()}
     {#if account.lydiaAccountId}
       {@render adminAndDisconnect(view.adminCanValidate)}

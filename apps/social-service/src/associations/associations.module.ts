@@ -35,7 +35,8 @@ import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
-import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import { LydiaCashierNotifier, LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import { LydiaCashiersService } from './lydia-cashiers.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationCategoriesController } from './association-categories.controller';
 import { PosterController } from './poster.controller';
@@ -106,6 +107,8 @@ import { RefundsController } from './refunds/refunds.controller';
     // translatable.
     PostNotificationsService,
     LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
     RefundsService,
     LydiaRefundNotifier,
   ],
@@ -127,6 +130,8 @@ import { RefundsController } from './refunds/refunds.controller';
     UserProfileService,
     PosterService,
     LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
   ],
 })
 export class AssociationsModule {}

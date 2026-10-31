@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PaymentController } from './payment.controller';
+import { LydiaCashiersController } from './lydia-cashiers.controller';
+import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import { PaymentService } from './payment.service';
 import { PaymentWebhookController } from './webhook.controller';
 import { RefundController } from './refund.controller';
@@ -7,7 +9,13 @@ import { PlatformModule } from '../platform/platform.module';
 
 @Module({
   imports: [PlatformModule],
-  controllers: [PaymentController, PaymentWebhookController, RefundController],
+  controllers: [
+    PaymentController,
+    PaymentWebhookController,
+    RefundController,
+    LydiaCashiersController,
+    InternalLydiaCashiersController,
+  ],
   providers: [PaymentService],
   exports: [PaymentService],
 })

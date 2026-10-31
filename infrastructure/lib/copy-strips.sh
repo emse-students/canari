@@ -118,13 +118,18 @@ apply_copy_strips() {
   # is a property of a secret). "vendorToken" is NOT NULL, so it is blanked rather than nulled.
   # Guarded on the table: a dump taken before migration 118 reached production has none.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_cashiers') IS NOT NULL THEN UPDATE lydia_cashiers SET \"phoneSealed\" = NULL, \"vendorToken\" = '' WHERE \"phoneSealed\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
+  # Migration 119: the claim's token (the copy holds no claim, like the marker above) and a
+  # Responsable's OTHER number, sealed like `phoneSealed`. Guarded on the columns: a dump taken
+  # before migration 119 reached production has neither.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaCashierClaimToken') THEN UPDATE associations SET \"lydiaCashierClaimToken\" = NULL WHERE \"lydiaCashierClaimToken\" IS NOT NULL; END IF; END \$\$;" "$database"
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'lydia_cashiers' AND column_name = 'previousPhoneSealed') THEN UPDATE lydia_cashiers SET \"previousPhoneSealed\" = NULL WHERE \"previousPhoneSealed\" IS NOT NULL; END IF; END \$\$;" "$database"
   # A refund's Lydia transaction (migration 120): the order_ref and Business a form answer was paid
   # through, and the same pair on each refund row. Live identifiers like `product_checkouts`' above;
   # the refund rows' columns are NOT NULL, so they are blanked rather than nulled. Guarded on the
   # column and the table: a dump taken before migration 120 reached production has neither.
   "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'submissions' AND column_name = 'lydiaOrderRef') THEN UPDATE submissions SET \"lydiaOrderRef\" = NULL, \"lydiaVendorToken\" = NULL WHERE \"lydiaOrderRef\" IS NOT NULL OR \"lydiaVendorToken\" IS NOT NULL; END IF; END \$\$;" "$database"
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_refunds') IS NOT NULL THEN UPDATE lydia_refunds SET \"orderRef\" = '', \"vendorToken\" = '' WHERE \"orderRef\" <> '' OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 23 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds\n' "$prefix"
+  printf '%s   payment identifiers cleared: 25 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say
