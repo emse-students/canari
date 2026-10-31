@@ -20,6 +20,9 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
+**Production's floor is `1.5.1`** (read from `GET /api/version` on 2026-10-31). An older figure on this
+page is the floor at the date its entry names.
+
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
@@ -94,7 +97,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor is now `1.2.9` on production) |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -503,16 +506,18 @@ and, on the receiving side, on that receiver's own windows. It is a FALLBACK and
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
 
-### No date yet - history answers and asks from clients older than step A
+### Floor met 2026-10-31 - history answers and asks from clients older than step A
 
-**Sites:** none to delete on the new client: an older client still asks without a `requestId` and
-answers by broadcast. A new answerer sends nothing addressed to an ask with no id
-(`sendBundleChunks`), and a new receiver drops from a broadcast bundle what falls in its own windows
-(`dropOwnExcludedMessages`).
-**What it costs:** a product choice: an older client is answered only by older peers, until
-`minClientVersion` carries step A.
-**Removal condition:** `minClientVersion` is a release carrying step A; then the broadcast branch of
-the `history_bundle` receiver and the no-id refusal line can go.
+**The condition is MET:** step A (#2270) is first in the stable `v1.5.0` (`v1.4.1` was never cut as
+a stable), and production's `minClientVersion` reads `1.5.1` (`GET /api/version`, 2026-10-31). No
+client below step A can unlock MLS, so none asks without a `requestId` or answers a newcomer by
+broadcast any more.
+**What can go, and what cannot:** the no-id refusal line (a new answerer sends nothing addressed to
+an ask with no id, `sendBundleChunks`) is now dead and goes in its own client pull request. The
+broadcast branch of the `history_bundle` receiver STAYS: it is not only a shim - a current build still
+broadcasts the state-only frame when the windows cannot be read (`sendStateOnly(..., false)` in
+`groupActions.ts`), and the stream walk drops what falls in the reader's own windows with the same
+`dropOwnExcludedMessages`. It goes only once that sender no longer broadcasts.
 
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 

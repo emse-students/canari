@@ -69,10 +69,13 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
+  withheldWindows,
   withholdExcludedHistoryRows,
+  withholdsArrivalSpan,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
@@ -4260,8 +4263,16 @@ export class MessagingService {
       { groupId, id: In(flagged.map((s) => s.id)), awaitingAdmission: true },
       { awaitingAdmission: false }
     );
+    // THE ARRIVAL IS THIS ADD, NOT THE ASK (user, 2026-10-21: "added = arrived"): the link dated the
+    // person's interval and device rows when they asked, and every history answer and the stream
+    // would hand them what was sent while they waited outside.
+    const dated = await dateArrivalAtAdmission(
+      m,
+      groupId,
+      flagged.map((s) => s.userId)
+    );
     this.logger.log(
-      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask`
+      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask; arrival dated at this Add (intervals=${dated.intervals} devices=${dated.devices})`
     );
     return flagged.map((s) => ({ userId: s.userId, askId: s.id }));
   }
@@ -6434,7 +6445,11 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownExclusionWindows(headerUserId, groupId);
+      const windows = await this.ownWithheldWindows(
+        headerUserId,
+        groupId,
+        headerGlobalAdmin === 'true'
+      );
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -6455,9 +6470,17 @@ export class MessagingService {
   }
 
   /**
-   * The caller's OWN exclusion windows in `groupId` - the spans they were out of the group (user,
-   * 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left, and for
-   * an internal caller with no user header, which reads on nobody's behalf.
+   * Everything the CALLER may not be handed from `groupId`'s history stream: the spans they were out
+   * of the group (user, 2026-10-14: a Remove holds against a later re-add) and, in a GROUP
+   * conversation, everything before their first arrival (user, 2026-10-21: a newcomer reads nothing
+   * from before they were added). The same {@link withheldWindows} the exclusions route answers the
+   * caller with, which every history answer is filtered on - so the server's own stream never hands
+   * a newcomer the ciphertexts an answering member withholds, whatever the reader's build does with
+   * them. Empty for an internal caller with no user header, which reads on nobody's behalf.
+   *
+   * A 1:1 and a key group withhold no arrival span ({@link withholdsArrivalSpan}), so for them this is
+   * the gaps alone, as it always was. A member's NEW device reads everything since its PERSON's
+   * arrival: intervals are per user, never per device.
    *
    * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
    * Postgres hiccup answers that group empty, never the whole batch.
@@ -6467,20 +6490,34 @@ export class MessagingService {
    * since their removal would be dropped although they are a member again. The repair is the one
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
+   *
+   * **A GLOBAL ADMIN IS NAMED BY ITS HEADER, NEVER INFERRED FROM A MISSING INTERVAL** (review of
+   * #2800). An admin holding no interval reads a group it is not in, and this filter has never
+   * narrowed that read. Anyone else reached here through the roster (`authorizeHistoryGroups`), so a
+   * caller holding NO interval at all is a member the enrolment failed to record - repaired like the
+   * one with no open interval, above. Should the repair open nothing (the roster row went
+   * meanwhile), the read FAILS CLOSED: one window over everything, said at ERROR - an absent record
+   * never reads as "withhold nothing".
+   *
+   * @param globalAdmin the caller's `x-global-admin` header said `true`.
    */
-  private async ownExclusionWindows(
+  private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string
+    groupId: string,
+    globalAdmin: boolean
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
     const read = () =>
       this.groupRepo.manager.find(GroupMembershipInterval, {
         where: { userId, groupId },
-        select: { groupId: true, joinedAt: true, leftAt: true },
+        select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
-    if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
+    // An admin's read of a group it never joined has nothing to repair; every other caller is on the
+    // roster, and a member outside every open interval - none at all included - is a record to repair.
+    const unrecorded = intervals.length === 0 && !globalAdmin;
+    if ((intervals.length > 0 || unrecorded) && !intervals.some((r) => r.leftAt === null)) {
       // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
       const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
       if (opened.length > 0) {
@@ -6492,7 +6529,38 @@ export class MessagingService {
       // removal may have closed it since - the table is the only answer to both.
       intervals = await read();
     }
-    return exclusionWindows(intervals);
+    if (intervals.length === 0) {
+      if (globalAdmin) return [];
+      this.logger.error(
+        `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} holds no membership interval and none could be opened - the stream is withheld whole rather than served unfiltered`
+      );
+      return [{ from: 0, until: null }];
+    }
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: {
+        id: true,
+        isGroup: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+        createdAt: true,
+      },
+    });
+    if (!withholdsArrivalSpan(group)) return exclusionWindows(intervals);
+    // The person's earliest device row in the group, the second record of their arrival - read as
+    // the exclusions route reads it, so the two answers are one.
+    const earliest = await this.deviceGroupRepo
+      .createQueryBuilder('d')
+      .select('MIN(d.createdAt)', 'firstDeviceAt')
+      .where('d.groupId = :groupId', { groupId })
+      .andWhere('d.userId = :userId', { userId })
+      .getRawOne<{ firstDeviceAt: Date | string | null }>();
+    return withheldWindows(
+      intervals,
+      true,
+      earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null,
+      group?.createdAt ?? null
+    );
   }
 
   /**
@@ -6546,7 +6614,11 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownExclusionWindows(headerUserId, groupId);
+          const windows = await this.ownWithheldWindows(
+            headerUserId,
+            groupId,
+            headerGlobalAdmin === 'true'
+          );
           const page = await this.readHistoryStreamPage(
             groupId,
             after,

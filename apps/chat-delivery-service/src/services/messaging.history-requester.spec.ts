@@ -317,6 +317,171 @@ describe('a history read names who asked', () => {
       expect(lines()).toContain('[HISTORY_BATCH] user=user-9 device=unstated group=group-2 error=');
     });
 
+    /**
+     * A NEWCOMER READS NOTHING FROM BEFORE THEIR ARRIVAL (user, 2026-10-21), and the server's own
+     * stream is held to it too: the same `withheldWindows` the exclusions route answers, so the
+     * ciphertexts a member's answer withholds are not served to the newcomer by this route either.
+     */
+    describe("in a GROUP conversation, also what preceded the reader's arrival", () => {
+      /** The group row and the reader's earliest device row in it. */
+      const groupAndFirstDevice = (
+        group: { isGroup: boolean; createdAt: Date; distributionWorkspaceId?: string | null },
+        firstDeviceAt: Date | null
+      ) => {
+        const internals = service as unknown as {
+          groupRepo: { findOne: jest.Mock };
+          deviceGroupRepo: { createQueryBuilder: jest.Mock };
+        };
+        internals.groupRepo.findOne = jest
+          .fn()
+          .mockResolvedValue({ id: GROUP, distributionChannelId: null, ...group });
+        const qb: Record<string, unknown> = {
+          select: () => qb,
+          where: () => qb,
+          andWhere: () => qb,
+          getRawOne: async () => ({ firstDeviceAt }),
+        };
+        internals.deviceGroupRepo.createQueryBuilder = jest.fn(() => qb);
+      };
+
+      beforeEach(() => {
+        stream = [];
+        put(1, 2);
+        put(2, 4);
+        put(3, 6);
+      });
+
+      it('a newcomer added on the 5th is served nothing from before it', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(5)));
+
+        const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }], USER, ADMIN);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['3-0']);
+        expect(batch.histories[GROUP].map((r) => r['id'])).toEqual(['3-0']);
+      });
+
+      it('the arrival is the EARLIER of the interval and the first device row (added = arrived)', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(3)));
+
+        const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['2-0', '3-0']);
+      });
+
+      it('the person who arrived with the group is withheld nothing', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(1)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(1)));
+
+        const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
+      });
+
+      it('a 1:1 and a key group withhold no arrival span, as before', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: false, createdAt: at(day(1)) }, at(day(5)));
+        expect(
+          (await service.getHistory(GROUP, undefined, USER, ADMIN)).rows.map((r) => r['id'])
+        ).toEqual(['1-0', '2-0', '3-0']);
+
+        groupAndFirstDevice(
+          { isGroup: true, createdAt: at(day(1)), distributionWorkspaceId: 'ws-1' },
+          at(day(5))
+        );
+        expect(
+          (await service.getHistory(GROUP, undefined, USER, ADMIN)).rows.map((r) => r['id'])
+        ).toEqual(['1-0', '2-0', '3-0']);
+      });
+
+      /**
+       * A MEMBER HOLDING NO INTERVAL IS NOT AN ADMIN (review of #2800): the admin is named by its
+       * header, and a roster member the enrolment failed to record is repaired - or, when nothing can
+       * be opened, served nothing rather than everything.
+       */
+      describe('a NON-admin caller holding no interval at all', () => {
+        /** `openMissingIntervals`' transaction: the roster rows it finds, and what its insert opens. */
+        const repairOpens = (roster: { userId: string; joinedAt: Date }[]) => {
+          const chain = (end: Record<string, unknown>) => {
+            const qb: Record<string, unknown> = { ...end };
+            for (const k of [
+              'select',
+              'addSelect',
+              'where',
+              'andWhere',
+              'setLock',
+              'insert',
+              'into',
+              'values',
+              'orIgnore',
+              'returning',
+            ])
+              qb[k] = () => qb;
+            return qb;
+          };
+          const tx = {
+            getRepository: () => ({
+              createQueryBuilder: () => chain({ getRawMany: async () => roster }),
+            }),
+            createQueryBuilder: () => chain({ execute: async () => ({ raw: roster }) }),
+          };
+          const internals = service as unknown as {
+            groupRepo: { manager: { transaction?: unknown } };
+          };
+          internals.groupRepo.manager.transaction = async (fn: (m: typeof tx) => unknown) => fn(tx);
+        };
+        const windowsOf = (s: MessagingService) =>
+          (
+            s as unknown as {
+              ownWithheldWindows: (u: string, g: string, admin: boolean) => Promise<unknown>;
+            }
+          ).ownWithheldWindows(USER, GROUP, false);
+
+        it('is repaired from the roster, and withheld what preceded that arrival', async () => {
+          intervalFind
+            .mockResolvedValueOnce([])
+            .mockResolvedValue([
+              { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+            ]);
+          repairOpens([{ userId: USER, joinedAt: at(day(5)) }]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([
+            { from: 0, until: at(day(5)).getTime() },
+          ]);
+          expect(lines()).toContain('opened a missing interval');
+        });
+
+        it('fails closed when nothing can be opened: every row withheld, said at ERROR', async () => {
+          intervalFind.mockResolvedValue([]);
+          repairOpens([]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([{ from: 0, until: null }]);
+          expect(lines()).toContain('withheld whole rather than served unfiltered');
+        });
+      });
+
+      it('a caller holding no interval (a global admin outside the group) is not narrowed', async () => {
+        intervalFind.mockResolvedValue([]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+        const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
+      });
+    });
+
     it('reads the windows of the CALLER, never of anybody else', async () => {
       await service.getHistory(GROUP, undefined, USER, ADMIN);
 

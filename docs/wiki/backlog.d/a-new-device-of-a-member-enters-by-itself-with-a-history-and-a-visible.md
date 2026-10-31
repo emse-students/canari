@@ -19,8 +19,10 @@ decision recorded earlier the same day. Planned for the release after 1.5.2.
 4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
    before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
    Add (decided 2026-10-23).
-5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
-   the release after 1.5.2.
+5. **Delivery.** Step A of history addressing (merged as #2270, in no release yet), and the two
+   server holes closed on 2026-10-31 (a link joiner dated at the Add, the stream held to the span
+   before arrival - [history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)),
+   ship TOGETHER with this model, in the release after 1.5.2.
 6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
    row (a separate PR).
 

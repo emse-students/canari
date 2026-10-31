@@ -64,6 +64,7 @@ import {
   callerSeatStanding,
   refuseAwaitingSeat,
   withheldWindows,
+  withholdsArrivalSpan,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
@@ -1447,8 +1448,7 @@ export class MembersController {
         `[EXCLUSIONS] group=${safeGroupId} has members but NO group row - answered as a 1:1`
       );
     }
-    const beforeFirstArrival =
-      group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
+    const beforeFirstArrival = withholdsArrivalSpan(group);
 
     const exclusions: Record<string, ExclusionWindow[]> = {};
     for (const userId of counted) {
