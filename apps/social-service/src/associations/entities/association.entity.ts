@@ -69,6 +69,14 @@ export class Association {
   lydiaEnrolmentStartedAt: Date | null;
 
   /**
+   * The Responsable step's "in flight" marker (migration 118): claimed atomically before
+   * `business/addcashier` (`AssociationsService.claimLydiaResponsable`), cleared by the record, a
+   * typed refusal, the unlink or a global admin. Raw SQL writes only.
+   */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaResponsableStartedAt: Date | null;
+
+  /**
    * The Lydia Business private token, ENCRYPTED (`common/secret-box.ts`, migration 100), that
    * verifies this association's `request/do` callbacks. Never reaches a browser: captured at
    * `business/create` (enrolment lot 1), answered decrypted to core-service alone. Kept out of every

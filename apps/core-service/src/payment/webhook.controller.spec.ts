@@ -506,7 +506,7 @@ describe('the cancel-pending answer core reads from social-service', () => {
  * THE business/create WEBHOOK IS UNSIGNED (lydia-api.md 5b), SO WHAT ITS POST MAY CHANGE IS DECIDED,
  * NOT INFERRED (owner, 2026-10-30, lot 2): `BUSINESS_VALIDATED` with a well-formed token reaches
  * social-service's readiness route ONCE, asking `ready: true` and nothing else; `BUSINESS_UNVALIDATED`
- * is notify only (the read of the holder, a WARN); everything else writes nothing. Every body below
+ * changes nothing and notifies nobody (the read of the holder, a WARN); everything else writes nothing. Every body below
  * reaches the real route through HTTP, and no PaymentService method is ever called.
  */
 describe('POST /api/payments/lydia-business-webhook - VALIDATED marks ready, nothing else writes', () => {
@@ -692,7 +692,7 @@ describe('POST /api/payments/lydia-business-webhook - VALIDATED marks ready, not
     expect(lines.join(' | ')).not.toContain(VENDOR);
   });
 
-  it('logs an unvalidation (notify only) and an unknown event at WARN', async () => {
+  it('logs an unvalidation (nothing changed, nobody notified) and an unknown event at WARN', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn');
     await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_UNVALIDATED' });
     await asMultipart({ vendor_token: VENDOR, event: 'SOMETHING\nFORGED' });

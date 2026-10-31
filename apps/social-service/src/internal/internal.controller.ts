@@ -270,6 +270,13 @@ export class InternalController {
       eraseSocialRows(erasureDb(manager), userId)
     );
 
+    for (const cashier of result.liveCashiersErased) {
+      // Lydia still holds this person as a cashier of that Business; Canari no longer tracks it.
+      this.logger.error(
+        `[AUDIT] [LYDIA] account erasure of user=${who} deleted a LIVE cashier row: association ` +
+          `${cashier.associationId}, Business ${cashier.vendorToken} - Lydia still lists that cashier`
+      );
+    }
     const pins = await this.channelService.announceErasedPins(result.pinsRemoved);
     const dropped = await invalidatePostListCache(this.redis);
 

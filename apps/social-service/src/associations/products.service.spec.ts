@@ -138,6 +138,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ),
     };
     manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
+    // The release writes through its transaction (`releaseWithheldFor`, the holder share-locked).
+    manager.update = jest.fn((entity: unknown, where: unknown, patch: unknown) =>
+      entity === AssociationProduct
+        ? (productRepo.update as jest.Mock)(where, patch)
+        : Promise.resolve({ affected: 0 })
+    );
     let withheldRows: Array<{ associationId: string }> = [];
     const productRepo = {
       findOne: jest.fn(),
@@ -3584,6 +3590,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const { service, assoRepo, productRepo } = makeService();
         productRepo.__setWithheld(['a1', 'a2']);
         assoRepo.find.mockResolvedValue([asso({ id: 'a1' }), asso({ id: 'a2' })] as any);
+        // The release re-reads each association under its share lock.
+        assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+          Promise.resolve(asso({ id }))
+        );
         productRepo.update.mockResolvedValue({ affected: 1 });
 
         expect(await service.releaseWithheldForAllAssociations()).toEqual({
@@ -3626,6 +3636,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const { service, assoRepo, productRepo } = makeService();
         productRepo.__setWithheld(['a1', 'a2']);
         assoRepo.find.mockResolvedValue([asso({ id: 'a1' }), asso({ id: 'a2' })] as any);
+        // The release re-reads each association under its share lock.
+        assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+          Promise.resolve(asso({ id }))
+        );
         productRepo.update.mockImplementation(((where: { associationId: string }) =>
           where.associationId === 'a1'
             ? Promise.reject(new Error('db down'))
@@ -3642,6 +3656,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         // `gone` has withheld products left behind by a deleted association (no FK); `a2` exists.
         productRepo.__setWithheld(['gone', 'a2']);
         assoRepo.find.mockResolvedValue([asso({ id: 'a2' })] as any);
+        // The release re-reads each association under its share lock.
+        assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+          Promise.resolve(asso({ id }))
+        );
         productRepo.update.mockResolvedValue({ affected: 1 });
 
         expect(await service.releaseWithheldForAllAssociations()).toEqual({

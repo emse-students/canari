@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import axios from 'axios';
 import * as provider from './lydia-payment-provider';
 import {
+  BadGatewayException,
   BadRequestException,
   GatewayTimeoutException,
   Logger,
@@ -21,6 +22,7 @@ import {
   LYDIA_RESPONSABLE_ALREADY_SET,
   LYDIA_RESPONSABLE_NOT_A_CASHIER,
   LYDIA_RESPONSABLE_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_PHONE_LOCKED,
   PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
@@ -673,18 +675,33 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
   >[2];
   const PHONE = '+33612345678';
   const allRights = { access_cashier: true };
-
-  function setup(pre: {
+  type Claim = {
     vendorToken: string | null;
     member: boolean;
     currentUserId: string | null;
-  }) {
+    phoneMatches?: boolean;
+    claimed?: boolean;
+  };
+
+  /** social-service's claim answer: claimed exactly when every check passes, as the real one. */
+  function claimOf(pre: Claim, userId = 'u1') {
+    const phoneMatches = pre.phoneMatches ?? true;
+    const claimed =
+      pre.claimed ??
+      (!!pre.vendorToken &&
+        pre.member &&
+        (!pre.currentUserId || pre.currentUserId === userId) &&
+        phoneMatches);
+    return { ...pre, phoneMatches, claimed };
+  }
+
+  function setup(pre: Claim) {
     mockedAxios.get.mockResolvedValue({ status: 200, data: { ok: true } });
-    mockedAxios.post.mockImplementation(async (url: string) =>
-      url.endsWith('/lydia-responsable-precheck')
-        ? { status: 200, data: pre }
-        : { status: 200, data: { responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' } } }
-    );
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-claim')) return { status: 200, data: claimOf(pre) };
+      if (url.endsWith('/lydia-responsable-release')) return { status: 200, data: { ok: true } };
+      return { status: 200, data: { responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' } } };
+    });
     const paymentService = {
       addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
       readLydiaCashierRights: jest.fn().mockResolvedValue(allRights),
@@ -694,8 +711,10 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       paymentService,
     };
   }
-  const stores = () =>
-    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith('/lydia-responsable'));
+  const postsTo = (suffix: string) =>
+    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith(suffix));
+  const stores = () => postsTo('/lydia-responsable');
+  const releases = () => postsTo('/lydia-responsable-release');
 
   beforeEach(() => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -707,7 +726,7 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
     mockedAxios.get.mockReset();
   });
 
-  it('adds at Lydia, THEN stores the confirmed row with the actor as adder', async () => {
+  it('claims the step with the phone, adds at Lydia, THEN stores the confirmed row with the actor as adder', async () => {
     const { controller, paymentService } = setup({
       vendorToken: 'vendor-1',
       member: true,
@@ -718,6 +737,7 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       { userId: 'u1', phone: PHONE, mode: 'add' },
       req
     );
+    expect(postsTo('/lydia-responsable-claim')[0][1]).toEqual({ userId: 'u1', phone: PHONE });
     expect(paymentService.addLydiaBusinessHolder).toHaveBeenCalledWith(id, 'vendor-1', PHONE);
     expect(stores()[0][1]).toEqual({
       vendorToken: 'vendor-1',
@@ -729,6 +749,8 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       ok: true,
       responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' },
     });
+    // The store clears the claim itself; no separate release on success.
+    expect(releases()).toHaveLength(0);
   });
 
   it('a person who is not a member is refused before any call to Lydia', async () => {
@@ -759,7 +781,77 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 
-  it('record mode READS the rights, never adds, and refuses a number that does not manage cashiers', async () => {
+  it('ANOTHER number for the live Responsable is the typed 409 PHONE_LOCKED, before any call to Lydia', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: 'u1',
+      phoneMatches: false,
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
+    expect(stores()).toHaveLength(0);
+  });
+
+  it('the SAME number for the live Responsable is a resend: added again and stored', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: 'u1',
+    });
+    await controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req);
+    expect(paymentService.addLydiaBusinessHolder).toHaveBeenCalledTimes(1);
+    expect(stores()).toHaveLength(1);
+  });
+
+  it('a step already in flight is social-service`s typed 409, passed on, and Lydia is never called', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    mockedAxios.post.mockImplementation(async () => {
+      throw Object.assign(new Error('conflict'), {
+        response: { status: 409, data: { code: 'LYDIA_RESPONSABLE_IN_FLIGHT' } },
+      });
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: 'LYDIA_RESPONSABLE_IN_FLIGHT' } });
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
+  });
+
+  it('a TYPED refusal of the add releases the claim; no usable answer keeps it, at ERROR', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    paymentService.addLydiaBusinessHolder.mockRejectedValueOnce(
+      new BadGatewayException({ code: provider.LYDIA_SIGNATURE_REFUSED })
+    );
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 502 });
+    expect(releases()).toHaveLength(1);
+
+    paymentService.addLydiaBusinessHolder.mockRejectedValueOnce(
+      new ServiceUnavailableException({ code: provider.LYDIA_UNREACHABLE })
+    );
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 503 });
+    expect(releases()).toHaveLength(1);
+    expect(error.mock.calls.flat().map(String).join(' | ')).toContain(
+      "the add's outcome is unknown"
+    );
+    expect(stores()).toHaveLength(0);
+  });
+
+  it('record mode READS the rights, never adds, refuses a number that does not manage cashiers, and releases', async () => {
     const { controller, paymentService } = setup({
       vendorToken: 'vendor-1',
       member: true,
@@ -771,6 +863,7 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
     ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_NOT_A_CASHIER } });
     expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
     expect(stores()).toHaveLength(0);
+    expect(releases()).toHaveLength(1);
 
     paymentService.readLydiaCashierRights.mockResolvedValue({ access_cashier: true });
     await controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'record' }, req);
@@ -781,9 +874,9 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
   it('a social-service REFUSAL of the store is passed on with its code; no answer is a 503 at ERROR', async () => {
     const { controller } = setup({ vendorToken: 'vendor-1', member: true, currentUserId: null });
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const precheck = { vendorToken: 'vendor-1', member: true, currentUserId: null };
+    const claim = claimOf({ vendorToken: 'vendor-1', member: true, currentUserId: null });
     mockedAxios.post.mockImplementation(async (url: string) => {
-      if (url.endsWith('/lydia-responsable-precheck')) return { status: 200, data: precheck };
+      if (url.endsWith('/lydia-responsable-claim')) return { status: 200, data: claim };
       throw Object.assign(new Error('conflict'), {
         response: { status: 409, data: { code: LYDIA_RESPONSABLE_ALREADY_SET } },
       });
@@ -793,14 +886,14 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
     ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_ALREADY_SET } });
 
     mockedAxios.post.mockImplementation(async (url: string) => {
-      if (url.endsWith('/lydia-responsable-precheck')) return { status: 200, data: precheck };
+      if (url.endsWith('/lydia-responsable-claim')) return { status: 200, data: claim };
       throw new Error('ECONNREFUSED');
     });
     await expect(
       controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
     ).rejects.toMatchObject({ status: 503 });
     expect(error.mock.calls.flat().map(String).join(' | ')).toContain(
-      'AFTER Lydia added the cashier - a retry is safe'
+      'AFTER Lydia added the cashier - the step stays claimed until a global admin clears it'
     );
   });
 
@@ -875,5 +968,6 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
     }).toEqual(contract.core);
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
+    expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
   });
 });

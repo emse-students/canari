@@ -5,7 +5,11 @@
  * replayed `BUSINESS_VALIDATED` give ONE notice), that a revert withholds exactly the on-sale
  * products of the holder and its approved delegates and the release puts back exactly those, that a
  * revert committed while a purchase is being prepared refuses it under the lock with the typed code
- * and issues NO request/do, and that migration 118 runs twice.
+ * and issues NO request/do, and that migration 118 runs twice. And what only CONCURRENCY proves
+ * (`Promise.all` on separate connections): N simultaneous VALIDATED give one transition and one
+ * notice, two enrolment claims give one winner and one typed 409, a VALIDATED racing a revert never
+ * leaves a withheld product on sale while its holder is not ready, and two simultaneous Responsable
+ * steps give one row, one typed conflict and ONE `business/addcashier`.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -14,7 +18,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, HttpException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { ProductCheckout } from './entities/product-checkout.entity';
@@ -27,7 +31,15 @@ import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
-import { AssociationsService } from './associations.service';
+import { PostNotification } from '../posts/entities/post-notification.entity';
+import { SECRET_BOX_ENV } from '../common/secret-box';
+import {
+  AssociationsService,
+  LYDIA_RESPONSABLE_ALREADY_SET,
+  LYDIA_RESPONSABLE_IN_FLIGHT,
+} from './associations.service';
+import { LYDIA_ENROLMENT_IN_FLIGHT } from './lydia-readiness';
+import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -36,6 +48,8 @@ const maybe = URL ? describe : describe.skip;
 const HOLDER = '00000000-0000-4000-8000-0000000001a1';
 const CLUB = '00000000-0000-4000-8000-0000000001a2';
 const PENDING_CLUB = '00000000-0000-4000-8000-0000000001a3';
+const ENROLLING = '00000000-0000-4000-8000-0000000001a4';
+const PHONE = '+33612345678';
 const VENDOR = 'vendor-token-of-the-holder';
 const migration = (name: string) => readFileSync(join(__dirname, '../migrations', name), 'utf8');
 
@@ -46,6 +60,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
   let associations: AssociationsService;
   let products: ProductsService;
   const tell = jest.fn(async () => 1);
+  let savedSecret: string | undefined;
   const requests: unknown[] = [];
 
   const options = (synchronize: boolean, entities: Function[]) => ({
@@ -73,6 +88,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       Association,
       AssociationAudience,
       Space,
+      PostNotification,
     ];
     const others = new DataSource(options(true, entities));
     await others.initialize();
@@ -87,14 +103,22 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query('RESET lock_timeout');
     await admin.query(
-      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
+         "displayName" text, admin boolean NOT NULL DEFAULT false)`
     );
+    await admin.query(
+      `INSERT INTO users (id, "firstName", admin) VALUES ('global-admin', 'Admin', true),
+         ('member-1', 'Ada', false), ('member-2', 'Bob', false)`
+    );
+    savedSecret = process.env[SECRET_BOX_ENV];
+    process.env[SECRET_BOX_ENV] = 'throwaway-encryption-secret-0123456789abcdef';
 
     const assoRepo = ds.getRepository(Association);
     for (const [id, extra] of [
       [HOLDER, { lydiaAccountId: VENDOR }],
       [CLUB, { paymentParentAssociationId: HOLDER, paymentDelegationStatus: 'approved' }],
       [PENDING_CLUB, { paymentParentAssociationId: HOLDER, paymentDelegationStatus: 'pending' }],
+      [ENROLLING, {}],
     ] as const) {
       await assoRepo.save(
         assoRepo.create({
@@ -113,6 +137,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       redis: { deleteByPattern: async () => 0 },
       lydiaNotifier: { enabled: () => true, tell },
       listFlagHolders: async () => ['manager-1'],
+      isMember: async () => true,
     }) as unknown as AssociationsService;
     products = Object.assign(Object.create(ProductsService.prototype) as object, {
       logger: new Logger('ProductsService'),
@@ -136,6 +161,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
 
   afterAll(async () => {
     jest.restoreAllMocks();
+    if (savedSecret === undefined) delete process.env[SECRET_BOX_ENV];
+    else process.env[SECRET_BOX_ENV] = savedSecret;
     await ds?.destroy();
     await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await admin?.end();
@@ -172,10 +199,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     const [cols] = await ds.query(
       `SELECT count(*)::int AS n FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = 'associations'
-          AND column_name IN ('lydiaReadinessCause', 'lydiaReadinessAt', 'lydiaEnrolmentStartedAt')`,
+          AND column_name IN ('lydiaReadinessCause', 'lydiaReadinessAt', 'lydiaEnrolmentStartedAt',
+                              'lydiaResponsableStartedAt')`,
       [schema]
     );
-    expect(cols.n).toBe(3);
+    expect(cols.n).toBe(4);
     await ds.query(
       `INSERT INTO lydia_cashiers ("associationId", "vendorToken", "userId", "phoneEnd", "addedByUserId")
        VALUES ($1, $2, 'u1', '78', 'u0')`,
@@ -228,6 +256,13 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(await flags(pending.id)).toEqual({ isActive: true, activationWithheld: false });
     expect(await flags(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
     expect(tell).toHaveBeenCalledWith(expect.anything(), 'paused', ['manager-1']);
+    // The report a person sees: one bell row per global admin, committed with the revert.
+    expect(
+      await ds.query(
+        `SELECT "recipientId", type, "postId" FROM post_notifications WHERE type = $1`,
+        [LYDIA_PAYMENTS_PAUSED_TYPE]
+      )
+    ).toEqual([{ recipientId: 'global-admin', type: LYDIA_PAYMENTS_PAUSED_TYPE, postId: HOLDER }]);
 
     // A second refusal of the same Business is a replay: nothing more, no second notice.
     await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
@@ -235,7 +270,14 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     });
     expect(tell).toHaveBeenCalledTimes(1);
 
-    await products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' });
+    // An unsigned VALIDATED does not clear Lydia's own refusal: nothing released.
+    await expect(
+      products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' })
+    ).resolves.toMatchObject({ kind: 'held-by-lydia' });
+    expect(await stateOf(HOLDER)).toEqual({ ready: false, cause: 'request-refused' });
+    expect(await flags(own.id)).toEqual({ isActive: false, activationWithheld: true });
+
+    await products.markLydiaReady(VENDOR, 'admin', { path: 'admin' });
     expect(await flags(own.id)).toEqual({ isActive: true, activationWithheld: false });
     expect(await flags(delegate.id)).toEqual({ isActive: true, activationWithheld: false });
     expect(await flags(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
@@ -268,5 +310,140 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(
       await ds.query(`SELECT id FROM product_checkouts WHERE "productId" = $1`, [item.id])
     ).toEqual([]);
+  });
+
+  describe('under concurrency (Promise.all, one connection each)', () => {
+    const reset = async (ready: boolean, cause: string | null) => {
+      await ds.query(
+        `UPDATE associations SET "lydiaOnboardingComplete" = $2, "lydiaReadinessCause" = $3,
+                "lydiaReadinessAt" = NULL, "lydiaEnrolmentStartedAt" = NULL,
+                "lydiaResponsableStartedAt" = NULL
+          WHERE id = $1`,
+        [HOLDER, ready, cause]
+      );
+      await ds.query(`DELETE FROM association_products`);
+      await ds.query(`DELETE FROM post_notifications`);
+      await ds.query(`DELETE FROM lydia_cashiers`);
+    };
+
+    it('N simultaneous VALIDATED: ONE transition and ONE notice', async () => {
+      await reset(false, null);
+      tell.mockClear();
+      const outcomes = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' })
+        )
+      );
+      expect(outcomes.filter((o) => o.kind === 'transitioned')).toHaveLength(1);
+      expect(outcomes.filter((o) => o.kind === 'replay')).toHaveLength(7);
+      expect(tell).toHaveBeenCalledTimes(1);
+      expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
+    });
+
+    it('two simultaneous enrolment claims: one wins, the other is the typed 409', async () => {
+      await ds.query(
+        `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaAccountId" = NULL WHERE id = $1`,
+        [ENROLLING]
+      );
+      const settled = await Promise.allSettled([
+        associations.claimLydiaEnrolment(ENROLLING),
+        associations.claimLydiaEnrolment(ENROLLING),
+      ]);
+      expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const [lost] = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+      expect(lost.reason).toBeInstanceOf(ConflictException);
+      expect((lost.reason as ConflictException).getResponse()).toMatchObject({
+        code: LYDIA_ENROLMENT_IN_FLIGHT,
+      });
+    });
+
+    it('a VALIDATED racing a revert: consistent, and nothing withheld goes back on sale while not ready', async () => {
+      for (let round = 0; round < 10; round++) {
+        await reset(false, null);
+        const withheld = await product(HOLDER, `withheld-${round}`, {
+          isActive: false,
+          activationWithheld: true,
+        });
+        const onSale = await product(CLUB, `delegate-withheld-${round}`, {
+          isActive: false,
+          activationWithheld: true,
+        });
+        await Promise.all([
+          products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' }),
+          associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
+            path: 'shop',
+            id: `race-${round}`,
+          }),
+        ]);
+        // Either order ends NOT ready (an unsigned VALIDATED never undoes a refusal), and nothing
+        // that was withheld is on sale: a release that ran after the revert released nothing.
+        expect(await stateOf(HOLDER)).toEqual({ ready: false, cause: 'request-refused' });
+        expect((await flags(withheld.id)).isActive).toBe(false);
+        expect((await flags(onSale.id)).isActive).toBe(false);
+      }
+    });
+
+    it('a release that runs AFTER a revert undid the ready re-reads under its lock and releases nothing', async () => {
+      await reset(true, 'webhook-validated');
+      const item = await product(HOLDER, 'late-release', {
+        isActive: false,
+        activationWithheld: true,
+      });
+      // The VALIDATED committed ready; Lydia's error 5 reverts before its release runs.
+      await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
+        path: 'shop',
+      });
+      await expect(products.releaseWithheldForAssociationAndDelegates(HOLDER)).resolves.toBe(0);
+      expect(await flags(item.id)).toEqual({ isActive: false, activationWithheld: true });
+    });
+
+    it('two simultaneous Responsable steps: ONE row, ONE typed conflict, ONE addcashier', async () => {
+      await reset(true, 'admin');
+      let addcashier = 0;
+      // What core-service does: claim, then (only when claimed) business/addcashier, then record.
+      const step = async (userId: string) => {
+        const pre = await associations.claimLydiaResponsable(HOLDER, userId, PHONE);
+        if (!pre.claimed) throw new Error('not claimed');
+        addcashier += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return associations.recordLydiaResponsable(HOLDER, {
+          vendorToken: VENDOR,
+          userId,
+          phone: PHONE,
+          addedByUserId: 'treasurer',
+        });
+      };
+      const settled = await Promise.allSettled([step('member-1'), step('member-2')]);
+      expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const [lost] = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+      expect(lost.reason).toBeInstanceOf(HttpException);
+      expect((lost.reason as HttpException).getResponse()).toMatchObject({
+        code: LYDIA_RESPONSABLE_IN_FLIGHT,
+      });
+      expect(addcashier).toBe(1);
+      expect(
+        await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "removedAt" IS NULL`)
+      ).toEqual([{ n: 1 }]);
+    });
+
+    it('two simultaneous records of two people: ONE row, the other the typed ALREADY_SET', async () => {
+      await reset(true, 'admin');
+      const record = (userId: string) =>
+        associations.recordLydiaResponsable(HOLDER, {
+          vendorToken: VENDOR,
+          userId,
+          phone: PHONE,
+          addedByUserId: 'treasurer',
+        });
+      const settled = await Promise.allSettled([record('member-1'), record('member-2')]);
+      expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const [lost] = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+      expect((lost.reason as HttpException).getResponse()).toMatchObject({
+        code: LYDIA_RESPONSABLE_ALREADY_SET,
+      });
+      expect(
+        await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "removedAt" IS NULL`)
+      ).toEqual([{ n: 1 }]);
+    });
   });
 });

@@ -24,6 +24,7 @@ import {
   LYDIA_CASHIER_RIGHTS_INCOMPLETE,
   LYDIA_SIGNATURE_REFUSED,
   LYDIA_UNREACHABLE,
+  redactForLog,
 } from './lydia-payment-provider';
 import { signLydiaRequest } from './lydia-signature';
 
@@ -777,6 +778,24 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     // CONTROL: redaction is by key, not a blanket mute - the other fields are still diagnosable.
     expect(logged).toContain('REQ-VISIBLE');
     expect(logged).not.toContain('SIGNATURESECRET');
+  });
+
+  it('redacts personal fields at ANY depth of an answer: a nested phone never reaches the log', () => {
+    const redacted = redactForLog({
+      error: '0',
+      data: {
+        cashier_phone: '+33612345678',
+        cashiers: [{ phone: '+33600000099', firstname: 'Ada', lastname: 'L', name: 'Ada L' }],
+        access_cashier: '1',
+      },
+    });
+    const text = JSON.stringify(redacted);
+    expect(text).not.toContain('612345678');
+    expect(text).not.toContain('600000099');
+    expect(text).not.toContain('Ada');
+    // CONTROL: redaction is by key, the rest stays diagnosable.
+    expect(text).toContain('access_cashier');
+    expect(redacted.error).toBe('0');
   });
 
   it('never logs the api_token_id nor a vendor_id echo (the private token) of a freshly created business', async () => {

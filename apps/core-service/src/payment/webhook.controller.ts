@@ -321,18 +321,20 @@ export class PaymentWebhookController {
   /**
    * Receives the `webhook` Lydia was given at `business/create` (`LydiaPaymentProvider
    * .createOnboarding`): two fields, `vendor_token` and `event` (`BUSINESS_VALIDATED` or
-   * `BUSINESS_UNVALIDATED`), and NO signature (lydia-api.md section 5b). The vendor token is
-   * public, so anyone can send this body.
+   * `BUSINESS_UNVALIDATED`), and NO signature (lydia-api.md section 5b), so anyone can send this
+   * body.
    *
    * WHAT IT MAY CHANGE, decided by the owner on 2026-10-30 (lot 2): `BUSINESS_VALIDATED` marks the
    * holder of the vendor token READY (social-service `markLydiaReady`, cause `webhook-validated`) -
    * the risk of an unsigned VALIDATED was ACCEPTED, and a forged one cannot make a payer pay into
    * nothing: a Business that is not validated answers `request/do` with error 5 BEFORE any request
-   * exists, which reverts the readiness at once. `BUSINESS_UNVALIDATED` NEVER changes state (notify
-   * only): a WARN naming the association, for its managers' admin. So no body can turn an
-   * association NOT ready. Anything malformed, an unknown event, no holder or two holders writes
-   * nothing (200: nothing to retry). A VALIDATED that could not be APPLIED answers 503, so Lydia
-   * retries it. Bounded and rate-limited like the request callback (multer limits here, nginx zone
+   * exists, which reverts the readiness at once - and an unsigned VALIDATED never clears what Lydia
+   * itself reported (error 5 / 2701): only a global admin does. `BUSINESS_UNVALIDATED` NEVER changes
+   * state and NOTIFIES NOBODY: it is a WARN line naming the association, in this service's log and
+   * nowhere else. So no body can turn an association NOT ready. Anything malformed, an unknown event,
+   * no holder or two holders writes nothing (200: nothing to retry). A VALIDATED that could not be
+   * APPLIED, or that names no holder while an enrolment's outcome is not yet recorded, answers 503
+   * to ask for a retry - whether Lydia retries a 503 is UNMEASURED. Bounded and rate-limited like the request callback (multer limits here, nginx zone
    * `lydia_callback` at the edge).
    */
   @Post('lydia-business-webhook')
@@ -367,8 +369,10 @@ export class PaymentWebhookController {
         );
         applied = data ?? {};
       } catch (err: unknown) {
+        // A 503 asks Lydia for a retry; that it retries is unmeasured.
         this.logger.error(
-          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied - answered 503 so Lydia retries',
+          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied (or no holder while an ' +
+            'enrolment is in flight) - answered 503; whether Lydia retries is unmeasured',
           describeHttpError(err as Error)
         );
         throw new ServiceUnavailableException('Failed to apply the business event');
@@ -385,7 +389,7 @@ export class PaymentWebhookController {
       : 'no association of ours';
     this.logger.warn(
       `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned) for ${named} - Lydia turns daily ` +
-        `transfers off; NOTHING changed here (notify only), for its managers and a global admin to look at`
+        `transfers off; NOTHING changed here and nobody was notified - this line is the only record`
     );
     return { received: true };
   }

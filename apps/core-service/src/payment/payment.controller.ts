@@ -32,6 +32,7 @@ import {
   LYDIA_CASHIER_PHONE_INVALID,
   LYDIA_CASHIER_PHONE_RE,
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
+  LYDIA_UNREACHABLE,
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
 } from './lydia-payment-provider';
@@ -86,6 +87,11 @@ export const LYDIA_RESPONSABLE_NOT_A_MEMBER = 'LYDIA_RESPONSABLE_NOT_A_MEMBER';
 export const LYDIA_RESPONSABLE_NOT_A_CASHIER = 'LYDIA_RESPONSABLE_NOT_A_CASHIER';
 /** The `code` (409) of a second person asked as Responsable: changing them is lot 3. */
 export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
+/**
+ * The `code` (409) of ANOTHER number for the live Responsable: Lydia would keep the old number as a
+ * cashier Canari no longer tracks, so changing it comes with lot 3. Also social-service's.
+ */
+export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
 
 function alreadyLinked(): ConflictException {
   return new ConflictException({
@@ -358,9 +364,31 @@ export class PaymentController {
   }
 
   /**
+   * Releases the Responsable step's claim after an outcome core-service KNOWS; a failure is logged
+   * at ERROR (the claim then waits for a global admin) and never replaces the answer being given.
+   */
+  private async releaseResponsableClaim(associationId: string): Promise<void> {
+    try {
+      await axios.post(
+        socialUrl(
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-responsable-release`
+        ),
+        {},
+        { ...internalSocialRequestConfig(), timeout: LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead }
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `Lydia Responsable of ${associationId}: the step's claim could not be released - a global ` +
+          `admin clears it`,
+        describeHttpError(err as Error)
+      );
+    }
+  }
+
+  /**
    * Clears the "enrolment in flight" marker (GLOBAL ADMIN only), after the admin checked with
    * Lydia's support that the unconfirmed `business/create` left no Business behind (or had it
-   * deleted). The association may then enrol again.
+   * deleted). The association may then enrol again. It clears the Responsable step's claim too.
    */
   @Post('lydia-enrolment-clear/:associationId')
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
@@ -412,16 +440,21 @@ export class PaymentController {
         message: 'The phone number must be written +33...',
       });
     }
-    const pre = await this.responsableSocialStep(associationId, 'precheck', () =>
+    // The checks AND the claim of this step, in social-service: claimed only when every check
+    // passes, so two managers cannot both have Lydia add a cashier (typed 409
+    // `LYDIA_RESPONSABLE_IN_FLIGHT` / `LYDIA_BUSINESS_CHANGED`, passed on as given).
+    const pre = await this.responsableSocialStep(associationId, 'claim', () =>
       axios.post<{
         vendorToken: string | null;
         member: boolean;
         currentUserId: string | null;
+        phoneMatches: boolean;
+        claimed: boolean;
       }>(
         socialUrl(
-          `internal/associations/${encodeURIComponent(associationId)}/lydia-responsable-precheck`
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-responsable-claim`
         ),
-        { userId },
+        { userId, phone },
         { ...internalSocialRequestConfig(), timeout: 10_000 }
       )
     );
@@ -445,26 +478,62 @@ export class PaymentController {
         message: 'This association already has a Responsable',
       });
     }
-    if (mode === 'add') {
-      await this.paymentService.addLydiaBusinessHolder(associationId, pre.vendorToken, phone);
-    } else {
-      const rights = await this.paymentService.readLydiaCashierRights(
-        associationId,
-        pre.vendorToken,
-        phone
+    if (!pre.phoneMatches) {
+      // The same person with ANOTHER number: Lydia would keep the old one as a cashier Canari no
+      // longer tracks. Refused BEFORE any call to Lydia; changing it is lot 3.
+      this.logger.warn(
+        `Lydia Responsable of ${associationId} refused: another number for the live Responsable`
       );
-      if (!rights.access_cashier) {
-        this.logger.warn(
-          `Lydia Responsable of ${associationId} not recorded: that number does not manage cashiers at Lydia`
-        );
-        throw new ConflictException({
-          code: LYDIA_RESPONSABLE_NOT_A_CASHIER,
-          message: 'That number is not a cashier managing cashiers of this Business at Lydia',
-        });
-      }
+      throw new ConflictException({
+        code: LYDIA_RESPONSABLE_PHONE_LOCKED,
+        message: "The Responsable's number cannot be changed yet",
+      });
     }
-    // Lydia has the cashier now; a failure to STORE is said at ERROR, and a retry is safe (the add
-    // replaces the rights, the record replaces the phone).
+    if (!pre.claimed) {
+      // Every check passed, so social-service claimed or refused: an answer with neither is not one.
+      this.logger.error(`Lydia Responsable of ${associationId}: the claim answered unclaimed`);
+      throw new ServiceUnavailableException('The association service answered unexpectedly');
+    }
+    try {
+      if (mode === 'add') {
+        await this.paymentService.addLydiaBusinessHolder(associationId, pre.vendorToken, phone);
+      } else {
+        const rights = await this.paymentService.readLydiaCashierRights(
+          associationId,
+          pre.vendorToken,
+          phone
+        );
+        if (!rights.access_cashier) {
+          this.logger.warn(
+            `Lydia Responsable of ${associationId} not recorded: that number does not manage cashiers at Lydia`
+          );
+          throw new ConflictException({
+            code: LYDIA_RESPONSABLE_NOT_A_CASHIER,
+            message: 'That number is not a cashier managing cashiers of this Business at Lydia',
+          });
+        }
+      }
+    } catch (err: unknown) {
+      // A KNOWN outcome releases the claim: a read changes nothing at Lydia, and a typed refusal
+      // added nothing. No usable answer to an ADD (`LYDIA_UNREACHABLE`, or an untyped failure)
+      // keeps it until a global admin clears it (`lydia-enrolment-clear`).
+      const answer = err instanceof HttpException ? err.getResponse() : undefined;
+      const typedCode =
+        answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
+      const known =
+        mode === 'record' || (err instanceof HttpException && typedCode !== LYDIA_UNREACHABLE);
+      if (known) {
+        await this.releaseResponsableClaim(associationId);
+      } else {
+        this.logger.error(
+          `Lydia Responsable of ${associationId}: the add's outcome is unknown - the step stays ` +
+            `claimed until a global admin clears it`
+        );
+      }
+      throw err;
+    }
+    // Lydia has the cashier now; a failure to STORE is said at ERROR and keeps the claim, so a
+    // global admin clears it once checked (the add replaces the rights, so a later add is safe).
     const data = await this.responsableSocialStep(associationId, 'store', () =>
       axios.post<{ responsable: unknown }>(
         socialUrl(`internal/associations/${encodeURIComponent(associationId)}/lydia-responsable`),
@@ -485,7 +554,7 @@ export class PaymentController {
    */
   private async responsableSocialStep<T>(
     associationId: string,
-    step: 'precheck' | 'store',
+    step: 'claim' | 'store',
     call: () => Promise<{ data: T }>
   ): Promise<T> {
     try {
@@ -500,7 +569,9 @@ export class PaymentController {
       }
       this.logger.error(
         `Lydia Responsable of ${associationId}: the ${step} at social-service failed` +
-          (step === 'store' ? ' AFTER Lydia added the cashier - a retry is safe' : ''),
+          (step === 'store'
+            ? ' AFTER Lydia added the cashier - the step stays claimed until a global admin clears it'
+            : ''),
         describeHttpError(err as Error)
       );
       throw new ServiceUnavailableException('The association service could not be reached');

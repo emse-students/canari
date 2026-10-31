@@ -1,16 +1,24 @@
-import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { In } from 'typeorm';
-import { SECRET_BOX_ENV, openSecret } from '../common/secret-box';
+import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import * as delegation from './payment-delegation.util';
 import {
   AssociationsService,
   LYDIA_ACCOUNT_ALREADY_LINKED,
+  LYDIA_BUSINESS_CHANGED,
   LYDIA_CASHIER_PHONE_PURPOSE,
   LYDIA_RESPONSABLE_ALREADY_SET,
+  LYDIA_RESPONSABLE_IN_FLIGHT,
+  LYDIA_RESPONSABLE_PHONE_LOCKED,
 } from './associations.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { LYDIA_ENROLMENT_IN_FLIGHT, LYDIA_READINESS_LOG_TAG } from './lydia-readiness';
-import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import {
+  LYDIA_PAYMENTS_PAUSED_TYPE,
+  LydiaPaymentsNotifier,
+} from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
 
 /**
@@ -26,19 +34,30 @@ const PHONE = '+33612345678';
 
 type Holder = { id: string; ready: boolean; cause: string | null; holders?: number };
 
-/** A manager answering the two statements of `setLydiaReadiness` from one in-memory row. */
+/** The statements of `setLydiaReadiness`, answered from one in-memory row (and the global admins). */
 function makeReadiness(
   row: Holder | null,
-  notifier = { enabled: () => true, tell: jest.fn(async () => 1) }
+  notifier = { enabled: () => true, tell: jest.fn(async () => 1) },
+  world: { enrolmentsInFlight?: number; admins?: string[] } = {}
 ) {
   const update = jest.fn(async () => ({ affected: 3 }));
   const find = jest.fn(async () => [{ id: CLUB }]);
+  const saved: Array<Record<string, unknown>> = [];
   const manager = {
     query: jest.fn(async (sql: string, params: unknown[]) => {
       if (sql.includes('FOR UPDATE')) {
         if (!row) return [];
-        const one = { id: row.id, name: 'BDE', cause: row.cause, at: '2026-10-01T00:00:00.000Z' };
+        const one = {
+          id: row.id,
+          name: 'BDE',
+          ready: row.ready,
+          cause: row.cause,
+          at: '2026-10-01T00:00:00.000Z',
+        };
         return Array.from({ length: row.holders ?? 1 }, () => one);
+      }
+      if (sql.includes('"lydiaEnrolmentStartedAt" IS NOT NULL')) {
+        return [{ n: world.enrolmentsInFlight ?? 0 }];
       }
       if (sql.includes('RETURNING id')) {
         const ready = params[1] as boolean;
@@ -47,10 +66,22 @@ function makeReadiness(
         row.cause = params[2] as string;
         return [[{ id: row.id }], 1];
       }
+      if (sql.includes('SET "lydiaReadinessCause" = $2')) {
+        row!.cause = params[1] as string;
+        return [[], 1];
+      }
+      if (sql.includes('FROM users WHERE admin = true')) {
+        return (world.admins ?? ['admin-1']).map((id) => ({ id }));
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     update,
     find,
+    create: jest.fn((_entity: unknown, fields: Record<string, unknown>) => fields),
+    save: jest.fn(async (_entity: unknown, rows: Array<Record<string, unknown>>) => {
+      saved.push(...rows);
+      return rows;
+    }),
   };
   const assoRepo = {
     manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager), find },
@@ -63,7 +94,7 @@ function makeReadiness(
     lydiaNotifier: notifier,
     listFlagHolders,
   }) as unknown as AssociationsService;
-  return { service, manager, update, notifier, listFlagHolders };
+  return { service, manager, update, notifier, listFlagHolders, saved };
 }
 
 function captureLogs() {
@@ -139,7 +170,28 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     );
     expect(error).toContain('marked ready by webhook-validated');
     expect(error).toContain('3 on-sale product(s) withheld');
+    expect(error).toContain('1 global admin(s) told');
     expect(notifier.tell).toHaveBeenCalledWith(expect.anything(), 'paused', expect.anything());
+  });
+
+  it('a revert writes a bell row to EVERY global admin in its own transaction, whatever the switch', async () => {
+    captureLogs();
+    const off = { enabled: () => false, tell: jest.fn(async () => 0) };
+    const row: Holder = { id: HOLDER, ready: true, cause: 'webhook-validated' };
+    const { service, manager, saved } = makeReadiness(row, off, { admins: ['admin-1', 'admin-2'] });
+    await service.setLydiaReadiness(VENDOR, false, 'request-refused', { path: 'shop' });
+    expect(saved.map((r) => r.recipientId)).toEqual(['admin-1', 'admin-2']);
+    expect(saved[0]).toMatchObject({
+      type: LYDIA_PAYMENTS_PAUSED_TYPE,
+      postId: HOLDER,
+      text: 'BDE',
+      meta: expect.objectContaining({ cause: 'request-refused', audience: 'global-admin' }),
+    });
+    // The same manager as the revert's UPDATE: one transaction, so state and report commit together.
+    expect(manager.save).toHaveBeenCalledTimes(1);
+    // A replay of the same refusal reports nothing again.
+    await service.setLydiaReadiness(VENDOR, false, 'request-refused', { path: 'shop' });
+    expect(saved).toHaveLength(2);
   });
 
   it('error 2701 is named as such, and a revert of a holder already not ready withholds nothing', async () => {
@@ -160,6 +212,42 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(notifier.tell).not.toHaveBeenCalled();
   });
 
+  it('a 2701 after an error-5 revert updates the cause, with no transition and no second notice', async () => {
+    captureLogs();
+    const row: Holder = { id: HOLDER, ready: false, cause: 'request-refused' };
+    const { service, update, notifier, saved } = makeReadiness(row);
+    const outcome = await service.setLydiaReadiness(VENDOR, false, 'request-blocked', {
+      path: 'form',
+    });
+    expect(outcome.kind).toBe('replay');
+    expect(row.cause).toBe('request-blocked');
+    expect(update).not.toHaveBeenCalled();
+    expect(notifier.tell).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+  });
+
+  it.each(['request-refused', 'request-blocked'])(
+    'an unsigned VALIDATED never clears %s: 200-style outcome, nothing written, a WARN',
+    async (cause) => {
+      const logs = captureLogs();
+      const row: Holder = { id: HOLDER, ready: false, cause };
+      const { service, manager, notifier } = makeReadiness(row);
+      const outcome = await service.setLydiaReadiness(VENDOR, true, 'webhook-validated', {
+        path: 'webhook',
+      });
+      expect(outcome).toMatchObject({ kind: 'held-by-lydia', associationId: HOLDER });
+      expect(row).toMatchObject({ ready: false, cause });
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(notifier.tell).not.toHaveBeenCalled();
+      expect(logs.warn.join('|')).toContain(`does not clear Lydia's own ${cause}`);
+      // The global admin's validation does clear it.
+      await expect(
+        service.setLydiaReadiness(VENDOR, true, 'admin', { path: 'admin' })
+      ).resolves.toMatchObject({ kind: 'transitioned' });
+      expect(row).toMatchObject({ ready: true, cause: 'admin' });
+    }
+  );
+
   it('no holder, or two (never guessed), writes nothing', async () => {
     const logs = captureLogs();
     const none = makeReadiness(null);
@@ -172,6 +260,14 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     ).resolves.toEqual({ kind: 'no-holder' });
     expect(two.manager.query).toHaveBeenCalledTimes(1);
     expect(logs.error.join('|')).toContain('2 associations hold ONE vendor token');
+  });
+
+  it('no holder while an enrolment is in flight is its own outcome (the route answers 503)', async () => {
+    captureLogs();
+    const { service } = makeReadiness(null, undefined, { enrolmentsInFlight: 1 });
+    await expect(
+      service.setLydiaReadiness(VENDOR, true, 'webhook-validated', { path: 'webhook' })
+    ).resolves.toEqual({ kind: 'no-holder-enrolment-in-flight' });
   });
 
   it('with the switch OFF, a transition writes no notification row and says so', async () => {
@@ -232,12 +328,14 @@ describe('the release and the withhold read ONE delegate predicate', () => {
     expect(release.mock.calls.map(([id]) => id)).toEqual([HOLDER, CLUB]);
   });
 
-  it('markLydiaReady releases on EVERY call, replays included, and never on no holder', async () => {
+  it('markLydiaReady releases on EVERY ready call, replays included, never when nothing is ready', async () => {
     const set = jest
       .fn()
       .mockResolvedValueOnce({ kind: 'transitioned', associationId: HOLDER })
       .mockResolvedValueOnce({ kind: 'replay', associationId: HOLDER })
-      .mockResolvedValueOnce({ kind: 'no-holder' });
+      .mockResolvedValueOnce({ kind: 'no-holder' })
+      .mockResolvedValueOnce({ kind: 'held-by-lydia', associationId: HOLDER })
+      .mockResolvedValueOnce({ kind: 'no-holder-enrolment-in-flight' });
     const products = Object.assign(Object.create(ProductsService.prototype) as object, {
       associationsService: { setLydiaReadiness: set },
       logger: new Logger('ProductsService'),
@@ -246,7 +344,7 @@ describe('the release and the withhold read ONE delegate predicate', () => {
     const release = jest
       .spyOn(products, 'releaseWithheldForAssociationAndDelegates')
       .mockResolvedValue(0);
-    for (let i = 0; i < 3; i++)
+    for (let i = 0; i < 5; i++)
       await products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' });
     expect(set).toHaveBeenCalledWith(VENDOR, true, 'webhook-validated', { path: 'webhook' });
     expect(release).toHaveBeenCalledTimes(2);
@@ -310,7 +408,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     userId: string;
     vendorToken: string;
     phoneSealed: string | null;
-    phoneEnd: string;
+    phoneEnd: string | null;
     removedAt: Date | null;
   };
   let saved: string | undefined;
@@ -323,22 +421,26 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     else process.env[SECRET_BOX_ENV] = saved;
   });
 
-  function makeRecord(linked: string | null, rows: Cashier[]) {
+  function makeRecord(
+    linked: string | null,
+    rows: Cashier[],
+    state = { marker: true as boolean, insertFails: false }
+  ) {
     const query = jest.fn(async (sql: string, params: unknown[]) => {
+      if (sql.includes('FROM associations WHERE id = $1 FOR UPDATE')) {
+        return [{ vendorToken: linked }];
+      }
       if (sql.includes('FOR UPDATE')) return rows.filter((r) => r.removedAt === null);
       if (sql.includes('SET "removedAt" = now()')) {
         const r = rows.find((c) => c.id === params[0])!;
         r.removedAt = new Date();
         r.phoneSealed = null;
+        r.phoneEnd = null;
         return [];
       }
-      if (sql.includes('SET "phoneSealed" = $2')) {
-        const r = rows.find((c) => c.id === params[0])!;
-        r.phoneSealed = params[1] as string;
-        r.phoneEnd = params[2] as string;
-        return [];
-      }
+      if (sql.includes('SET "confirmedAt" = now()')) return [];
       if (sql.includes('INSERT INTO lydia_cashiers')) {
+        if (state.insertFails) throw Object.assign(new Error('duplicate key'), { code: '23505' });
         rows.push({
           id: `row-${rows.length + 1}`,
           vendorToken: params[1] as string,
@@ -349,16 +451,23 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
         });
         return [];
       }
+      if (sql.includes('"lydiaResponsableStartedAt" = NULL')) {
+        state.marker = false;
+        return [];
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     });
     const assoRepo = {
-      findOne: jest.fn(async () => ({ id: HOLDER, lydiaAccountId: linked })),
-      // The read-back (`lydiaResponsableOf`): the live row of that Business, never the sealed phone.
-      query: jest.fn(async (_sql: string, params: unknown[]) =>
-        rows
+      // The read-back (`lydiaResponsableOf`) and the release of the step's claim.
+      query: jest.fn(async (sql: string, params: unknown[]) => {
+        if (sql.includes('"lydiaResponsableStartedAt" = NULL')) {
+          state.marker = false;
+          return [];
+        }
+        return rows
           .filter((r) => r.removedAt === null && r.vendorToken === params[1])
-          .map((r) => ({ userId: r.userId, phoneEnd: r.phoneEnd, displayName: 'Ada' }))
-      ),
+          .map((r) => ({ userId: r.userId, phoneEnd: r.phoneEnd, displayName: 'Ada' }));
+      }),
       manager: {
         transaction: async (fn: (m: { query: typeof query }) => unknown) => fn({ query }),
       },
@@ -368,19 +477,21 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       logger: new Logger('AssociationsService'),
     }) as unknown as AssociationsService;
   }
-  const body = (userId = 'user-1') => ({
+  const body = (userId = 'user-1', phone = PHONE) => ({
     vendorToken: VENDOR,
     userId,
-    phone: PHONE,
+    phone,
     addedByUserId: 'treasurer-1',
   });
 
-  it('stores the phone SEALED, answers and logs its last two digits only', async () => {
+  it('stores the phone SEALED, answers and logs its last two digits only, and clears the claim', async () => {
     const logs = captureLogs();
     const rows: Cashier[] = [];
-    const view = await makeRecord(VENDOR, rows).recordLydiaResponsable(HOLDER, body());
+    const state = { marker: true, insertFails: false };
+    const view = await makeRecord(VENDOR, rows, state).recordLydiaResponsable(HOLDER, body());
     expect(view).toEqual({ userId: 'user-1', name: 'Ada', phoneEnd: '78' });
     expect(rows).toHaveLength(1);
+    expect(state.marker).toBe(false);
     expect(rows[0].phoneSealed).not.toContain('612345678');
     expect(openSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, rows[0].phoneSealed!)).toBe(PHONE);
     expect(() => openSecret(LYDIA_CASHIER_PHONE_PURPOSE, CLUB, rows[0].phoneSealed!)).toThrow(
@@ -391,21 +502,39 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     expect(all).toContain('phone ending 78');
   });
 
-  it('another person while one is live is the typed 409; the same person replaces the phone', async () => {
-    captureLogs();
+  it('another person is ALREADY_SET; the same person with ANOTHER number is PHONE_LOCKED, nothing replaced', async () => {
+    const logs = captureLogs();
     const rows: Cashier[] = [];
     const service = makeRecord(VENDOR, rows);
     await service.recordLydiaResponsable(HOLDER, body('user-1'));
+    const sealedBefore = rows[0].phoneSealed;
     await expect(service.recordLydiaResponsable(HOLDER, body('user-2'))).rejects.toMatchObject({
       status: 409,
       response: { code: LYDIA_RESPONSABLE_ALREADY_SET },
     });
-    await service.recordLydiaResponsable(HOLDER, { ...body('user-1'), phone: '+33600000099' });
+    await expect(
+      service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000099'))
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
     expect(rows).toHaveLength(1);
-    expect(rows[0].phoneEnd).toBe('99');
+    expect(rows[0]).toMatchObject({ phoneEnd: '78', phoneSealed: sealedBefore });
+    // The same person and number again (a re-sent SMS) is accepted and replaces nothing.
+    await expect(service.recordLydiaResponsable(HOLDER, body('user-1'))).resolves.toMatchObject({
+      phoneEnd: '78',
+    });
+    expect(rows).toHaveLength(1);
+    expect(Object.values(logs).flat().join('|')).not.toContain('600000099');
   });
 
-  it('a row of an EARLIER Business is closed and its phone cleared', async () => {
+  it('a concurrent insert refused by the unique index is the typed ALREADY_SET, never a bare 500', async () => {
+    captureLogs();
+    const state = { marker: true, insertFails: true };
+    await expect(
+      makeRecord(VENDOR, [], state).recordLydiaResponsable(HOLDER, body())
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_ALREADY_SET } });
+    expect(state.marker).toBe(false);
+  });
+
+  it('a row of an EARLIER Business is closed, its phone and its end cleared', async () => {
     captureLogs();
     const rows: Cashier[] = [
       {
@@ -418,18 +547,133 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       },
     ];
     await makeRecord(VENDOR, rows).recordLydiaResponsable(HOLDER, body('user-1'));
-    expect(rows[0]).toMatchObject({ phoneSealed: null });
+    expect(rows[0]).toMatchObject({ phoneSealed: null, phoneEnd: null });
     expect(rows[0].removedAt).not.toBeNull();
     expect(rows[1]).toMatchObject({ userId: 'user-1', vendorToken: VENDOR, removedAt: null });
   });
 
-  it('the Business changed meanwhile: refused, nothing written', async () => {
+  it('the Business changed meanwhile: the typed BUSINESS_CHANGED, nothing written, claim released', async () => {
     captureLogs();
     const rows: Cashier[] = [];
+    const state = { marker: true, insertFails: false };
     await expect(
-      makeRecord('another-business', rows).recordLydiaResponsable(HOLDER, body())
-    ).rejects.toBeInstanceOf(ConflictException);
+      makeRecord('another-business', rows, state).recordLydiaResponsable(HOLDER, body())
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_BUSINESS_CHANGED } });
     expect(rows).toHaveLength(0);
+    expect(state.marker).toBe(false);
+  });
+});
+
+describe('AssociationsService.claimLydiaResponsable - the checks and the claim of the step', () => {
+  let saved: string | undefined;
+  beforeAll(() => {
+    saved = process.env[SECRET_BOX_ENV];
+    process.env[SECRET_BOX_ENV] = SECRET;
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env[SECRET_BOX_ENV];
+    else process.env[SECRET_BOX_ENV] = saved;
+  });
+
+  function makeClaimant(state: {
+    linked: string | null;
+    member: boolean;
+    live: { userId: string; phone: string } | null;
+    marker: boolean;
+    switchBusinessOnClaim?: boolean;
+  }) {
+    const assoRepo = {
+      findOne: jest.fn(async () => ({ id: HOLDER, lydiaAccountId: state.linked })),
+      query: jest.fn(async (sql: string, params: unknown[]) => {
+        if (sql.includes('FROM lydia_cashiers')) {
+          return state.live
+            ? [
+                {
+                  userId: state.live.userId,
+                  phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, HOLDER, state.live.phone),
+                },
+              ]
+            : [];
+        }
+        if (sql.includes('"lydiaResponsableStartedAt" = now()')) {
+          if (state.switchBusinessOnClaim) state.linked = 'another-business';
+          const free = !state.marker && state.linked === params[1];
+          if (free) state.marker = true;
+          return free ? [[{ id: HOLDER }], 1] : [[], 0];
+        }
+        throw new Error(`unexpected SQL: ${sql}`);
+      }),
+    };
+    const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
+      assoRepo,
+      logger: new Logger('AssociationsService'),
+    }) as unknown as AssociationsService;
+    jest.spyOn(service, 'isMember').mockImplementation(async () => state.member);
+    return service;
+  }
+
+  it('one claim wins; the second is the typed 409 RESPONSABLE_IN_FLIGHT', async () => {
+    captureLogs();
+    const state = { linked: VENDOR, member: true, live: null, marker: false };
+    const service = makeClaimant(state);
+    await expect(service.claimLydiaResponsable(HOLDER, 'user-1', PHONE)).resolves.toMatchObject({
+      vendorToken: VENDOR,
+      claimed: true,
+      phoneMatches: true,
+    });
+    await expect(service.claimLydiaResponsable(HOLDER, 'user-1', PHONE)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_IN_FLIGHT },
+    });
+  });
+
+  it('the Business changing between the read and the claim is the typed BUSINESS_CHANGED', async () => {
+    captureLogs();
+    const state = {
+      linked: VENDOR,
+      member: true,
+      live: null,
+      marker: false,
+      switchBusinessOnClaim: true,
+    };
+    await expect(
+      makeClaimant(state).claimLydiaResponsable(HOLDER, 'user-1', PHONE)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_BUSINESS_CHANGED } });
+  });
+
+  it('the live Responsable with ANOTHER number is answered phoneMatches=false and NOT claimed', async () => {
+    const logs = captureLogs();
+    const state = {
+      linked: VENDOR,
+      member: true,
+      live: { userId: 'user-1', phone: PHONE },
+      marker: false,
+    };
+    const service = makeClaimant(state);
+    await expect(
+      service.claimLydiaResponsable(HOLDER, 'user-1', '+33600000099')
+    ).resolves.toMatchObject({ currentUserId: 'user-1', phoneMatches: false, claimed: false });
+    expect(state.marker).toBe(false);
+    // The same number is a resend: claimed.
+    await expect(service.claimLydiaResponsable(HOLDER, 'user-1', PHONE)).resolves.toMatchObject({
+      phoneMatches: true,
+      claimed: true,
+    });
+    expect(Object.values(logs).flat().join('|')).not.toContain('612345678');
+  });
+
+  it('another person, a non-member or no Business is answered and never claimed', async () => {
+    captureLogs();
+    for (const state of [
+      { linked: VENDOR, member: true, live: { userId: 'user-2', phone: PHONE }, marker: false },
+      { linked: VENDOR, member: false, live: null, marker: false },
+      { linked: null, member: true, live: null, marker: false },
+    ]) {
+      await expect(
+        makeClaimant(state).claimLydiaResponsable(HOLDER, 'user-1', PHONE)
+      ).resolves.toMatchObject({ claimed: false });
+      expect(state.marker).toBe(false);
+    }
   });
 });
 
@@ -472,7 +716,29 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
     const service = makeBare({ assoRepo: { update: jest.fn(async () => ({})), query } });
     await service.clearLydiaAccount(HOLDER);
     const closing = query.mock.calls.find(([sql]) => String(sql).includes('lydia_cashiers'));
-    expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL');
+    expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL');
     expect(closing?.[1]).toEqual([HOLDER]);
+  });
+});
+
+describe('the Responsable codes social-service answers follow the shared contract', () => {
+  it('equal libs/contracts/lydia-refusal-codes.json', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
+        'utf8'
+      )
+    ) as { social: Record<string, string> };
+    expect({
+      responsableAlreadySet: LYDIA_RESPONSABLE_ALREADY_SET,
+      responsablePhoneLocked: LYDIA_RESPONSABLE_PHONE_LOCKED,
+      responsableInFlight: LYDIA_RESPONSABLE_IN_FLIGHT,
+      businessChanged: LYDIA_BUSINESS_CHANGED,
+    }).toEqual({
+      responsableAlreadySet: contract.social.responsableAlreadySet,
+      responsablePhoneLocked: contract.social.responsablePhoneLocked,
+      responsableInFlight: contract.social.responsableInFlight,
+      businessChanged: contract.social.businessChanged,
+    });
   });
 });

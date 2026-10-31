@@ -695,14 +695,19 @@ with Lydia clears it (`POST /api/payments/lydia-enrolment-clear/:associationId`,
 
 **The webhook marks a Business ready, and nothing else (owner, 2026-10-30, lot 2).**
 `business/create` carries `webhook` = `/api/payments/lydia-business-webhook` (public, multer-bounded,
-nginx zone `lydia_callback`). Its body is unsigned and names a public vendor token. The owner ACCEPTED
+nginx zone `lydia_callback`). Its body is unsigned, so anyone can send it. The owner ACCEPTED
 the risk of a forged `BUSINESS_VALIDATED`: it cannot make anyone pay into nothing, because a Business
 Lydia has not validated answers the first `request/do` with error 5 BEFORE any request exists, and
 that answer reverts the readiness at once (below). So `BUSINESS_VALIDATED` asks social-service's
 `internal/associations/lydia-readiness` for `{ ready: true, cause: 'webhook-validated' }` and nothing
-else; a failure to apply it answers 503, so Lydia retries. `BUSINESS_UNVALIDATED` NEVER changes state:
-a WARN naming the association (notify only). Anything malformed or unknown writes nothing. So no body
-can make an association NOT ready. A spec drives every event, a forged field set and an oversized body
+else; a failure to apply it answers 503 to ask for a retry, and so does a VALIDATED that matches no
+holder while some association's `business/create` outcome is not yet recorded
+(`lydiaEnrolmentStartedAt` set: it may name the Business being linked). **That Lydia retries a 503 is
+UNMEASURED.** An unsigned VALIDATED never clears a holder whose cause is Lydia's own answer
+(`request-refused`, `request-blocked`): 200, nothing written, a WARN - only the global admin's
+"Valider l'onboarding" clears those. `BUSINESS_UNVALIDATED` NEVER changes state and NOTIFIES NOBODY: its
+WARN line in core-service's log is the only record. Anything malformed or unknown writes nothing. So no
+body can make an association NOT ready. A spec drives every event, a forged field set and an oversized body
 through the real route and asserts exactly that. A global admin keeps "Valider l'onboarding", now the
 same writer.
 
@@ -713,12 +718,16 @@ one transaction that locks the holder of the vendor token, and an
 `UPDATE ... WHERE "lydiaOnboardingComplete" <> $ready RETURNING` that IS the transition - a replay
 updates nothing, logs a debug line and notifies nobody. Every write records why and when
 (`lydiaReadinessCause` = `webhook-validated` | `admin` | `request-refused` | `request-blocked`,
-`lydiaReadinessAt`). No holder, or two, writes nothing.
+`lydiaReadinessAt`). No holder, or two, writes nothing. A second refusal naming ANOTHER cause (2701
+after error 5) updates the cause and its date, with no transition and no second notice.
 
 - **Ready** (`ProductsService.markLydiaReady`, the webhook and the admin route): then the withheld
   products of the holder and of its APPROVED delegates are released - on EVERY call, replays included,
   so a crash between the commit and the release heals at the next one (`activationWithheld` is the
-  allowlist, so a second release finds nothing).
+  allowlist, so a second release finds nothing). The release RE-READS readiness in its own
+  transaction, the association and its delegation parent share-locked, the revert locking that holder
+  FOR UPDATE: a release running after a revert undid the "ready" releases nothing (an integration
+  spec races the two).
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
   `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
   from a form (member or guest): the unissued attempt is released, then the HOLDER of the vendor token
@@ -726,6 +735,16 @@ updates nothing, logs a debug line and notifies nobody. Every write records why 
   and its approved delegates' withheld in the same transaction - through `approvedDelegateIds`, the
   SAME predicate the release reads, a spec spying on both. Logged at ERROR, `[LYDIA-READINESS] holder
   <id> reverted: request/do answered error 5 (...); it had been marked ready by <cause> at <date>`.
+  **Error 5 pauses the WHOLE holder** (the owner's decision). Its meaning - "the Business is not
+  validated" - comes from ONE homologation measurement and is believed to be a property of the
+  Business, not of the payer's input; nothing yet rules out a payer-side cause, which is why the
+  revert is a report a person sees (next bullet).
+- **The global admins** (`users.admin`) get a bell row `lydia_payments_paused` (no push) written in
+  the REVERT'S OWN transaction, so the state and its report commit together, whatever the managers'
+  switch says. No alerting mechanism exists in this estate, so the existing bell is what was reused;
+  an older native build draws it as the neutral unknown-type row, which still names the association.
+  The managers' payments screen shows the pause with its cause and date, and says payments stay
+  paused until a platform administrator re-checks the account with Lydia.
 - **The payer** reads the typed 409 `PAYMENTS_NOT_ACTIVATED` (or `PAYMENTS_BLOCKED` after a 2701),
   from `assertPaymentsReady`, `preparePurchase`, and `decidePurchase`, which re-reads the routing
   under the buyer's lock BEFORE the product's own flag: a revert committed while the purchase was
@@ -745,27 +764,45 @@ they can run it in the Lydia Pro app (the one measured route,
 `POST /api/payments/lydia-responsable/:associationId` (core-service, a payout manager), with the chosen
 member and their phone in E.164:
 
-1. **Pre-check through social-service** (`lydia-responsable-precheck`): the Business linked now
+1. **Checks and claim through social-service** (`lydia-responsable-claim`): the Business linked now
    (`LYDIA_NO_BUSINESS` otherwise), whether the person is a MEMBER (`LYDIA_RESPONSABLE_NOT_A_MEMBER`),
-   and whether another person is already the live Responsable (changing them is lot 3).
+   whether another person is already the live Responsable (`LYDIA_RESPONSABLE_ALREADY_SET`; changing
+   them is lot 3), and - the same person asked again - whether the phone is the number already sealed:
+   ANOTHER number is the typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, refused BEFORE any call to Lydia,
+   since Lydia would keep the old number as a cashier Canari no longer tracks (changing it is lot 3);
+   the same number is a resend. Only when every check passes is the step CLAIMED, in ONE statement on
+   the association row (`lydiaResponsableStartedAt`, migration 118): a second manager meanwhile reads
+   the typed 409 `LYDIA_RESPONSABLE_IN_FLIGHT` (or `LYDIA_BUSINESS_CHANGED`), so Lydia is asked ONCE
+   (an integration spec races two steps). A typed outcome releases the claim
+   (`lydia-responsable-release`); the store clears it in its own transaction; an add with no usable
+   answer, or a store that failed after the add, keeps it until a global admin clears it with the
+   enrolment marker (`lydia-enrolment-clear`).
 2. **`business/addcashier`** (`LydiaPaymentProvider.addBusinessHolder`): the 13 rights as a JSON array
    of names, `notify=yes` (Lydia sends the SMS), the signature over the URL-ENCODED values with
    `LYDIA_PROVIDER_PRIVATE_TOKEN` (REQUIRED in production since this lot). Then the rights are READ
    BACK (`business/getpermission`): anything short of all 13 is `LYDIA_CASHIER_RIGHTS_INCOMPLETE`,
    never counted as added. Typed: 444 `LYDIA_SIGNATURE_REFUSED`, 3 `LYDIA_CASHIER_PERMISSIONS_INVALID`,
-   102/103 `LYDIA_BUSINESS_TOKEN_REJECTED` (502); no answer or an HTML page `LYDIA_UNREACHABLE` (503,
-   a retry is safe: a second add replaces the rights). **Record mode**, for a Business whose holder is
+   102/103 `LYDIA_BUSINESS_TOKEN_REJECTED` (502); no answer or an HTML page `LYDIA_UNREACHABLE` (503;
+   the claim is kept, and a later add is safe once cleared: a second add replaces the rights). **Record mode**, for a Business whose holder is
    already a cashier: no add, the read-back alone, and `access_cashier` is required
    (`LYDIA_RESPONSABLE_NOT_A_CASHIER`).
 3. **Stored** (`lydia-responsable`, social-service): `lydia_cashiers` (migration 118), the phone
    SEALED (`secret-box.ts`, purpose `lydia-cashier-phone/v1`, the association id as context) and only
-   its last two digits (`phoneEnd`) ever read back or logged. One live Responsable per association (a
-   partial unique index); the same person again replaces the phone; a row of an EARLIER Business is
-   closed and its phone cleared; the unlink closes every row. Personal data: register entry C23 and
+   its last two digits (`phoneEnd`) ever read back or logged. In ONE transaction, the association row
+   locked: the Business must still be the one claimed (`LYDIA_BUSINESS_CHANGED`), one live Responsable
+   per association (a partial unique index, whose violation answers the typed
+   `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number
+   `LYDIA_RESPONSABLE_PHONE_LOCKED`; the same person and number refreshes the confirmation; a row of an
+   EARLIER Business is closed, its phone and `phoneEnd` cleared; the unlink closes every row the same
+   way. Nothing ties the phone to the member: the member is not asked, and the manager types it.
+   **A live row deleted** - by the account's erasure, or by the association's delete (`ON DELETE
+   CASCADE`) - is an `[AUDIT] [LYDIA]` ERROR naming the association and the Business, never the phone:
+   Lydia still lists that cashier. Personal data: register entry C23 and
    the privacy policy, changed together ([register](../../compliance/register-of-processing.md)).
 
 The codes are one file, `libs/contracts/lydia-refusal-codes.json`, asserted by core, social and the
-frontend. The screen never shows the `vendor_token`, and the "Ouvrir le tableau de bord Lydia" button
+frontend. Core redacts `cashier_phone`, `phone`, `firstname`, `lastname` and `name` (with the private
+token fields) at ANY depth of a Lydia answer before logging it. The screen never shows the `vendor_token`, and the "Ouvrir le tableau de bord Lydia" button
 is gone (its link answered 404 to anyone not signed in to Lydia's console).
 
 **The paste field is gone** (production has no linked Business without a stored key, counted

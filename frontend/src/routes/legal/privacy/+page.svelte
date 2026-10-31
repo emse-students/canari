@@ -168,11 +168,14 @@
         <dd>
           Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
           de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
-          reçoit un SMS de Lydia et devient caissier de ce compte. Canari garde l'identifiant du
-          membre, celui du trésorier qui l'a désigné, la date, et le numéro chiffré (illisible sans
-          la clé du serveur) ; seuls ses deux derniers chiffres sont affichés. Le numéro chiffré est
-          effacé quand le compte Lydia est délié de l'association, et la ligne est supprimée avec
-          votre compte Canari. Lydia conserve ses propres données selon sa politique.
+          reçoit un SMS de Lydia et devient caissier de ce compte. Le numéro est saisi par le
+          trésorier : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle. Canari garde l'identifiant du membre, celui du trésorier qui l'a désigné,
+          la date, et le numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers
+          chiffres sont affichés. Le numéro chiffré et ses deux derniers chiffres sont effacés quand
+          le compte Lydia est délié de l'association ; les deux identifiants restent jusqu'à la
+          suppression de votre compte Canari, avec laquelle la ligne est supprimée. Lydia conserve
+          ses propres données selon sa politique.
         </dd>
       </div>
       <div>

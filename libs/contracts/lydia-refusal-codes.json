@@ -18,7 +18,10 @@
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
     "paymentsBlocked": "PAYMENTS_BLOCKED",
     "enrolmentInFlight": "LYDIA_ENROLMENT_IN_FLIGHT",
-    "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET"
+    "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET",
+    "responsablePhoneLocked": "LYDIA_RESPONSABLE_PHONE_LOCKED",
+    "responsableInFlight": "LYDIA_RESPONSABLE_IN_FLIGHT",
+    "businessChanged": "LYDIA_BUSINESS_CHANGED"
   },
   "notificationTypes": {
     "active": "lydia_payments_active",

@@ -109,16 +109,16 @@ apply_copy_strips() {
   # the same live identifier as `associations.lydiaAccountId`. Guarded on the table, because a dump
   # taken before migration 101 reached production has no such table.
   "$sql" "DO \$\$ BEGIN IF to_regclass('product_checkouts') IS NOT NULL THEN UPDATE product_checkouts SET \"requestUuid\" = NULL, \"requestId\" = NULL, \"vendorToken\" = '' WHERE \"requestUuid\" IS NOT NULL OR \"requestId\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
-  # Why and when readiness last changed, and the enrolment-in-flight marker (migration 118): the
-  # copy is not onboarded (above), so it carries no cause for a readiness it does not have, and no
-  # marker for a `business/create` it never sent. Guarded on the column, like the key.
-  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaReadinessCause') THEN UPDATE associations SET \"lydiaReadinessCause\" = NULL, \"lydiaReadinessAt\" = NULL, \"lydiaEnrolmentStartedAt\" = NULL WHERE \"lydiaReadinessCause\" IS NOT NULL OR \"lydiaReadinessAt\" IS NOT NULL OR \"lydiaEnrolmentStartedAt\" IS NOT NULL; END IF; END \$\$;" "$database"
+  # Why and when readiness last changed, and the two in-flight markers (migration 118): the copy is
+  # not onboarded (above), so it carries no cause for a readiness it does not have, and no marker for
+  # a `business/create` or `business/addcashier` it never sent. Guarded on the column, like the key.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaReadinessCause') THEN UPDATE associations SET \"lydiaReadinessCause\" = NULL, \"lydiaReadinessAt\" = NULL, \"lydiaEnrolmentStartedAt\" = NULL, \"lydiaResponsableStartedAt\" = NULL WHERE \"lydiaReadinessCause\" IS NOT NULL OR \"lydiaReadinessAt\" IS NOT NULL OR \"lydiaEnrolmentStartedAt\" IS NOT NULL OR \"lydiaResponsableStartedAt\" IS NOT NULL; END IF; END \$\$;" "$database"
   # A Lydia cashier's phone, SEALED under production's secret (migration 118), and the Business it is
   # a cashier of: personal data and a live identifier, blanked like the key above ("unreadable today"
   # is a property of a secret). "vendorToken" is NOT NULL, so it is blanked rather than nulled.
   # Guarded on the table: a dump taken before migration 118 reached production has none.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_cashiers') IS NOT NULL THEN UPDATE lydia_cashiers SET \"phoneSealed\" = NULL, \"vendorToken\" = '' WHERE \"phoneSealed\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 17 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers\n' "$prefix"
+  printf '%s   payment identifiers cleared: 18 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say

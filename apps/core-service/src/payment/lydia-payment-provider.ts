@@ -255,19 +255,40 @@ const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> =
  * travels in every `request/do` and names the Business in every callback (lydia-api.md section 1) -
  * so a server log may carry it; it is what identifies an orphan Business to Lydia's support.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'vendor_id', 'signature']);
+const LYDIA_LOG_REDACT_KEYS = new Set([
+  'api_token_id',
+  'vendor_id',
+  'signature',
+  // Personal data an answer may echo (a cashier call's, a payer's): never in a log line.
+  'cashier_phone',
+  'phone',
+  'firstname',
+  'lastname',
+  'name',
+]);
 
 /** The public origin Lydia calls back on: nginx, the single entry point, from `FRONTEND_URL`. */
 function publicApiBase(): string {
   return (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
 }
 
-function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) =>
-      LYDIA_LOG_REDACT_KEYS.has(key) ? [key, '[redacted]'] : [key, value]
-    )
-  );
+/**
+ * A copy of a Lydia answer fit for a log line: every `LYDIA_LOG_REDACT_KEYS` field replaced, at ANY
+ * depth (an answer nests `data`, `permissions` or a list of cashiers), the rest kept as is.
+ */
+export function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, inner]) =>
+          LYDIA_LOG_REDACT_KEYS.has(key) ? [key, '[redacted]'] : [key, walk(inner)]
+        )
+      );
+    }
+    return value;
+  };
+  return walk(data) as Record<string, unknown>;
 }
 
 /**

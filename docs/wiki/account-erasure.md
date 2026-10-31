@@ -156,7 +156,10 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **The Responsable of a Lydia Business** (`lydia_cashiers`, migration 118): the row naming the
   account is DELETED, its sealed phone with it; a row the account ADDED keeps its person and gets
   `addedByUserId = '[deleted]'`. The cashier rights at Lydia are Lydia's data, not reached by this
-  erasure (enrolment lot 3) - [payments](frontend/modules/payments.md).
+  erasure (enrolment lot 3), so a LIVE row (`removedAt` NULL) it deletes is read first
+  (`liveCashiersErased`) and reported per row at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted a
+  LIVE cashier row`, naming the association and the Business, never the phone - the same line the
+  association's delete writes before its `ON DELETE CASCADE` - [payments](frontend/modules/payments.md).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 

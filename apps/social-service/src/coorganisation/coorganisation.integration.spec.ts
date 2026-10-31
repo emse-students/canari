@@ -150,6 +150,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       CREATE TABLE association_role_history (association_id uuid, user_id varchar);
       CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
       CREATE TABLE form_respondents ("formId" uuid, "userId" varchar);
+      CREATE TABLE lydia_cashiers ("associationId" uuid, "vendorToken" varchar, "userId" varchar,
+        "addedByUserId" varchar, "removedAt" timestamptz);
     `);
     for (const [id, name] of [
       [A1, 'Organiser'],

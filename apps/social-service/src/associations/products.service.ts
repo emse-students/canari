@@ -764,10 +764,45 @@ export class ProductsService {
     return this.releaseWithheldFor(asso);
   }
 
-  /** The release itself, for an association already loaded (see `releaseWithheldProducts`). */
+  /**
+   * The release itself, for an association already loaded (see `releaseWithheldProducts`).
+   *
+   * Readiness is RE-READ inside the release's own transaction, the association row (and its
+   * delegation parent, the holder whose readiness counts) share-locked: a revert
+   * (`AssociationsService.setLydiaReadiness`) locks that holder FOR UPDATE before it withholds, so
+   * a release running after a "ready" that a revert has since undone sees the revert and releases
+   * nothing - no withheld product goes back on sale while its holder is not ready. Only the
+   * provider (a core-service call) is read outside the lock.
+   */
   private async releaseWithheldFor(asso: Association): Promise<number> {
     const associationId = asso.id;
-    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    const provider = await this.activePaymentProvider();
+    const { count, paymentTarget } = await this.assoRepo.manager.transaction(async (manager) => {
+      const fresh = await manager.findOne(Association, {
+        where: { id: associationId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!fresh) return { count: 0, paymentTarget: null };
+      if (isDelegating(fresh)) {
+        await manager.query(`SELECT id FROM associations WHERE id = $1 FOR SHARE`, [
+          fresh.paymentParentAssociationId,
+        ]);
+      }
+      const target = await this.routeWith(fresh, provider, manager);
+      if (!target.ready) return { count: 0, paymentTarget: target };
+      const { affected } = await manager.update(
+        AssociationProduct,
+        { associationId, activationWithheld: true },
+        { isActive: true, activationWithheld: false }
+      );
+      return { count: affected ?? 0, paymentTarget: target };
+    });
+    if (!paymentTarget) {
+      this.logger.warn(
+        `[SHOP] nothing released for association=${associationId.slice(0, 8)}: it no longer exists`
+      );
+      return 0;
+    }
     if (!paymentTarget.ready) {
       this.logger.debug(
         `[SHOP] nothing released for association=${associationId.slice(0, 8)}: payment target not ready ` +
@@ -775,12 +810,6 @@ export class ProductsService {
       );
       return 0;
     }
-
-    const { affected } = await this.productRepo.update(
-      { associationId, activationWithheld: true },
-      { isActive: true, activationWithheld: false }
-    );
-    const count = affected ?? 0;
     if (count > 0) {
       this.logger.log(
         `[SHOP] released ${count} withheld product(s) for association=${associationId.slice(0, 8)}: ` +
@@ -887,7 +916,8 @@ export class ProductsService {
     ref: LydiaReadinessRef
   ): Promise<LydiaReadinessOutcome> {
     const outcome = await this.associationsService.setLydiaReadiness(vendorToken, true, cause, ref);
-    if (outcome.kind === 'no-holder') return outcome;
+    // Nothing became (or already was) ready: nothing to release.
+    if (outcome.kind !== 'transitioned' && outcome.kind !== 'replay') return outcome;
     const released = await this.releaseWithheldForAssociationAndDelegates(outcome.associationId);
     this.logger.debug(
       `[SHOP] readiness ${outcome.kind} for association=${outcome.associationId.slice(0, 8)}: ` +

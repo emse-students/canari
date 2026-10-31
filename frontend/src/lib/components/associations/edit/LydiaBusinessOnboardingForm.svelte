@@ -475,6 +475,9 @@
                         : m.asso_lydia_paused_refused(),
                   })}
                 </p>
+                <p class="text-text-muted text-sm leading-relaxed">
+                  {m.asso_lydia_paused_admin_check()}
+                </p>
               {:else if step.state === 'current'}
                 <p class="text-text-muted text-sm leading-relaxed">
                   {m.asso_lydia_validation_waiting()}

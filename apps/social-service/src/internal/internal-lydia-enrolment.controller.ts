@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ServiceUnavailableException,
   Controller,
   Header,
   Headers,
@@ -39,9 +40,13 @@ export class InternalLydiaEnrolmentController {
    * Lydia's UNSIGNED `BUSINESS_VALIDATED`, handed over by core-service: marks the holder of
    * `vendorToken` ready (`ProductsService.markLydiaReady`, cause `webhook-validated`; the risk of an
    * unsigned VALIDATED was accepted by the owner on 2026-10-30). ONLY `ready: true` with that cause
-   * is accepted: `BUSINESS_UNVALIDATED` never changes state (notify only, decided 2026-10-30), so no
-   * body can make this route turn an association NOT ready. Answers what happened; no holder is
-   * `no-holder`, a 200 - nothing to retry. A failure to apply throws (5xx), so core answers Lydia 503.
+   * is accepted: `BUSINESS_UNVALIDATED` never changes state (decided 2026-10-30), so no body can
+   * make this route turn an association NOT ready, nor clear what Lydia itself reported
+   * (`held-by-lydia`, a 200 that wrote nothing). Answers what happened; no holder is `no-holder`, a
+   * 200 - nothing to retry - EXCEPT while some association's `business/create` outcome is not yet
+   * recorded (`no-holder-enrolment-in-flight`): the VALIDATED may name the Business being linked,
+   * so this answers 503 and core answers Lydia 503, asking for a retry. That Lydia retries a 503 is
+   * UNMEASURED. A failure to apply throws (5xx) the same way.
    */
   @Post('lydia-readiness')
   @HttpCode(200)
@@ -49,7 +54,10 @@ export class InternalLydiaEnrolmentController {
   async lydiaReadiness(
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { vendorToken?: unknown; ready?: unknown; cause?: unknown }
-  ): Promise<{ outcome: 'transitioned' | 'replay' | 'no-holder'; associationId: string | null }> {
+  ): Promise<{
+    outcome: 'transitioned' | 'replay' | 'held-by-lydia' | 'no-holder';
+    associationId: string | null;
+  }> {
     assertInternalSecret(headerSecret);
     const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
     if (
@@ -63,10 +71,12 @@ export class InternalLydiaEnrolmentController {
     const outcome = await this.productsService.markLydiaReady(vendorToken, 'webhook-validated', {
       path: 'webhook',
     });
-    return {
-      outcome: outcome.kind,
-      associationId: outcome.kind === 'no-holder' ? null : outcome.associationId,
-    };
+    if (outcome.kind === 'no-holder-enrolment-in-flight') {
+      // A retry is asked for; whether Lydia honours a 503 is unmeasured.
+      throw new ServiceUnavailableException('An enrolment is in flight; retry later');
+    }
+    if (!('associationId' in outcome)) return { outcome: 'no-holder', associationId: null };
+    return { outcome: outcome.kind, associationId: outcome.associationId };
   }
 
   /** Claims the enrolment-in-flight marker before `business/create` (typed 409 otherwise). */
@@ -102,19 +112,43 @@ export class InternalLydiaEnrolmentController {
     return { ok: true };
   }
 
-  /** What core-service checks before asking Lydia to add a Responsable (a read). */
-  @Post(':id/lydia-responsable-precheck')
+  /**
+   * What core-service checks before asking Lydia to add a Responsable, and the claim of that step
+   * (`AssociationsService.claimLydiaResponsable`; typed 409 when another step is in flight). The
+   * phone travels in the body and is never logged.
+   */
+  @Post(':id/lydia-responsable-claim')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
-  async responsablePrecheck(
+  async responsableClaim(
     @Headers('x-internal-secret') headerSecret: string,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { userId?: unknown }
-  ): Promise<{ vendorToken: string | null; member: boolean; currentUserId: string | null }> {
+    @Body() body: { userId?: unknown; phone?: unknown }
+  ): Promise<{
+    vendorToken: string | null;
+    member: boolean;
+    currentUserId: string | null;
+    phoneMatches: boolean;
+    claimed: boolean;
+  }> {
     assertInternalSecret(headerSecret);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
-    if (!userId) throw new BadRequestException('userId is required');
-    return this.associationsService.lydiaResponsablePrecheck(id, userId);
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    if (!userId || !phone) throw new BadRequestException('userId and phone are required');
+    return this.associationsService.claimLydiaResponsable(id, userId, phone);
+  }
+
+  /** Releases the Responsable step's claim after a typed outcome core-service knows. */
+  @Post(':id/lydia-responsable-release')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async responsableRelease(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<{ ok: true }> {
+    assertInternalSecret(headerSecret);
+    await this.associationsService.releaseLydiaResponsable(id);
+    return { ok: true };
   }
 
   /** Records the Responsable Lydia confirmed (sealed phone; only its last two digits answered). */

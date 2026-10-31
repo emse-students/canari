@@ -18,7 +18,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
-import { In, Not, Repository, type SelectQueryBuilder } from 'typeorm';
+import { In, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -43,7 +43,11 @@ import {
   type LydiaReadinessCause,
 } from './lydia-readiness';
 import { approvedDelegateIds } from './payment-delegation.util';
-import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import {
+  LYDIA_PAYMENTS_PAUSED_TYPE,
+  LydiaPaymentsNotifier,
+} from './lydia-payments-notifier.service';
+import { PostNotification } from '../posts/entities/post-notification.entity';
 import {
   AssociationMember,
   AssociationPermissionFlag,
@@ -91,7 +95,7 @@ import {
   UpdateAssociationCalendarEventDto,
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
@@ -282,6 +286,39 @@ export const LYDIA_ACCOUNT_ALREADY_LINKED = 'LYDIA_ACCOUNT_ALREADY_LINKED';
  */
 export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
 
+/**
+ * The `code` of the 409 refusing ANOTHER phone number for the live Responsable: Lydia would keep the
+ * old number as a cashier Canari no longer tracks, so changing it comes with lot 3.
+ */
+export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
+
+/** The `code` of the 409 refusing a Responsable step while another one's outcome is not known. */
+export const LYDIA_RESPONSABLE_IN_FLIGHT = 'LYDIA_RESPONSABLE_IN_FLIGHT';
+
+/** The `code` of the 409 answered when the linked Business changed between two steps. */
+export const LYDIA_BUSINESS_CHANGED = 'LYDIA_BUSINESS_CHANGED';
+
+function responsableAlreadySet(): ConflictException {
+  return new ConflictException({
+    code: LYDIA_RESPONSABLE_ALREADY_SET,
+    message: 'This association already has a Responsable; changing them is not available yet',
+  });
+}
+
+function responsablePhoneLocked(): ConflictException {
+  return new ConflictException({
+    code: LYDIA_RESPONSABLE_PHONE_LOCKED,
+    message: "The Responsable's number cannot be changed yet",
+  });
+}
+
+function lydiaBusinessChanged(): ConflictException {
+  return new ConflictException({
+    code: LYDIA_BUSINESS_CHANGED,
+    message: 'The Lydia Business of this association changed meanwhile',
+  });
+}
+
 /** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
 export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
 
@@ -304,7 +341,14 @@ export type LydiaReadinessOutcome =
       previousCause: LydiaReadinessCause | null;
       previousAt: Date | null;
     }
-  | { kind: 'no-holder' };
+  | {
+      /** An unsigned VALIDATED over a holder Lydia itself reported: nothing written. */
+      kind: 'held-by-lydia';
+      associationId: string;
+      previousCause: LydiaReadinessCause | null;
+      previousAt: Date | null;
+    }
+  | { kind: 'no-holder' | 'no-holder-enrolment-in-flight' };
 
 /** The confirmed Responsable of an association's CURRENT Business, as the payments screen reads it. */
 export interface LydiaResponsableView {
@@ -737,6 +781,19 @@ export class AssociationsService {
       // its associations first too (`ERASURE_ASSOCIATION_LOCK_SQL`), so the two never cross.
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
+      // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
+      // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
+      // phone.
+      const liveCashiers: Array<{ vendorToken: string }> = await manager.query(
+        `SELECT "vendorToken" FROM lydia_cashiers WHERE "associationId" = $1 AND "removedAt" IS NULL`,
+        [id]
+      );
+      for (const cashier of liveCashiers) {
+        this.logger.error(
+          `[AUDIT] [LYDIA] association ${id} deleted with a LIVE cashier row: Business ` +
+            `${cashier.vendorToken} - Lydia still lists that cashier`
+        );
+      }
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
@@ -3184,16 +3241,21 @@ ${rejectionReason}`
    * The holder's row is locked, then `UPDATE ... WHERE "lydiaOnboardingComplete" <> $ready
    * RETURNING id`: the returned row IS the transition, so idempotence comes from durable state - a
    * replayed webhook, a second refusal or a double admin click finds the flag already set and writes
-   * nothing. Going to false, the same transaction withholds the on-sale products of the holder and
-   * of its approved delegating children (`approvedDelegateIds`, the release's own predicate):
+   * nothing but, for a second refusal naming ANOTHER cause (5 then 2701), the cause and its date.
+   * Going to false, the same transaction withholds the on-sale products of the holder and of its
+   * approved delegating children (`approvedDelegateIds`, the release's own predicate):
    * `isActive=false, activationWithheld=true`, the exact inverse of the release; a product a
-   * manager took off sale (`isActive=false`) is not touched, so it is never released later either.
-   * Requests already issued stay payable and settle as before: no settle path reads `isActive`.
+   * manager took off sale is not touched, so it is never released later either. The same
+   * transaction writes a bell row to every global admin (`LYDIA_PAYMENTS_PAUSED_TYPE`, no push),
+   * so the revert is a report a person sees, whatever the managers' switch says.
    *
-   * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`), on every call,
-   * replays included - products cannot be released from here without a cycle between the two
-   * services. Only a transition logs loudly and notifies the payout managers; a replay is a debug
-   * line. No holder, or two (refused, never guessed), writes nothing.
+   * An UNSIGNED `webhook-validated` never clears a holder Lydia itself reported (`request-refused`,
+   * `request-blocked`): that is the global admin's `admin` call alone (`held-by-lydia`, a WARN).
+   *
+   * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`). Only a transition
+   * logs loudly and notifies the payout managers; a replay is a debug line. No holder, or two
+   * (refused, never guessed), writes nothing; no holder while an enrolment is in flight somewhere is
+   * `no-holder-enrolment-in-flight`, which the webhook route answers 503 so Lydia retries.
    */
   async setLydiaReadiness(
     vendorToken: string,
@@ -3205,14 +3267,28 @@ ${rejectionReason}`
     this.logger.debug(
       `${LYDIA_READINESS_LOG_TAG} set ready=${ready} cause=${cause} asked by ${where}`
     );
-    const result = await this.assoRepo.manager.transaction(async (manager) => {
-      const holders: Array<{
-        id: string;
-        name: string;
-        cause: LydiaReadinessCause | null;
-        at: Date | string | null;
-      }> = await manager.query(
-        `SELECT id, name, "lydiaReadinessCause" AS cause, "lydiaReadinessAt" AS at
+    type Holder = {
+      id: string;
+      name: string;
+      ready: boolean;
+      cause: LydiaReadinessCause | null;
+      at: Date | string | null;
+    };
+    type Step =
+      | { kind: 'none'; inFlight: boolean }
+      | { kind: 'held'; holder: Holder }
+      | {
+          kind: 'done';
+          holder: Holder;
+          transitioned: boolean;
+          causeRefreshed: boolean;
+          withheld: number;
+          admins: number;
+        };
+    const step: Step = await this.assoRepo.manager.transaction(async (manager): Promise<Step> => {
+      const holders: Holder[] = await manager.query(
+        `SELECT id, name, "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
+                "lydiaReadinessAt" AS at
            FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
         [vendorToken]
       );
@@ -3222,14 +3298,26 @@ ${rejectionReason}`
             `${LYDIA_READINESS_LOG_TAG} ${holders.length} associations hold ONE vendor token ` +
               `(${holders.map((h) => sanitizeLog(h.id)).join(', ')}) - nothing written (${where})`
           );
-        } else {
-          this.logger.warn(
-            `${LYDIA_READINESS_LOG_TAG} no association holds the vendor token - nothing written (${where})`
-          );
+          return { kind: 'none', inFlight: false };
         }
-        return null;
+        const [{ n }]: Array<{ n: number }> = await manager.query(
+          `SELECT count(*)::int AS n FROM associations WHERE "lydiaEnrolmentStartedAt" IS NOT NULL`
+        );
+        this.logger.warn(
+          `${LYDIA_READINESS_LOG_TAG} no association holds the vendor token - nothing written ` +
+            `(${where}); ${n} enrolment(s) in flight`
+        );
+        return { kind: 'none', inFlight: n > 0 };
       }
       const [holder] = holders;
+      if (
+        ready &&
+        cause === 'webhook-validated' &&
+        !holder.ready &&
+        (holder.cause === 'request-refused' || holder.cause === 'request-blocked')
+      ) {
+        return { kind: 'held', holder };
+      }
       const updated: unknown[] = await manager.query(
         `UPDATE associations
             SET "lydiaOnboardingComplete" = $2, "lydiaReadinessCause" = $3, "lydiaReadinessAt" = now()
@@ -3240,7 +3328,18 @@ ${rejectionReason}`
       // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
       const rows = Array.isArray(updated[0]) ? (updated[0] as unknown[]) : updated;
       const transitioned = rows.length > 0;
+      let causeRefreshed = false;
+      if (!transitioned && !ready && holder.cause !== cause) {
+        // Already not ready, for another reason (5 then 2701): the cause follows Lydia's latest
+        // answer, with no transition and no second notice.
+        await manager.query(
+          `UPDATE associations SET "lydiaReadinessCause" = $2, "lydiaReadinessAt" = now() WHERE id = $1`,
+          [holder.id, cause]
+        );
+        causeRefreshed = true;
+      }
       let withheld = 0;
+      let admins = 0;
       if (transitioned && !ready) {
         const ids = [holder.id, ...(await approvedDelegateIds(manager, holder.id))];
         const res = await manager.update(
@@ -3249,21 +3348,29 @@ ${rejectionReason}`
           { isActive: false, activationWithheld: true }
         );
         withheld = res.affected ?? 0;
+        admins = await this.reportRevertToGlobalAdmins(manager, holder, cause, where);
       }
-      return { holder, transitioned, withheld };
+      return { kind: 'done', holder, transitioned, causeRefreshed, withheld, admins };
     });
-    if (!result) return { kind: 'no-holder' };
-    const { holder, transitioned, withheld } = result;
+    if (step.kind === 'none') {
+      return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
+    }
+    const { holder } = step;
     const previousAt = holder.at ? new Date(holder.at) : null;
-    const previous = {
-      associationId: holder.id,
-      previousCause: holder.cause,
-      previousAt,
-    };
+    const previous = { associationId: holder.id, previousCause: holder.cause, previousAt };
+    if (step.kind === 'held') {
+      this.logger.warn(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)}: an unsigned BUSINESS_VALIDATED ` +
+          `does not clear Lydia's own ${holder.cause} (${where}) - nothing written; a global admin ` +
+          `re-checks and validates by hand`
+      );
+      return { kind: 'held-by-lydia', ...previous };
+    }
+    const { transitioned, causeRefreshed, withheld, admins } = step;
     if (!transitioned) {
       this.logger.debug(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} already ready=${ready} - replay ` +
-          `of ${cause} (${where}), nothing written`
+          `of ${cause} (${where})${causeRefreshed ? `, cause updated from ${holder.cause ?? 'none'}` : ', nothing written'}`
       );
       return { kind: 'replay', ...previous };
     }
@@ -3280,7 +3387,8 @@ ${rejectionReason}`
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
           `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
-          `by ${before}; ${withheld} on-sale product(s) withheld${switchedOff}`
+          `by ${before}; ${withheld} on-sale product(s) withheld; ${admins} global admin(s) told` +
+          switchedOff
       );
     }
     await this.invalidatePostListCaches();
@@ -3302,6 +3410,43 @@ ${rejectionReason}`
       );
     }
     return { kind: 'transitioned', ...previous };
+  }
+
+  /**
+   * The report a revert owes a PERSON: one bell row per global admin (`users.admin`), type
+   * `LYDIA_PAYMENTS_PAUSED_TYPE`, written in the revert's own transaction so the state and its
+   * report commit together, and never pushed. Unlike the managers' notice it is not behind
+   * `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`: the web client renders the type now, and an older native
+   * build shows the neutral unknown-type row, which still names the association. Answers how many
+   * admins were told; zero is said at ERROR by the caller's line.
+   */
+  private async reportRevertToGlobalAdmins(
+    manager: EntityManager,
+    holder: { id: string; name: string },
+    cause: LydiaReadinessCause,
+    where: string
+  ): Promise<number> {
+    const admins: Array<{ id: string }> = await manager.query(
+      `SELECT id FROM users WHERE admin = true`
+    );
+    if (admins.length === 0) return 0;
+    await manager.save(
+      PostNotification,
+      admins.map(({ id }) =>
+        manager.create(PostNotification, {
+          recipientId: id,
+          type: LYDIA_PAYMENTS_PAUSED_TYPE,
+          postId: holder.id,
+          actorId: 'system',
+          actorName: SYSTEM_ACTOR_NAME,
+          associationId: null,
+          associationLogoUrl: null,
+          text: holder.name,
+          meta: { cause, reportedBy: where, audience: 'global-admin' },
+        })
+      )
+    );
+    return admins.length;
   }
 
   /**
@@ -3381,15 +3526,20 @@ ${rejectionReason}`
   /**
    * Clears the "enrolment in flight" marker: after a TYPED refusal of `business/create` (nothing
    * was created), or by a global admin who checked with Lydia that no Business was left behind.
-   * Never on an unconfirmed create. Harmless when a Business is linked (the link cleared it).
+   * Never on an unconfirmed create. Harmless when a Business is linked (the link cleared it). The
+   * admin's clear also clears the Responsable step's marker (`lydiaResponsableStartedAt`): it is the
+   * one hand that unblocks an enrolment whose outcome nobody knows.
    */
   async releaseLydiaEnrolment(id: string, why: 'refused' | 'admin'): Promise<void> {
     await this.assoRepo.query(
-      `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL WHERE id = $1`,
+      why === 'admin'
+        ? `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaResponsableStartedAt" = NULL
+            WHERE id = $1`
+        : `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL WHERE id = $1`,
       [id]
     );
     const line = `[LYDIA] enrolment marker cleared on association ${sanitizeLog(id)} (${why})`;
-    this.logger.log(why === 'admin' ? `[AUDIT] ${line}` : line);
+    this.logger.log(why === 'admin' ? `[AUDIT] ${line}, the Responsable step's too` : line);
   }
 
   /**
@@ -3419,27 +3569,138 @@ ${rejectionReason}`
   }
 
   /**
-   * What core-service needs before asking Lydia to add a Responsable: the Business linked now,
-   * whether the chosen person is a member of the association, and who the live Responsable is
-   * (changing them is lot 3). A read, nothing else.
+   * Whether `phone` is the number sealed on the live Responsable row `rowId` of association `id`.
+   * A row whose seal cannot be opened (a rotated or missing secret) is NOT a match, said at ERROR:
+   * the number is then locked until lot 3, never silently replaced. The phone is never logged.
    */
-  async lydiaResponsablePrecheck(
+  private async lydiaResponsablePhoneMatches(
     id: string,
-    userId: string
-  ): Promise<{ vendorToken: string | null; member: boolean; currentUserId: string | null }> {
+    sealed: string | null,
+    phone: string
+  ): Promise<boolean> {
+    if (!sealed) {
+      this.logger.error(
+        `[LYDIA] live Responsable of ${sanitizeLog(id)} has no sealed phone - treated as another number`
+      );
+      return false;
+    }
+    try {
+      return openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed) === phone;
+    } catch (err: unknown) {
+      this.logger.error(
+        `[LYDIA] the live Responsable's phone of ${sanitizeLog(id)} cannot be opened - treated as ` +
+          `another number: ${err instanceof Error ? err.name : String(err)}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * What core-service checks before asking Lydia to add a Responsable, AND the claim of that step.
+   * Answers the Business linked now, whether the chosen person is a member, who the live
+   * Responsable is (changing them is lot 3), and - when the same person is asked again - whether
+   * `phone` is the number already recorded (`phoneMatches`; a different one is refused by core,
+   * `LYDIA_RESPONSABLE_PHONE_LOCKED`, since Lydia would keep the old number as a cashier Canari no
+   * longer tracks).
+   *
+   * Only when every check passes is the step CLAIMED, in ONE statement on the association row
+   * (`lydiaResponsableStartedAt`, migration 118), so two managers cannot both have Lydia add a
+   * cashier: the loser reads the typed 409 `LYDIA_RESPONSABLE_IN_FLIGHT`, or
+   * `LYDIA_BUSINESS_CHANGED` when the Business changed between the read and the claim. The claim is
+   * released by the record (success), by `releaseLydiaResponsable` (a typed refusal), or by a
+   * global admin; an outcome nobody knows keeps it.
+   */
+  async claimLydiaResponsable(
+    id: string,
+    userId: string,
+    phone: string
+  ): Promise<{
+    vendorToken: string | null;
+    member: boolean;
+    currentUserId: string | null;
+    phoneMatches: boolean;
+    claimed: boolean;
+  }> {
+    this.logger.debug(`[LYDIA] Responsable claim asked on ${sanitizeLog(id)}`);
+    if (!E164_RE.test(phone)) {
+      this.logger.warn(`[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: phone not E.164`);
+      throw new BadRequestException('An E.164 phone is required');
+    }
     const vendorToken = await this.lydiaVendorTokenOf(id);
     const member = await this.isMember(userId, id);
-    const current = vendorToken ? await this.lydiaResponsableOf(id, vendorToken) : null;
-    return { vendorToken, member, currentUserId: current?.userId ?? null };
+    const live: Array<{ userId: string; phoneSealed: string | null }> = vendorToken
+      ? await this.assoRepo.query(
+          `SELECT "userId", "phoneSealed" FROM lydia_cashiers
+            WHERE "associationId" = $1 AND "vendorToken" = $2 AND role = 'responsable'
+              AND "removedAt" IS NULL AND "confirmedAt" IS NOT NULL
+            LIMIT 1`,
+          [id, vendorToken]
+        )
+      : [];
+    const currentUserId = live[0]?.userId ?? null;
+    const phoneMatches =
+      currentUserId === userId
+        ? await this.lydiaResponsablePhoneMatches(id, live[0].phoneSealed, phone)
+        : true;
+    const answer = { vendorToken, member, currentUserId, phoneMatches, claimed: false };
+    if (!vendorToken || !member || (currentUserId && currentUserId !== userId) || !phoneMatches) {
+      this.logger.debug(
+        `[LYDIA] Responsable step on ${sanitizeLog(id)} not claimed: business=${!!vendorToken} ` +
+          `member=${member} other=${!!currentUserId && currentUserId !== userId} phoneMatches=${phoneMatches}`
+      );
+      return answer;
+    }
+    const result: unknown[] = await this.assoRepo.query(
+      `UPDATE associations SET "lydiaResponsableStartedAt" = now()
+        WHERE id = $1 AND "lydiaAccountId" = $2 AND "lydiaResponsableStartedAt" IS NULL
+        RETURNING id`,
+      [id, vendorToken]
+    );
+    const written = Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
+    if (written > 0) {
+      this.logger.log(`[LYDIA] Responsable step claimed on association ${sanitizeLog(id)}`);
+      return { ...answer, claimed: true };
+    }
+    if ((await this.lydiaVendorTokenOf(id)) !== vendorToken) {
+      this.logger.warn(
+        `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: the Business changed meanwhile`
+      );
+      throw lydiaBusinessChanged();
+    }
+    this.logger.warn(
+      `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: another Responsable step is in flight`
+    );
+    throw new ConflictException({
+      code: LYDIA_RESPONSABLE_IN_FLIGHT,
+      message: 'A Responsable is being added to this association; its outcome must be known first',
+    });
+  }
+
+  /**
+   * Releases the Responsable step's claim after a TYPED outcome core-service knows (Lydia refused,
+   * or the read-back answered): nothing is left in flight at Lydia. Never on an unknown outcome.
+   */
+  async releaseLydiaResponsable(id: string): Promise<void> {
+    await this.assoRepo.query(
+      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
+      [id]
+    );
+    this.logger.log(
+      `[LYDIA] Responsable step released on association ${sanitizeLog(id)} (refused)`
+    );
   }
 
   /**
    * Records the Responsable core-service just added at Lydia (or found already a cashier there),
    * CONFIRMED by Lydia's read-back: the phone sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`, the
-   * association id as context) and only its last two digits readable. Refused when the Business
-   * linked now is not `vendorToken` (it changed meanwhile), or when another person is the live
-   * Responsable (409 `LYDIA_RESPONSABLE_ALREADY_SET`). The same person again (a re-sent SMS)
-   * replaces the phone. The phone is never logged.
+   * association id as context) and only its last two digits readable. In ONE transaction, the
+   * association row locked: refused when the Business linked now is not `vendorToken` (409
+   * `LYDIA_BUSINESS_CHANGED`), when another person is the live Responsable (409
+   * `LYDIA_RESPONSABLE_ALREADY_SET`, also what a concurrent insert's unique violation answers), or
+   * when the same person comes with ANOTHER number (409 `LYDIA_RESPONSABLE_PHONE_LOCKED`; changing
+   * it is lot 3). The same person and number again (a re-sent SMS) refreshes the confirmation. The
+   * step's claim is cleared by the same transaction, and by every typed refusal here. The phone is
+   * never logged.
    */
   async recordLydiaResponsable(
     id: string,
@@ -3462,55 +3723,90 @@ ${rejectionReason}`
       );
       throw new ServiceUnavailableException('Cashier phone storage is not configured');
     }
-    if ((await this.lydiaVendorTokenOf(id)) !== vendorToken) {
-      this.logger.warn(
-        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the Business changed meanwhile`
-      );
-      throw new ConflictException('The Lydia Business of this association changed meanwhile');
-    }
     const sealed = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, phone);
     const phoneEnd = phone.slice(-2);
-    await this.assoRepo.manager.transaction(async (manager) => {
-      const live: Array<{ id: string; userId: string; vendorToken: string }> = await manager.query(
-        `SELECT id, "userId", "vendorToken" FROM lydia_cashiers
-          WHERE "associationId" = $1 AND role = 'responsable' AND "removedAt" IS NULL FOR UPDATE`,
-        [id]
-      );
-      const current = live[0];
-      const sameBusiness = !!current && current.vendorToken === vendorToken;
-      if (sameBusiness && current.userId !== userId) {
+    try {
+      await this.assoRepo.manager.transaction(async (manager) => {
+        const asso: Array<{ vendorToken: string | null }> = await manager.query(
+          `SELECT "lydiaAccountId" AS "vendorToken" FROM associations WHERE id = $1 FOR UPDATE`,
+          [id]
+        );
+        if (asso.length === 0) throw new NotFoundException('Association not found');
+        if ((asso[0].vendorToken?.trim() || null) !== vendorToken) {
+          this.logger.warn(
+            `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the Business changed meanwhile`
+          );
+          throw lydiaBusinessChanged();
+        }
+        const live: Array<{
+          id: string;
+          userId: string;
+          vendorToken: string;
+          phoneSealed: string | null;
+        }> = await manager.query(
+          `SELECT id, "userId", "vendorToken", "phoneSealed" FROM lydia_cashiers
+            WHERE "associationId" = $1 AND role = 'responsable' AND "removedAt" IS NULL FOR UPDATE`,
+          [id]
+        );
+        const current = live[0];
+        const sameBusiness = !!current && current.vendorToken === vendorToken;
+        if (sameBusiness && current.userId !== userId) {
+          this.logger.warn(
+            `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: another person is the Responsable`
+          );
+          throw responsableAlreadySet();
+        }
+        if (
+          sameBusiness &&
+          !(await this.lydiaResponsablePhoneMatches(id, current.phoneSealed, phone))
+        ) {
+          this.logger.warn(
+            `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: another number for the same ` +
+              `Responsable (locked until lot 3)`
+          );
+          throw responsablePhoneLocked();
+        }
+        if (current && !sameBusiness) {
+          // A row of an EARLIER Business: not a cashier of this one. Closed, its phone cleared.
+          await manager.query(
+            `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL
+              WHERE id = $1`,
+            [current.id]
+          );
+        }
+        if (sameBusiness) {
+          await manager.query(
+            `UPDATE lydia_cashiers SET "confirmedAt" = now(), "addedByUserId" = $2, "addedAt" = now()
+              WHERE id = $1`,
+            [current.id, addedBy]
+          );
+        } else {
+          await manager.query(
+            `INSERT INTO lydia_cashiers
+               ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
+                "addedByUserId", "confirmedAt")
+             VALUES ($1, $2, $3, $4, $5, 'responsable', $6, now())`,
+            [id, vendorToken, userId, sealed, phoneEnd, addedBy]
+          );
+        }
+        await manager.query(
+          `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
+          [id]
+        );
+      });
+    } catch (err: unknown) {
+      if ((err as { code?: unknown })?.code === '23505') {
+        // The partial unique index (one live Responsable per association) refused a concurrent
+        // insert: another person was recorded first. Typed, never a bare 500.
         this.logger.warn(
-          `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: another person is the Responsable`
+          `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: a concurrent record won`
         );
-        throw new ConflictException({
-          code: LYDIA_RESPONSABLE_ALREADY_SET,
-          message: 'This association already has a Responsable; changing them is not available yet',
-        });
+        await this.releaseLydiaResponsable(id);
+        throw responsableAlreadySet();
       }
-      if (current && !sameBusiness) {
-        // A row of an EARLIER Business: not a cashier of this one. Closed, its phone cleared.
-        await manager.query(
-          `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL WHERE id = $1`,
-          [current.id]
-        );
-      }
-      if (sameBusiness) {
-        await manager.query(
-          `UPDATE lydia_cashiers SET "phoneSealed" = $2, "phoneEnd" = $3, "confirmedAt" = now(),
-                  "addedByUserId" = $4, "addedAt" = now()
-            WHERE id = $1`,
-          [current.id, sealed, phoneEnd, addedBy]
-        );
-      } else {
-        await manager.query(
-          `INSERT INTO lydia_cashiers
-             ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
-              "addedByUserId", "confirmedAt")
-           VALUES ($1, $2, $3, $4, $5, 'responsable', $6, now())`,
-          [id, vendorToken, userId, sealed, phoneEnd, addedBy]
-        );
-      }
-    });
+      if (err instanceof ConflictException) await this.releaseLydiaResponsable(id);
+      throw err;
+    }
     this.logger.log(
       `[AUDIT] Lydia Responsable recorded on association ${sanitizeLog(id)}: user ` +
         `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ${sanitizeLog(addedBy).slice(0, 8)}`
@@ -3542,8 +3838,12 @@ ${rejectionReason}`
     // The cashiers Canari recorded were cashiers of THAT Business: closed, their phone cleared
     // (retention: a phone is kept only while its holder is a cashier, migration 118).
     await this.assoRepo.query(
-      `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL
+      `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL
         WHERE "associationId" = $1 AND "removedAt" IS NULL`,
+      [id]
+    );
+    await this.assoRepo.query(
+      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
       [id]
     );
     await this.invalidatePostListCaches();

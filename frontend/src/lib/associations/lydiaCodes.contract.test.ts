@@ -5,7 +5,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { LYDIA_ENROLMENT_IN_FLIGHT, LYDIA_RESPONSABLE_REFUSAL } from './lydiaResponsableRefusal';
+import {
+  LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_RESPONSABLE_REFUSAL,
+  LYDIA_RESPONSABLE_SOCIAL_REFUSAL,
+} from './lydiaResponsableRefusal';
 import { PAYMENTS_BLOCKED, PAYMENTS_NOT_ACTIVATED } from './paymentRefusal';
 
 const CONTRACT = JSON.parse(
@@ -34,5 +38,11 @@ describe('Lydia codes follow the shared contract', () => {
     expect(PAYMENTS_NOT_ACTIVATED).toBe(CONTRACT.social.paymentsNotActivated);
     expect(PAYMENTS_BLOCKED).toBe(CONTRACT.social.paymentsBlocked);
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(CONTRACT.social.enrolmentInFlight);
+    expect(LYDIA_RESPONSABLE_SOCIAL_REFUSAL).toEqual({
+      ALREADY_SET: CONTRACT.social.responsableAlreadySet,
+      PHONE_LOCKED: CONTRACT.social.responsablePhoneLocked,
+      IN_FLIGHT: CONTRACT.social.responsableInFlight,
+      BUSINESS_CHANGED: CONTRACT.social.businessChanged,
+    });
   });
 });
