@@ -1283,13 +1283,31 @@ Four defects of one seam, found by a read-only review and fixed together:
   deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
   the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
   an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
-  rare and the inviter's history push covers. Drop before mark, so a kill between them leaves an
-  `active` row over no state, which the restore demotes to `pending` - the same end.
+  rare and the inviter's history push covers.
+- **A kill can leave any pair of (row, state), and the restore is what is total over them (review
+  of #2808).** The merged Remove reaches disk through checkpoints the commit path does not order -
+  its own `persistNow`, a flush on backgrounding, another group's structural checkpoint, one already
+  running - because a checkpoint takes no lock against the commit path; the row lives in another
+  store. No write order on that path can therefore guarantee anything, and an `active` row over the
+  evicted state survives some kills, with `reAddIsInFlight` (memory only) gone. It was read as
+  `active` and the next send retired the conversation. `reconcileRestoredLifecycles`
+  (`admissionState.ts`) now reads membership for EVERY row over a held group (together, one local
+  read each): `true` promotes a `pending` row; `false`, on an `active` or a `pending` row, DROPS the
+  evicted state and leaves the row `pending`, so the recovery asks the server, whose answer is right
+  for both readings of the Remove (a Welcome owed is waited for, a seat is joined, no seat retires
+  the row); `null` changes nothing. The reads run at most eight at once (one IPC call each on
+  native); the drops share ONE awaited checkpoint, since each is a full encrypted save (~1.7 s on a
+  phone) and this runs before the connection opens; and `applyRestoredLifecycles` writes every row it
+  changed, so the verdict is durable. The row is still marked before the drop at run time, only so
+  no in-memory reader sees `active` over no state.
+
+  **A DELIBERATE TRADE:** a row whose eviction a kill left unrecorded now waits for the server's
+  answer instead of retiring locally - offline included, where it stays `pending` until a connection
+  answers. Nothing local separates a real eviction from the first half of this device's own
+  re-admission once `reAddIsInFlight` is gone, and retiring the second is the defect this fixes.
 - **The boot restore undid that row.** It promoted any `pending` row whose group
-  `getLocalGroups()` listed, and an evicted group stays listed. `reconcileRestoredLifecycles`
-  (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` DROPS the held
-  evicted state (a row written by the first version, or a kill after the mark) and keeps the row
-  `pending`; `null` promotes nothing.
+  `getLocalGroups()` listed, and an evicted group stays listed: the promotion now reads membership,
+  as above.
 - **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
   flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
   after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
@@ -1303,15 +1321,23 @@ Four defects of one seam, found by a read-only review and fixed together:
   `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
   REQUIRED and raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE
   implementation both a Welcome and an external join reach (resume, statuses, deferred welcome
-  requests, the debounced invitation sweep). The two `RecoveryDeps` built outside the session -
-  `verifyCurrentUserMembership`'s direct-conversation repair and `startNewConversation`'s 1:1 repair
-  (`groupCreation.ts`) - reach it through `groupReadyAnnouncer.ts`, which the session registers and
-  clears with the outbox; a join landing with no live session says so in a `warn` line.
+  requests, the debounced invitation sweep).
+- **And it announces only into the session that started the work (review of #2808).** Every step of
+  `announceGroupReady` reaches module-level state, so a Welcome or a join landing after a sign-out
+  and the next sign-in acted on the NEXT session. The function is no longer exported: the session
+  registers it in `groupReadyAnnouncer.ts` with the outbox, and EVERY `onGroupReady` - the message
+  pipeline's, the in-session `makeRecoveryDeps`, `verifyCurrentUserMembership`'s and
+  `startNewConversation`'s repairs - is `captureGroupReadyAnnouncer()`, taken when its deps are
+  built. That one check forwards only while the registration it captured is still live. A session
+  ended since is an ordinary sign-out (`info`); work built with no session live is a `warn`. A
+  source test pins that no `onGroupReady` goes around it.
 
 Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
 recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no
 seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.test.ts`,
-`admissionState.test.ts` and `setupMessageHandler.test.ts` (`onGroupReady` on both Welcome paths).
+`admissionState.test.ts` (an `active` row over a group this device is out of waits on the server),
+`groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
+(`onGroupReady` on both Welcome paths).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 
