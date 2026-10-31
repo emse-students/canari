@@ -77,6 +77,13 @@ export class Association {
   lydiaResponsableStartedAt: Date | null;
 
   /**
+   * The random token written with that claim (migration 119): only a release or a record carrying
+   * it clears the claim. Never returned to a client. Raw SQL writes only.
+   */
+  @Column({ type: 'uuid', nullable: true, insert: false, update: false, select: false })
+  lydiaCashierClaimToken: string | null;
+
+  /**
    * The vendor token `business/create` answered while the enrolment is in flight, recorded BEFORE
    * the key check and the link (migration 118): the one unknown token a `BUSINESS_VALIDATED` may be
    * retried for. Cleared by the link and every release of the marker. Raw SQL writes only.

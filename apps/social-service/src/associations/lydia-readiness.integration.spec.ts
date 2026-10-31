@@ -33,12 +33,9 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { SECRET_BOX_ENV } from '../common/secret-box';
-import {
-  AssociationsService,
-  LYDIA_RESPONSABLE_ALREADY_SET,
-  LYDIA_RESPONSABLE_IN_FLIGHT,
-} from './associations.service';
+import { AssociationsService, LYDIA_RESPONSABLE_IN_FLIGHT } from './associations.service';
 import { LYDIA_ENROLMENT_IN_FLIGHT } from './lydia-readiness';
+import { LYDIA_CASHIER_CLAIM_LOST } from './lydia-cashier-claim';
 import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
 
@@ -101,6 +98,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     // TWICE: CD may replay it, and every statement is IF NOT EXISTS.
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
+    await admin.query(migration('119_lydia_cashiers_lot3.sql'));
     await admin.query('RESET lock_timeout');
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
@@ -317,7 +315,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       await ds.query(
         `UPDATE associations SET "lydiaOnboardingComplete" = $2, "lydiaReadinessCause" = $3,
                 "lydiaReadinessAt" = NULL, "lydiaEnrolmentStartedAt" = NULL,
-                "lydiaResponsableStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL
+                "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL,
+                "lydiaEnrolmentVendorToken" = NULL
           WHERE id = $1`,
         [HOLDER, ready, cause]
       );
@@ -412,6 +411,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           phone: PHONE,
           addedByUserId: 'treasurer',
           confirmed: true,
+          claimToken: pre.claimToken,
         });
       };
       const settled = await Promise.allSettled([step('member-1'), step('member-2')]);
@@ -429,14 +429,20 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
 
     it('an UNCONFIRMED Responsable locks its number and the one-Responsable rule; the same number confirms it', async () => {
       await reset(true, 'admin');
-      const record = (userId: string, phone: string, confirmed: boolean) =>
-        associations.recordLydiaResponsable(HOLDER, {
+      // What core-service does: the claim, then the record carrying its token.
+      const record = async (userId: string, phone: string, confirmed: boolean) => {
+        const pre = await associations.claimLydiaResponsable(HOLDER, userId, phone);
+        expect(pre.claimed).toBe(true);
+        const recorded = await associations.recordLydiaResponsable(HOLDER, {
           vendorToken: VENDOR,
           userId,
           phone,
           addedByUserId: 'treasurer',
           confirmed,
+          claimToken: pre.claimToken,
         });
+        return recorded.view;
+      };
       await expect(record('member-1', PHONE, false)).resolves.toMatchObject({ confirmed: false });
       expect(
         await ds.query(
@@ -453,9 +459,6 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
         associations.claimLydiaResponsable(HOLDER, 'member-2', PHONE)
       ).resolves.toMatchObject({ currentUserId: 'member-1', claimed: false });
       // The same number is claimed, re-added, and the record confirms the SAME row.
-      await expect(
-        associations.claimLydiaResponsable(HOLDER, 'member-1', PHONE)
-      ).resolves.toMatchObject({ claimed: true });
       await expect(record('member-1', PHONE, true)).resolves.toMatchObject({ confirmed: true });
       expect(
         await ds.query(
@@ -496,8 +499,9 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       ).toEqual([{ t: null }]);
     });
 
-    it('two simultaneous records of two people: ONE row, the other the typed ALREADY_SET', async () => {
+    it('two simultaneous records of two people under one claim: ONE row, the other the typed CLAIM_LOST', async () => {
       await reset(true, 'admin');
+      const { claimToken } = await associations.claimLydiaResponsable(HOLDER, 'member-1', PHONE);
       const record = (userId: string) =>
         associations.recordLydiaResponsable(HOLDER, {
           vendorToken: VENDOR,
@@ -505,12 +509,13 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           phone: PHONE,
           addedByUserId: 'treasurer',
           confirmed: true,
+          claimToken,
         });
       const settled = await Promise.allSettled([record('member-1'), record('member-2')]);
       expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
       const [lost] = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
       expect((lost.reason as HttpException).getResponse()).toMatchObject({
-        code: LYDIA_RESPONSABLE_ALREADY_SET,
+        code: LYDIA_CASHIER_CLAIM_LOST,
       });
       expect(
         await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "removedAt" IS NULL`)

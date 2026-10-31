@@ -1,3 +1,4 @@
+import { LydiaCashiersService } from '../associations/lydia-cashiers.service';
 import {
   Controller,
   Delete,
@@ -66,7 +67,8 @@ export class InternalController {
     private readonly userFollowRepo: Repository<UserFollow>,
     private readonly channelService: ChannelService,
     private readonly redis: RedisService,
-    private readonly postMediaRetention: PostMediaRetentionService
+    private readonly postMediaRetention: PostMediaRetentionService,
+    private readonly lydiaCashiers: LydiaCashiersService
   ) {}
 
   /**
@@ -284,11 +286,23 @@ export class InternalController {
     const keptMedia = await keptPostMediaIds(erasureDb(this.postRepo.manager), userId);
     await this.postMediaRetention.keepForAssociation(keptMedia);
 
+    // Lot 3: every number the account's live cashier rows hold is removed at Lydia FIRST, best
+    // effort - never a throw, never a wait on a claim; what Lydia did not confirm keeps its ERROR
+    // audit line below.
+    const removedAtLydia = await this.lydiaCashiers.revokeBeforeErasure(userId);
+
     const result = await this.postRepo.manager.transaction((manager) =>
       eraseSocialRows(erasureDb(manager), userId)
     );
 
     for (const cashier of result.liveCashiersErased) {
+      if (removedAtLydia.has(`${cashier.associationId}:${cashier.vendorToken}`)) {
+        this.logger.log(
+          `[AUDIT] [LYDIA] account erasure of user=${who} deleted a cashier row of association ` +
+            `${sanitizeLog(cashier.associationId)} whose numbers Lydia confirmed removed`
+        );
+        continue;
+      }
       // Lydia still holds this person as a cashier of that Business; Canari no longer tracks it.
       this.logger.error(
         `[AUDIT] [LYDIA] account erasure of user=${who} deleted a LIVE cashier row: association ` +

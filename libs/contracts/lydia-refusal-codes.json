@@ -1,5 +1,5 @@
 {
-  "description": "The typed codes of Lydia enrolment lot 2 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes.",
+  "description": "The typed codes of Lydia enrolment lots 2 and 3 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes. `switches` are the gates both sides must agree on (lot 3: adding a cashier ships OFF until one production removal has been observed).",
   "core": {
     "businessNotValidated": "LYDIA_BUSINESS_NOT_VALIDATED",
     "businessBlocked": "LYDIA_BUSINESS_BLOCKED",
@@ -12,7 +12,12 @@
     "cashierPhoneInvalid": "LYDIA_CASHIER_PHONE_INVALID",
     "responsableNotAMember": "LYDIA_RESPONSABLE_NOT_A_MEMBER",
     "responsableNotACashier": "LYDIA_RESPONSABLE_NOT_A_CASHIER",
-    "noBusiness": "LYDIA_NO_BUSINESS"
+    "noBusiness": "LYDIA_NO_BUSINESS",
+    "cashierAddDisabled": "LYDIA_CASHIER_ADD_DISABLED",
+    "cashierRevokeUnconfirmed": "LYDIA_CASHIER_REVOKE_UNCONFIRMED",
+    "cashierReadbackInvalid": "LYDIA_CASHIER_READBACK_INVALID",
+    "cashierRemovalPrecondition": "LYDIA_CASHIER_REMOVAL_PRECONDITION",
+    "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN"
   },
   "social": {
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
@@ -22,11 +27,26 @@
     "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET",
     "responsablePhoneLocked": "LYDIA_RESPONSABLE_PHONE_LOCKED",
     "responsableInFlight": "LYDIA_RESPONSABLE_IN_FLIGHT",
-    "businessChanged": "LYDIA_BUSINESS_CHANGED"
+    "businessChanged": "LYDIA_BUSINESS_CHANGED",
+    "cashierInFlight": "LYDIA_CASHIER_IN_FLIGHT",
+    "cashierNotAMember": "LYDIA_CASHIER_NOT_A_MEMBER",
+    "cashierAlreadySet": "LYDIA_CASHIER_ALREADY_SET",
+    "cashierPhoneInUse": "LYDIA_CASHIER_PHONE_IN_USE",
+    "cashierNoResponsable": "LYDIA_CASHIER_NO_RESPONSABLE",
+    "cashierResponsableNumber": "LYDIA_CASHIER_RESPONSABLE_NUMBER",
+    "cashierNotFound": "LYDIA_CASHIER_NOT_FOUND",
+    "cashierRoleFixed": "LYDIA_CASHIER_ROLE_FIXED",
+    "cashierClaimLost": "LYDIA_CASHIER_CLAIM_LOST",
+    "cashierNumberChanged": "LYDIA_CASHIER_NUMBER_CHANGED",
+    "cashierConfirmedRequired": "LYDIA_CASHIER_CONFIRMED_REQUIRED"
   },
   "notificationTypes": {
     "active": "lydia_payments_active",
-    "paused": "lydia_payments_paused"
+    "paused": "lydia_payments_paused",
+    "cashierAdded": "lydia_cashier_added"
+  },
+  "switches": {
+    "cashierAddEnabled": false
   },
   "refund": {
     "description": "Lydia refunds (lot 4, docs/wiki/frontend/modules/payments.md \"Refunds\"). `core` codes are answered by core-service's internal refund route, `social` codes by social-service's refund routes; the frontend words each one. `notificationTypes` is the payer's bell row.",

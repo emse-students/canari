@@ -104,3 +104,69 @@ export class LydiaPaymentsNotifier {
     return written;
   }
 }
+
+/**
+ * THE GATE OF THE CASHIER NOTICE (lot 3): ships SWITCHED OFF, and only a pull request turns it on.
+ *
+ * Its type, `lydia_cashier_added`, is new: a client older than the release CARRYING Lydia enrolment
+ * lot 3 draws it as the neutral unknown-type row, a wrong sentence no server change can take back
+ * (legacy-compatibility.md, "a NEW notification type").
+ *
+ * WHAT FLIPS IT: `minClientVersion` at or above the first release carrying Lydia enrolment lot 3,
+ * on BOTH estates, once BOTH Play AND the App Store serve it - THEN a one-line pull request setting
+ * this to `true` and changing the spec that pins it. Lydia's own SMS reaches the person meanwhile.
+ */
+export const LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false;
+
+/** The bell row's type for "you were added as a cashier"; equals `libs/contracts/lydia-refusal-codes.json`. */
+export const LYDIA_CASHIER_ADDED_TYPE = 'lydia_cashier_added';
+
+/**
+ * TELLS A MEMBER THEY WERE ADDED AS A LYDIA CASHIER OF AN ASSOCIATION (lot 3): one bell row, its
+ * `postId` the association id and its text the association's name; the client links it to the
+ * Lydia Pro help page. No push: Lydia sends its own SMS, and a push would need a content key every
+ * native build carries.
+ */
+@Injectable()
+export class LydiaCashierNotifier {
+  private readonly logger = new Logger(LydiaCashierNotifier.name);
+
+  constructor(private readonly notifications: PostNotificationsService) {}
+
+  /** Whether the notice may be sent at all - see {@link LYDIA_CASHIER_NOTIFICATIONS_ENABLED}. */
+  enabled(): boolean {
+    return LYDIA_CASHIER_NOTIFICATIONS_ENABLED;
+  }
+
+  /**
+   * Writes the bell row for `recipientId`. Returns the rows written (0 while switched off). Never
+   * throws: a notice that could not be written is logged at WARN - the add itself stands.
+   */
+  async tellAdded(association: { id: string; name: string }, recipientId: string): Promise<number> {
+    const short = association.id.slice(0, 8);
+    if (!this.enabled()) {
+      this.logger.debug(`[LYDIA-NOTIFY] association ${short}: cashier notice switched off`);
+      return 0;
+    }
+    try {
+      const written = await this.notifications.createNotifications({
+        recipientIds: [recipientId],
+        type: LYDIA_CASHIER_ADDED_TYPE,
+        postId: association.id,
+        actorId: SYSTEM_ACTOR_ID,
+        actorName: SYSTEM_ACTOR_NAME,
+        text: association.name,
+        skipPush: true,
+      });
+      this.logger.log(
+        `[LYDIA-NOTIFY] association ${short}: cashier ${recipientId.slice(0, 8)} told (${written} row)`
+      );
+      return written;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `[LYDIA-NOTIFY] association ${short}: the cashier notice could not be written: ${String(err)}`
+      );
+      return 0;
+    }
+  }
+}

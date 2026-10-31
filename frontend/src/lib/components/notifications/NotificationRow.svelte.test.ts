@@ -397,6 +397,13 @@ describe('NotificationRow for the Lydia payments notices', () => {
     const target = renderRow(row('lydia_payments_paused'));
     expect(target.textContent).toContain(m.notif_lydia_payments_paused_text({ name: 'BDE' }));
   });
+
+  it('tells a new cashier which association added them, as a known row that opens', () => {
+    const target = renderRow(row('lydia_cashier_added'));
+    expect(target.textContent).toContain(m.notif_lydia_cashier_added_text({ name: 'BDE' }));
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
 });
 
 describe('NotificationRow with a type this build does not know', () => {
