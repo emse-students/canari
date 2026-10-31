@@ -543,7 +543,7 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
         })
       ).rejects.toMatchObject({ status: 502, response: { code: LYDIA_BUSINESS_CREATED_UNLINKED } });
       const logged = error.mock.calls.flat().map(String).join(' | ');
-      // The durable record of the orphan: its tag, the association and the PUBLIC vendor token.
+      // The durable record of the orphan: its tag, the association and the vendor token.
       expect(logged).toContain(LYDIA_ORPHAN_LOG_TAG);
       expect(logged).toContain('assoc-1');
       expect(logged).toContain('vendor_token=vendor-token-xyz');
@@ -829,7 +829,7 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     });
     const logged = lines.join(' | ');
     expect(logged).toContain('business/create');
-    // The private token never; the vendor token is public (lydia-api.md section 1) and may be logged.
+    // The private token never; the vendor token may be logged.
     expect(logged).not.toContain('PRIVATESECRET');
   });
 });

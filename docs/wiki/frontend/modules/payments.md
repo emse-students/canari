@@ -515,8 +515,8 @@ arrived minus `sig` - not a list the code chooses - and every value must be a st
 characters each at most). The key is the one of the association whose `lydiaAccountId` is the body's
 `vendor_token`, asked of social-service over `POST /api/internal/associations/lydia-callback-key`
 (`X-Internal-Secret`, `Cache-Control: no-store`, under `/api/internal/`, which no nginx `location`
-routes). Resolving the key FROM the body is sound because the signature is the proof: anyone may name
-a public vendor token, nobody but the Business can sign for it. **Every failure is ONE 400 `Invalid
+routes). Resolving the key FROM the body is sound because the signature is the proof: naming a vendor
+token is not signing for it. **Every failure is ONE 400 `Invalid
 signature`** - unknown association, no key, wrong key, wrong field set, a non-string value - so the
 route says nothing about which associations hold a key; the reason (`unsignable-body`,
 `no-vendor-token`, `no-key`, `mismatch`) goes to the server log only. Failing to READ the key (social
@@ -621,9 +621,8 @@ read as "not linked", which would invite a second `business/create`. A link refu
 `LYDIA_ACCOUNT_ALREADY_LINKED` (a concurrent run won) is the same 409, classified on the code and not
 on the status.
 
-**What may be logged:** the `vendor_token` (`api_token`) is PUBLIC - it names a payment destination,
-it is in every callback and on the manager's screen - so an ERROR line may carry it, and the orphan's
-must. The Business private key (`api_token_id`, `vendor_id`) and every signature are secret and never
+**What may be logged:** the `vendor_token` (`api_token`) - an ERROR line may carry it, and the
+orphan's must. The Business private key (`api_token_id`, `vendor_id`) and every signature are secret and never
 logged (`LYDIA_LOG_REDACT_KEYS` in `lydia-payment-provider.ts`).
 
 #### An orphan Business: ONE typed outcome, and what an admin does

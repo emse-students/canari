@@ -143,8 +143,7 @@ export function businessCreateUnconfirmed(
 }
 
 /**
- * Logs an orphan Business at ERROR - association, `vendor_token` (public, see `LYDIA_LOG_REDACT_KEYS`)
- * and why - and returns the typed `LYDIA_BUSINESS_CREATED_UNLINKED` 502 to throw. The private token
+ * Logs an orphan Business at ERROR - association, `vendor_token` and why - and returns the typed `LYDIA_BUSINESS_CREATED_UNLINKED` 502 to throw. The private token
  * never reaches this line.
  */
 export function businessCreatedUnlinked(
@@ -251,9 +250,8 @@ const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> =
  * token (`auth/vendortoken`, homologation 2026-10-30; `createOnboarding` stores it encrypted) and
  * `vendor_id` is the name `auth/vendortoken` gives the same value, and
  * `signature` is the value Lydia's `request/state` answers with (and the callbacks carry): the proof
- * the whole confirmation rests on. `api_token`, the Business's `vendor_token`, is NOT secret - it
- * travels in every `request/do` and names the Business in every callback (lydia-api.md section 1) -
- * so a server log may carry it; it is what identifies an orphan Business to Lydia's support.
+ * the whole confirmation rests on. `api_token`, the Business's `vendor_token`, is not in this set:
+ * it is what identifies an orphan Business to Lydia's support.
  */
 const LYDIA_LOG_REDACT_KEYS = new Set([
   'api_token_id',
