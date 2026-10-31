@@ -94,8 +94,8 @@ jobs:
       # gap between the caller resolving the commit and this line is TWENTY-TWO MINUTES, measured on
       # v0.16.6 (bump 19:45:12, deploy 20:07:45). Resolving `main` again here would make the
       # `prod-released` tag at the bottom name a commit this tree is not on. The released commit is
-      # always an ancestor of `main` (the ruleset forbids a force-push), so fetching the branch makes
-      # it reachable, and `reset` fails loudly if it somehow is not.
+      # the bump on `release/vX.Y.Z`, fetched BY SHA (GitHub serves any commit a ref reaches), and
+      # `reset` fails loudly if it somehow is not there.
       #
       # THERE IS NO `actions/checkout` ABOVE THIS, AND THERE WAS ONE UNTIL 2026-09-24. It cloned the
       # monorepo into the runner's workspace, where not one step ever read it: every step works in
@@ -297,7 +297,7 @@ jobs:
 
       # MICONNECT'S CONFIGURATION IS THE BLUEPRINTS IN THIS TREE, applied on every stable release.
       # The runner lives on the host MiConnect runs on, so it reaches the worker container directly;
-      # the blueprints travel on stdin, so nothing is copied into /srv/miconnect. ONE transaction:
+      # the blueprints travel on stdin, so nothing is copied into the MiConnect directory. ONE transaction:
       # a blueprint that fails leaves MiConnect exactly as it was, and fails this job - so
       # `prod-released` below does not move. Re-applying every release is also what reverts an edit
       # made by hand in the admin UI. The pre-release ran the same thing as a dry run first.

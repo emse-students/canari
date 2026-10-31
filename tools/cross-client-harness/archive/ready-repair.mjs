@@ -8,7 +8,8 @@
  */
 import { spawn } from 'node:child_process';
 import { clearOverlays, client, evaluate } from '../chat.mjs';
-import { ORIGIN, PORTS } from '../names.mjs';
+import { PORTS } from '../names.mjs';
+import { ORIGIN } from '../site.mjs';
 import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
 import { MAX_REPAIR_PASSES, READY_EXPR, isReady, stateOf } from './ready-probe.mjs';
 
@@ -81,6 +82,32 @@ async function dismissOverlay(d, log) {
 }
 
 /**
+ * A MINIMIZED SEAT IS RESTORED BEFORE ANYTHING ELSE IS ASKED OF IT. Browsers only.
+ *
+ * The launch flags keep an OCCLUDED window visible (`launch.mjs`), but nothing covers a MINIMIZED one:
+ * Chrome reports its page `hidden`, drops every input event and then freezes it. On BIG-1-noI1
+ * (alpha.5, 2026-10-26), W3's window was minimized. Three clicks on the row's group were lost,
+ * the next run's invariant could not click a tile, and W3's console fell silent for 75 s while every
+ * other seat kept polling. The preflight had read W3 as "unlocked" because readiness never looks at
+ * the window. Restoring the window is a gesture a user makes; it touches no state of the app.
+ *
+ * @param {string} d the seat
+ * @param {(line: string) => void} log
+ */
+async function restoreMinimizedWindow(d, log) {
+  if (!/^W\d$/.test(d)) return;
+  const cx = await client(PORTS[d], null, { focus: false });
+  try {
+    const { windowId, bounds } = await cx.send('Browser.getWindowForTarget');
+    if (bounds?.windowState !== 'minimized') return;
+    log(`  fix  ${d.padEnd(3)} its window is MINIMIZED - its page is hidden and drops every click; restoring it`);
+    await cx.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+  } finally {
+    cx.close();
+  }
+}
+
+/**
  * Brings ONE device to a named starting point, repairing loudly, and says what it ended as.
  *
  * THE REPAIRS ARE EXPECTED, NOT EXCEPTIONAL - a fresh tab starts at the PIN gate, a client left on
@@ -102,6 +129,7 @@ async function dismissOverlay(d, log) {
 export async function bringToReady(d, { log = console.log } = {}) {
   let s;
   try {
+    await restoreMinimizedWindow(d, log);
     s = await readiness(d);
   } catch (e) {
     return { ok: false, state: null, trail: [], unreachable: e instanceof Error ? e.message : String(e) };

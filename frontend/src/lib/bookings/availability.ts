@@ -9,6 +9,14 @@
  * `fromStoredLines` reads such a pair back as one. Pure, so every case is a table test.
  */
 
+/**
+ * The server's cap on the stored lines one availability carries (`MAX_AVAILABILITY_LINES`,
+ * `apps/social-service/src/bookings/dto/space.dto.ts`). A fixed slot is one line, so a week of
+ * short slots reaches it: the wizard and the painter stop at it and say so, before the server
+ * refuses the save.
+ */
+export const MAX_AVAILABILITY_LINES = 200;
+
 /** ISO weekday, 1 = Monday .. 7 = Sunday, as the server stores it. */
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -47,6 +55,16 @@ export function minutesOf(time: string): number {
 
 /** The stored `HH:MM:SS` as the editor shows it. */
 const short = (time: string) => time.slice(0, 5);
+
+/**
+ * Monday..Sunday in `locale` (`fr-FR`, `en-US`), `long` or `short`, as the editors label days;
+ * 2024-01-01 was a Monday.
+ */
+export function weekdayNames(locale: string, style: 'long' | 'short'): string[] {
+  return [1, 2, 3, 4, 5, 6, 7].map((d) =>
+    new Date(Date.UTC(2024, 0, d)).toLocaleDateString(locale, { weekday: style, timeZone: 'UTC' })
+  );
+}
 
 /** The next ISO weekday. */
 export const nextWeekday = (d: number): Weekday => ((d % 7) + 1) as Weekday;

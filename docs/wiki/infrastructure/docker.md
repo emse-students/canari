@@ -23,7 +23,9 @@ development is the file under `local/`.
 frontend (Nginx:80)
   |-- chat-gateway:3000         <- depends on redis
   |-- call-service:3004          <- depends on Cloudflare TURN (no internal deps)
-  |-- chat-delivery-service:3010 <- depends on postgres, redis
+  |-- chat-delivery-service:3010 <- depends on postgres, redis, core-service (an owner's device
+  |                                 delete ends that device's sessions there, INTERNAL_SECRET;
+  |                                 503 when core cannot be reached)
   |-- media-service:3011         <- depends on garage
   |-- core-service:3012          <- depends on postgres
   |-- social-service:3014        <- depends on postgres, core-service, media-service
@@ -317,7 +319,7 @@ make local-frontend    # BUILD_WEB=1 build + assert the shape + rebuild BOTH fro
 ```
 
 **A bare `bun run build` produces the wrong artefact and the failure is a SUCCESS.**
-`svelte.config.js` picks adapter-**static** unless `BUILD_WEB` is set - deliberately, so a Tauri
+`kit.config.js` picks adapter-**static** unless `BUILD_WEB` is set - deliberately, so a Tauri
 build is what you get by default. Both of the estate's frontend images want the other shape:
 `Dockerfile.frontend-ssr` does `COPY frontend/build ./` and runs `node index.js`, and
 `Dockerfile.frontend` (nginx) copies `frontend/build/client` and `build/prerendered`. A static build

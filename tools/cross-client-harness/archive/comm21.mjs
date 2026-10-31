@@ -31,6 +31,7 @@ import {
   apiPost,
   armComposer,
   awaitMessage,
+  clearOverlays,
   client,
   countMessage,
   evaluate,
@@ -52,7 +53,6 @@ import {
   openCommunity,
   openInviteLink,
   revokeChannelAccess,
-  saveChannelAccess,
   selectedChannel,
 } from '../comm.mjs';
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from '../grainedb.mjs';
@@ -159,7 +159,7 @@ await step('let the peer in', async () => {
   await openSalon(w1);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
 });
 
 // -- Arming: the peer is really in, and really writing ------------------------------------

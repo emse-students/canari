@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -68,10 +68,11 @@ key set from both, the fallback armed from both, and the FCM visibility each owe
 
 ### What a group owns, and the one list that says so
 
-A group's rows live in **seven** tables, and `GROUP_OWNED_TABLES`
+A group's rows live in **eleven** tables, and `GROUP_OWNED_TABLES`
 ([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
-definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
-`mls_commit_log`, `mls_group_info`, `group_invites` - plus `dm_user_dismissed_groups`, which
+definition of that set: `dm_group_members`, `queued_message`, `queued_payload`,
+`dm_device_group_memberships`, `mls_commit_log`, `mls_group_info`, `group_invites`,
+`dm_group_membership_intervals`, `dm_seat_evictions`, `dm_revoked_device_groups` - plus `dm_user_dismissed_groups`, which
 `deleteGroupOwnedRows` takes only on a HARD delete. Plus three Redis key shapes in
 `GROUP_REDIS_KEY_PREFIXES`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
@@ -692,11 +693,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   and sends nothing - the app's own load answers the request, and the newcomer re-asks every 60 s; a
   settle in a process warmed inside the round trip is `left-to-foreground`, whose loaded state holds
   the stage. The stage's ledger entry is written under the same hold of the `mls.bin` write lock as
-  the stage, and the sign-out sweep (`remove_mls_state_in`) takes that lock, so it removes both or
-  neither. The entry names its commit's digest, so a settle forgets its own stage and never a later
-  one of the same group. The warm mark is STICKY (set by the first foreground load, never cleared while
-  the process lives), so a process Android keeps alive refuses every background Welcome; its rate is
-  owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  the stage, and the state reset's sweep (`end_native_session`, through `remove_mls_state_held`)
+  holds that lock, so it removes both or neither. The entry names its commit's digest, so a settle
+  forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
+  signed-in session (set by the foreground load, cleared only when the native session ends -
+  `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
+  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -724,7 +726,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
   target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
   against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
-  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  the MLS state (`remove_mls_state_held`, under the teardown's hold) sweeps the memo and its `.tmp` with it - and deletes
   `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
   finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
@@ -759,8 +761,14 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   an empty `deviceId` or `groupId` when the scope names one, because a criterion left out of a delete
   widens it to every row.
 - **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
-  `removeGroupMember` write `dm_group_members` first, then the membership interval, then the device
-  rows and (on a removal) the queued Welcomes. Two transactions that take the same rows in the same
+  `removeGroupMember` take the group's seat lock, then `dm_group_members`, then (on a removal the
+  membership interval and the queued Welcomes, then) the device rows - the add, since ADM-3, only
+  re-reads an ADMITTED seat there and writes device rows, enrolling nobody but the group's CREATOR, into an
+  empty roster ([the creation bootstrap](#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)) -
+  and "empty" and "creator" are decided by a re-read under the seat lock taken EXCLUSIVE for that one
+  case, so anyone else is answered `409 MEMBER_NOT_ADMITTED` with nothing written
+  (`add-enrolment.integration.spec.ts`)
+  ([mls-protocol](../protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)). Two transactions that take the same rows in the same
   order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
   that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
   it cannot run two live sessions, so it proves the order and not the wait). Both Welcome stores -
@@ -797,7 +805,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its
   own work package
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-one-mls-manager-per-process-owed-a-review-before-code)).
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A key-group frame is stored once (migration 034, 2026-10-22)
@@ -1017,6 +1025,47 @@ Welcome is owed, a window the add lock does not cover on every path. The row is 
 stranded=N` on the log when any seat is pending with all three false. Client side:
 [mls-recovery-ladder](../protocols/mls-recovery-ladder.md#a-silent-reader-is-handed-to-the-roster-repair-by-the-groups-list).
 
+### An invitation-link ask is announced to every online member, and so is its outcome (2026-10-25)
+
+`utils/join-ask-announce.ts` is the one place both frames are built. The audience is every `active`
+device row of every ADMITTED seat (`ADMITTED_SEAT`, so an awaiting seat never hears another's ask),
+minus the asker. Each device gets ONE Redis script (`publishIfAddressable` with `JOIN_ASK_CAPABILITY`,
+`services/addressing.ts`) that checks the presence key (`devicePresenceKey`, the one implementation,
+shared with `messaging.service.ts`) and that every live session declared `join-ask-1` - read from the
+gateway's twin hash `addressing:join-ask:*` (`JOIN_ASK_PUBLISH_LUA`), never from the history value,
+which stays what every shipped chat-delivery compares whole - and publishes in the same call; all
+devices go concurrently. A retired replica finishes the join-ask work in flight when its drain reaches
+`beforeExit` (`finishJoinAskWorkInFlight`, a fixed set read once - never work started later), and the
+stale-pending cron is ONE tracked unit from its first read (`trackJoinAskWork`), so a SIGTERM during
+it cannot leave an ask expired unannounced. A publish that never returns is bounded by the release's
+own drain (`ROLLING_DRAIN_SECONDS`), not by a timer here. The commit door takes the asks it admitted
+as soon as its transaction commits, so a later step that throws cannot lose their announcement. A device with a session that did not declare it - a build
+older than these frames - gets nothing, so it never logs a frame no handler took. Each frame goes out
+on the generic control path (`chat:messages`, `isWelcomeRequest: true`, `proto` = the JSON frame,
+`requiresCapability: 'join-ask-1'`), which the gateway delivers only to sessions holding it.
+
+Every frame carries `askId`, the awaiting seat's row id - the ask's identity, which the client settles
+by ([mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)); the pending sweep
+rows and the roster rows of an awaiting seat carry it too.
+
+- `group.join_ask` from `acceptGroupInvite`, after the seat is written, beside the existing
+  `welcome_request` to ONE elected device (that election now only answers a member's own devices);
+- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only
+  and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
+  removes their own awaiting seat; `expired` for each seat `expireUnansweredAsks` deletes; and
+  `admitted` after the transaction in which `liftAwaitingAdmission` cleared a flag commits - the
+  commit door and the Welcome door, which return the asks they lifted, so a second Add announces
+  nothing.
+
+Announcing is fire-and-forget (`dispatch`, tracked so `joinAskAnnouncementsSettled()` can await it in
+tests): no caller awaits it, so no HTTP answer waits on Redis, and the commit door announces in its
+`finally`, after the commit lock is released.
+
+An offline member gets nothing and learns it at its next sweep (`GET mls/invitations/pending`); a
+failed publish is logged `[JOIN_ASK]` at WARN and changes no outcome. The log is
+`[JOIN_ASK] ANNOUNCED|SETTLED ... devices=N`. Client side and the race it settles:
+[mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
 ### A fulfilled invitation is retired by whoever can PROVE it, and a vouch does not replay
 
 `getPendingInvitations` serves every `pending` row in the caller's groups, and the caller's first
@@ -1091,18 +1140,82 @@ BLOCKS, and a wipe that completes at some later moment nobody controls is not on
 This is the immediate half only. A device that is offline when it is deleted learns at its next
 login, from the denylist, exactly as before.
 
-`registerDevice` therefore refuses a revoked id with **403 `{ code: 'DEVICE_REVOKED' }`**. Before
+`registerDevice` (and the prekey upload, through the same `refuseRevokedDevice`) therefore refuses a
+banned id with a 403 that says WHO banned it, read from `revoked_device.reason` (migration 040):
+
+| `reason` | refusal | the client's answer |
+| --- | --- | --- |
+| `retired` - the install's own rotation abandoned the id (`DELETE ...?reason=retired`) | `{ code: 'DEVICE_REVOKED', reason: 'retired' }` | a fresh id (`DeviceRevokedError`, below) |
+| `owner` - the owner revoked it from another device (a `DELETE` without a reason) | `{ code: 'DEVICE_REVOKED_BY_OWNER', reason: 'owner' }` | sign out and wipe (`DeviceRevokedByOwnerError` -> `onDeviceRevoked` -> `wipeRevokedDevice`), never a new id |
+| NULL - a row written before the column | read as `owner` (`revocationReasonOf`) | the same wipe |
+
+**The owner's cause is never downgraded, and the merge is ONE statement** (`upsertRevocation`: an
+`INSERT ... ON CONFLICT ("userId", "deviceId") DO UPDATE SET reason = CASE ...`, which reads the
+existing row under the conflict's row lock, so two deletes racing on one id cannot both read "no
+owner" and the retired one win): a later `?reason=retired` on an id whose active ban is the owner's
+keeps `owner`, and says so at `warn`; a lapsed ban starts over with the new cause. Any other `reason`
+value is a 400 - a cause written wrong decides whether a device is wiped. **A distinct code for the owner, not a
+field of `DEVICE_REVOKED`**, so a client older than it reads an unknown 403 and does not re-enrol; and
+a client reads `DEVICE_REVOKED` WITHOUT `reason: 'retired'` (a server older than the reason) as the
+owner's, said at `error` (`classifyRevokedDeviceRefusal`). The compatibility of both directions is in
+[legacy-compatibility](../legacy-compatibility.md). An ended session cannot reach any of this: its
+access token is answered anonymous at `/api/auth/verify`
+([sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+**An owner's ban ends the device's sessions before the delete answers.** Once the recorded cause is
+`owner`, the delete asks core-service to end every session bound to that device except the caller's
+own (`endDeviceSessions` in `src/internal/device-sessions.ts`; the caller's `sid` comes from
+`X-Session-Id`). Every way that call can fail is the typed `DeviceSessionsNotEndedError`, answered
+503 and logged at `error` - never swallowed, never a success. The ban is already written and the
+device already signalled (the signal is sent BEFORE this step, so its failure skips neither); the
+panel still signs out the logins it shows for the row (`removeDeviceRow`), and whatever survives
+stays listed - a login whose device is gone gets its own row - for the user's retry. A retirement
+ends none. What a device-bound
+ending does not reach is stated in
+[sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25).
+
+Before
 that check existed, registration succeeded and the device was then filtered out of `getUserDevices`
 and resolved to a `null` KeyPackage by `resolveKeyPackagePayloadForDevice` - registered, absent from
 its own device list, never invitable to a group, with no error surfaced anywhere. That silent state
 was [WP-DEV-PANEL-1](../../../CLAUDE.md).
 
-The client answers the refusal by becoming a new device: `BaseMlsService.generateKeyPackage` catches
+The client answers a RETIRED id by becoming a new device: `BaseMlsService.generateKeyPackage` catches
 the typed `DeviceRevokedError` and calls `rotateDeviceIdentity`, which mints a fresh id, reloads
 empty MLS state, persists it, and deregisters the abandoned id. Retried exactly once - a second
 refusal is a server bug, not a state to keep rotating through. The MLS credential is
 `userId:deviceId`, so a new id *is* a new device: local history is gone and every group must
 re-invite it. That is the intended cost of a revocation being real.
+
+
+### The creation bootstrap admits the creator alone (migration 042, 2026-10-29)
+
+`POST mls/groups/:id/members` enrols ONE person itself: a group's creator, registering into the
+still-empty roster right after `POST mls/groups` (`groupCreation.ts` calls `registerMember` for
+itself before it creates the local MLS group, so the server names the group first). **The creation
+bootstrap enrols the group's recorded creator (`createdBy`) and nobody else; a group with no recorded
+creator is bootstrapped by nobody.**
+
+- **The creation route records its AUTHENTICATED caller** in `dm_groups."createdBy"` (the HMAC-bound
+  `x-user-id`, never a body field), in canonical form (`canonicalUserId`: trimmed, lower-cased, the
+  form the guard verifies), and every comparison with it uses that form. A body `createdBy` naming
+  another account is refused `403 MEMBERSHIP_NOT_ALLOWED` before any row is written.
+- **It is INTERNAL**: `GET mls/groups/:id` strips it, and no other route returns a group row whole.
+- **The bootstrap admits that account and nobody else.** `isCreationBootstrap` routes on it
+  (unlocked), and `writePendingSeats(..., 'creator')` re-reads `createdBy` beside the roster under the
+  seat lock taken exclusive, answering `not_creator` (the route's `409 MEMBER_NOT_ADMITTED`). Any
+  other account is refused earlier, at the route's guard: `403 MEMBERSHIP_NOT_ALLOWED`, nothing written,
+  and `[ADD_MEMBER] bootstrap REFUSED ... creator=<id|none>` at WARN.
+- **A NULL creator is bootstrapped by nobody**, never admitted: every row written before migration
+  042 (additive, nullable, no backfill, no default - nothing rewritten, nothing deleted), every
+  key-distribution group (also refused earlier by `KEY_DISTRIBUTION_GROUP`). A group that already has
+  members never takes the bootstrap.
+- **An account erasure anonymises it** to `[deleted]` (`ACCOUNT_ERASURE_COVERAGE`), which matches no
+  caller; the group lives on for its members.
+
+Pinned by `add-enrolment.integration.spec.ts` against PostgreSQL (another account, the creator after
+it, the legacy row, the locked `roster_taken` and the race at the writer), and by
+`members.controller.blocks.spec.ts` / `messaging.one-active-writer.spec.ts` at the route.
 
 ## Refusal codes - one stable name per refusal a member can act on (2026-10-19)
 
@@ -1128,7 +1241,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 | delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
 | delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
 | core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
-| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `ADMIN_SELF_DEMOTE`, `ADMIN_SELF_CHANGE` | 403 | an administrator removes, or otherwise writes, their own right | no screen calls it yet |
 | core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
 
 `MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in
@@ -1201,9 +1314,29 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 |---|---|---|
 | POST | `/api/mls/groups` | Create group record |
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
-| PATCH | `/api/mls/groups/:groupId` | Rename group |
-| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group |
+| PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
+| PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+
+**A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
+says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
+may act on THIS group, and is the one check the group's metadata and lifecycle routes, the add-lock's
+two doors and the device-membership deletions share. An admitted member passes - any member, as the
+conversation panel offers rename, photo and delete to every member; a caller with no seat (never a
+member, removed, or the group absent or tombstoned) gets the 403 `NOT_A_MEMBER`, the same for an
+unknown and a known id; a seat awaiting admission gets the 409 `awaiting_admission`. A key group
+answers from its active device rows (`standingOnGroupOfKind`, which `memberOfGroupKind` also reads).
+A tombstoned group is read as absent by its `deletedAt`, never inferred from the purge of its seats,
+so a replayed delete is the 403 the client's owed-exit drain reads as done. Two narrower rules sit on
+top: rename, photo and delete-for-everyone refuse a key-distribution group to EVERY caller (403
+`KEY_DISTRIBUTION_GROUP`, after the membership check, so a stranger still reads `NOT_A_MEMBER`) -
+its lifecycle is the internal `mls/distribution-groups` routes'; and a member ending ANOTHER user's
+device row may end only a row that is not `active` (the pending invitation the group cannot honour),
+and never one in a key-distribution group. The condition rides the delete itself (`status <> 'active'`),
+after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
+locking the device row first would invert it and can deadlock; a row left behind is active and is the
+403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
@@ -1213,10 +1346,11 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
-| POST | `/api/mls/groups/:groupId/members` | Add member record to group |
-| GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the group's recorded creator (`createdBy`), into an empty roster |
+| GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which of up to 1000 sent leaf identities belong to a revoked device - key groups included; admitted members only, about users bound to the group, throttled per user; each identity is validated as `userId` + `deviceId`, never against the 128 bound as a whole (a real one is 147-149 characters); one outside the rule (`libs/contracts/leaf-identity.cases.json`) is skipped and counted, never a refusal of the batch ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -1275,11 +1409,11 @@ group names nobody. The client removes exactly those leaves
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
-| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). An ACCEPT names every declared admit it dropped in `refusedAdmits` (`{ userId, deviceId, reason }`, absent when none), so the committer sends no Welcome a refusal already decided ([mls-protocol](../protocols/mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
-| POST | `/api/mls/welcome` | Deliver Welcome message to a device |
+| POST | `/api/mls/welcome` | Deliver Welcome message to a device. A target device no key package names (revoked, or never registered) is `404 WELCOME_TARGET_UNKNOWN` (`error: 'welcome_target_unknown'`), one `warn` decision line; a target off the roster is `403 WELCOME_TARGET_NOT_MEMBER`. Until 2026-10-25 the first was a bare `Error`, a 500 with a stack (DEV-3) |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
@@ -1318,11 +1452,11 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/group-invites/:token/accept` | Accept group invite |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Get pending invitations |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | Get device memberships |
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership status |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | POST | `/api/mls/kick-stale-user` | Reset all devices for a user to pending |
 | POST | `/api/mls/kick-stale-device` | Reset single device to pending |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete specific membership (own device; an admitted member of the group may end another user's row only while it is not `active`) |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships (own device) |
 | POST | `/api/mls/groups/:groupId/force_leave` | Force device exit from group |
 
 ### Push notifications
@@ -1725,9 +1859,10 @@ opened the app.
   ringtone audio attributes, `setBypassDnd`). `showIncomingCallNotification` builds a
   `NotificationCompat.CallStyle.forIncomingCall` (API 31+; two-action fallback below) with
   full-screen intent (`USE_FULL_SCREEN_INTENT`), `FLAG_INSISTENT` looping ringtone,
-  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = deep link
-  `fr.emse.canari://chat/<groupId>?acceptCall=<callId>&video=<0|1>`; decline = local dismiss
-  broadcast (`ACTION_CALL_DECLINE` - group decline only means "stop ringing me").
+  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = a private intent
+  (`CallRingAnswer`: the plain `fr.emse.canari://chat/<groupId>` link plus a per-ring nonce in the
+  extras, [calls](../frontend/modules/calls.md#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30));
+  decline = the `ACTION_CALL_DECLINE` broadcast, which also tells the caller.
   `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
   (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
 - **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;
@@ -1751,9 +1886,10 @@ opened the app.
   `interruptionLevel = .timeSensitive` (app-alive path and NSE), which needs the
   `com.apple.developer.usernotifications.time-sensitive` entitlement - without it iOS silently
   downgrades to `.active`.
-- **NSE** (`NotificationService.swift`): `call_invite` → ringtone + time-sensitive banner with
-  the accept deep link; `call_control` with `callEnded` → blank passive content + removes any
-  delivered notification whose `userInfo["canariCallId"]` matches.
+- **NSE** (`NotificationService.swift`): a decrypted `call_invite` → blank passive content, never a
+  ring (since 2026-10-30: the ring is the server's `call_ring` alone, [calls](../frontend/modules/calls.md));
+  `call_control` with `callEnded` → blank passive content + removes any delivered notification
+  whose `userInfo["canariCallId"]` matches.
 
 #### Unified rich notification grouping (WP-XP-7)
 
@@ -2189,7 +2325,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/add-lock` | Acquire distributed add-lock |
+| POST | `/api/mls/add-lock` | Acquire distributed add-lock (admitted member; so does the PushSecret door) |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
 ### Calls
@@ -2240,6 +2376,8 @@ are both ON with no backfill). It lives in THIS service because every push is se
 | `reactions` | `social_reaction`, and the DM reaction (`reaction: 'true'`) | `sendPushToUser` |
 | `events` | the six `event_*` keys | `sendPushToUser` |
 | `forms` | `form_opening_soon`, `form_open`, `form_paid_over_capacity` (the organiser alert, [forms](../frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off): filed under the EXISTING id, since a new id is a switch older clients cannot draw), `type: 'form_reminder'` | `sendPushToUser` |
+| `follows` | `social_follow_request`, `social_follow_accepted` (WP-F4). A NEW id on purpose: a follow request is no other category's kind. An older build cannot draw its switch, but the choice is per ACCOUNT and decided here, so a switch flipped on any newer device silences every device. Off, the request still waits in the inbox | `sendPushToUser` |
+| `bookings` | `social_booking_cancelled`, `social_booking_withdrawn`, `social_booking_added`, `social_booking_reminder` (WP-N, [bookings-chantier](../bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)). A NEW id, decided by the user's delegate (Q-R15: "a Reservations category in the notification settings"): an older build cannot draw its switch, as for `follows`. Off, the bell still lists them | `sendPushToUser` |
 
 The id list and the push-to-category map are ONE file, `services/push-category.ts`; the frontend
 mirrors the ids (`frontend/src/lib/notifications/categories.ts`) and `categories.contract.test.ts`

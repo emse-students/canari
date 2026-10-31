@@ -25,7 +25,7 @@
  * IT BUILDS ITS OWN VENUE. The shared community cannot be used: this check removes W2 from it, and
  * every other row in the phase needs W2 to still be there.
  */
-import { client, realClick } from '../chat.mjs';
+import { clearOverlays, client, realClick } from '../chat.mjs';
 import {
   acceptInviteLink,
   createChannel,
@@ -39,7 +39,6 @@ import {
   openCommunity,
   openInviteLink,
   removeCommunityMember,
-  saveChannelAccess,
   selectedChannel,
 } from '../comm.mjs';
 import {
@@ -98,7 +97,7 @@ await step('create the private salon with the peer in it', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
-  await saveChannelAccess(w1);
+  await clearOverlays(w1);
 });
 const channelId = await step('read the salon id', () =>
   workspaceId ? channelIdOf(workspaceId, salon) : null

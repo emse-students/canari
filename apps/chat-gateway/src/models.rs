@@ -104,8 +104,8 @@ mod tests {
 /// native WebSocket plugin (outside the WebView) cannot send WebView cookies.
 /// Used ONLY when the `canari_ws_token` cookie is absent.
 ///
-/// `caps`: comma-separated capabilities the code behind this socket declares. The one read today is
-/// [`crate::addressing::ADDRESSED_HISTORY_CAPABILITY`]; absent on every build that predates it.
+/// `caps`: comma-separated capabilities the code behind this socket declares, among
+/// [`crate::addressing::KNOWN_CAPABILITIES`]; absent on every build that predates them.
 #[derive(Deserialize)]
 pub struct AuthParams {
     pub device_id: Option<String>,

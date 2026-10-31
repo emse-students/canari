@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="23/10/2026"
+  updated="31/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -112,12 +112,70 @@
         </dd>
       </div>
       <div>
+        <dt>Directs (quand la fonction est ouverte)</dt>
+        <dd>
+          Quand vous lancez un direct, la vidéo est découpée sur votre appareil en courts segments,
+          chiffrés avant l'envoi avec une clé propre au direct. Notre serveur conserve cette clé
+          (chiffrée dans la base de données par un secret du serveur) et la remet aux membres
+          autorisés à regarder : <strong>ce n'est donc pas un chiffrement de bout en bout</strong>.
+          Le stockage des fichiers et le cache de notre serveur web ne détiennent que des segments
+          chiffrés ; notre serveur, qui détient la clé, pourrait les déchiffrer, mais il ne
+          déchiffre un contenu de direct que pour vérifier un message du chat signalé (voir «
+          Signalements, blocages et modération »). Le serveur connaît en clair : qui diffuse et au
+          nom de quelle association, les heures de début et de fin du direct et la raison de sa fin,
+          la taille de chaque segment, les membres que vous retirez du direct, et, pour chaque
+          spectateur, le fait qu'il regarde (son compte et l'heure de sa dernière lecture). Le
+          nombre de spectateurs est affiché à vous et à ceux qui regardent ; aucune fonction de
+          Canari ne montre leur liste, ni à vous ni à la modération. Les messages du chat sont
+          chiffrés avec la même clé ; leur auteur est connu du serveur et son nom est affiché aux
+          autres spectateurs. Les réactions (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées
+          : le serveur enregistre qui réagit et compte les réactions. Un direct n'est pas enregistré
+          et n'a pas de rediffusion. Avant votre premier direct, vous acceptez les règles de
+          publication : la version acceptée et sa date sont conservées. Pour limiter les abus, le
+          serveur garde aussi l'heure de chacun de vos démarrages pendant une heure. Les journaux
+          techniques notent les débuts et fins de direct, les coupures et les retraits de
+          spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
+        </dd>
+      </div>
+      <div>
+        <dt>Abonnements et demandes d'abonnement</dt>
+        <dd>
+          Pour suivre une personne, vous lui envoyez une demande : elle reçoit une notification à
+          votre nom, puis l'accepte ou la refuse ; un refus n'est signalé à personne. Si elle
+          accepte, vous en êtes notifié. Sont conservées la demande et sa date, puis, si elle est
+          acceptée, la date d'acceptation ; un refus supprime la demande. Vous pouvez consulter la
+          liste de vos abonnés et en retirer quelqu'un. Pour ne jamais notifier deux fois la même
+          personne et limiter le nombre de nouvelles demandes par jour, le serveur garde aussi le
+          fait qu'une demande (ou son acceptation) a déjà été notifiée entre deux comptes, et sa
+          date, même après un retrait, un refus ou un blocage. Suivre une association ne demande
+          rien à personne.
+        </dd>
+      </div>
+      <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
-          (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
-          bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
-          exemple un CV) sont lisibles par l'association qui l'a créé.
+          (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
+          d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
+          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
+          donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
+          formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Responsable du compte de paiement Lydia d'une association</dt>
+        <dd>
+          Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
+          de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
+          reçoit un SMS de Lydia et devient caissier de ce compte. Le numéro est saisi par le
+          trésorier : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle. Canari garde l'identifiant du membre, celui du trésorier qui l'a désigné,
+          la date, et le numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers
+          chiffres sont affichés. Le numéro chiffré et ses deux derniers chiffres sont effacés quand
+          le compte Lydia est délié de l'association ; les deux identifiants restent jusqu'à la
+          suppression de votre compte Canari, avec laquelle la ligne est supprimée. Lydia conserve
+          ses propres données selon sa politique.
         </dd>
       </div>
       <div>
@@ -149,7 +207,18 @@
           lire. Les autres personnes ne voient votre nom que si l'espace l'affiche, sinon seulement
           « occupé ». L'affiche d'un espace est chiffrée sur l'appareil de l'organisateur, comme
           l'image d'une publication. Un organisateur peut exporter les réservations de son espace
-          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu.
+          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu. Les
+          personnes d'une réservation sont prévenues par une notification de son annulation, d'un
+          retrait, d'un ajout et, avant le créneau, par un rappel ; Canari enregistre pour cela le
+          délai de rappel que chacun choisit, et l'heure à laquelle ce rappel est parti. Le message
+          qu'un organisateur joint à une annulation n'est pas conservé avec la réservation : il ne
+          figure que dans la notification. Sur un espace accessible par son seul lien, la
+          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Dans
+          l'application, la notification nomme le lieu (l'espace et la ressource, qui peut porter le
+          nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
+          créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
+          bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
+          a été supprimé entre-temps.
         </dd>
       </div>
       <div>
@@ -170,28 +239,33 @@
         </dd>
       </div>
       <div>
-        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dt>Appels audio et vidéo (quand la fonction est ouverte)</dt>
         <dd>
-          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
-          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
-          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
-          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
-          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
-          6. Une fois l'appel décroché,
+          Le son et l'image d'un appel sont chiffrés de bout en bout entre les deux appareils : ni
+          notre serveur ni Cloudflare ne peuvent les écouter ou les voir, et aucun appel n'est
+          enregistré, ni le son ni l'image. La caméra ne s'allume que pendant un appel : quand vous
+          passez ou acceptez un appel vidéo, ou quand vous l'allumez pendant l'appel. Elle s'éteint
+          quand vous la coupez, quand l'appel se termine et tant que l'application est en
+          arrière-plan (elle se rallume à votre retour si elle était allumée). Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, si l'appel est demandé en
+          vidéo (sans le conserver), qui décroche et depuis quel appareil, l'heure et la durée. Il
+          garde l'état d'un appel 4 heures au plus après son début, et ses journaux techniques en
+          gardent la trace pendant la durée indiquée en section 6. Une fois l'appel décroché,
           <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
           serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
           IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
           de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
-          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
-          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
-          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
-          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
-          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
-          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
-          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
-          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
-          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
-          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son et l'image, toujours
+          chiffrés, passent par le relais de Cloudflare (section 4), qui en voit le volume. Un appel que
+          vous ne décrochez pas ne transmet votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez
+          refuser les appels dans chaque conversation, et aucun appel n'est possible entre deux membres
+          dont l'un a bloqué l'autre. La conversation garde une ligne « appel » (heure, durée), chiffrée
+          comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
+          appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
+          fermée : il contient en clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un
+          groupe, et les identifiants techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée
+          est générique, « Appel entrant », sans nom), et sur les deux s'il s'agit d'un appel vidéo. Dans
+          cette version, un appel ne sonne que dans l'application ouverte.
         </dd>
       </div>
       <div>
@@ -207,7 +281,21 @@
         <dt>Signalements, blocages et modération</dt>
         <dd>
           Les signalements que vous faites ou qui vous concernent, les personnes que vous bloquez,
-          et les éventuelles mesures de modération.
+          et les éventuelles mesures de modération. Pour un direct : signaler un message du chat
+          transmet son texte, que le serveur vérifie contre le message chiffré avant de le garder,
+          signé, pour la modération ; c'est un texte que le serveur ne lisait pas avant le
+          signalement. Une coupure par la modération est enregistrée (le direct, la personne qui
+          diffusait, l'association, le modérateur, le motif, une note éventuelle de la modération
+          qui ne vous est pas montrée, les heures) ; une coupure peut viser un direct en cours ou un
+          direct qui vient de se terminer, et celle d'un direct diffusé au nom d'une association
+          compte pour la personne qui diffusait. Vous en êtes prévenu sans que le nom du modérateur
+          soit indiqué, sauf pour une première coupure d'un direct déjà terminé, qui n'est pas
+          notifiée. Toute coupure à partir de la deuxième en 90 jours suspend automatiquement le
+          droit de lancer un direct pendant 30 jours à compter de la coupure ; chaque coupure est
+          décidée par une personne, jamais par un nombre de signalements. Un retrait du droit de
+          diffuser est enregistré de la même façon. Un blocage, dans un sens ou dans l'autre,
+          empêche de voir le direct de l'autre et masque ses messages et réactions dans un chat,
+          mais il ne retire personne du nombre de spectateurs.
         </dd>
       </div>
       <div>
@@ -267,6 +355,14 @@
             <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
+            <td>Directs, chat et réactions</td>
+            <td
+              >Diffuser un direct aux membres autorisés et prévenir vos abonnés ; conserver votre
+              acceptation des règles du direct, condition pour en lancer un</td
+            >
+            <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
             <td>Appels audio</td>
             <td>Établir un appel chiffré entre deux membres d'une conversation</td>
             <td>Exécution du service (6.1.b)</td>
@@ -296,7 +392,7 @@
           </tr>
           <tr>
             <td>Signalements, blocages, modération</td>
-            <td>Faire respecter les conditions d'utilisation</td>
+            <td>Faire respecter les conditions d'utilisation, y compris pendant les directs</td>
             <td>Intérêt légitime (6.1.f) : la sécurité de la communauté</td>
           </tr>
           <tr>
@@ -347,7 +443,11 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair.
+          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne ou une
+          association que vous suivez lance un direct, la notification contient en clair son nom et des
+          identifiants techniques (le direct, l'association, l'image affichée), sans autre texte ; un
+          avis de coupure, de suspension ou de retrait du droit de diffuser est une phrase fixe, sans
+          nom.
         </p>
       </li>
       <li>
@@ -355,7 +455,9 @@
         <p>
           Prestataire de paiement français. Il reçoit le montant, le nom des produits et l'adresse
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
-          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia.
+          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
+          le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
+          afin de l'ajouter comme caissier de ce compte.
         </p>
       </li>
       <li>
@@ -486,6 +588,61 @@
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
           </tr>
           <tr>
+            <td>Direct : vidéo chiffrée, chat, réactions, spectateurs retirés</td>
+            <td>
+              Supprimés à la fin du direct (par vous, après 60 secondes sans vidéo, au bout d'une
+              heure, par une coupure de la modération ou à la suppression de votre compte). Après
+              une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
+              les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
+              ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
+              reprise toutes les 30 secondes. Un segment mis en cache par notre serveur web ou par
+              l'appareil d'un spectateur : deux minutes au plus après sa dernière lecture
+            </td>
+          </tr>
+          <tr>
+            <td>Place de spectateur (votre compte, l'heure de votre dernière lecture)</td>
+            <td>
+              Effacée quand vous quittez le direct, 30 secondes au plus après votre dernière
+              lecture, et à la fin du direct
+            </td>
+          </tr>
+          <tr>
+            <td>Heure de chaque démarrage d'un direct</td>
+            <td>Une heure</td>
+          </tr>
+          <tr>
+            <td>Message du chat d'un direct signalé</td>
+            <td>
+              Jusqu'au traitement du signalement, 90 jours au plus, y compris si son auteur supprime
+              son compte entre-temps (le message est alors détaché du compte)
+            </td>
+          </tr>
+          <tr>
+            <td>Coupure d'un direct par la modération</td>
+            <td
+              >90 jours ; elle compte pendant ce délai dans les sanctions des conditions
+              d'utilisation</td
+            >
+          </tr>
+          <tr>
+            <td>Retrait du droit de lancer un direct</td>
+            <td>Jusqu'à ce que la modération le lève, ou jusqu'à la suppression du compte</td>
+          </tr>
+          <tr>
+            <td>Acceptation des règles du direct</td>
+            <td>Tant que le compte existe</td>
+          </tr>
+          <tr>
+            <td>Abonnements et demandes d'abonnement</td>
+            <td>
+              Une demande : jusqu'à sa réponse (un refus la supprime), son retrait, un blocage (elle
+              est aussitôt masquée, puis supprimée) ou la suppression d'un des deux comptes ; un
+              abonnement : jusqu'à son retrait par l'un ou l'autre, un blocage (il est aussitôt
+              masqué, puis supprimé) ou la suppression d'un des deux comptes ; la trace qu'une
+              notification a été envoyée : jusqu'à la suppression d'un des deux comptes
+            </td>
+          </tr>
+          <tr>
             <td>Documents d'une association</td>
             <td
               >Tant que l'association les conserve, y compris après la suppression du compte qui les
@@ -581,7 +738,10 @@
         quotidiennes, hebdomadaires et mensuelles : un fichier supprimé peut y subsister
         <strong>jusqu'à 6 mois</strong>. La plupart des fichiers sont chiffrés sur votre appareil
         avant l'envoi ; les fichiers déposés dans un formulaire et les logos des associations ne le
-        sont pas. Une sauvegarde n'est relue que pour restaurer le service.
+        sont pas. Un direct en cours au moment d'une sauvegarde nocturne peut y laisser ses lignes
+        de base de données (dont le chat chiffré et la clé du direct, elle-même chiffrée par un
+        secret du serveur qui n'est pas dans la base) et des segments chiffrés, pour les durées
+        ci-dessus. Une sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>
   </section>
@@ -700,7 +860,8 @@
         <dd>
           Les messages, les fichiers et les réactions des conversations sont chiffrés sur votre
           appareil. Le serveur ne détient aucune clé permettant de les lire. Il en va de même du son
-          des appels audio, chiffré entre les deux appareils.
+          des appels audio, chiffré entre les deux appareils. Les directs, eux, ne sont pas chiffrés
+          de bout en bout (section 2).
         </dd>
       </div>
       <div>
@@ -764,11 +925,14 @@
         réservations passées, qui gardent le nom affiché jusqu'à leur suppression à un an. Vos
         espaces de réservation personnels sont supprimés avec tout ce qu'ils contiennent, y compris
         les réservations à venir d'autres personnes, qui n'en sont pas prévenues ; l'affiche d'un
-        espace d'association est conservée, elle appartient à l'association. Certaines données ne
-        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
-        commentaires et réactions sur les publications d'autres membres et l'historique des
-        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
-        l'effacement par e-mail dès maintenant.
+        espace d'association est conservée, elle appartient à l'association. Un direct que vous
+        diffusez s'arrête et ses données sont supprimées ; vos messages et réactions dans les
+        directs, vos coupures, votre retrait éventuel et votre acceptation des règles du direct sont
+        effacés, sauf un message signalé, gardé détaché de votre compte jusqu'au traitement du
+        signalement (90 jours au plus). Certaines données ne sont pas encore atteintes par cette
+        suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur les
+        publications d'autres membres et l'historique des modifications de votre profil : leur
+        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section

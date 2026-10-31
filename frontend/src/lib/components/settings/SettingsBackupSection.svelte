@@ -26,7 +26,6 @@
   // the user already holds it. Dropped from the screen by "I have saved the code" or by leaving.
   let shownCode: string | null = $state(null);
   let shownNote: string | null = $state(null);
-  let codeCopied = $state(false);
 
   // Decision 4 of 2026-10-22: after the move to the hardware-held key, earlier backups no longer
   // open on this phone, so a new one is asked for until it is made. Read again after each export.
@@ -86,7 +85,6 @@
   async function handleExport() {
     outcome = null;
     shownCode = null;
-    codeCopied = false;
     outcome = await session.handleExport(appendLog);
     shownCode = outcome?.recoveryCode ?? null;
     shownNote = outcome?.codeNote ?? null;
@@ -94,13 +92,12 @@
   }
 
   async function copyCode() {
-    if (shownCode) codeCopied = await copyText(shownCode, 'backup recovery code');
+    if (shownCode) await copyText(shownCode, { what: 'code' });
   }
 
   function forgetShownCode() {
     shownCode = null;
     shownNote = null;
-    codeCopied = false;
   }
 </script>
 
@@ -182,7 +179,7 @@
             onclick={copyCode}
             class="border-cn-border rounded-xl border px-3 py-2 text-sm font-bold"
           >
-            {codeCopied ? m.profile_backup_code_copied() : m.profile_backup_code_copy()}
+            {m.profile_backup_code_copy()}
           </button>
           <button
             type="button"

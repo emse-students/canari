@@ -97,6 +97,10 @@ function makeCtx(moveEpochDuringExport: boolean) {
       return { groupId: GROUP, commit: new Uint8Array([9]) };
     }),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
+    // The key the merged commit gives this device's leaf, which the ledger names it by.
+    ownLeafKey: vi.fn(async () => 'k-leaf'),
+    noteOwnLeafReplaced: (BaseMlsService.prototype as unknown as Record<string, unknown>)
+      .noteOwnLeafReplaced,
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     forgetGroup: vi.fn(),
     ...keyPackageWaitFields(),

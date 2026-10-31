@@ -11,6 +11,10 @@
     createProduct,
     updateProduct,
     deleteProduct,
+    SocialApiError,
+    TIER_CHECKOUT_OPEN,
+    TIER_HAS_HOLDERS,
+    fetchCotisationOptions,
     type Association,
     type AssociationProduct,
     type CotisantRosterItem,
@@ -39,6 +43,19 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { tierSaveRefusal } from '$lib/associations/tierKeyRefusal';
+  import {
+    centsToEuros,
+    eurosToCents,
+    mayCreateTier,
+    riseSourceTier,
+    riseSources,
+    singlePriceCents,
+    tierPriceLabel,
+    tiersInPriceOrder,
+  } from '$lib/associations/cotisationTiers';
+  import { formatAmount } from '$lib/forms/fillAnswers';
+  import TierRiseEditor from './TierRiseEditor.svelte';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -76,19 +93,31 @@
   let tiersLoadedForAssoId: string | null = null;
 
   let showAddTierForm = $state(false);
+  /**
+   * Whether this server derives a new tier's key from its label (`tierKeyFromLabel`). Read before
+   * offering tier creation, never inferred: an older server would create a base tier instead.
+   */
+  let tierCreationSupported = $state(false);
   let addingTier = $state(false);
   let newTierName = $state('');
-  let newTierVariantKey = $state('');
   let newTierPriceEuros = $state<number | ''>('');
   let newTierMemberPriceTag = $state('');
   let newTierMemberPriceEuros = $state<number | ''>('');
 
   let expandedTierId = $state<string | null>(null);
   /**
-   * The expanded tier's "upgrade from" tag, read back by `handleSaveTier` through its hidden
-   * `memberPriceTag` input. One slot for the same reason as `editingMatrix` below.
+   * The expanded tier's form, one slot for the same reason as `editingMatrix` below. The tier's
+   * key (`variantKey`) is not among them: it is a technical id fixed at creation, and editing the
+   * label must never move the tier's cotisants to another tag.
    */
+  let editingName = $state('');
+  let editingPriceEuros = $state<number | ''>('');
+  /** The source tier's tag of the expanded tier's preferential price; empty when there is none. */
   let editingUpgradeFromTag = $state('');
+  let editingRiseEuros = $state<number | ''>('');
+
+  /** The tiers in reading order, cheapest first - the order a rise is ranked by. */
+  let orderedTiers = $derived(tiersInPriceOrder(tierProducts));
   let savingTierId = $state<string | null>(null);
   /** Which tier's on-sale switch is in flight, so only that row's control is disabled. */
   let togglingTierId = $state<string | null>(null);
@@ -121,17 +150,13 @@
     { value: 'dated', label: m.asso_cotisations_mode_dated() },
   ];
 
-  /**
-   * The tiers a tier's member price may be conditioned on, "none" first. A sibling that grants no
-   * tag yet is left out: its value would be the empty string, the same as "none".
-   */
-  function upgradeFromOptions(excludeProductId?: string): PickerOption[] {
-    return [
-      { value: '', label: m.asso_cotisations_tier_upgrade_none() },
-      ...tierProducts
-        .filter((p) => p.id !== excludeProductId && p.grantedTagName)
-        .map((p) => ({ value: p.grantedTagName ?? '', label: p.name })),
-    ];
+  /** The one-line summary of a tier's preferential price, or null when it has none. */
+  function riseSummary(product: AssociationProduct): string | null {
+    if (!product.memberPriceTag || product.amountCentsMember == null) return null;
+    const from =
+      riseSourceTier(tierProducts, product.memberPriceTag)?.name ??
+      m.asso_cotisations_rise_from_unknown();
+    return m.asso_cotisations_rise_summary({ due: formatAmount(product.amountCentsMember), from });
   }
 
   // ── Roster ────────────────────────────────────────────────────────────────
@@ -313,16 +338,27 @@
     }
   }
 
-  /** Fetches the association's products and keeps every tier (membership-type) product, base tier first. */
+  /** Fetches the association's products and keeps every tier (membership-type) product. */
   async function loadTierProducts() {
     tiersLoading = true;
     tiersError = '';
     console.log(`[Cotisations] Loading tier products - asso=${asso.id.slice(0, 8)}`);
     try {
-      const productsList = await listAssociationProductsForManage(asso.id);
-      tierProducts = productsList
-        .filter((p) => p.type === 'membership')
-        .sort((a, b) => (a.variantKey === null ? -1 : 1) - (b.variantKey === null ? -1 : 1));
+      const [productsList, options] = await Promise.all([
+        listAssociationProductsForManage(asso.id),
+        // Unread options offer no creation, but must not hide the tiers that DID load.
+        fetchCotisationOptions(asso.id).catch((e: unknown) => {
+          console.error('[Cotisations] Failed to read cotisation options:', e);
+          return null;
+        }),
+      ]);
+      tierProducts = productsList.filter((p) => p.type === 'membership');
+      tierCreationSupported = mayCreateTier(options);
+      if (!tierCreationSupported) {
+        console.warn(
+          `[Cotisations] Tier creation not offered - asso=${asso.id.slice(0, 8)}: the server publishes no tierKeyFromLabel`
+        );
+      }
     } catch (e) {
       tiersError = m.asso_cotisations_membership_load_error();
       console.error('[Cotisations] Failed to load tier products:', e);
@@ -349,39 +385,42 @@
 
   function resetAddTierForm() {
     newTierName = '';
-    newTierVariantKey = '';
     newTierPriceEuros = '';
     newTierMemberPriceTag = '';
     newTierMemberPriceEuros = '';
     showAddTierForm = false;
   }
 
-  /** Creates an additional cotisation tier (the base tier already exists once cotisation is enabled). */
+  /**
+   * Creates an additional cotisation tier (the base tier already exists once cotisation is
+   * enabled). No key is sent: the server derives it from the label (`deriveVariantKey`), unique
+   * among the association's tiers, and it never changes afterwards.
+   */
   async function handleCreateTier() {
-    if (!newTierName.trim() || !newTierVariantKey.trim()) return;
+    if (!newTierName.trim()) return;
     addingTier = true;
     tiersError = '';
+    const riseCents = newTierMemberPriceTag ? eurosToCents(newTierMemberPriceEuros) : null;
     console.log(
-      `[Cotisations] Creating tier - asso=${asso.id.slice(0, 8)} variantKey=${newTierVariantKey.trim()}`
+      `[Cotisations] Creating tier - asso=${asso.id.slice(0, 8)} rise=${riseCents !== null ? 'set' : 'none'}`
     );
     try {
       await createProduct(asso.id, {
         name: newTierName.trim(),
         type: 'membership',
-        variantKey: newTierVariantKey.trim(),
-        amountCents:
-          newTierPriceEuros !== '' ? Math.round(Number(newTierPriceEuros) * 100) : undefined,
-        memberPriceTag: newTierMemberPriceTag || undefined,
-        amountCentsMember:
-          newTierMemberPriceTag && newTierMemberPriceEuros !== ''
-            ? Math.round(Number(newTierMemberPriceEuros) * 100)
-            : undefined,
+        deriveVariantKey: true,
+        amountCents: eurosToCents(newTierPriceEuros) ?? undefined,
+        memberPriceTag: riseCents !== null ? newTierMemberPriceTag : undefined,
+        amountCentsMember: riseCents ?? undefined,
       });
       resetAddTierForm();
       await Promise.all([loadTierProducts(), loadCotisationTiers()]);
     } catch (e) {
-      tiersError = m.asso_cotisations_tier_create_error();
-      console.error('[Cotisations] Failed to create tier:', e);
+      // A key or a preferential-price link the server refuses is the manager's to change: say why.
+      const refusal = tierSaveRefusal(e);
+      tiersError = refusal?.message ?? m.asso_cotisations_tier_create_error();
+      if (refusal) console.warn(`[Cotisations] Tier create refused: code=${refusal.code}`);
+      else console.error('[Cotisations] Failed to create tier:', e);
     } finally {
       addingTier = false;
     }
@@ -400,7 +439,10 @@
       return;
     }
     expandedTierId = product.id;
+    editingName = product.name;
+    editingPriceEuros = centsToEuros(product.amountCents);
     editingUpgradeFromTag = product.memberPriceTag ?? '';
+    editingRiseEuros = centsToEuros(product.amountCentsMember);
     editingMatrix = matrixOf(product.priceMatrix);
     void loadFormations();
   }
@@ -457,59 +499,60 @@
   }
 
   /**
-   * Saves a tier's label, price, upgrade-pricing link and tier identifier.
+   * Saves a tier's label, price and preferential price for holders of another tier.
    *
-   * `variantKey` is editable so an association that outgrew the auto-provisioned base tier can
-   * convert it into a named forfait: the server re-derives the granted tag and carries the
-   * existing cotisants over to it, so nothing is lost. An empty value means the base tier.
+   * The tier's key (`variantKey`) is never sent: it was derived from the label at creation and is
+   * fixed, so renaming a forfait leaves its tag - and every cotisant holding it - where it is. A
+   * preferential price is stored only as a complete pair (source tier AND amount); a half-filled
+   * one is cleared, since the checkout would charge the full price for it anyway.
    */
-  async function handleSaveTier(product: AssociationProduct, form: HTMLFormElement) {
-    const fd = new FormData(form);
+  async function handleSaveTier(product: AssociationProduct) {
+    const name = editingName.trim();
+    if (!name) return;
+    if (gridProblem) {
+      tiersError = gridProblemMessage(gridProblem);
+      return;
+    }
     savingTierId = product.id;
     tiersError = '';
     try {
-      const name = String(fd.get('name') ?? '').trim();
-      const priceRaw = String(fd.get('priceEuros') ?? '').trim();
-      const memberPriceTag = String(fd.get('memberPriceTag') ?? '');
-      const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
-      const variantKey = String(fd.get('variantKey') ?? '').trim() || null;
-      if (!name) return;
-      if (gridProblem) {
-        tiersError = gridProblemMessage(gridProblem);
-        return;
-      }
       // A grid replaces the fixed pricing, so the fields it replaces are cleared rather than left
       // behind: kept values would be dead state the server ignores and the next manager believes.
       const gridded = editingMatrix !== null;
+      const riseCents = !gridded && editingUpgradeFromTag ? eurosToCents(editingRiseEuros) : null;
+      console.log(
+        `[Cotisations] Saving tier ${product.id.slice(0, 8)} - gridded=${gridded} rise=${riseCents !== null ? 'set' : 'none'}`
+      );
       const updated = await updateProduct(asso.id, product.id, {
         name,
-        variantKey,
         priceMatrix: matrixPayload(editingMatrix) as PriceMatrix | null,
-        amountCents: gridded ? null : priceRaw ? Math.round(Number(priceRaw) * 100) : null,
-        memberPriceTag: gridded ? null : memberPriceTag || null,
-        amountCentsMember:
-          !gridded && memberPriceTag && memberPriceRaw
-            ? Math.round(Number(memberPriceRaw) * 100)
-            : null,
+        amountCents: gridded ? null : eurosToCents(editingPriceEuros),
+        memberPriceTag: riseCents !== null ? editingUpgradeFromTag : null,
+        amountCentsMember: riseCents,
       });
       tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
       expandedTierId = null;
       editingMatrix = null;
-      // A retag renames the tag on every cotisant of this tier, so both the picker and the
-      // roster's Forfait column are stale until refetched.
+      // The label is what the add picker and the roster's Forfait column show, so both are stale
+      // after a rename until refetched.
       await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
     } catch (e) {
-      tiersError = m.asso_cotisations_membership_save_error();
-      console.error('[Cotisations] Failed to save tier:', e);
+      const refusal = tierSaveRefusal(e);
+      tiersError = refusal?.message ?? m.asso_cotisations_membership_save_error();
+      if (refusal) console.warn(`[Cotisations] Tier save refused: code=${refusal.code}`);
+      else console.error('[Cotisations] Failed to save tier:', e);
     } finally {
       savingTierId = null;
     }
   }
 
   /**
-   * Deletes a tier. Allowed for the base tier too - a multi-tier association typically wants the
-   * auto-provisioned base gone, since holders of its un-suffixed tag report no forfait at all to
-   * consumers like Le Cercle. The server refuses to delete the last remaining tier.
+   * Deletes a tier. The server refuses to delete the last remaining tier, a tier people still hold
+   * (`TIER_HAS_HOLDERS`, worded here with their count and the right that can move them), and a
+   * tier with a payment in progress (`TIER_CHECKOUT_OPEN`). A multi-tier association that wants
+   * its auto-provisioned base tier gone while people hold it RENAMES it into a named tier (a change
+   * of identifier carries every holder's tag over) or moves its holders first; only a tier nobody
+   * holds is deleted.
    */
   async function handleDeleteTier(product: AssociationProduct) {
     if (
@@ -524,6 +567,17 @@
       tierProducts = tierProducts.filter((p) => p.id !== product.id);
       await loadCotisationTiers();
     } catch (e) {
+      // People still hold the tier: a refusal the manager acts on, named with its count.
+      if (e instanceof SocialApiError && e.code === TIER_HAS_HOLDERS && e.holderCount !== null) {
+        tiersError = m.asso_cotisations_tier_delete_has_holders({ count: e.holderCount });
+        console.warn('[Cotisations] Tier delete refused: still held by', e.holderCount);
+        return;
+      }
+      if (e instanceof SocialApiError && e.code === TIER_CHECKOUT_OPEN) {
+        tiersError = m.asso_cotisations_tier_delete_checkout_open();
+        console.warn('[Cotisations] Tier delete refused: a payment of the tier is in progress');
+        return;
+      }
       tiersError = m.asso_cotisations_tier_delete_error();
       console.error('[Cotisations] Failed to delete tier:', e);
     }
@@ -753,10 +807,15 @@
       {#if canManageProducts}
         <div class="border-cn-border space-y-3 border-t pt-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <h4 class="text-text-main text-xs font-bold tracking-wide uppercase">
-              {m.asso_cotisations_price_title()}
-            </h4>
-            {#if !tiersLoading && tierProducts.length > 0}
+            <div>
+              <h4 class="text-text-main text-xs font-bold tracking-wide uppercase">
+                {m.asso_cotisations_price_title()}
+              </h4>
+              {#if tierProducts.length > 1}
+                <p class="text-text-muted mt-0.5 text-xs">{m.asso_cotisations_tier_order_hint()}</p>
+              {/if}
+            </div>
+            {#if !tiersLoading && tierProducts.length > 0 && tierCreationSupported}
               <button
                 type="button"
                 onclick={() => (showAddTierForm = !showAddTierForm)}
@@ -783,19 +842,26 @@
             <p class="text-text-muted text-sm">{m.asso_cotisations_membership_missing()}</p>
           {:else}
             <ul class="space-y-3">
-              {#each tierProducts as product (product.id)}
+              {#each orderedTiers as product, rank (product.id)}
+                {@const rise = product.priceMatrix ? null : riseSummary(product)}
                 <li class="border-cn-border/70 bg-cn-bg overflow-hidden rounded-xl border">
                   <div class="flex items-center gap-3 px-4 py-3">
+                    <!-- The tier's place in the reading order, cheapest first. -->
+                    {#if orderedTiers.length > 1}
+                      <span
+                        class="bg-cn-surface-alt text-text-muted flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums"
+                        aria-label={m.asso_cotisations_tier_rank_aria({
+                          rank: rank + 1,
+                          count: orderedTiers.length,
+                        })}
+                      >
+                        {rank + 1}
+                      </span>
+                    {/if}
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-2">
                         <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                        {#if product.variantKey}
-                          <span
-                            class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
-                          >
-                            {product.variantKey}
-                          </span>
-                        {:else}
+                        {#if product.variantKey === null && tierProducts.length > 1}
                           <span
                             class="bg-cn-surface-alt text-text-muted rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
@@ -807,13 +873,9 @@
                         {#if product.priceMatrix}
                           {m.asso_cotisations_tier_grid_summary()}
                         {:else}
-                          {product.amountCents != null
-                            ? `${(product.amountCents / 100).toFixed(2)} €`
-                            : m.asso_cotisations_tier_price_free_label()}
-                          {#if product.memberPriceTag && product.amountCentsMember != null}
-                            · {m.asso_cotisations_tier_upgrade_price_label({
-                              price: (product.amountCentsMember / 100).toFixed(2),
-                            })}
+                          {tierPriceLabel(singlePriceCents(product))}
+                          {#if rise}
+                            · {rise}
                           {/if}
                         {/if}
                       </p>
@@ -879,7 +941,7 @@
                         class="grid gap-3 sm:grid-cols-2"
                         onsubmit={(e) => {
                           e.preventDefault();
-                          void handleSaveTier(product, e.currentTarget);
+                          void handleSaveTier(product);
                         }}
                       >
                         <div class="space-y-1">
@@ -890,9 +952,8 @@
                           >
                           <input
                             id="tier-name-{product.id}"
-                            name="name"
                             type="text"
-                            value={product.name}
+                            bind:value={editingName}
                             required
                             class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                           />
@@ -911,73 +972,29 @@
                             >
                             <input
                               id="tier-price-{product.id}"
-                              name="priceEuros"
                               type="number"
                               min="0.01"
                               step="0.01"
-                              value={product.amountCents != null ? product.amountCents / 100 : ''}
+                              inputmode="decimal"
+                              bind:value={editingPriceEuros}
                               placeholder="10.00"
                               class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                             />
                           </div>
                         {/if}
-                        <div class="space-y-1 sm:col-span-2">
-                          <label
-                            for="tier-variant-{product.id}"
-                            class="text-text-muted text-xs font-semibold"
-                            >{m.asso_cotisations_tier_variant_key_label()}</label
-                          >
-                          <input
-                            id="tier-variant-{product.id}"
-                            name="variantKey"
-                            type="text"
-                            value={product.variantKey ?? ''}
-                            placeholder={m.asso_cotisations_tier_variant_key_base_placeholder()}
-                            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                          />
-                          <p class="text-text-muted text-xs">
-                            {m.asso_cotisations_tier_variant_key_change_hint()}
-                          </p>
-                        </div>
+                        <!--
+                          A holder of another tier pays in FULL unless this is set: the editor says
+                          so in words, and previews what the member will read.
+                        -->
                         {#if tierProducts.length > 1 && editingMatrix === null}
-                          <div class="space-y-1 sm:col-span-2">
-                            <label
-                              for="tier-upgrade-from-{product.id}"
-                              class="text-text-muted text-xs font-semibold"
-                              >{m.asso_cotisations_tier_upgrade_from_label()}</label
-                            >
-                            <Picker
-                              id="tier-upgrade-from-{product.id}"
-                              value={editingUpgradeFromTag}
-                              options={upgradeFromOptions(product.id)}
-                              onValueChange={(v) => (editingUpgradeFromTag = v)}
-                              label={m.asso_cotisations_tier_upgrade_from_label()}
-                              variant="field"
-                              density="compact"
-                            />
-                            <input
-                              type="hidden"
-                              name="memberPriceTag"
-                              value={editingUpgradeFromTag}
-                            />
-                          </div>
-                          <div class="space-y-1 sm:col-span-2">
-                            <label
-                              for="tier-upgrade-price-{product.id}"
-                              class="text-text-muted text-xs font-semibold"
-                              >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
-                            >
-                            <input
-                              id="tier-upgrade-price-{product.id}"
-                              name="memberPriceEuros"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={product.amountCentsMember != null
-                                ? product.amountCentsMember / 100
-                                : ''}
-                              placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
-                              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                          <div class="sm:col-span-2">
+                            <TierRiseEditor
+                              idPrefix="tier-{product.id}"
+                              toName={editingName.trim() || product.name}
+                              fullCents={eurosToCents(editingPriceEuros)}
+                              sources={riseSources(tierProducts, product.id)}
+                              bind:fromTag={editingUpgradeFromTag}
+                              bind:riseEuros={editingRiseEuros}
                             />
                           </div>
                         {/if}
@@ -1032,7 +1049,9 @@
             </ul>
           {/if}
 
-          {#if showAddTierForm}
+          {#if !tiersLoading && tierProducts.length > 0 && !tierCreationSupported}
+            <p class="text-text-muted text-xs">{m.asso_cotisations_tier_add_unavailable()}</p>
+          {:else if showAddTierForm}
             <form
               class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4"
               onsubmit={(e) => {
@@ -1052,19 +1071,7 @@
                     id="new-tier-name"
                     type="text"
                     bind:value={newTierName}
-                    required
-                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-                <div class="space-y-1">
-                  <label for="new-tier-variant" class="text-text-muted text-xs font-semibold"
-                    >{m.asso_cotisations_tier_variant_key_label()}</label
-                  >
-                  <input
-                    id="new-tier-variant"
-                    type="text"
-                    bind:value={newTierVariantKey}
-                    placeholder="avec-alcool"
+                    placeholder={m.asso_cotisations_tier_new_name_placeholder()}
                     required
                     class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
@@ -1078,47 +1085,25 @@
                     type="number"
                     min="0.01"
                     step="0.01"
+                    inputmode="decimal"
                     bind:value={newTierPriceEuros}
                     placeholder="10.00"
                     class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
               </div>
-              <p class="text-text-muted text-xs">{m.asso_cotisations_tier_variant_key_hint()}</p>
-              <div class="space-y-1">
-                <label for="new-tier-upgrade-from" class="text-text-muted text-xs font-semibold"
-                  >{m.asso_cotisations_tier_upgrade_from_label()}</label
-                >
-                <Picker
-                  id="new-tier-upgrade-from"
-                  value={newTierMemberPriceTag}
-                  options={upgradeFromOptions()}
-                  onValueChange={(v) => (newTierMemberPriceTag = v)}
-                  label={m.asso_cotisations_tier_upgrade_from_label()}
-                  variant="field"
-                  density="compact"
-                />
-              </div>
-              {#if newTierMemberPriceTag}
-                <div class="space-y-1">
-                  <label for="new-tier-upgrade-price" class="text-text-muted text-xs font-semibold"
-                    >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
-                  >
-                  <input
-                    id="new-tier-upgrade-price"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    bind:value={newTierMemberPriceEuros}
-                    placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
-                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-              {/if}
+              <TierRiseEditor
+                idPrefix="new-tier"
+                toName={newTierName.trim() || m.asso_cotisations_rise_this_tier()}
+                fullCents={eurosToCents(newTierPriceEuros)}
+                sources={riseSources(tierProducts)}
+                bind:fromTag={newTierMemberPriceTag}
+                bind:riseEuros={newTierMemberPriceEuros}
+              />
               <div class="flex items-center gap-3 pt-1">
                 <button
                   type="submit"
-                  disabled={addingTier || !newTierName.trim() || !newTierVariantKey.trim()}
+                  disabled={addingTier || !newTierName.trim()}
                   class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
                 >
                   {addingTier ? m.common_saving_label() : m.asso_cotisations_tier_create_button()}

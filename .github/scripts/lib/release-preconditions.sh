@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# THE THREE QUESTIONS A RELEASE MUST ANSWER BEFORE IT IS ALLOWED TO START.
+# THE QUESTIONS A RELEASE MUST ANSWER BEFORE IT IS ALLOWED TO START.
 #
 # WHY THEY DID NOT EXIST. `bump-version.yml` is the first link of every deployment - production, the
 # dev estate and both stores all start from its COMPLETION - and until 2026-09-03 it contained SIX
@@ -95,60 +95,27 @@ classify_dev_coverage() {
   esac
 }
 
-# CAN THE BUMP STILL PUSH? Answered from two facts the preflight already holds, rather than by
-# finding out at the push.
+# IS THE RELEASED COMMIT ON `main`? Gate 2, read from a `GET /compare/{target}...main` status
+# (base = the released commit, head = main, so `identical` and `ahead` both mean main contains it).
 #
-# The bump job checks out the RELEASED commit, writes the version across 18 files and runs
-# `git push origin HEAD:main`. That push is a fast-forward only while `main` still POINTS AT the
-# released commit - and the second gate deliberately accepts `ahead` as well, because `main`
-# containing the commit is what that gate is about.
+# CONTAINMENT, AND NOTHING ABOUT WHERE `main` POINTS NOW (2026-10-30). Until then a pre-release's
+# bump pushed to `main`, so this gate also asked whether `main` still POINTED at the commit, and a
+# pull request merged in the minutes after the cut killed the release: `v1.5.1-alpha.3` refused
+# here, `v1.5.1-alpha.5` rejected at the push one minute after a green preflight. The bump of EVERY
+# release goes to `release/vX.Y.Z` now (docs/wiki/cicd.md, "A pre-release is pinned on its release
+# branch"), nothing in a release's critical path pushes to `main`, and `main` moving on is the
+# ordinary case. What the gate keeps is its intent: the commit reached the trunk through a pull
+# request. `main` is never force-pushed (ruleset), so what it contains now it contained at the cut.
 #
-# FOR ONE SHAPE OF RELEASE `ahead` IS PERFECTLY SAFE: if the released tree already carries the
-# version being released, the bump writes nothing, commits nothing and pushes nothing, which is the
-# no-op branch the bump job documents. For every other shape the push is a non-fast-forward, the
-# preflight has already said yes, and the release dies at its SECOND job with a git error that
-# names none of this - a gate approving what a later step refuses, which is the shape the rule
-# against learning by failing exists to forbid.
-#
-# The discriminator is the version in the released tree, which the preflight has checked out and
-# can read for free. So it is carried to where the decision is made.
-#
-# args:  <compare status>  <version in the released tree>  <version being released>
-# stdout: `pushable head` | `pushable noop` | `unpushable <tree version>` | `undecidable <why>`
-classify_main_position() {
-  local status="${1-}" tree="${2-}" want="${3-}"
-
-  # An unreadable input is never permission, on the same principle as every other judgement here.
-  if [ -z "$want" ]; then
-    printf 'undecidable no version was passed to compare against\n'
-    return 0
-  fi
-
+# args:   <compare status>
+# stdout: `on-main <status>` | `off-main <status>` | `undecidable <why>`
+classify_on_main() {
+  local status="${1-}"
   case "$status" in
-    identical)
-      # `main` is the released commit, so a bump commit on top of it fast-forwards by construction.
-      printf 'pushable head\n'
-      ;;
-    ahead)
-      if [ -z "$tree" ]; then
-        # THE TREE NOT STATING A VERSION IS ITSELF THE REFUSAL. Without it there is no way to tell
-        # the harmless no-op from the release that dies at its second job, and a guess here picks
-        # between deploying production and not deploying at all.
-        printf 'undecidable the released tree states no version, so the no-op case cannot be told apart\n'
-      elif [ "$tree" = "$want" ]; then
-        printf 'pushable noop\n'
-      else
-        printf 'unpushable %s\n' "$tree"
-      fi
-      ;;
-    '')
-      printf 'undecidable status is empty\n'
-      ;;
-    *)
-      # `behind` and `diverged` never reach here - gate 2 refuses them first - but a classifier
-      # that answers for an input it was not given is a classifier its next caller will trust.
-      printf 'undecidable status %s is not a position this answers for\n' "$status"
-      ;;
+    identical|ahead) printf 'on-main %s\n' "$status" ;;
+    behind|diverged) printf 'off-main %s\n' "$status" ;;
+    '')              printf 'undecidable status is empty\n' ;;
+    *)               printf 'undecidable unknown status %s\n' "$status" ;;
   esac
 }
 
@@ -170,4 +137,72 @@ latest_prerelease_tag() {
   done
   [ "${#tags[@]}" -eq 0 ] && return 0
   printf '%s\n' "${tags[@]}" | sort -V | tail -1
+}
+
+# IS THIS PRE-RELEASE STILL THE NEWEST RELEASE? Gate 2's second question, pre-releases only
+# (2026-10-30).
+#
+# Until 2026-10-30 gate 2 also asked whether `main` still POINTED at the commit, and that refused a
+# stale pre-release by accident: anything older than the newest release was behind `main`. With the
+# bump off `main` that half went, so a `gh run rerun` of a refused `alpha.5` after `alpha.6` shipped
+# would pass every gate, force `release/vX.Y.Z` back to its own bump, redeploy older code to dev,
+# move `dev-deployed` back, and upload store build ..05 after ..06 - which App Store Connect refuses
+# (CFBundleVersion must rise) and Play refuses as a rollout that blocks upgrades. It is asked on
+# purpose now, from the tags, before anything moves.
+#
+# THE ORDER IS THE STORE BAND, read from `bump-app-version.sh --code`/`--codes` - the one implementation of it,
+# never restated here. A tag the band cannot parse never reached a store, so it orders nothing.
+#
+# args:   <version being released>  <path to bump-app-version.sh>
+# stdin:  every `v*` tag name, one per line
+# stdout: `current`                  no tag carries a higher store build number
+#         `stale <tag>`              a later pre-release of THIS version exists - the common case
+#         `superseded <tag>`         a release of another version (or this version's stable) is higher
+#         `undecidable <why>`        no evidence either way, which is not permission
+classify_prerelease_currency() {
+  local want="${1#v}" bump="${2-}"
+  local own tag code best_code=0 best_tag='' latest latest_code
+  local -a tags=()
+
+  if [ -z "$want" ] || [ -z "$bump" ]; then
+    printf 'undecidable no version or no bump script was passed\n'
+    return 0
+  fi
+  own="$(bash "$bump" --code "$want" 2>/dev/null)" || {
+    printf 'undecidable %s has no store band\n' "$want"
+    return 0
+  }
+  while IFS= read -r tag; do
+    tag="${tag%$'\r'}"
+    [ -n "$tag" ] && tags+=("$tag")
+  done
+  # The release's own tag is in this list whenever it was published, so an empty list, or one
+  # without it, is an unreadable or partial answer - never a repository with nothing newer in it.
+  if [ "${#tags[@]}" -eq 0 ]; then
+    printf 'undecidable no tag was listed\n'
+    return 0
+  fi
+  for tag in "${tags[@]}"; do
+    [ "$tag" = "v$want" ] && break
+  done
+  if [ "$tag" != "v$want" ]; then
+    printf 'undecidable v%s itself is not in the tag list, so the list is incomplete\n' "$want"
+    return 0
+  fi
+
+  # ONE process for every tag (`--codes`), never one per tag.
+  latest="$(printf '%s\n' "${tags[@]}" | latest_prerelease_tag "${want%%-*}")"
+  latest_code=0
+  while IFS=' ' read -r code tag; do
+    if [ "$code" -gt "$best_code" ]; then best_code="$code"; best_tag="$tag"; fi
+    [ "$tag" = "$latest" ] && latest_code="$code"
+  done < <(printf '%s\n' "${tags[@]}" | bash "$bump" --codes)
+
+  if [ "$latest_code" -gt "$own" ]; then
+    printf 'stale %s\n' "$latest"
+  elif [ "$best_code" -gt "$own" ]; then
+    printf 'superseded %s\n' "$best_tag"
+  else
+    printf 'current\n'
+  fi
 }

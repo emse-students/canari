@@ -6,7 +6,7 @@
  *      holding everything below except `STATE_DIR`. Put `test-accounts.json` beside them (see
  *      `test-accounts.example.json`), and let the Chrome profiles, the debug APK, the phone baseline
  *      and `results.ndjson` accumulate there too. **It moved one level further out on 2026-09-03**,
- *      when the campaign restarted from zero: the previous root still holds the LITHIUM rig's
+ *      when the campaign restarted from zero: the previous root still holds that earlier rig's
  *      account file and display names, and a root that cannot be reached by the old path cannot be
  *      half-inherited by accident. Two files were deliberately LEFT there - `play-console-sa.json`
  *      and `google-services.json` - because they are store and build credentials rather than rig
@@ -71,6 +71,29 @@ export const DISPLAY_NAME_OF = { owner: "<owner display name>", peer: "<peer dis
  */
 export const SITE = "http://localhost:8081";
 
+/*
+ * **ONLY TWO VALUES ARE ACCEPTED (2026-10-24): the local estate above, or `https://dev.canari-emse.fr`.**
+ * Anything else - production under either of its names first - is REFUSED by `site.mjs` the moment
+ * any rig module loads, and no rig code path can reach production's containers at all
+ * (`estate-target.mjs`). Every module reads `SITE` and `ORIGIN` through `site.mjs`, never from here.
+ */
+
+/**
+ * THE SSH ALIAS OF THE HOST CARRYING DEV'S COMPOSE PROJECT (`canari-dev`), required when `SITE` is
+ * dev and ignored otherwise. `estate.mjs` runs `docker` there to find dev's containers BY LABEL.
+ * Machine-local wiring: the alias and the host map behind it are in the private operations notes and
+ * never in this public repository.
+ */
+export const DEV_SSH_HOST = "<ssh alias of the host carrying canari-dev>";
+
+/**
+ * DEV'S IDENTITY-PROVIDER VALUES, required by `a1apk.mjs` to build an APK for dev and ignored
+ * otherwise - the pre-release pipeline takes the same pair from its `DEV_AUTHENTIK_*` secrets
+ * (`android.yml`), and there is no fallback to the local estate's pair. Neither is a secret: the dev
+ * web estate serves both in its own bundle, which is where to read them.
+ */
+export const DEV_AUTHENTIK = { url: "<https://... dev's VITE_AUTHENTIK_URL>", clientId: "<dev's VITE_AUTHENTIK_CLIENT_ID>" };
+
 /**
  * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.
  *
@@ -82,7 +105,11 @@ export const SITE = "http://localhost:8081";
  * account-level, so the fresh device enters the same one. `newdevice.mjs` refuses any other device
  * by name - see its `WIPEABLE`.
  */
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335, I1: 9444 };
+// W6 IS THE SECOND SCRATCH DEVICE OF THE OWNER (1.4.1 campaign, DEV-4 and DEV-6 mint two devices): wipeable
+// like W3, owner account like W3, and its CAS session paid once by a human like W3's.
+// W7 AND W8 ARE SECOND SEATS OF THE PEER AND THE THIRD ACCOUNT (1.4.1 campaign, BIG-1..3): every
+// account but the fourth then has more than one device in the large group.
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, W6: 9228, W7: 9229, W8: 9230, A2: 9335, I1: 9444 };
 
 /**
  * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
@@ -121,7 +148,7 @@ export const UDID_OF = { I1: "<UDID of the iPhone>" };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, W6: SITE, W7: SITE, W8: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -136,7 +163,14 @@ export const ACCOUNT_OF = {
   A1: "<owner key>",
   I1: "<owner key>",
   W3: "<owner key>",
+  W6: "<owner key>",
   W2: "<peer key>",
+  // The 1.4.1 campaign's third and fourth accounts (plan section 4.1): `campaign-fixtures.mjs` seats
+  // them here and refuses without a web seat; `launch.mjs` starts these two profiles.
+  W4: "<third key>",
+  W5: "<fourth key>",
+  W7: "<peer key>",
+  W8: "<third key>",
 };
 
 /**

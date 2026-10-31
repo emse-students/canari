@@ -245,3 +245,40 @@ describe('a frame parked behind a Welcome', () => {
     expect(complaint).not.toHaveBeenCalled();
   });
 });
+
+describe('the Welcome announcement to the conversation layer', () => {
+  /**
+   * A KEY GROUP'S WELCOME WRITES NO CONVERSATION ROW. The `onWelcomeProcessed` listener creates an
+   * `active` row for any group it holds none for; announced for a community's key group, it put a
+   * seed carrier in the sidebar store, and the next boot's discovery purged it again. The handler
+   * classifies the group before installing it, so the drain reads that fact rather than announcing.
+   */
+  it('announces a conversation Welcome and stays silent on a key-group one', async () => {
+    const svc = makeService();
+    const note = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const announced: (string | undefined)[] = [];
+    svc.onWelcomeProcessed((g) => announced.push(g));
+    const known = (svc as unknown as { knownDistributionGroups: Set<string> })
+      .knownDistributionGroups;
+    poke(svc, {
+      userId: 'user-a',
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi.fn().mockResolvedValue(undefined),
+      },
+      // What `handleDistributionWelcome` does first: classify the group as a seed carrier.
+      messageCallback: vi.fn(async (_s: string, _c: Uint8Array, groupId?: string) => {
+        if (groupId === 'key-group') known.add(groupId);
+        return true;
+      }),
+    });
+    const scheduler = inner(svc).messageScheduler;
+
+    scheduler.enqueue(frame('key-group', 'alice', { isWelcome: true }));
+    scheduler.enqueue(frame('chat-group', 'bob', { isWelcome: true }));
+    await inner(svc).processQueue();
+
+    expect(announced).toEqual(['chat-group']);
+    note.mockRestore();
+  });
+});

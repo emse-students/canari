@@ -10,6 +10,8 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
+  import { pendingAskPreview } from '$lib/utils/chat/joinRequestAnswer';
+  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface Props {
     /**
@@ -41,6 +43,12 @@
      * the group is dead, not in transit). Defaults to `false`.
      */
     isRemoved?: boolean;
+    /**
+     * Whether this account's seat is an invitation-link ask no member has answered and this device
+     * was never in the group (`isNeverAdmitted`). Such a conversation has no channel at all, so the
+     * tile says it waits for a member rather than "E2E channel established". Defaults to `false`.
+     */
+    awaitingAdmission?: boolean;
     /** Whether this tile is the currently active conversation. */
     isSelected: boolean;
     /** Number of unread messages to display as a badge. */
@@ -60,6 +68,7 @@
     lastMessage,
     isReady,
     isRemoved = false,
+    awaitingAdmission = false,
     isSelected,
     unreadCount = 0,
     imageMediaId = null,
@@ -71,6 +80,9 @@
   const isDirect = $derived(conversationType === 'direct');
 
   let previewText = $state<string | null>(null);
+  // A member's pending join ask in this conversation replaces the preview, and nothing else: no
+  // badge, no unread change (`pendingAskPreview`).
+  const askPreview = $derived(pendingAskPreview(conversationId, globalSession.userId));
   let isOnline = $derived(isDirect ? $presenceMap[contactName] || false : false);
   let resolvedDisplayName = $state('');
 
@@ -85,9 +97,12 @@
 
   onMount(() => {
     // Only poll presence for real user IDs (direct conversations).
+    // The teardown names the peer it watched, captured here: a prop read in a teardown can re-run a
+    // parent derived with stale values and rewire it (frontend/architecture, on teardowns).
     if (isDirect) {
-      watchUsers([contactName]);
-      return () => unwatchUsers([contactName]);
+      const watched = contactName;
+      watchUsers([watched]);
+      return () => unwatchUsers([watched]);
     }
   });
 
@@ -154,6 +169,7 @@
   data-conversation-tile={conversationId}
   data-ready={isReady}
   data-removed={isRemoved}
+  data-awaiting-admission={awaitingAdmission}
   data-selected={isSelected}
   class="group flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
@@ -175,7 +191,7 @@
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
+      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="lg" />
     {/if}
   </div>
 
@@ -222,7 +238,11 @@
         ? 'text-text-main font-semibold'
         : 'text-text-muted opacity-90'}"
     >
-      <EmojiText text={previewText || m.chat_e2e_established_preview()} />
+      <EmojiText
+        text={awaitingAdmission
+          ? m.chat_awaiting_admission_preview()
+          : (askPreview ?? previewText) || m.chat_e2e_established_preview()}
+      />
     </div>
   </div>
 </button>

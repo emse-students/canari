@@ -2,6 +2,7 @@ import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 import type { IMlsService } from '$lib/mlsService';
 import { withoutAnyComments } from '$lib/styles/markupSources';
 import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from './groupSweep';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * Minimal service stub. `getGroupServerStatus` answers with a LIVE row naming no distribution
@@ -63,8 +64,9 @@ describe('readGroupSweepSnapshot', () => {
     expect(snapshot.serverGroups[0]?.name).toBe('first');
   });
 
-  it('refuses a list that could not be fetched, and says so out loud', async () => {
+  it('refuses a list that could not be fetched, and says so out loud, once', async () => {
     const log = vi.fn();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const mlsService = makeMls({
       getLocalGroups: vi.fn().mockReturnValue(['held']),
       getUserGroups: vi.fn().mockRejectedValue(new Error('502')),
@@ -74,7 +76,30 @@ describe('readGroupSweepSnapshot', () => {
 
     expect(snapshot.fetchOk).toBe(false);
     expect(snapshot.absenceIsEvidence).toBe(false);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch user groups'));
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('Failed to fetch user groups');
+    expect(log).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  // Production 1.5.1: an absent link at a cold start printed the same failure twice, once at error.
+  it('says a list that got NO answer once, as the expected state it is, never at error', async () => {
+    const log = vi.fn();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['held']),
+      getUserGroups: vi
+        .fn()
+        .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch'))),
+    });
+
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', log);
+
+    expect(snapshot.absenceIsEvidence).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+    error.mockRestore();
   });
 
   it('refuses an EMPTY list while this device holds trees', async () => {
@@ -85,6 +110,21 @@ describe('readGroupSweepSnapshot', () => {
     expect(snapshot.fetchOk).toBe(true);
     expect(snapshot.absenceIsEvidence).toBe(false);
     expect(snapshot.unusableReason).toContain('empty');
+  });
+
+  it('BELIEVES an empty list when the only trees held are key groups, which the list never names', async () => {
+    // Review of #2493: any community member holds key-group trees, and `GET /mls/users/:id/groups`
+    // leaves distribution groups out by construction - so a joiner whose only ask was declined got
+    // an empty list it could never believe, and neither recovery nor discovery could end the ask.
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['key-group']),
+      isDistributionGroup: vi.fn((id: string) => id === 'key-group'),
+    });
+
+    const snapshot = await readGroupSweepSnapshot(mlsService, 'u', vi.fn());
+
+    expect(snapshot.absenceIsEvidence).toBe(true);
+    expect(snapshot.unusableReason).toBeNull();
   });
 
   it('BELIEVES an empty list when this device holds nothing - that is a real empty account', async () => {

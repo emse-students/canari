@@ -45,6 +45,12 @@ import { holdsGroupState } from './groupUsability';
  * it; a `memberRemoved` notice here would tell them a second time, in the words of an eviction, that
  * somebody chose to leave.
  *
+ * **A SEAT THAT AWAITS A MEMBER'S ANSWER ADMITS NOBODY.** An invitation-link ask is a row on the
+ * roster, but no accepted commit has admitted its person - so a leaf held under it (an Add decided
+ * before a Decline, merged by a client the server then refused) is stray like any departed one. The
+ * batch names those seats per group (`awaiting`) and the fresh read flags them
+ * (`awaitingAdmission`); both are read as off the roster here.
+ *
  * **AND THE LEAF OF A REVOKED DEVICE, WHOSE OWNER STAYS.** Revoking a device (`DELETE
  * mls/devices/:userId/:deviceId`) purges its routing and cannot touch a tree, so its leaf kept every
  * future epoch for whoever holds the device. The same batch read names, per group, the revoked
@@ -52,9 +58,11 @@ import { holdsGroupState } from './groupUsability';
  * by device (`removeMemberDevice`), after the departures, on a fresh tree and a fresh answer. It is
  * an ALLOWLIST - a destructive control acts only on what the server states is revoked, never on a
  * leaf the routing table merely forgot (a device fresh-start looks exactly like that) - and this
- * device never removes itself: a revoked device is wiped by its own revocation path. And it is
- * staged only on the branch the server publishes (`publishedBranch.ts`): nobody asked for this
- * commit, so it must not be the one that spreads a fork.
+ * device never removes itself: a revoked device is wiped by its own revocation path.
+ *
+ * **BOTH REMOVALS ARE STAGED ONLY ON THE BRANCH THE SERVER PUBLISHES** (`publishedBranch.ts`): the
+ * departed members' (`removeDepartedMembers`) as much as the revoked devices' (`removeMemberDevice`).
+ * Nobody asked for either commit, so neither may be the one that spreads a fork.
  *
  * @returns the groups whose tree a removal changed - empty when every tree already agrees, when this
  *   device holds none of them, or when nothing could be decided.
@@ -103,8 +111,11 @@ export async function removeStrayLeaves(
       log(`[STRAY] ${groupId.slice(0, 8)}... roster refused (not a member) - nobody removed`);
       continue;
     }
-    const rosterUserIds = batch.rosters.get(groupId);
-    if (!rosterUserIds) continue; // not answered: counted in the line above
+    const answered = batch.rosters.get(groupId);
+    if (!answered) continue; // not answered: counted in the line above
+    // A seat still AWAITING a member's answer admits nobody: a leaf held under it is stray.
+    const awaiting = new Set(batch.awaiting.get(groupId) ?? []);
+    const rosterUserIds = answered.filter((u) => !awaiting.has(u));
     const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
     const revoked = revokedLeavesIn({
       leafIdentities,
@@ -197,13 +208,7 @@ async function removeRevokedLeaves(
     await mlsService.removeMemberDevice(groupId, identities);
   } catch (e) {
     if (e instanceof UnpublishedBranchError) {
-      // Nothing was staged: this device's state is not the branch the server publishes, and a
-      // removal from it would spread that branch. A `diverged` one was handed to the recovery
-      // ladder where it was thrown; the next connection after the repair decides again.
-      log(
-        `[STRAY] ${short}... ${identities.length} revoked device(s) NOT removed: the published base ` +
-          `cannot vouch for this device's state (${e.reason}) - nothing staged`
-      );
+      logUnvouchedRemoval(short, `${identities.length} revoked device(s)`, e, log);
       return false;
     }
     // Loud for the reason `removeStrays` gives: until this lands, the revoked device can still
@@ -224,6 +229,24 @@ async function removeRevokedLeaves(
       'gone from the tree'
   );
   return true;
+}
+
+/**
+ * The line of a removal the published base could not vouch for - a non-refusal: NOTHING was staged,
+ * because this device's state is not the branch the server publishes and a removal from it would
+ * spread that branch. A `diverged` one was handed to the recovery ladder where it was thrown
+ * (`assertOnPublishedBranch`); the next connection after the repair decides again.
+ */
+function logUnvouchedRemoval(
+  short: string,
+  what: string,
+  e: UnpublishedBranchError,
+  log: (msg: string) => void
+): void {
+  log(
+    `[STRAY] ${short}... ${what} NOT removed: the published base cannot vouch for this device's ` +
+      `state (${e.reason}) - nothing staged`
+  );
 }
 
 /**
@@ -276,7 +299,9 @@ async function removeStrays(
   let keptLeafCount: number;
   try {
     const leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
-    const rosterUserIds = (await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId);
+    const rosterUserIds = (await mlsService.getGroupUserMembers(groupId))
+      .filter((m) => m.awaitingAdmission !== true)
+      .map((m) => m.userId);
     ({ strayUserIds, keptLeafCount } = diffRosterAgainstTree({
       leafIdentities,
       rosterUserIds,
@@ -304,8 +329,14 @@ async function removeStrays(
       `leaf - removing (${keptLeafCount} leaves stay)`
   );
   try {
-    await mlsService.removeMember(groupId, strayUserIds);
+    // A commit the DIFF decided, nobody asked for: staged only on the published branch, like the
+    // revoked-leaf removal below - a forked device must not be the one that removes anybody.
+    await mlsService.removeDepartedMembers(groupId, strayUserIds);
   } catch (e) {
+    if (e instanceof UnpublishedBranchError) {
+      logUnvouchedRemoval(groupId.slice(0, 8), `${strayUserIds.length} departed member(s)`, e, log);
+      return false;
+    }
     // Loud, and not swallowed into a boolean: until this commit lands, everyone named here still
     // holds key material for the conversation. A rejected commit (another member won the epoch) is
     // the benign case and the next connection carries it - anything else is a real failure, and

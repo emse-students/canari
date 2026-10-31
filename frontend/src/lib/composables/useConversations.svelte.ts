@@ -12,6 +12,7 @@ import {
   declineJoinRequest as declineJoinAsk,
   type JoinAnswerDeps,
 } from '$lib/utils/chat/joinAnswers';
+import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -42,6 +43,7 @@ import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
+  fetchGroupRoster,
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
@@ -69,9 +71,15 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
+  replanLostInvitation,
   startNewConversation as startConversation,
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
+import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import {
+  makeLostInvitationReplanner,
+  makeUnrecordedInvitationTeller,
+} from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   findConversationKeyByGroupId,
@@ -82,7 +90,13 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
-import { reportFollowerTabRefusal } from '$lib/utils/chat/conversationRefusalMessage';
+import {
+  reportBulkAdditionRefusal,
+  reportFollowerTabRefusal,
+  reportLostInvitation,
+  reportMemberRemovalFailure,
+} from '$lib/utils/chat/conversationRefusalMessage';
+import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
@@ -96,6 +110,10 @@ import {
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
 import { drainOutboxForExit } from '$lib/utils/chat/outbox';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+
+/** Salons whose "decoded after entry was decided" decision was already logged this session. */
+const salonEntryDecisionNoted = new SvelteSet<string>();
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -673,10 +691,9 @@ export function useConversations() {
       );
       return;
     }
-    if (stored.length === 0) {
-      Log.d('CHANNEL', `${salonTag} stored page empty - nothing drawn`);
-      return;
-    }
+    // An empty stored page is every first open of a salon: nothing to draw is no event, and the
+    // server page that follows is what draws (and logs) the salon.
+    if (stored.length === 0) return;
     if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
       Log.d('CHANNEL', `${salonTag} stored page not drawn - a newer load started meanwhile`);
       return;
@@ -834,7 +851,10 @@ export function useConversations() {
       // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
       // on the community's key group, which a listing still in flight may not have registered yet
       // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
-      if (await whenSalonEntryDecided(rawId)) {
+      // Said ONCE per salon per session: it is the decision (the page waited for an entry), and the
+      // same salon re-reading on every open repeated it (5 lines in one measured row).
+      if ((await whenSalonEntryDecided(rawId)) && !salonEntryDecisionNoted.has(rawId)) {
+        salonEntryDecisionNoted.add(rawId);
         ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
       }
       const loaded: ChatMessage[] = [];
@@ -1121,13 +1141,99 @@ export function useConversations() {
     queuedCtx: ConversationContext | null;
     /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
     queuedAsks: number;
+    /** Conversations whose archive replay a restore skipped on a link known down (`oweArchiveReplays`). */
+    owedArchives: Set<string>;
+    /** Unsubscribes the one reconnect listener that replays {@link owedArchives}; null when none is armed. */
+    owedReconnectOff: (() => void) | null;
   }
 
   function newRestoreGeneration(id: number): RestoreGeneration {
-    return { id, retired: false, running: null, queued: null, queuedCtx: null, queuedAsks: 0 };
+    return {
+      id,
+      retired: false,
+      running: null,
+      queued: null,
+      queuedCtx: null,
+      queuedAsks: 0,
+      // A `SvelteSet` only because the lint asks for one in a `.svelte.ts`; nothing renders it.
+      owedArchives: new SvelteSet(),
+      owedReconnectOff: null,
+    };
+  }
+
+  /**
+   * THE ARCHIVES A RESTORE SKIPPED ON A LINK KNOWN DOWN ARE REPLAYED ON THE NEXT RECONNECT, ONCE.
+   *
+   * The restore runs at boot and on a Welcome only, so a replay it skipped (`loadExistingConversations`,
+   * `onArchiveReplaysSkipped`) would otherwise wait for the conversation's next OPEN - days on a
+   * phone, against a mailbox that keeps 14. An EVENT, never a clock: `connectivity.onReconnect`
+   * fires on `online` and when a request is answered after a transport failure; an edge that comes
+   * while the server is still not proven (`isOffline`) leaves the listener armed for the next one.
+   * Idempotent by the durable stream cursor: a conversation already replayed meanwhile (opened, or a
+   * later restore) costs one `limit=1` probe. Bound to its generation: a sign-out drops it.
+   */
+  function oweArchiveReplays(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): void {
+    for (const id of ids) gen.owedArchives.add(id);
+    if (gen.owedReconnectOff) return;
+    gen.owedReconnectOff = connectivity.onReconnect(() => {
+      if (connectivity.isOffline) return;
+      gen.owedReconnectOff?.();
+      gen.owedReconnectOff = null;
+      const owed = [...gen.owedArchives];
+      gen.owedArchives.clear();
+      if (gen.retired || owed.length === 0) return;
+      void replayOwedArchives(gen, ctx, owed);
+    });
+  }
+
+  /**
+   * Replays each owed archive in turn - serialised, as the restore's own phase 2 is.
+   *
+   * A LINK THAT DROPS AGAIN MID-REPLAY RE-OWES WHAT IS LEFT: each id is checked against
+   * `connectivity.isOffline` before its read, and the remainder goes back to
+   * {@link oweArchiveReplays} for the next answered reconnect, said once. Without it every remaining
+   * id would send its probe into the dead link, and `loadHistoryForConversation` - to which an
+   * unanswered read is an empty page, not a throw - would drop each one silently.
+   */
+  async function replayOwedArchives(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): Promise<void> {
+    ctx.log(`[CATCHUP] link back - replaying ${ids.length} archive(s) skipped while it was down`);
+    for (let i = 0; i < ids.length; i++) {
+      if (gen.retired) return;
+      if (connectivity.isOffline) {
+        const rest = ids.slice(i);
+        ctx.log(
+          `[CATCHUP] the link dropped again - ${rest.length} archive replay(s) owed to the next reconnect`
+        );
+        oweArchiveReplays(gen, ctx, rest);
+        return;
+      }
+      const id = ids[i];
+      // Left since (a leave, a delete): nothing to replay into.
+      if (!conversations.has(id)) continue;
+      try {
+        await loadHistoryForConversation(id, id, ctx);
+      } catch (e) {
+        // REACHABLE, AND NOT FROM THE NETWORK: the replay's own failures are caught and logged
+        // inside, but its fast path (the stream cursor read from `localStorage`, the stored page
+        // read and drawn) runs outside that catch and throws out. Logged, and the loop goes on - this
+        // runs under `void`, so an escape would be an unhandled rejection that ends the replay of
+        // every id after it. This archive waits for the conversation's next open.
+        ctx.log(`[CATCHUP] owed archive replay of ${id.slice(0, 8)} failed: ${String(e)}`);
+      }
+    }
   }
 
   let restoreGeneration = newRestoreGeneration(0);
+  /** The client a lost-invitation re-planner is registered on, so the sign-out can remove it. */
+  let replannerMls: IMlsService | null = null;
 
   /**
    * Retires the current session's restore chain - called by the sign-out teardown, next to the
@@ -1138,7 +1244,14 @@ export function useConversations() {
   function invalidateRestores(): void {
     const retired = restoreGeneration;
     retired.retired = true;
+    retired.owedReconnectOff?.();
+    retired.owedReconnectOff = null;
+    retired.owedArchives.clear();
     restoreGeneration = newRestoreGeneration(retired.id + 1);
+    // The re-planner re-plans into THIS session's map: the next account must not inherit it. Its
+    // entries stay in the leaving account's own record.
+    replannerMls?.setOwedInvitationReplanner(null);
+    replannerMls = null;
     // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
     // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
     // landing) must wait for that session's restore rather than trust the one that left.
@@ -1221,6 +1334,7 @@ export function useConversations() {
     // THE CLIENT THIS PASS RESTORED INTO, named once: asking `ensureMls()` again at the end would
     // CREATE a client if a sign-out retired this one meanwhile.
     let mlsService: IMlsService | null = null;
+    let restored = false;
     try {
       mlsService = ctx.ensureMls();
       await loadExistingConversations({
@@ -1237,7 +1351,9 @@ export function useConversations() {
         historyBaseUrl: ctx.historyBaseUrl,
         log: ctx.log,
         onArchivedIdsChange: () => {},
+        onArchiveReplaysSkipped: (ids) => oweArchiveReplays(gen, ctx, ids),
       });
+      restored = true;
     } finally {
       // A pass whose session ended speaks for nobody: the map is the next session's to mark, and
       // the client it would wake belongs to the account that left.
@@ -1247,6 +1363,16 @@ export function useConversations() {
         // queue rather than dropped. The restore finishing is what makes it readable, so it is the
         // trigger to ask again - there is no timer waiting to notice.
         mlsService?.notifyConversationsRestored();
+        // The re-plan of a lost invitation needs the map it re-plans into: registered only once a
+        // restore SUCCEEDED - on a map a failed restore left empty, every entry would read as a
+        // conversation that does not exist.
+        if (mlsService && restored) {
+          mlsService.setOwedInvitationReplanner(
+            lostInvitationReplanner(ctx, mlsService, gen),
+            makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
+          );
+          replannerMls = mlsService;
+        }
       }
     }
   }
@@ -1657,11 +1783,13 @@ export function useConversations() {
   // ── Group members ─────────────────────────────────────────────────────────
 
   /**
-   * Fetches the deduplicated list of member userIds for an MLS group and stores them in
-   * groupMembers. No-op for channel conversations, and for one this device is no longer in.
+   * Reads the group's roster ({@link fetchGroupRoster}) into groupMembers, the ONE list every
+   * member surface shows. No-op for channel conversations, and for one this device is no longer in.
+   * Re-read on the events that change it: selecting the conversation, and the end of this device's
+   * own Add, admission or Remove (each writes the roster before it returns).
    *
-   * THE ROSTER OF A RETIRED CONVERSATION IS NOT OURS TO ASK FOR. `GET /api/mls/groups/:id/members`
-   * is members-only by design, so on a device holding a Remove commit the request has exactly one
+   * THE ROSTER OF A RETIRED CONVERSATION IS NOT OURS TO ASK FOR. `GET /api/mls/groups/:id/user-members`
+   * (like `.../members`, which this read used until 2026-10-25) is members-only by design, so on a device holding a Remove commit the request has exactly one
    * possible outcome, and it is a 403 in the console of every removed device. Both selection paths
    * fire this one line above `verifyCurrentUserMembership`, which was taught the same fact on
    * 2026-08-23 - this call site was not, which is why GRP-3 still recorded the 403 the next day.
@@ -1669,7 +1797,11 @@ export function useConversations() {
    *
    * An empty roster is the ANSWER here rather than a fallback: there is no membership to show.
    */
-  async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
+  async function loadGroupMembers(
+    id: string,
+    ctx: ConversationContext | null,
+    opts?: { fresh?: boolean }
+  ) {
     if (!ctx) return;
     if (isChannelConversationId(id)) {
       groupMembers = [];
@@ -1682,7 +1814,7 @@ export function useConversations() {
       return;
     }
     try {
-      groupMembers = await fetchUniqueGroupMembers(ctx.ensureMls(), id);
+      groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {
       console.warn('[GroupMembers]', e);
       groupMembers = [];
@@ -2048,7 +2180,7 @@ export function useConversations() {
     // (device fetch + bulk commit + welcomes) takes several seconds.
     pendingInvites = { groupId: convo.id, ids: normalized };
     try {
-      await inviteMembersToGroup(normalized, convo, {
+      const outcome = await inviteMembersToGroup(normalized, convo, {
         mlsService: ctx.ensureMls(),
         storage: ctx.storage,
         userId: ctx.userId,
@@ -2057,9 +2189,13 @@ export function useConversations() {
         conversations,
         selectConversation: (name) => selectConversationWithCtx(name, ctx),
         saveConversation: (name) => saveConversation(name, ctx),
+        addMessageToChat: ctx.addMessageToChat,
         log: ctx.log,
       });
-      await loadGroupMembers(convo.id, ctx);
+      // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
+      if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
+      // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
+      await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {
       // `processBulkAddition` lets only this refusal through; anything else is its own to report.
       if (!reportFollowerTabRefusal(e)) throw e;
@@ -2068,14 +2204,22 @@ export function useConversations() {
     }
   }
 
-  /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */
-  function joinAnswerDeps(ctx: ConversationContext): JoinAnswerDeps {
-    const mlsService = ctx.ensureMls();
-    return {
-      mlsService,
+  /**
+   * Re-plans a member's invitation whose KEPT commit did not land (`owedInvitations.ts`, OFF-3) and
+   * tells the member every ending it does not complete - `makeLostInvitationReplanner`, bound here.
+   */
+  function lostInvitationReplanner(
+    ctx: ConversationContext,
+    mlsService: IMlsService,
+    gen: RestoreGeneration
+  ): OwedInvitationReplanner {
+    return makeLostInvitationReplanner({
+      // The session that registered it: retired by the sign-out (`invalidateRestores`).
+      isCurrent: () => !gen.retired,
       conversations,
-      invite: (userIds, convo) =>
-        inviteMembersToGroup(userIds, convo, {
+      mlsService,
+      replan: (owed, convo) =>
+        replanLostInvitation(owed, convo, {
           mlsService,
           storage: ctx.storage,
           userId: ctx.userId,
@@ -2085,7 +2229,39 @@ export function useConversations() {
           selectConversation: (name) => selectConversationWithCtx(name, ctx),
           saveConversation: (name) => saveConversation(name, ctx),
           log: ctx.log,
+          addMessageToChat: ctx.addMessageToChat,
         }),
+      report: reportLostInvitation,
+      afterCompleted: (convo) => loadGroupMembers(convo.id, ctx),
+    });
+  }
+
+  /** What a member's answer to a join ask needs, bound to this context (`joinAnswers.ts`). */
+  function joinAnswerDeps(ctx: ConversationContext): JoinAnswerDeps {
+    const mlsService = ctx.ensureMls();
+    return {
+      mlsService,
+      conversations,
+      invite: (userIds, convo, answering) =>
+        inviteMembersToGroup(
+          userIds,
+          convo,
+          {
+            mlsService,
+            storage: ctx.storage,
+            userId: ctx.userId,
+            deviceKeyB64: ctx.deviceKeyB64,
+            historyBaseUrl: ctx.historyBaseUrl,
+            conversations,
+            selectConversation: (name) => selectConversationWithCtx(name, ctx),
+            saveConversation: (name) => saveConversation(name, ctx),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+          },
+          answering ? { answering } : {}
+        ),
+      collectStrayLeaves: async (groupId) =>
+        (await removeStrayLeaves(mlsService, [groupId], ctx.userId, ctx.log)).includes(groupId),
       log: ctx.log,
     };
   }
@@ -2101,7 +2277,7 @@ export function useConversations() {
   ): Promise<JoinAnswerResult> {
     const result = await admitJoinRequest(request, joinAnswerDeps(ctx));
     if (result.done && selectedContact === request.groupId) {
-      await loadGroupMembers(request.groupId, ctx);
+      await loadGroupMembers(request.groupId, ctx, { fresh: true });
     }
     return result;
   }
@@ -2141,10 +2317,21 @@ export function useConversations() {
     });
   }
 
-  /** Renames the currently selected group on the server, broadcasts the change via MLS, and appends a system message. No-op for DMs and channels. */
+  /**
+   * Applies `patch` to the conversation as it stands NOW, never to a snapshot taken before an await:
+   * whatever was written in between (a notice, a message) survives. A conversation gone meanwhile is
+   * left gone.
+   */
+  function patchConversation(key: string, patch: Partial<Conversation>): void {
+    const current = conversations.get(key);
+    if (current) conversations.set(key, { ...current, ...patch });
+  }
+
+  /** Renames the currently selected group on the server, broadcasts the change via MLS, and writes this device's own notice under the frame's id. No-op for DMs and channels. */
   async function handleRenameGroup(name: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups can be renamed
     try {
@@ -2154,19 +2341,24 @@ export function useConversations() {
         newName: name,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      conversations.set(selectedContact, { ...convo, name });
-      await saveConversation(selectedContact, ctx);
-      ctx.log(`Group ${selectedContact} renamed`);
+      // RE-READ AFTER THE AWAIT, AND PATCH THE NAME ONLY. The send wrote our own notice into this
+      // conversation meanwhile (`sendVisibleNotice`); writing back the snapshot taken before the
+      // await erased it from this device's screen - the one device that had never drawn it.
+      patchConversation(key, { name });
+      await saveConversation(key, ctx);
+      ctx.log(`Group ${key} renamed`);
     } catch (e) {
       ctx.log(`Erreur renommage: ${String(e)}`);
     }
   }
 
-  /** Sets the currently selected group's avatar on the server, broadcasts the change via MLS, and updates the UI. No-op for DMs and channels. */
+  /** Sets the currently selected group's avatar on the server, broadcasts the change via MLS, writes this device's own notice under the frame's id, and updates the UI. No-op for DMs and channels. */
   async function handleSetGroupImage(mediaId: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups carry an avatar
     try {
@@ -2176,9 +2368,11 @@ export function useConversations() {
         mediaId,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      conversations.set(selectedContact, { ...convo, imageMediaId: mediaId });
-      await saveConversation(selectedContact, ctx);
+      // Re-read and patch, for the reason `handleRenameGroup` gives.
+      patchConversation(key, { imageMediaId: mediaId });
+      await saveConversation(key, ctx);
       ctx.log(`Photo de groupe mise a jour (media=${mediaId})`);
     } catch (e) {
       ctx.log(`Erreur changement photo: ${String(e)}`);
@@ -2272,30 +2466,44 @@ export function useConversations() {
    * inherits it, which is the same reason the deletion paths do it at their own call site.
    */
   async function handleRemoveMember(memberId: string, ctx: ConversationContext) {
-    if (!selectedContact) return;
-    const convo = conversations.get(selectedContact);
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
     if (!convo) return;
     const confirmed = await showConfirm(chat_group_remove_member_confirm(), {
       danger: true,
       confirmLabel: common_remove_label(),
     });
     if (!confirmed) return;
+    // THE ROSTER IS REREAD WHENEVER THE SERVER RECORDED THE REMOVAL - on success, and when only its
+    // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
+    // `try`, so a failed reread is never reported as a failed removal.
+    let recorded: boolean;
     try {
-      await removeMemberAndBroadcast({
+      // `already-out` is a complete removal too (another commit took their leaves): no error.
+      const outcome = await removeMemberAndBroadcast({
         mlsService: ctx.ensureMls(),
         groupId: convo.id,
         memberId,
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
       });
-      membershipCache.delete(convo.id);
-      groupMembers = groupMembers.filter((m) => m !== memberId);
-      await loadGroupMembers(convo.id, ctx);
-      ctx.log(`${memberId} retire du groupe.`);
+      recorded = true;
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
     } catch (e) {
-      ctx.log(`Erreur retrait membre: ${String(e)}`);
-      reportFollowerTabRefusal(e);
+      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
+      // Recorded or not is the error's TYPE; the sentence is the follower tab's when that is why.
+      recorded = e instanceof MemberRemovalNotCommittedError;
+      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
     }
+    if (!recorded) return;
+    membershipCache.delete(convo.id);
+    groupMembers = groupMembers.filter((m) => m !== memberId);
+    await loadGroupMembers(convo.id, ctx).catch((e: unknown) =>
+      ctx.log(`[REMOVE_MEMBER] member list not reread after the removal: ${String(e)}`)
+    );
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────
@@ -2443,7 +2651,10 @@ export function useConversations() {
     openSidePanel,
     closeSidePanel,
     toggleSidePanel,
-    /** Fetches and stores the deduplicated member list for an MLS group. */
+    /**
+     * Reads and stores the user-level ADMITTED roster of an MLS group (`user-members`, seats awaiting
+     * admission left out). `fresh` skips an identical read already in flight.
+     */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */
     verifyCurrentUserMembership,

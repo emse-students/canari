@@ -1,5 +1,12 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { UserTagService } from './user-tag.service';
+import {
+  EXCLUDED_TIER_HELD,
+  TAG_HELD_BY_ANOTHER_ISSUER,
+  TAG_NOT_ISSUER_TIER,
+  TagHeldByAnotherIssuerError,
+  UserTagService,
+} from './user-tag.service';
 import { UserTag } from './entities/user-tag.entity';
 
 describe('UserTagService.listCotisants / exportCotisants', () => {
@@ -9,10 +16,27 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
+      // The grant's one `INSERT ... ON CONFLICT ... RETURNING`, played as a first grant.
+      query: jest.fn((_sql: string, p: unknown[]) =>
+        Promise.resolve([
+          {
+            id: 'tag-1',
+            userId: p[0],
+            tagName: p[1],
+            issuingAssocId: p[2],
+            grantedBy: p[3],
+            expiresAt: p[4],
+            metadata: JSON.parse(p[5] as string),
+            inserted: true,
+          },
+        ])
+      ),
       manager: { query: jest.fn() },
     };
     // A transaction runs against the same mock, so a test can assert what happened inside it.
     repo.manager.getRepository = jest.fn(() => repo);
+    repo.manager.findOne = jest.fn((_entity: unknown, opts: unknown) => repo.findOne(opts));
+    repo.manager.delete = jest.fn((_entity: unknown, where: unknown) => repo.delete(where));
     repo.manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(repo.manager));
     const service = new UserTagService(repo as unknown as Repository<UserTag>);
     return { service, repo };
@@ -25,11 +49,21 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
   function mockCatalogue(
     repo: { manager: { query: jest.Mock } },
     asso: { slug: string; cotisationMode: string | null } | null,
-    tiers: { name: string; variantKey: string | null }[]
+    tiers: { name: string; variantKey: string | null }[],
+    /** user1's active tag names in the association's namespace, as `heldOrphanTierTagsOf` reads them. */
+    namespaceTags: string[] = []
   ) {
-    repo.manager.query.mockImplementation((sql: string) =>
-      Promise.resolve(sql.includes('FROM associations') ? (asso ? [asso] : []) : tiers)
-    );
+    repo.manager.query.mockImplementation((sql: string) => {
+      if (sql.includes('FROM associations')) return Promise.resolve(asso ? [asso] : []);
+      if (sql.includes('FROM user_tags')) {
+        return Promise.resolve(
+          sql.trimStart().startsWith('SELECT')
+            ? namespaceTags.map((tagName) => ({ userId: 'user1', tagName }))
+            : []
+        );
+      }
+      return Promise.resolve(tiers);
+    });
   }
 
   const row = (overrides: Partial<Record<string, unknown>> = {}) => ({
@@ -238,12 +272,110 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
+  // A tag grant is scoped to the association that grants it: the raw grant names one of its OWN
+  // tier tags, and is then the roster's manual add (XOR included).
+  describe('grantTagForAssociation', () => {
+    const cercleTiers = [
+      { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      { name: 'Sans alcool', variantKey: 'sans-alcool' },
+    ];
+
+    it('grants one of its own tier tags, issued by itself, and swaps the sibling tier out', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+
+      const tag = await service.grantTagForAssociation('asso1', {
+        userId: 'user1',
+        tagName: 'cotisant:cercle-avec-alcool',
+        grantedBy: 'admin1',
+      });
+
+      expect(tag).toMatchObject({
+        tagName: 'cotisant:cercle-avec-alcool',
+        issuingAssocId: 'asso1',
+        expiresAt: null,
+      });
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
+      });
+    });
+
+    it.each([
+      ['a name of another association', 'cotisant:bde-2026-2027'],
+      ['a name that is no tier at all', 'vip:cercle'],
+    ])('refuses (403 TAG_NOT_ISSUER_TIER) %s, writing nothing', async (_label, tagName) => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+
+      const refused = service.grantTagForAssociation('asso1', {
+        userId: 'user1',
+        tagName,
+        grantedBy: 'admin1',
+      });
+
+      await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(refused).rejects.toMatchObject({ response: { code: TAG_NOT_ISSUER_TIER } });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // The upsert never crosses issuers: a row of the same name issued elsewhere is never renewed.
+  describe('a grant over a name held under another issuer', () => {
+    it('grantOrRenew throws TagHeldByAnotherIssuerError when the statement writes no row', async () => {
+      const { service, repo } = makeService();
+      repo.query.mockResolvedValueOnce([]);
+
+      await expect(
+        service.grantOrRenew({
+          userId: 'user1',
+          tagName: 'cotisant:bde',
+          issuingAssocId: 'asso1',
+          grantedBy: 'admin1',
+        })
+      ).rejects.toBeInstanceOf(TagHeldByAnotherIssuerError);
+      expect(String(repo.query.mock.calls[0][0])).toContain(
+        'WHERE user_tags."issuingAssocId" IS NOT DISTINCT FROM EXCLUDED."issuingAssocId"'
+      );
+    });
+
+    it('a paid grant answers the refusal and swaps nothing; a manual one lets the 409 through', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+      ]);
+      repo.findOne.mockResolvedValue(null);
+      repo.query.mockResolvedValue([]);
+
+      expect(await service.grantCotisantIfARise('asso1', 'user1', 'system', null, {})).toEqual({
+        refused: TAG_HELD_BY_ANOTHER_ISSUER,
+      });
+      await expect(service.grantCotisant('asso1', 'user1', 'admin1')).rejects.toBeInstanceOf(
+        TagHeldByAnotherIssuerError
+      );
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getActiveTag', () => {
+    it('reads only the rows the asked association issued', async () => {
+      const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue(null);
+
+      await service.getActiveTag('user1', 'cotisant:bde', 'asso1');
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'user1', tagName: 'cotisant:bde', issuingAssocId: 'asso1' },
+      });
+    });
+
     it('returns null when the user holds no such tag', async () => {
       const { service, repo } = makeService();
       repo.findOne.mockResolvedValue(null);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBeNull();
+      expect(await service.getActiveTag('user1', 'cotisant:bde', 'asso1')).toBeNull();
     });
 
     it('returns the tag row when it never expires', async () => {
@@ -251,7 +383,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const tag = { userId: 'user1', tagName: 'cotisant:bde', expiresAt: null };
       repo.findOne.mockResolvedValue(tag);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBe(tag);
+      expect(await service.getActiveTag('user1', 'cotisant:bde', 'asso1')).toBe(tag);
     });
 
     it('returns null once the tag has expired', async () => {
@@ -262,7 +394,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         expiresAt: new Date('2020-01-01T00:00:00Z'),
       });
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBeNull();
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026', 'asso1')).toBeNull();
     });
 
     it('returns the tag row while it is still valid', async () => {
@@ -274,7 +406,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       };
       repo.findOne.mockResolvedValue(tag);
 
-      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBe(tag);
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026', 'asso1')).toBe(tag);
     });
   });
 
@@ -304,7 +436,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('rejects when cotisation is not enabled (no mode set)', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ slug: 'bde', cotisationMode: null }]);
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: null }, []);
 
       await expect(service.grantCotisant('asso1', 'user1', 'admin1')).rejects.toThrow(
         'Cotisation is not enabled'
@@ -313,7 +445,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('rejects when the association does not exist', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([]);
+      mockCatalogue(repo, null, []);
 
       await expect(service.grantCotisant('missing', 'user1', 'admin1')).rejects.toThrow(
         'Association not found'
@@ -343,10 +475,12 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.delete).toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
       });
       expect(repo.delete).not.toHaveBeenCalledWith({
         userId: 'user1',
         tagName: 'cotisant:cercle-avec-alcool',
+        issuingAssocId: 'asso1',
       });
     });
 
@@ -369,20 +503,327 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
+  // A paid form's grant is ranked like a settlement: it never swaps out a dearer tier by the XOR.
+  describe('grantCotisantWithin', () => {
+    it("grants inside the CALLER's transaction, under the buyer's lock, never opening its own", async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+        { name: 'Sans alcool', variantKey: 'sans-alcool' },
+      ]);
+      repo.findOne.mockResolvedValue(null);
+
+      const tag = await service.grantCotisantWithin(
+        repo.manager,
+        'asso1',
+        'user1',
+        'admin1',
+        'avec-alcool',
+        { purchaseRecordId: 'rec-1' }
+      );
+
+      expect(tag).toMatchObject({ tagName: 'cotisant:cercle-avec-alcool', grantedBy: 'admin1' });
+      expect(repo.manager.transaction).not.toHaveBeenCalled();
+      expect(
+        repo.manager.query.mock.calls.some(
+          ([sql, params]: [string, unknown[]]) =>
+            String(sql).includes('pg_advisory_xact_lock(hashtextextended($1, 0))') &&
+            params?.[0] === 'tier:asso1:user1'
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe('grantCotisantIfARise', () => {
+    const priced = [
+      { name: 'Sans alcool', variantKey: 'sans-alcool', amountCents: 1500, priceMatrix: null },
+      { name: 'Avec alcool', variantKey: 'avec-alcool', amountCents: 3000, priceMatrix: null },
+    ];
+    const holding = (repo: { findOne: jest.Mock }, tagName: string | null) =>
+      repo.findOne.mockImplementation(
+        ({ where }: { where: { tagName: string; issuingAssocId: string } }) =>
+          Promise.resolve(
+            where.tagName === tagName && where.issuingAssocId === 'asso1'
+              ? { tagName, expiresAt: null }
+              : null
+          )
+      );
+
+    it('refuses a cheaper tier than the one held, and grants and revokes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'lower' });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('grants a rise, and swaps the cheaper tier out', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      const outcome = await service.grantCotisantIfARise(
+        'asso1',
+        'user1',
+        'system',
+        'avec-alcool',
+        {}
+      );
+
+      expect(outcome).toMatchObject({ granted: { tagName: 'cotisant:cercle-avec-alcool' } });
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+        issuingAssocId: 'asso1',
+      });
+    });
+
+    // Two legacy tags held at once: renewing the cheaper one would run the XOR and revoke the dearer.
+    it('refuses to renew the cheaper of two held tiers, and revokes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockResolvedValue({ expiresAt: null });
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'lower' });
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    // The very tier held is NOT renewed (review of #2713): a paid form that renewed it took its
+    // price twice - from a holder who bought it in the shop while the form's payment was in flight
+    // (the lock makes that settlement visible here), or a holder of two legacy tags.
+    it('refuses to renew the tier held, even the dearer of two, and writes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockResolvedValue({ expiresAt: null, metadata: { productId: 'p1' } });
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'avec-alcool', {
+          submissionId: 's1',
+        })
+      ).toEqual({ refused: 'held' });
+      expect(repo.query).not.toHaveBeenCalled();
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('a shop grant committed during the payment is seen under the lock: not renewed', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      // Read AFTER the lock: the settlement that waited on it has committed the tier.
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {
+          submissionId: 's1',
+        })
+      ).toEqual({ refused: 'held' });
+      expect(repo.manager.query.mock.calls[0][0]).toMatch(/pg_advisory_xact_lock/);
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // A replay whose grant committed before its claim was released: the held tag IS this answer's
+    // delivery, so it is answered granted and nothing is written - a replay, never a renewal.
+    it("answers granted, writing nothing, when the held tag is this answer's own delivery", async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
+        Promise.resolve(
+          where.tagName === 'cotisant:cercle-sans-alcool'
+            ? { tagName: where.tagName, expiresAt: null, metadata: { submissionId: 's1' } }
+            : null
+        )
+      );
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {
+          submissionId: 's1',
+        })
+      ).toHaveProperty('granted');
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // Owner, 2026-10-30: a form for people WITHOUT a tier refuses, under the lock, a payer who holds it.
+    it('refuses a held tier of the excluded set, EXCLUDED_TIER_HELD, and writes nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-sans-alcool');
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'avec-alcool',
+          {},
+          {
+            variantKeys: ['sans-alcool'],
+          }
+        )
+      ).toEqual({ refused: EXCLUDED_TIER_HELD });
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('anyTier excludes a held tag of a DELETED tier too', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'sans-alcool',
+          {},
+          {
+            anyTier: true,
+          }
+        )
+      ).toEqual({ refused: EXCLUDED_TIER_HELD });
+    });
+
+    it('CONTROL: grants when no excluded tier is held', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise(
+          'asso1',
+          'user1',
+          'system',
+          'sans-alcool',
+          {},
+          {
+            variantKeys: ['avec-alcool'],
+          }
+        )
+      ).toHaveProperty('granted');
+    });
+
+    // The paid form's pre-check, before any payment request: the same rank, no lock, no write.
+    it('rankCotisationTier answers the rank the grant would take, writing nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('lower');
+      expect(await service.rankCotisationTier('asso1', 'user1', 'avec-alcool')).toBe('held');
+      expect(repo.manager.transaction).not.toHaveBeenCalled();
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    // The form's pre-check already read the catalogue: handed over, it is not read again.
+    it('rankCotisationTier ranks on a catalogue it is handed, without reading it again', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, 'cotisant:cercle-avec-alcool');
+      const tiers = await service.listCotisationTiers('asso1');
+      const catalogueReads = jest.spyOn(service, 'listCotisationTiers');
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool', tiers)).toBe(
+        'lower'
+      );
+      expect(catalogueReads).not.toHaveBeenCalled();
+      // CONTROL: without it, the catalogue is read.
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('lower');
+      expect(catalogueReads).toHaveBeenCalledTimes(1);
+    });
+
+    // A tier deleted while held: its tag names no product. Ranked as holding nothing, a paid grant
+    // of a cheaper tier went through and the XOR never dropped it.
+    it('refuses a paid grant to a holder of a DELETED tier as unranked, granting nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'unranked' });
+      expect(await service.rankCotisationTier('asso1', 'user1', 'avec-alcool')).toBe('unranked');
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('a manual grant swaps the tag of a DELETED tier out, scoped to the issuer', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+        'cotisant:cercle-sans-alcool',
+      ]);
+      holding(repo, null);
+
+      await service.grantCotisant('asso1', 'user1', 'admin1', 'sans-alcool');
+
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-premium',
+        issuingAssocId: 'asso1',
+      });
+    });
+
+    // The claim has no manager behind it: swapping the orphan out would DELETE the tag of a deleted,
+    // possibly dearer, paid tier - the only record of what the holder paid. Left to a manager.
+    it('the legacy claim grants nothing to a holder of the tag of a DELETED tier, and swaps nothing', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced, [
+        'cotisant:cercle-premium',
+      ]);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
+      ).toBeNull();
+      expect(repo.delete).not.toHaveBeenCalled();
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: the legacy claim grants its tier to a user holding no tier, deleted or not', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);
+      holding(repo, null);
+
+      expect(
+        await service.grantCotisantUnlessHeld('asso1', 'user1', 'legacy', 'sans-alcool', {})
+      ).toMatchObject({ tagName: 'cotisant:cercle-sans-alcool' });
+    });
+
+    it('rankCotisationTier answers none for an association without cotisation', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: null }, priced);
+
+      expect(await service.rankCotisationTier('asso1', 'user1', 'sans-alcool')).toBe('none');
+    });
+  });
+
   // WP-COT-9: MANAGE_MEMBERS is per-association, so the tag id alone must not be enough to reach
   // a row - an admin of one association could otherwise revoke any other association's cotisant.
   describe('revoke', () => {
-    it('scopes the delete to the issuing association', async () => {
+    it("scopes the delete to the issuing association, under the holder's tier lock", async () => {
       const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue({ id: 'tag1', userId: 'user1', issuingAssocId: 'asso1' });
 
       await service.revoke('tag1', 'asso1');
 
+      expect(repo.findOne).toHaveBeenCalledWith({ where: { id: 'tag1', issuingAssocId: 'asso1' } });
       expect(repo.delete).toHaveBeenCalledWith({ id: 'tag1', issuingAssocId: 'asso1' });
+      const locks = (repo.manager.query as jest.Mock).mock.calls
+        .filter(([sql]) => String(sql).includes('pg_advisory_xact_lock'))
+        .map(([, params]) => params);
+      expect(locks).toEqual([['tier:asso1'], ['tier:asso1:user1']]);
     });
 
     it('throws 404 when the tag belongs to another association', async () => {
       const { service, repo } = makeService();
-      repo.delete.mockResolvedValue({ affected: 0 });
+      repo.findOne.mockResolvedValue(null);
 
       await expect(service.revoke('tag-of-other-asso', 'asso1')).rejects.toThrow('Tag not found');
     });

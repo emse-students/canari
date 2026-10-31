@@ -205,6 +205,12 @@ avatar in ONE 40px box that the avatar fills (it used to draw a 48px avatar insi
 and the phone apps' glass title pill, being a `rounded-full` surface, holds a CIRCLE avatar so the
 two corners are concentric - a squircle inscribed in a pill was the mismatch.
 
+**The native pill's avatar is a bitmap and must paint the same gradient (2026-10-31).** Placeholders
+are `background-image` gradients since #2776, so `avatarBitmap.ts` can no longer read a
+`backgroundColor` (transparent: bare initials on dark, white on white in light). It reads the
+computed `--avatar-hue-from/to` of the `.avatar-placeholder` and paints a 135deg canvas gradient,
+person, group glyph and association alike; `app.css` stays the only copy of the palette.
+
 ---
 
 ## 7. The target - what the redesign adopted (SHIPPED, see section 9)
@@ -3230,7 +3236,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.md#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21)).
+touch must be the one the gesture claims ([backlog](../backlog.d/p2-the-tab-swipe-on-a-slow-start-both-causes-fixed-owed-a-real-finger.md)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.
@@ -3293,3 +3299,16 @@ and a tap on the reel slide it out on the drag release snap, the reel growing ba
 comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
 never a page of older comments, never the swap of the reader's local id for the server's row), and
 the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.
+
+## Avatar placeholders: eight gradient hues, picked from the entity's ID (user, 2026-10-30)
+
+Every avatar without a photo or logo (a person, a group or community, an association) used to be yellow initials on the same navy disc. It is now ONE component, `AvatarPlaceholder.svelte`, used by `Avatar`, `GroupAvatar` and `AssociationAvatar` (the anonymous-post avatar stays an icon on navy on purpose: it is nobody).
+
+- **The palette** is `--avatar-hue-0..7-from/to` in `app.css` (orange, pink, violet, blue, cyan, green, red, amber) drawn as a plain 135deg `linear-gradient` on the element. Theme-independent: white initials on every stop in both themes. No `background-clip` text trick (WebKit draws it badly). Every stop keeps white at >= 3:1 (WCAG AA large text); the amber is darkened for it, and `avatar.test.ts` recomputes the ratio from `app.css`.
+- **The pick** is `avatarHueIndex(id)` (FNV-1a mod 8), seeded by the ID: user id, conversation / group / workspace id, association id. NEVER the display name, which changes. `GroupAvatar` and `AssociationAvatar` therefore take a required `id`. Known gap: a channel-invitation card carries no workspace id on the wire, so it seeds on the channel id.
+- **Shapes** are unchanged: the caller passes `circle` or `squircle`. A real photo or logo is untouched.
+- Not converted: the Carte poster canvas (`trombinoscope.ts`) still draws its own `generateAvatarColor` tiles.
+
+## The brand lockup is centred on its icon by trimming the line boxes (2026-10-31)
+
+`CanariBrand` (the only place the lockup is drawn: `Navbar`, and `MobileHeader` without the tagline) sat 1.5-2 px low because each line box carries space above the cap height and below the baseline. Each line is now `leading-none` with `em` margins from the font's real metrics (Fredoka 700: cap top 0.166em, baseline 0.131em from the box edges; Nunito 500: 0.110em and 0.171em), and the block is `min-h-10` + `justify-between`, so the cap top of "Canari" and the baseline of the tagline sit on the icon's edges (measured: within 0.5 px, was +2.0 / +1.6 px). `em` and not `text-box: trim-both cap alphabetic`, which Firefox has not shipped. Re-measure these constants if the brand or body font changes.

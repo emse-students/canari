@@ -29,7 +29,7 @@ impl log::Log for WebLogger {
             // level and text arrive. So the decision is made here, once, by `mls_core::logging`
             // (which carries the reasoning and the tests) - and `wasm_bindings_log` on the other
             // side prints what Rust decided instead of keeping a second, drifting copy of it.
-            let level = mls_core::logging::console_level(record.level(), record.target(), &message);
+            let level = mls_core::logging::console_level(record.level(), record.target());
             js_log(&level.to_string(), &message);
         }
     }
@@ -293,6 +293,12 @@ impl WasmMlsClient {
             return "unavailable (caller's clock is not a time)".to_string();
         }
         self.manager.key_package_census_summary_at(now_secs as u64)
+    }
+
+    /// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
+    #[wasm_bindgen]
+    pub fn own_signature_key(&self) -> Vec<u8> {
+        self.manager.own_signature_key()
     }
 
     /// Signs a v2 session ENDORSEMENT with this device's MLS credential key (channel-encryption §21).
@@ -954,6 +960,15 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// The HPKE encryption key of this device's leaf in `group_id`, which names the leaf, or
+    /// `undefined` when the tree holds none (`MlsManager::own_leaf_encryption_key`).
+    #[wasm_bindgen]
+    pub fn own_leaf_encryption_key(&self, group_id: String) -> Result<Option<Vec<u8>>, JsValue> {
+        self.manager
+            .own_leaf_encryption_key(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Whether this device's current context in `group_id` is the one the served base
     /// `group_info` describes - same epoch, tree hash and transcript hash
     /// (`MlsManager::own_context_matches_base`). Gates the periodic refresh against a fork.
@@ -1043,10 +1058,11 @@ impl WasmMlsClient {
         out
     }
 
-    /// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+    /// `recipient` was answered for `welcome` in `group_id` (`MlsManager::welcome_delivered`).
     #[wasm_bindgen]
-    pub fn welcome_delivered(&mut self, group_id: String, recipient: String) {
-        self.manager.welcome_delivered(&group_id, &recipient);
+    pub fn welcome_delivered(&mut self, group_id: String, recipient: String, welcome: Vec<u8>) {
+        self.manager
+            .welcome_delivered(&group_id, &recipient, &welcome);
     }
 
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
@@ -1084,6 +1100,18 @@ impl WasmMlsClient {
     pub fn export_group_info(&self, group_id: String) -> Result<Vec<u8>, JsValue> {
         self.manager
             .export_group_info(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+    /// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+    #[wasm_bindgen]
+    pub fn external_join_is_a_further_device(
+        &self,
+        group_info_bytes: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .external_join_is_a_further_device(&group_info_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

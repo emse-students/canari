@@ -102,6 +102,18 @@ export function addressedHistoryAnswer(device: string): FrameDelivery {
 export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
 
 /**
+ * The capability this build declares because it routes the invitation-link ask frames
+ * (`group.join_ask`, `group.join_ask.settled`, `channelEventHandler.ts`). chat-delivery sends them
+ * only to a device all of whose sessions declared it, and the gateway keeps them from a session that
+ * did not - so a build older than these frames never meets one it would report as reaching no
+ * handler. The same literal is in chat-delivery and the gateway (`JOIN_ASK_CAPABILITY`).
+ */
+export const JOIN_ASK_CAPABILITY = 'join-ask-1';
+
+/** Every capability this build declares on its socket, comma-separated as `caps=` carries them. */
+export const SOCKET_CAPABILITIES = [ADDRESSED_HISTORY_CAPABILITY, JOIN_ASK_CAPABILITY].join(',');
+
+/**
  * The gateway socket URL, built in ONE place for both openers (web and Tauri) so the two cannot
  * declare different capabilities. Every session declares: a tab is a reader of every frame routed
  * to the device, so each one says what it applies. `redacted` is the same URL with the token masked,
@@ -112,7 +124,7 @@ export function gatewaySocketUrl(
   deviceId: string,
   token?: string
 ): { url: string; redacted: string } {
-  const base = `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}&caps=${encodeURIComponent(ADDRESSED_HISTORY_CAPABILITY)}`;
+  const base = `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}&caps=${encodeURIComponent(SOCKET_CAPABILITIES)}`;
   return {
     url: token ? `${base}&token=${encodeURIComponent(token)}` : base,
     redacted: token ? `${base}&token=***` : `${base} (no token)`,

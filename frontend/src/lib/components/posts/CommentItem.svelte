@@ -28,10 +28,15 @@
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostImage from './PostImage.svelte';
   import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
+  import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import CommentItem from './CommentItem.svelte';
   import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
   import { COMMENT_MAX_LENGTH, type PostComment } from '$lib/posts/api';
-  import { commentAuthorHref, commentAuthorName } from '$lib/posts/commentAuthor';
+  import {
+    commentAuthorHref,
+    commentAuthorName,
+    commentRevealedAuthorId,
+  } from '$lib/posts/commentAuthor';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
@@ -88,6 +93,11 @@
 
   const authorName = $derived(commentAuthorName(comment));
   const authorHref = $derived(commentAuthorHref(comment));
+  /**
+   * The writer of an anonymous comment, for the reader the server served it to (the writer, a
+   * moderator, an admin): drawn small under "Anonyme", which stays the name (user, 2026-10-24).
+   */
+  const revealedAuthorId = $derived(commentRevealedAuthorId(comment));
   const isPending = $derived(pendingCommentIds?.has(comment.id) ?? false);
   const liked = $derived(comment.likes?.includes(currentUserId) ?? false);
   const likeCount = $derived(comment.likes?.length ?? 0);
@@ -225,6 +235,9 @@
           <span class="text-text-main mb-0.5 block text-xs font-bold">
             <EmojiText text={authorName} />
           </span>
+        {/if}
+        {#if revealedAuthorId}
+          <RevealedAuthorLine userId={revealedAuthorId} class="text-text-muted mb-0.5" />
         {/if}
         {#if isReply}
           <!-- "In reply to" badge on rendered replies. -->

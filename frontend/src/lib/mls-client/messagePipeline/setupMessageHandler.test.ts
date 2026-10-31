@@ -528,7 +528,11 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     // First detection: republish fresh key material, then drive the externalJoin-first seam.
     expect(mls.republishKeyMaterial).toHaveBeenCalledWith('device-key');
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
+    // `welcomeHandled`: the recovery starts before this Welcome's ACK, so the server may still list
+    // it as queued - and the seam must not wait for the Welcome this device just spent (#2466).
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), {
+      welcomeHandled: true,
+    });
     // The self-heal seam owns welcome_request (fallback); the handler no longer calls it directly.
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
@@ -556,7 +560,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // No 3-strike wait: the peer-independent externalJoin (via requestReAdd) is attempted at once,
     // so a device whose peers have suspended re-adds can still self-heal.
     await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), {
+      welcomeHandled: true,
+    });
   });
 
   it('Welcome (GroupAlreadyExists) → noop, ACK', async () => {
@@ -856,6 +862,55 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(mls.updateInvitationStatus).not.toHaveBeenCalled();
       expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
       expect(deps.conversations.has(keyGroup)).toBe(false);
+    });
+
+    /**
+     * A RESTART RE-DELIVERS THE WELCOME AFTER THE STARTUP WALK REGISTERED THE GROUP, and the server
+     * row may then be unreadable. The row's test alone sent it down the conversation path, whose
+     * held-without-row branch writes an id placeholder row and announces it.
+     */
+    it('an unreadable server row still routes a group this session names as a key group', async () => {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi.fn().mockResolvedValue(null);
+      mls.isDistributionGroup = vi.fn((g: string) => g === keyGroup);
+      mls.getLocalGroups = vi.fn().mockReturnValue([keyGroup]);
+      mls.isGroupActive = vi.fn().mockResolvedValue(true);
+      mls.noteDistributionGroup = vi.fn();
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      expect(await onMsg('admin', new Uint8Array([1]), keyGroup, true, undefined)).toBe(true);
+
+      expect(deps.conversations.has(keyGroup)).toBe(false);
+      expect(deps.saveConversation).not.toHaveBeenCalled();
+      expect(mls.notifyConversationAvailable).not.toHaveBeenCalled();
+      // The session's own registration is kept: an unreadable row names no scope to replace it with.
+      expect(mls.registerDistributionGroup).not.toHaveBeenCalled();
+      expect(mls.noteDistributionGroup).not.toHaveBeenCalled();
+      expect(mls.updateInvitationStatus).toHaveBeenCalledWith(
+        'dev-x',
+        'user-a',
+        keyGroup,
+        'active'
+      );
+    });
+
+    it('a readable conversation row outranks what this session remembers', async () => {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getGroupMeta = vi
+        .fn()
+        .mockResolvedValue({ groupId: keyGroup, name: 'Equipe', isGroup: true });
+      mls.isDistributionGroup = vi.fn().mockReturnValue(true);
+      mls.getLocalGroups = vi.fn().mockReturnValue([keyGroup]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      await onMsg('peer', new Uint8Array([1]), keyGroup, true, undefined);
+
+      expect(deps.conversations.get(keyGroup)).toMatchObject({ name: 'Equipe' });
     });
   });
 

@@ -60,7 +60,7 @@ the web/phone split from `ORIGIN[device] === SITE` precisely so this stays one f
 
 **The rig is in this repository**, at `tools/cross-client-harness/` - the scripts that run, not a
 copy of them. **Its STATE is deliberately outside**, in `../../canari-harness` (moved one level up
-on 2026-09-03, so that nothing of the LITHIUM rig can be inherited by accident): the account file,
+on 2026-09-03, so that nothing of the previous machine's rig can be inherited by accident): the account file,
 the two Chrome profiles (which ARE W1 and W2 - their MLS identity, their history, their login), the
 verdict record, the APK and the phone baseline. **Two files stayed behind in the old directory on
 purpose** - `play-console-sa.json` and `google-services.json` - because they are store and build
@@ -444,9 +444,9 @@ real device. Three lessons generalise to every future one:
   SvelteKit boots from an inline module, so a selector-based assertion finds nothing and silently
   asserts nothing.
 
-**Leon pushes to Canari's `main` too**, and the same reasoning applies to every commit of his:
-`git fetch` at the START of a session and again before any measurement, then `git pull` his work in.
-His work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
+**Another contributor pushes to Canari's `main` too**, and the same reasoning applies to every commit of theirs:
+`git fetch` at the START of a session and again before any measurement, then `git pull` their work in.
+That work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
 taken against a tree that is behind `main` is a verdict about something nobody is running, and that
 is how a cell becomes wrong without anyone touching it.
 

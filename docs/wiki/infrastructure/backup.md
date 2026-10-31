@@ -57,8 +57,17 @@ volume sha256-identically over 172 objects. Full model:
 
 | Location | Retention |
 |---|---|
-| Local (`/home/canari/backups/`) | 14 days (`BACKUP_RETENTION_DAYS`, configurable) |
-| Offsite (`<backup-user>@<offsite-host>:<offsite-dir>/`) | Same 14-day retention, enforced via SSH |
+| Local (`BACKUP_DIR`) | 7 days (`LOCAL_RETENTION_DAYS`) |
+| Offsite (`<backup-user>@<offsite-host>:<offsite-dir>/`) | 14 days (`BACKUP_RETENTION_DAYS`), enforced via SSH |
+
+**Two retentions since 2026-10-24, and the offsite one is the promise.** The local disk is the
+shared host's, which its administrators reported at 90 % that day; an archive weighed ~700 MB a
+night ([why](#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13)), so 15 local copies cost about
+10 GB. The offsite copy (the same files, checked identical before the local ones were cut) keeps the
+14 days the privacy policy states, so no published figure changed. `find -mtime +N` deletes a file
+once it is N+1 whole days old, at the next nightly run: a local archive lives up to ~9 days, an
+offsite one up to ~16. `.github/scripts/tests/backup-retention.test.sh` runs `backup.sh` against
+stubs and asserts that each purge reads its own variable.
 
 ## Offsite transfer
 
@@ -75,7 +84,8 @@ The SSH key for the offsite account must be pre-authorized on the offsite server
 | Variable | Default | Description |
 |---|---|---|
 | `BACKUP_DIR` | `/home/canari/backups` | Local backup directory |
-| `BACKUP_RETENTION_DAYS` | `14` | Days to keep local + offsite archives |
+| `BACKUP_RETENTION_DAYS` | `14` | Days to keep offsite archives |
+| `LOCAL_RETENTION_DAYS` | `7` | Days to keep local archives (never more than offsite) |
 | `BACKUP_SSH_HOST` | `<backup-user>@<offsite-host>` | Offsite rsync destination (empty to disable) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | Offsite directory |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | Authentik PostgreSQL container name (empty to skip) |
@@ -126,6 +136,39 @@ than its run, does it hold garage_data files and `node_key`, is it in the offsit
 is the report. Its verdict is tested against the shapes above (`backup-report.test.sh`). The
 configuration the four scripts share is `backup-config.sh`, three copies until then.
 
+## Why the archive went from 80 MB to 700 MB (2026-10-13)
+
+**Measured 2026-10-24**, read-only (`backup.log`, `tar tzvf` of the newest archive, `SELECT`s of
+sizes and counts inside `BEGIN READ ONLY`). `backup.log` gives 80 MB on 10-10 and 10-11, 112 MB on
+10-12, **716 MB on 10-13**, 751 MB on 10-14, then a slow fall to 648 MB on 10-24; the `auth_db`
+dump went from 9 s to 63 s the same night. In the 10-24 archive, `postgres_auth_db.sql.gz` is
+644 MB of 679 MB (`authentik_db.sql.gz` 37 MB, `media_meta.tar.gz` 32 KB).
+
+**The growth is ONE table, `queued_message`** (1 489 MB on disk, 272 524 rows), and in it ONE
+community key group, `1b1687d0`, the one the
+[queue audit](prod-queue-and-epoch-audit-2026-10-12.md) found: 189 205 of its rows were written on
+10-12 and 10-13 (797 MB of ciphertext), carrying only 4 772 distinct payloads, each queued for
+about 40 seats - the broadcast seed answers that #1768 (`v1.2.6`) addressed to one device. From
+10-14 that group writes a few hundred to 3 000 rows a day, so the cause has stopped; what is left
+is the rows already written. Rows of 16 KB or more are 8 249 rows and 615 MB.
+
+| Recipient of a `1b1687d0` row | Devices | Rows | MB |
+| --- | --- | --- | --- |
+| no session, no push token | 109 | 172 060 | 728 |
+| session, no push token | 40 | 18 281 | 74 |
+| push token, no session | 10 | 10 511 | 44 |
+| session and push token | 66 | 3 462 | 14 |
+
+**It belongs in the archive, so nothing is excluded.** `queued_message` is the encrypted MLS
+history still owed to devices; a restore without it loses every message an offline device has not
+fetched. It has no other home - restic holds the media volumes only. What would shrink the archive
+is deleting the rows no device will ever fetch (the first line of the table), which is a production
+deletion and waits for the user's decision:
+[backlog](../backlog.md#p2---the-nightly-archive-is-mostly-one-groups-undelivered-queue-measured-2026-10-24).
+Left alone, those rows leave at the queue's 90-day bound, around 2027-01-10. The next fan-out of
+that shape is stored once per frame by #2260 (`queued_payload`, its writer behind
+`QUEUED_PAYLOAD_SHARED_WRITES`, still `false` on 2026-10-24), which rewrites no existing row.
+
 ## Restore
 
 ```bash
@@ -138,7 +181,7 @@ See `infrastructure/backup/README.md` for the full restore procedure.
 
 - The backup dumps are **logical** (not physical), so they are portable across PostgreSQL minor versions.
 - media_meta is backed up as a volume tar (and again into restic) — a restore replaces the entire volume.
-- **An EMPTY value is a decision, an UNSET one takes the default.** The three variables whose empty value means something - `BACKUP_SSH_HOST`, `MICONNECT_PG_CONTAINER`, `MICONNECT_SSH_HOST` - are read with `${VAR-default}`, never `${VAR:-default}`: `:-` treats empty as unset and puts the default back, so until 2026-09-25 none of the three "empty to ..." rows above was true, and the escape hatch `restore.sh` itself names (`MICONNECT_PG_CONTAINER=`) did not exist. Found by the same construction failing a live test of Sky's backup.
+- **An EMPTY value is a decision, an UNSET one takes the default** (`BACKUP_SSH_HOST` has none since 2026-10-29: the address is private, so an unset value stops the script and the crontab must carry it: `infrastructure/.env` is read after the config, too late). The three variables whose empty value means something - `BACKUP_SSH_HOST`, `MICONNECT_PG_CONTAINER`, `MICONNECT_SSH_HOST` - are read with `${VAR-default}`, never `${VAR:-default}`: `:-` treats empty as unset and puts the default back, so until 2026-09-25 none of the three "empty to ..." rows above was true, and the escape hatch `restore.sh` itself names (`MICONNECT_PG_CONTAINER=`) did not exist. Found by the same construction failing a live test of Sky's backup.
 - **The Authentik backup is NOT skipped when its container is absent - the backup FAILS.** Only an empty `MICONNECT_PG_CONTAINER` excludes it, because a value that is set and unreachable is a backup that would succeed without the identities.
 - No S3 offsite in the current setup (the `BACKUP_S3_*` variables exist in the script but are not actively used).
 - **The restic password is not in `infrastructure/.env` and not a GitHub secret**, because the CD

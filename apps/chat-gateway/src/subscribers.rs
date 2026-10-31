@@ -22,12 +22,13 @@ type ConnectedUsers = Arc<Mutex<HashMap<String, HashMap<u64, ConnectedUser>>>>;
 /// `chat:channel_events`, routing frames to connected WebSocket clients.
 /// Reconnects automatically with a 5-second back-off if the connection drops.
 ///
-/// `session_caps` is what each local session declared on its socket: an ADDRESSED frame reaches only
-/// the sessions that declared [`crate::addressing::ADDRESSED_HISTORY_CAPABILITY`] (the edge filter).
+/// `session_caps` is what each local session declared on its socket: a frame needing a capability -
+/// an ADDRESSED conversation frame, or a control frame naming one in `requiresCapability` - reaches
+/// only the sessions that declared it (the edge filter, [`crate::addressing::deliverable_sessions`]).
 pub fn spawn_redis_subscriber(
     redis_client: redis::Client,
     connected_users: ConnectedUsers,
-    session_caps: Arc<Mutex<HashMap<u64, bool>>>,
+    session_caps: Arc<Mutex<HashMap<u64, crate::addressing::SessionCaps>>>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -177,13 +178,23 @@ pub fn spawn_redis_subscriber(
                             tracing::info!("Looking for connected user: {}", key);
 
                             // Send to ALL active connections for this key (multi-tab support) -
-                            // except, for an ADDRESSED frame, a session that did not declare it
-                            // can refuse one (history-answer-addressing, rule 6).
-                            let addressed = !is_control
-                                && json
-                                    .get("addressed")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
+                            // except, for a frame needing a capability, a session that did not
+                            // declare it (history-answer-addressing rule 6; the join-ask frames).
+                            let required =
+                                match crate::addressing::required_capability(&json, is_control) {
+                                    Ok(required) => required,
+                                    Err(why) => {
+                                        // chat-delivery and this gateway name capabilities from one
+                                        // list; a name outside it is a deploy that put them apart.
+                                        tracing::error!(
+                                            "[PubSub] control frame for {}:{} NOT delivered - {}",
+                                            recipient_id,
+                                            device_id,
+                                            why
+                                        );
+                                        continue;
+                                    }
+                                };
                             let senders = {
                                 let map = connected_users.lock().unwrap();
                                 map.get(&key).cloned()
@@ -195,8 +206,8 @@ pub fn spawn_redis_subscriber(
                                 found = true;
                                 let (_, refused) = {
                                     let caps = session_caps.lock().unwrap();
-                                    crate::addressing::addressed_recipients(
-                                        addressed,
+                                    crate::addressing::deliverable_sessions(
+                                        required,
                                         senders.keys().copied(),
                                         &caps,
                                     )
@@ -208,11 +219,11 @@ pub fn spawn_redis_subscriber(
                                     // that connected since - or a check that failed. Either way the
                                     // frame does not reach it, and nothing queues it for later.
                                     tracing::error!(
-                                        "[PubSub] ADDRESSED frame NOT delivered to {} conn_id={} (queuedId={}) - this session did not declare {}",
+                                        "[PubSub] frame NOT delivered to {} conn_id={} (queuedId={}) - this session did not declare {}",
                                         key,
                                         conn_id,
                                         queue_id,
-                                        crate::addressing::ADDRESSED_HISTORY_CAPABILITY
+                                        required.unwrap_or("")
                                     );
                                 }
                                 for tx in senders.values() {

@@ -1070,12 +1070,12 @@ So the same bundle answered differently depending on WHEN it was asked. A1's bun
 `builtAt` under two commits is impossible, and only a query against a MOVING ref produces it.
 
 `resolveStamp` once REQUIRED the ref for that reason. **It is gone since 2026-10-05**: the build names
-its own commit (`kit.version.name` is `<builtAtMs>-<sha>`, written by `frontend/svelte.config.js`,
+its own commit (`kit.version.name` is `<builtAtMs>-<sha>`, written by `frontend/kit.config.js`,
 which throws without git), and `parseBuildStamp` in `tools/cross-client-harness/buildstamp.mjs` reads
 it back. No ref, no clock, no inference - the question "which history" cannot be asked wrongly
 because it is not asked. A bundle built before this stamp (a bare number) is refused, not guessed.
 
-**The stamp is computed ONCE per process** (a `Symbol.for` slot on `globalThis`, in `svelte.config.js`): a
+**The stamp is computed ONCE per process** (a `Symbol.for` slot on `globalThis`, in `kit.config.js`): a
 build loads that config more than once, and #1476 stamped at every load, so one output carried two build
 ids and `check-bundle-consistency.mjs` refused it (release `v1.0.4-alpha.1`, 2026-10-06). Deliberately not
 an env var: it would outlive the build and pin a stale stamp. `src/svelteConfigStamp.test.ts` loads the
@@ -1403,11 +1403,12 @@ reads clean.
 
 A settings panel is a `position: fixed` backdrop over the whole page. The gestures that act INSIDE
 one - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` - deliberately leave it up,
-because their callers usually have more to do in there; only `Save` genuinely ends the interaction,
-which is why `saveChannelAccess` is the one that clears. That is correct, and it means the
-obligation to close lands on the check.
+because their callers usually have more to do in there. The access panel's old `Save` was the one
+gesture that ended the interaction and cleared it; since #1171 every control writes on its own, the
+Save is gone, and its helper `saveChannelAccess` was deleted with it (2026-10-26). That leaves the
+obligation to close on the check, every time.
 
-Five of the twelve call sites had quietly dropped it. The comment on `saveChannelAccess` records
+Five of the twelve call sites had quietly dropped it. The comment on `saveChannelAccess` recorded
 this exact aftermath being paid for once already - "COMM-9/10 saved the roster, tried to post, and
 died on `no stable element` for a composer that was plainly in the DOM" - and the fix went to the
 single gesture that had failed. Its sibling `revokeChannelAccess` needs no save, ends inside the
@@ -1882,6 +1883,18 @@ membership(s)`, `N conversation(s) have exactly ONE user`, `N conversation(s) ha
 all`. Matching `[CRON] reportSingleHolderGroups:` would have silenced the findings the report exists
 to deliver, which is how a classifier earns the right to be ignored. The same discipline is already
 written above for `[DEVICE_MEMBERSHIPS] ... stranded=0`.
+
+**A report about the WHOLE estate over the last hour is no row's, so it leaves the row window
+(2026-10-26).** `reportCommitLogHealth` names busy groups and commit-log holes across every group. On
+`1.4.1-alpha.6`, its busy-group line landed in DEV-6's window and read as DEV-6's dirt. The real cause
+was KILL-1's commits an hour earlier, and the clock happened to strike during DEV-6. So `srvlog.mjs`
+now takes every `[CRON] reportCommitLogHealth` line out of each row's window before classifying it,
+and only counts it there (`hourlyCommitReportCount`). Its findings are judged once per run by
+`bun archive/hourlyread.mjs --since <run start>` (`commitreport.mjs`). That read requires:
+
+- every group a report names belongs to the campaign, by ledger id or by its busiest committer;
+- a group at the per-device threshold appears only in an hour KILL-1 ran in, and only one such group;
+- no hole, no failed report, and no spelling the read was not written for. Any of these fails the run.
 
 ### AND A STAMP IS NOT A SPELLING - #742 KILLED EVERY ANCHORED RULE AT ONCE, FOR FIVE DAYS
 
@@ -3775,8 +3788,10 @@ user asked for.
 **What that says about this board is the point.** The defect is invisible to every row here, and to
 the two HEAL-REVOKE cells that ARE green, because they assert the log line - `[RESET] done - nothing
 of this device remains` - or the product's behaviour, and neither is a reading of the disk. It was
-also invisible to every gate in the repo: nothing in CI compiles the Android app, so a missing class
-in a LAYOUT inside a dependency reached a user. **A cell asserting an empty store after a revocation,
+also invisible to every gate in the repo: nothing in CI compiled the Android app, so a missing class
+in a LAYOUT inside a dependency reached a user. (Since 2026-10-30 `compile-android-app` compiles
+the app's Kotlin on a pull request; it would still not have inflated that layout, which only a
+run does.) **A cell asserting an empty store after a revocation,
 on BOTH halves, is therefore owed on A1 and on a web device**, and it is the only row that would have
 caught this. Until it exists, a HEAL-REVOKE pass means the product recovered, never that the device
 is clean.

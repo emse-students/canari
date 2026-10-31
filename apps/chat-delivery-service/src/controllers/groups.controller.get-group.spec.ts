@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { GroupsController } from './groups.controller';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
@@ -47,6 +48,7 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
       providers: [
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(GroupMember), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
         // `createGroup` enrols the creator through the ONE `pending -> active` writer since
@@ -73,6 +75,16 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
     expect(got).toMatchObject({ groupId: 'g-1', activeEpoch: 284, baseEpoch: 283 });
   });
 
+  it('never returns the internal creator column, whoever holds the id', async () => {
+    groupRepo.findOne.mockResolvedValue({ ...ROW, createdBy: 'creator-id' });
+    groupInfoRepo.findOne.mockResolvedValue(null);
+
+    const got = await controller.getGroup('g-1');
+
+    expect(got).not.toHaveProperty('createdBy');
+    expect(got).toMatchObject({ groupId: 'g-1', name: 'Amis' });
+  });
+
   it('answers null - not zero - when no base has ever been published', async () => {
     // AND THE DIFFERENCE IS THE WHOLE POINT. `0` would read as "a base exists and is 284 epochs
     // behind", which is a stale base and asks for a republish; nothing has been lost here, and the
@@ -93,7 +105,7 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
 
     const got = await controller.getGroup('g-missing');
 
-    expect(got).toBeNull();
+    expect(got).toEqual({ found: false });
     expect(groupInfoRepo.findOne).not.toHaveBeenCalled();
   });
 });

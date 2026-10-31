@@ -24,7 +24,7 @@ import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
-import { SignOutInProgressError } from '$lib/stores/auth';
+import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 
 /** Connection watchdog duration - same value as RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
@@ -164,6 +164,7 @@ export async function attemptReconnectImpl(
       deviceKeyB64: ctx.getDeviceKey(),
       scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
       setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+      onCaughtUp: () => ctx.onConnectionCaughtUp(),
       setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
       processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
       log: cb.log,
@@ -192,11 +193,13 @@ export async function attemptReconnectImpl(
       cb.log('[WS] Reconnect stopped - a sign-out is in progress.');
       return;
     }
-    if (err instanceof Error && err.name === 'SessionExpiredError') {
+    // By TYPE, never by name: a session its owner's device revocation ended is a subclass with a
+    // name of its own, and a name compare let it through to the retry below (DEV-3, 2026-10-25).
+    if (err instanceof SessionExpiredError) {
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
-      void goto(resolve('/login'), { replaceState: true });
+      void goto(resolve('/login'), { replace: true });
       return;
     }
     if (err instanceof IdentitySplitError) {

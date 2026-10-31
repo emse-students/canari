@@ -22,10 +22,13 @@ const MY_DEVICE = 'device-test';
 
 const wire = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55]);
 
-/** One archive row; `sender_device_id` decides whether the walk even offers it to MLS. */
-const rowFrom = (senderDeviceId?: string) => ({
+/**
+ * One archive row; its sender pair decides whether the walk even offers it to MLS. A row of this
+ * device names this account too - the server admits a sender only as a member under that pair.
+ */
+const rowFrom = (senderDeviceId?: string, senderId = 'peer') => ({
   id: '1786655250946-0',
-  sender_id: 'peer',
+  sender_id: senderId,
   sender_device_id: senderDeviceId,
   content: toBase64(wire),
   timestamp: String(1786655250946),
@@ -80,7 +83,7 @@ describe('the catch-up session opened by an archive replay', () => {
   it('is never opened when every row of the page is this device own traffic', async () => {
     // These rows are recognised before MLS is offered anything - the server carries
     // `sender_device_id` precisely so they are not decrypted. A page of them needs no session.
-    const { createDecryptSession } = await replay([rowFrom(MY_DEVICE)]);
+    const { createDecryptSession } = await replay([rowFrom(MY_DEVICE, USER)]);
 
     expect(createDecryptSession).not.toHaveBeenCalled();
   });

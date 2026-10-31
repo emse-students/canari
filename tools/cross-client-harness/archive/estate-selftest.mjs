@@ -21,8 +21,26 @@
  *
  *   bun archive/estate-selftest.mjs
  */
-import { readFileSync } from 'node:fs';
-import { estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ANDROID_APP_ORIGIN, appBundleVerdict, estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
+import {
+  DEV_PROJECT,
+  EstateRefusedError,
+  REFUSED_STATUS,
+  devExecCommand,
+  devLogsCommand,
+  devResolveContainer,
+  estateOf,
+  makeEstate,
+  pageVerdict,
+  refuseForeignOrigins,
+  refuseForeignPage,
+  registerAttachOrigin,
+  requireExactOrigin,
+} from '../estate-target.mjs';
 
 const SITE = 'http://localhost:8081';
 const PROD = 'https://canari-emse.fr';
@@ -40,6 +58,12 @@ ok('local only is ACCEPTED', estateVerdict([SITE], SITE).ok);
 ok('local behind the engine schemes is ACCEPTED', estateVerdict([...ENGINE, SITE], SITE).ok);
 ok('production is REFUSED', !estateVerdict([PROD], SITE).ok);
 ok('dev is REFUSED', !estateVerdict([DEV], SITE).ok);
+// THE ANDROID APP IS JUDGED BY ITS RECORDED BUNDLE, never by a timeline its plugin-http traffic never reaches (2026-10-27).
+ok('an app whose recorded bundle targets the estate and passed is ACCEPTED', appBundleVerdict({ origin: DEV, bundleOk: true }, DEV).ok);
+ok('an app no build recorded is REFUSED, never assumed', appBundleVerdict(null, DEV).reason === 'unrecorded');
+ok('an app built for another estate is REFUSED', appBundleVerdict({ origin: SITE, bundleOk: true }, DEV).reason === 'other-estate');
+ok('an app whose bundle check did not pass is REFUSED', appBundleVerdict({ origin: DEV, bundleOk: false }, DEV).reason === 'bundle-unchecked');
+ok('the app origin is one the timeline excuses - which is why its silence proves nothing', NOT_AN_ESTATE.includes(ANDROID_APP_ORIGIN) && estateVerdict([ANDROID_APP_ORIGIN], DEV).reason === 'silent');
 ok('the engine schemes ALONE are refused, as silence', estateVerdict(ENGINE, SITE).reason === 'silent');
 
 // THE STRAY IS THE CASE A WEAKER TEST PASSES. "SITE is among them" would accept this; a client
@@ -106,9 +130,257 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
   ok('restartGateway refuses a non-local estate', /if \(!LOCAL\) \{\s*throw new Error\(\s*`restartGateway/.test(estateSource));
 }
 
+// ── R1 (2026-10-24): THREE ESTATES, AND THE THIRD IS A REFUSAL ──────────────────────────────────
+// Until that day `LOCAL` was a boolean and everything not local was routed to PRODUCTION's
+// containers, so pointing SITE at dev would have read production and reported it as dev. These
+// assertions drive the real routing (`makeEstate`) with STUB transports: what is asserted is which
+// host and which command a call would have reached, and that a refused SITE reaches nothing at all.
+{
+  const refusal = (site) => {
+    try {
+      estateOf(site);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  ok('the local estate is accepted', estateOf(SITE) === 'local');
+  ok('127.0.0.1 is the local estate too', estateOf('http://127.0.0.1:8081') === 'local');
+  ok('dev is accepted, as exactly https on the default port', estateOf(DEV) === 'dev' && estateOf(`${DEV}/chat`) === 'dev');
+  for (const prod of [PROD, 'https://canari.emse.fr', 'https://www.canari-emse.fr', `${PROD}/api/version`]) {
+    const e = refusal(prod);
+    ok(`PRODUCTION ${prod} is REFUSED, typed, reason 'production'`, e instanceof EstateRefusedError && e.reason === 'production');
+    ok(`and the refusal says PRODUCTION in words (${prod})`, /PRODUCTION/.test(e?.message ?? ''));
+  }
+  ok('dev over plain http is refused', refusal('http://dev.canari-emse.fr')?.reason === 'insecure-dev');
+  ok('dev on another port is refused', refusal('https://dev.canari-emse.fr:8443')?.reason === 'insecure-dev');
+  ok('an undeclared host is refused, not guessed', refusal('https://staging.canari-emse.fr')?.reason === 'unknown');
+  ok('a value that is not a URL is refused', refusal('dev')?.reason === 'unparseable');
+
+  // The transports, recorded rather than run.
+  const harness = (site, devSshHost = 'dev-host-alias') => {
+    const calls = { docker: [], dockerSpawn: [], ssh: [] };
+    let built = null;
+    let error = null;
+    try {
+      built = makeEstate({
+        site,
+        devSshHost,
+        docker: (args) => (calls.docker.push(args), 'canari-local-postgres-1\n'),
+        dockerSpawn: (args) => (calls.dockerSpawn.push(args), { status: 0, stdout: 'a\n\u001b[32mb\u001b[0m\n', stderr: 'c\n' }),
+        ssh: (host, command) => (calls.ssh.push({ host, command }), 'line one\n\nline two'),
+      });
+    } catch (e) {
+      error = e;
+    }
+    return { calls, built, error };
+  };
+  const untouched = (c) => c.docker.length + c.dockerSpawn.length + c.ssh.length === 0;
+
+  for (const prod of [PROD, 'https://canari.emse.fr']) {
+    const h = harness(prod);
+    ok(`makeEstate(${prod}) throws at construction`, h.error instanceof EstateRefusedError && h.built === null);
+    ok(`and no transport was touched for ${prod}`, untouched(h.calls));
+  }
+  {
+    const h = harness(DEV, null);
+    ok('dev without DEV_SSH_HOST is refused, naming the missing setting', h.error?.reason === 'no-dev-host' && /DEV_SSH_HOST/.test(h.error.message));
+    ok('and touched nothing', untouched(h.calls));
+    ok('a placeholder host (the example file\'s) is refused the same way', harness(DEV, '<ssh alias>').error?.reason === 'no-dev-host');
+  }
+
+  const dev = harness(DEV);
+  ok('dev builds, and says it is dev', dev.built?.ESTATE === 'dev' && dev.built.DEV && !dev.built.LOCAL);
+  dev.built.psql("SELECT id FROM users WHERE x = 'a$1'");
+  dev.built.redis('XLEN some-stream');
+  const lines = dev.built.srvLines('core-service', '900s');
+  dev.built.verifyTarget(['postgres']);
+  const devCommands = dev.calls.ssh.map((c) => c.command);
+  ok('every dev call went over ssh to DEV_SSH_HOST, and none to local docker', dev.calls.ssh.length === 4 && dev.calls.ssh.every((c) => c.host === 'dev-host-alias') && dev.calls.docker.length === 0 && dev.calls.dockerSpawn.length === 0);
+  ok('every dev command resolves its container by the canari-dev compose LABEL', devCommands.every((c) => c.includes('--filter label=com.docker.compose.project=canari-dev')));
+  ok('and re-reads the label on the container before using it', devCommands.every((c) => c.includes('docker inspect -f') && c.includes('!= canari-dev')));
+  ok('no dev command names a container, so none can name production\'s', devCommands.every((c) => !/infrastructure-|canari-prod|canari-local/.test(c)));
+  ok('psql reaches the postgres service', devCommands[0].includes('com.docker.compose.service=postgres'));
+  ok('psql runs as the container\'s own POSTGRES_USER', devCommands[0].includes('printenv POSTGRES_USER') && devCommands[0].includes('psql -X -U "$u" -d auth_db'));
+  ok('the SQL is single-quoted, so $1 and quotes reach Postgres intact', devCommands[0].endsWith(`-tAc 'SELECT id FROM users WHERE x = '\\''a$1'\\'''`));
+  ok('redis reaches the redis service', devCommands[1].includes('com.docker.compose.service=redis') && devCommands[1].endsWith('docker exec "$c" redis-cli XLEN some-stream'));
+  ok('the log window reaches the named service, both streams', devCommands[2].includes('com.docker.compose.service=core-service') && devCommands[2].endsWith('docker logs --since 900s "$c" 2>&1'));
+  ok('and its lines come back trimmed, blanks dropped', lines.join('|') === 'line one|line two');
+  ok('a service name that is not one is refused before it is spliced into a command', (() => {
+    try {
+      devResolveContainer('postgres; rm -rf /');
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+  ok('a stamped log window asks docker for its own instants, and only when asked', devLogsCommand('core-service', '900s', { timestamps: true }).endsWith('docker logs --timestamps --since 900s "$c" 2>&1') && !devLogsCommand('core-service', '900s').includes('--timestamps'));
+  ok('so is a --since that is not one', (() => {
+    try {
+      devLogsCommand('core-service', '1h; reboot');
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+
+  const local = harness(SITE);
+  local.built.psql('SELECT 1');
+  local.built.redis('PING');
+  const localLines = local.built.srvLines('core-service', '60s');
+  ok('the local estate never reaches ssh', local.calls.ssh.length === 0);
+  ok('and addresses the canari-local containers', local.calls.docker.every((a) => a[1]?.startsWith('canari-local-')) && local.calls.dockerSpawn[0]?.at(-1) === 'canari-local-core-service-1');
+  ok('the local log reader keeps BOTH streams and strips colour', localLines.join('|') === 'a|b|c');
+}
+
+// ── THE RESOLVER IS EXECUTED, NOT ONLY READ: a stub `docker` on PATH, the real shell snippet ──────
+// A string test cannot tell a snippet that refuses from one that falls through to `docker exec`
+// with an empty name. This runs it under `sh` against four states of a fake daemon.
+{
+  const sh = spawnSync('sh', ['-c', 'exit 0']);
+  if (sh.error) {
+    ok('sh is available to execute the resolver (needed by this gate)', false);
+  } else {
+    const dir = mkdtempSync(join(tmpdir(), 'estate-selftest-'));
+    writeFileSync(
+      join(dir, 'docker'),
+      [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  ps) printf "%b" "$FAKE_PS" ;;',
+        '  inspect) printf "%s\\n" "$FAKE_PROJECT" ;;',
+        '  exec) shift; echo "EXEC $*" ;;',
+        'esac',
+      ].join('\n'),
+    );
+    chmodSync(join(dir, 'docker'), 0o755);
+    const run = (ps, project) =>
+      spawnSync('sh', ['-c', devExecCommand('postgres', 'psql -c 1')], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${dir}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH}`, FAKE_PS: ps, FAKE_PROJECT: project },
+      });
+    const one = run('canari-dev-postgres-1\\n', DEV_PROJECT);
+    ok('one running container labelled canari-dev: the command runs IN it', one.status === 0 && one.stdout.trim() === 'EXEC canari-dev-postgres-1 psql -c 1');
+    const none = run('', DEV_PROJECT);
+    ok(`no container: refused with ${REFUSED_STATUS}, nothing executed`, none.status === REFUSED_STATUS && !none.stdout.includes('EXEC'));
+    const two = run('a\\nb\\n', DEV_PROJECT);
+    ok(`two containers: refused with ${REFUSED_STATUS}, nothing executed`, two.status === REFUSED_STATUS && !two.stdout.includes('EXEC'));
+    const foreign = run('x-postgres-1\\n', 'canari-prod');
+    ok(`a container reporting another project: refused with ${REFUSED_STATUS}, nothing executed`, foreign.status === REFUSED_STATUS && !foreign.stdout.includes('EXEC'));
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ── A PAGE IS ATTACHED TO OR NAVIGATED TO ONLY BY ALLOWLIST (R1 review, 2026-10-24) ─────────────
+{
+  const allowed = (url, estate = DEV) => pageVerdict(url, estate).ok;
+  ok('a page on the estate passes, any path', allowed(`${DEV}/chat`) && allowed(`${SITE}/g/join/x`, SITE));
+  ok('a page on ANOTHER estate is refused (local page while SITE is dev, and back)', !allowed(`${SITE}/chat`) && !allowed(`${DEV}/chat`, SITE));
+  ok('production is refused under both names and www', !allowed(`${PROD}/chat`) && !allowed('https://canari.emse.fr/chat') && !allowed('https://www.canari-emse.fr/'));
+  ok('the trailing-dot spelling the denylist let through is refused', !allowed('https://canari-emse.fr./chat') && !allowed('https://dev.canari-emse.fr./chat'));
+  ok('upper case is the same host to a browser and is judged as such', !allowed('https://CANARI-EMSE.FR/chat') && allowed('https://DEV.canari-emse.fr/chat'));
+  ok('an unknown host, another port, plain http of dev are refused', !allowed('https://example.org/') && !allowed('https://dev.canari-emse.fr:8443/') && !allowed('http://dev.canari-emse.fr/'));
+  ok('the Tauri engine pages pass', allowed('http://tauri.localhost/chat') && allowed('tauri://localhost/chat'));
+  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-native://newtab/') && allowed('chrome-error://chromewebdata/') && allowed('') && !allowed(' ') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
+  ok('the identity providers pass over https only', allowed('https://miconnect.emse.fr/if/flow/x') && allowed('https://auth.canari-emse.fr/x') && allowed('https://cas.emse.fr/cas/login') && !allowed('http://miconnect.emse.fr/'));
+  ok('a production refusal says so', /PRODUCTION/.test(pageVerdict('https://canari-emse.fr./x', DEV).why));
+  ok('a non-URL is refused', !allowed('not a url'));
+  // The registry: nothing registered refuses everything; site.mjs registers SITE.
+  const refusal = (url) => {
+    try {
+      refuseForeignPage(url);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  const unregistered = refusal(`${DEV}/chat`);
+  ok('with no estate registered, even the estate is refused (no fallback)', unregistered instanceof EstateRefusedError && unregistered.reason === 'no-estate');
+  registerAttachOrigin(DEV);
+  const prodPage = refusal('https://canari-emse.fr./chat');
+  ok('registered on dev: a production page is refused, typed', prodPage instanceof EstateRefusedError && prodPage.reason === 'production');
+  ok('registered on dev: a dev page passes', refusal(`${DEV}/chat`) === null);
+  // Exact origins only, for SITE and every web ORIGIN.
+  const exact = (v) => {
+    try {
+      return requireExactOrigin(v) === v;
+    } catch {
+      return false;
+    }
+  };
+  ok('SITE must be exactly an origin', exact(DEV) && exact(SITE) && !exact(`${DEV}/`) && !exact(`${DEV}/chat`) && !exact('https://DEV.canari-emse.fr') && !exact('https://dev.canari-emse.fr.') && !exact('dev.canari-emse.fr'));
+  let slash = null;
+  try {
+    refuseForeignOrigins({ W1: `${DEV}/` }, 'dev');
+  } catch (e) {
+    slash = e;
+  }
+  ok('a web ORIGIN with a trailing slash is refused', slash instanceof EstateRefusedError && /ORIGIN\.W1/.test(slash.message));
+  // The attach path, the navigation path and the browser launch all go through the guard.
+  const cdpSource = readFileSync(new URL('../cdp.mjs', import.meta.url), 'utf8');
+  const launchSource = readFileSync(new URL('../launch.mjs', import.meta.url), 'utf8');
+  ok('listTargets refuses every listed page before returning it', cdpSource.includes('for (const t of pages) refuseForeignPage(String(t.url));'));
+  ok(
+    'every Page.navigate and Target.createTarget is judged before it is sent',
+    cdpSource.includes(`{ 'Page.navigate': 'url', 'Target.createTarget': 'url' }`) && cdpSource.includes('refuseForeignPage(String(params[NAVIGATIONS[method]]))')
+  );
+  ok('startBrowser judges its landing url and the pages the profile restored', launchSource.includes('refuseForeignPage(url);') && launchSource.includes('await listTargets(port);'));
+  const rawList = [];
+  for (const dir of [new URL('../', import.meta.url), new URL('./', import.meta.url)]) {
+    for (const name of readdirSync(dir)) {
+      // phone-ios.mjs lists the iPhone bridge to FIND the app page, then attaches through listTargets.
+      if (!name.endsWith('.mjs') || ['cdp.mjs', 'phone-ios.mjs', 'estate-selftest.mjs'].includes(name)) continue;
+      const code = readFileSync(new URL(name, dir), 'utf8').replace(/^\s*(\/\/|\*).*$/gm, '');
+      if (code.includes('/json/list')) rawList.push(name);
+    }
+  }
+  ok('no rig file reads /json/list itself, around the one attach path', rawList.length === 0);
+  if (rawList.length) console.log(`         offenders: ${rawList.join(' ')}`);
+  let foreign = null;
+  try {
+    refuseForeignOrigins({ W1: DEV, W2: PROD, A1: 'http://tauri.localhost' }, 'dev');
+  } catch (e) {
+    foreign = e;
+  }
+  ok('an ORIGIN map with a web device on production is refused while SITE is dev', foreign instanceof EstateRefusedError && /ORIGIN\.W2/.test(foreign.message));
+  ok('one whose web devices are all on dev passes', refuseForeignOrigins({ W1: DEV, W2: DEV, I1: 'tauri://localhost' }, 'dev').W1 === DEV);
+}
+
+// ── THE DOOR CANNOT BE WALKED AROUND: only site.mjs reads SITE or ORIGIN out of names.mjs ────────
+{
+  const root = new URL('../', import.meta.url);
+  const offenders = [];
+  let scanned = 0;
+  for (const dir of [root, new URL('./', import.meta.url)]) {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.mjs') || name === 'site.mjs') continue;
+      const source = readFileSync(new URL(name, dir), 'utf8');
+      scanned++;
+      for (const m of source.matchAll(/^\s*(?:import|export)\s*\{([^}]*)\}\s*from\s*['"]\.\.?\/names\.mjs['"]/gm)) {
+        if (/\b(SITE|ORIGIN)\b/.test(m[1])) offenders.push(name);
+      }
+      if (/import\(\s*['"]\.\.?\/names\.mjs['"]\s*\)\)?\.(SITE|ORIGIN)/.test(source)) offenders.push(name);
+      // THE OTHER IMPORT FORMS (R1 review): a namespace import read as `N.SITE` or `N[...]`, a
+      // destructured dynamic import, and a `createRequire` of names.mjs in a file reading `.SITE`.
+      // Not covered, and said in the README: the one non-JS driver, `a1.py`, which reads no estate.
+      for (const ns of source.matchAll(/import\s*\*\s*as\s+(\w+)\s+from\s*['"]\.\.?\/names\.mjs['"]/g)) {
+        if (new RegExp(`\\b${ns[1]}\\s*(\\.\\s*(SITE|ORIGIN)\\b|\\[)`).test(source)) offenders.push(`${name} (namespace)`);
+      }
+      if (/\{[^}]*\b(SITE|ORIGIN)\b[^}]*\}\s*=\s*await\s+import\(\s*['"]\.\.?\/names\.mjs['"]/.test(source)) offenders.push(`${name} (dynamic)`);
+      if (/createRequire\([^)]*\)\(\s*['"]\.\.?\/names\.mjs['"]\s*\)/.test(source) && /\.\s*(SITE|ORIGIN)\b/.test(source)) offenders.push(`${name} (require)`);
+    }
+  }
+  ok(`no rig file but site.mjs takes SITE or ORIGIN from names.mjs (${scanned} scanned)`, scanned > 100 && offenders.length === 0);
+  if (offenders.length) console.log(`         offenders: ${offenders.join(' ')}`);
+  for (const file of ['../estate.mjs', '../estate-target.mjs']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    ok(`${file.slice(3)} names no production container or project`, !/infrastructure-|canari-prod/.test(source));
+  }
+}
+
 console.log(
   failures
-    ? `[estate] ${failures} FAILURE(S) - the gate deciding what a +A1 verdict is about does not hold`
-    : '[estate] clean - it accepts the local estate, refuses every other, and an opaque origin is not one',
+    ? `[estate] ${failures} FAILURE(S) - the gate deciding which estate the rig addresses does not hold`
+    : '[estate] clean - local and dev only, production refused before any transport, dev addressed by label',
 );
 process.exit(failures ? 1 : 0);

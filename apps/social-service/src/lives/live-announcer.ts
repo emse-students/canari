@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
+import { acceptedFollowSql } from '../follows/follow-status';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { liveVisibleToUserSql } from '../spaces/reader-spaces';
 import { isLiveEnabled } from './live-enabled.guard';
@@ -9,8 +10,9 @@ import { short } from './live-log';
 /** Short form of an id for a log line. */
 
 /**
- * Who is told that a live started (decision L10): the broadcaster's FOLLOWERS - `user_follows` for a
- * member's live, `association_follows` for a live broadcast as an association - minus the
+ * Who is told that a live started (decision L10): the broadcaster's FOLLOWERS - the ACCEPTED
+ * `user_follows` rows for a member's live (a pending request is not a follow, WP-F1),
+ * `association_follows` for a live broadcast as an association - minus the
  * broadcaster, minus a follower who cannot SEE it (`liveVisibleToUserSql`: the rule of a post by the
  * same author or association, so a member's live reaches only followers sharing a space with them),
  * minus either side of a block with the broadcaster, minus a viewer the broadcaster already removed.
@@ -27,7 +29,8 @@ import { short } from './live-log';
 export function liveAudienceSql(asAssociation: boolean): string {
   const followers = asAssociation
     ? `SELECT f."followerUserId" AS id FROM association_follows f WHERE f."associationId" = $3`
-    : `SELECT f."followerUserId" AS id FROM user_follows f WHERE f."followedUserId" = $1`;
+    : `SELECT f."followerUserId" AS id FROM user_follows f
+         WHERE f."followedUserId" = $1 AND ${acceptedFollowSql('f')}`;
   // The visibility predicate is the PLAIN one (no read grant), as for a post's announcement: a named
   // reader is never notified for their perimeter.
   return `SELECT DISTINCT fw.id FROM (${followers}) fw
@@ -66,8 +69,8 @@ export interface ClaimedLive {
  * commit - the trade `PostAnnounceScheduler` documents: a crash between the two loses ONE
  * announcement, where the other order could repeat it.
  *
- * OFF ON PRODUCTION: nothing is sent unless `LIVE_ENABLED` is `true`, whoever calls (the ingest
- * route that claims is itself behind the same switch).
+ * Nothing is sent unless `LIVE_ENABLED` is `true`, whoever calls (the ingest route that claims is
+ * itself behind the same switch, and behind `lives_mode` too).
  *
  * In-app: NO bell row. A live is deleted when it ends (L3), so a row naming it would be a 404 for
  * ever after; the LIVE card at the top of the feed (L5, client-side, still owed) is its in-app face.

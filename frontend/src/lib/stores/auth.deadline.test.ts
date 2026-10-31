@@ -133,7 +133,12 @@ describe('the refresh deadline', () => {
   it('reads a 401 on the re-send exactly as before: a dead session, announced once', async () => {
     const handler = vi.fn();
     setSessionExpiredHandler(handler);
-    fetchMock.mockImplementationOnce(hung).mockResolvedValueOnce(new Response('', { status: 401 }));
+    fetchMock.mockImplementationOnce(hung).mockResolvedValueOnce(
+      new Response(JSON.stringify({ statusCode: 401, message: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
 
     const outcome = refresh().catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(REFRESH_DEADLINE_MS);

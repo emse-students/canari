@@ -21,6 +21,14 @@
 export const DELETED_ACCOUNT = '[deleted]';
 
 /**
+ * True for an id an erasure wrote: `DELETED_ACCOUNT` itself (most tables), or `[deleted]:<row id>`
+ * (tables whose unique index needs one value per row, such as `product_checkouts`).
+ */
+export function isErasedAccount(userId: string): boolean {
+  return userId === DELETED_ACCOUNT || userId.startsWith(`${DELETED_ACCOUNT}:`);
+}
+
+/**
  * `delete` - the rows go. `anonymise` - the row stays (it also belongs to other people, or is an
  * accounting record) and the id becomes {@link DELETED_ACCOUNT}, or NULL where the column allows
  * it. `kept` - deliberately untouched, with the reason. `code` - carried out by code rather than a
@@ -48,6 +56,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'association_role_history.user_id': { action: 'delete' },
   'user_follows.followerUserId': { action: 'delete' },
   'user_follows.followedUserId': { action: 'delete' },
+  'user_follow_notices.followerUserId': { action: 'delete' },
+  'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
   'association_push_mutes.userId': { action: 'delete' },
   'user_tags.userId': { action: 'delete' },
@@ -64,6 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
+  // A booking notice's place and slot (migration 117): holds no account id itself, and goes with
+  // the row the recipient's (or the actor's) statement above deletes - never kept past its person.
+  'post_notifications.meta': { action: 'delete', via: 'recipientId' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },
@@ -121,6 +134,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
   'association_documents.uploadedBy': { action: 'anonymise' },
   'associations.createdBy': { action: 'anonymise' },
+  // A Lydia cashier (migration 118): the person's own row goes, sealed phone included - the rights
+  // Lydia still holds for that number are lot 3's removal (docs/wiki/account-erasure.md).
+  'lydia_cashiers.userId': { action: 'delete' },
+  'lydia_cashiers.addedByUserId': { action: 'anonymise' },
   'poster_projects.createdBy': { action: 'anonymise' },
   'workspace_invites.createdBy': { action: 'anonymise' },
   'channel_workspaces.createdBy': { action: 'anonymise' },
@@ -128,6 +145,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'proposals.proposedBy': { action: 'anonymise' },
   'proposals.decidedBy': { action: 'anonymise' },
   'user_tags.grantedBy': { action: 'anonymise' },
+  // Who recorded how a payment paid and not granted was settled (migration 113): an accounting
+  // record, kept, its author anonymised like every other authorship column.
+  'purchase_record_closings.closedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -408,6 +428,20 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
 ];
 
 /**
+ * The order `ERASURE_ROW_STATEMENTS` rewrites the buyer's tier rows in, the order every tier path
+ * locks them, so an erasure and a tier write queue instead of deadlocking or leaving a real id
+ * behind. Asserted by `account-erasure.spec.ts`.
+ * - `product_checkouts` FIRST: a settlement locks its checkout row, then INSERTS the purchase record
+ *   and writes the tag. An erasure that rewrote `purchase_records` first would miss that record (not
+ *   committed yet), then wait on the checkout row; the settlement would commit a record carrying the
+ *   real id. Waiting on the checkout row FIRST means the record is committed before it is rewritten.
+ * - `purchase_records` next: a closing locks its record, then writes the tag (it never touches a
+ *   checkout row, so this order has no cycle with it).
+ * - `user_tags` last: whichever tier write ran first, its tag is deleted.
+ */
+export const ERASURE_TIER_ORDER = ['product_checkouts', 'purchase_records', 'user_tags'] as const;
+
+/**
  * The statements that run BEFORE the scrub of other people's posts, in the order they must run inside
  * ONE transaction. Order matters where a row references another (`minesweeper_scores` before
  * `minesweeper_challenges`), and where one statement reads what the next rewrites (an association's
@@ -424,16 +458,39 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Own content and standing
   { label: 'posts', sql: `DELETE FROM posts WHERE "authorId" = $1` },
   { label: 'association_members', sql: `DELETE FROM association_members WHERE "userId" = $1` },
+  { label: 'lydia_cashiers', sql: `DELETE FROM lydia_cashiers WHERE "userId" = $1` },
+  {
+    label: 'lydia_cashiers_added_by',
+    sql: `UPDATE lydia_cashiers SET "addedByUserId" = $2 WHERE "addedByUserId" = $1`,
+  },
   { label: 'role_history', sql: `DELETE FROM association_role_history WHERE user_id = $1` },
   {
     label: 'user_follows',
     sql: `DELETE FROM user_follows WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
   },
   {
+    label: 'user_follow_notices',
+    sql: `DELETE FROM user_follow_notices WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
+  },
+  {
     label: 'association_follows',
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
+  // Anonymised, in `ERASURE_TIER_ORDER` (checkouts, records, then the tags): the order a settlement
+  // (checkout row, record, tag) and a closing (record, tag) take. An erasure that runs first is seen
+  // by both: the settlement of an erased buyer's checkout records `paid_not_granted` and grants
+  // nothing (`settlePaidCheckout`), a closing refuses `granted`. One that runs second rewrites the
+  // record the other committed and deletes its tag. Unique per row for checkouts, for the partial
+  // unique index on open attempts.
+  {
+    label: 'product_checkouts',
+    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
+  },
+  {
+    label: 'purchase_records',
+    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
+  },
   { label: 'user_tags', sql: `DELETE FROM user_tags WHERE "userId" = $1` },
   { label: 'user_moderation', sql: `DELETE FROM user_moderation WHERE "userId" = $1` },
   { label: 'form_respondents', sql: `DELETE FROM form_respondents WHERE "userId" = $1` },
@@ -486,19 +543,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
   ...LIVES_ERASURE_STATEMENTS,
 
-  // Anonymised
-  {
-    label: 'purchase_records',
-    sql: `UPDATE purchase_records SET "userId" = $2 WHERE "userId" = $1`,
-  },
+  // Anonymised (purchase_records and product_checkouts above, before the tags)
   {
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
-  },
-  // Unique per row, for the partial unique index named above.
-  {
-    label: 'product_checkouts',
-    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
   },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
@@ -569,6 +617,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
   {
+    label: 'purchase_closings',
+    sql: `UPDATE purchase_record_closings SET "closedByUserId" = $2 WHERE "closedByUserId" = $1`,
+  },
+  {
     label: 'moderation_muted',
     sql: `UPDATE user_moderation SET "mutedBy" = $2 WHERE "mutedBy" = $1`,
   },
@@ -587,11 +639,14 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // a community the account had already left - a name no key group can act on, because a salon's
   // group entitles only members of its community (`isDistributionGroupEntitled`) and that earlier
   // departure already cut its seats. So there is no key distribution to cut, only the name to drop.
+  // It is an access write all the same, so it raises `accessRevision` like every other one: a
+  // settings panel still showing the name must not rewrite the list as if it had not changed.
   {
     label: 'channel_allowed_users',
     sql: `UPDATE channels
              SET "allowedUsers" = array_to_string(
-                   array_remove(string_to_array("allowedUsers", ','), lower($1)), ',')
+                   array_remove(string_to_array("allowedUsers", ','), lower($1)), ','),
+                 "accessRevision" = "accessRevision" + 1
            WHERE lower($1) = ANY(string_to_array("allowedUsers", ','))`,
   },
   // Its mention on OTHER people's posts: the column (comma-joined, ids compared lower-cased) ...
@@ -931,7 +986,17 @@ export interface SocialErasureResult {
   postsScrubbed: number;
   /** Pinned salon messages that were deleted: each salon is told its pin is gone. */
   pinsRemoved: Array<{ id: string; channelId: string }>;
+  /**
+   * The account's LIVE Lydia cashier rows (`removedAt` NULL) the erasure deleted: Lydia still holds
+   * that person as a cashier of that Business, and nothing in Canari tracks it any more - the
+   * caller reports each one at ERROR. Never the phone.
+   */
+  liveCashiersErased: Array<{ associationId: string; vendorToken: string }>;
 }
+
+/** The account's live Lydia cashier rows, read before the erasure deletes them. */
+const LIVE_CASHIERS_SQL = `SELECT "associationId", "vendorToken" FROM lydia_cashiers
+  WHERE "userId" = $1 AND "removedAt" IS NULL`;
 
 /**
  * The media of the account's association posts, which stay with the association. Read BEFORE the
@@ -971,6 +1036,10 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
+  const liveCashiersErased = await db.read<{ associationId: string; vendorToken: string }>(
+    LIVE_CASHIERS_SQL,
+    [userId]
+  );
 
   const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
   // In the log line's `rows=`: how many associations the erasure held while it ran.
@@ -990,5 +1059,5 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   }
   // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
   Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
-  return { counts, postsScrubbed, pinsRemoved };
+  return { counts, postsScrubbed, pinsRemoved, liveCashiersErased };
 }

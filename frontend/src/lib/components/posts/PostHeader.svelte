@@ -2,11 +2,17 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
-  import { Clock, Repeat2, Send, VenetianMask } from '@lucide/svelte';
+  import RevealedAuthorLine from './RevealedAuthorLine.svelte';
+  import { Clock, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-  import { postAuthorHref, postAuthorLinkLabel, postAuthorName } from '$lib/posts/postAuthorName';
-  import { pendingRequests, republishedByLine } from '$lib/posts/republication';
+  import {
+    postAuthorHref,
+    postAuthorLinkLabel,
+    postAuthorName,
+    revealedPostAuthor,
+  } from '$lib/posts/postAuthorName';
+  import { pendingRequests, republishedByText } from '$lib/posts/republication';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -16,16 +22,22 @@
 
   let { post }: Props = $props();
 
-  /** True whenever the reader can see WHO published an anonymous post - drives the badge alone. */
-  const anonymousBadge = $derived(!!post.anonymous && !!post.authorId);
+  /**
+   * Who wrote an anonymous post, when the server told this reader (author, moderator, admin): drawn
+   * small under "Anonyme", which stays the name (user, 2026-10-24).
+   */
+  const revealed = $derived(revealedPostAuthor(post));
 
   /** The post's publisher name - see `postAuthorName`, shared with the media viewer. */
   function getPostAuthorName(): string {
     return postAuthorName(post);
   }
 
-  /** "Republie par X, Y +N" (D38): one card per post, however many associations carry it. */
-  const republished = $derived(republishedByLine(post.republishedBy));
+  /**
+   * "Republie par X, Y +N" (D38): one card per post, however many associations carry it - on the
+   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own.
+   */
+  const republished = $derived(republishedByText(post.republishedBy));
 
   /**
    * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this
@@ -73,31 +85,25 @@
         <span class="text-text-main text-sm font-bold">{getPostAuthorName()}</span>
       {/if}
     </div>
-    <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">
-      <Clock size={12} strokeWidth={2.5} />
-      <span title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
-      {#if anonymousBadge}
-        <span class="inline-flex items-center gap-1" title={m.post_anonymous_badge_hint()}>
-          <VenetianMask size={12} strokeWidth={2.5} />
-          {m.post_anonymous_label()}
-        </span>
+    {#if revealed}
+      <RevealedAuthorLine
+        userId={revealed.userId}
+        fallback={revealed.name}
+        class="text-text-muted"
+      />
+    {/if}
+    <div
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium opacity-80"
+      data-post-time-line
+    >
+      <Clock size={12} strokeWidth={2.5} class="shrink-0" />
+      <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      {#if republished}
+        <span class="shrink-0" aria-hidden="true">&middot;</span>
+        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
+        <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
       {/if}
     </div>
-    {#if republished}
-      <div class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium">
-        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" />
-        <span class="truncate">
-          <EmojiText
-            text={republished.extra > 0
-              ? m.post_republished_by_more({
-                  names: republished.names.join(', '),
-                  count: republished.extra,
-                })
-              : m.post_republished_by({ names: republished.names.join(', ') })}
-          />
-        </span>
-      </div>
-    {/if}
     {#if requested.length > 0}
       <div class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium">
         <Send size={12} strokeWidth={2.5} class="shrink-0" />

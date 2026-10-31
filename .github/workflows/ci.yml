@@ -83,6 +83,7 @@ jobs:
       run-frontend-build: ${{ steps.matrix.outputs.frontend_build }}
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
+      run-android-app: ${{ steps.matrix.outputs.android_app }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
       run-miconnect: ${{ steps.matrix.outputs.miconnect }}
     steps:
@@ -115,6 +116,7 @@ jobs:
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
+            echo "android_app=true"  >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
             echo "miconnect=true"    >> "$GITHUB_OUTPUT"
           }
@@ -300,10 +302,10 @@ jobs:
 
           # The PRODUCTION BUILD runs on a pull request only when what it consumes changed: the
           # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
-          # (`svelte.config`, `vite.config`, so the adapters too) and the image that serves the
+          # (`kit.config`, `vite.config`, so the adapters too) and the image that serves the
           # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
           # passed every gate here, because nothing ran the build before the merge.
-          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/svelte.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend_build=false" >> "$GITHUB_OUTPUT"
@@ -320,6 +322,28 @@ jobs:
             echo "android=true" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- Android `:app` compile --
+          # What `compile-android-app` reads: the Android project itself, and whatever feeds the
+          # generation of its `tauri.settings.gradle` AND the Rust it checks for the Android target
+          # (the app crate's `build.rs` runs under cargo, so the manifest, the lock, the toolchain,
+          # the crate's sources, `mls-core` it depends on by path, and the native plugins it names),
+          # plus its own script. This is the ONLY pull-request compile for an Android Rust target,
+          # which is why `src/` is here. Narrower than `android` above on purpose: `android-tests`
+          # is a JVM project this job does not build, and it pays minutes of Rust.
+          if has '^frontend/src-tauri/gen/android/' || \
+             has '^frontend/src-tauri/src/' || \
+             has '^frontend/src-tauri/Cargo\.(toml|lock)$' || \
+             has '^frontend/src-tauri/build\.rs$' || \
+             has '^frontend/src-tauri/tauri\.conf\.json$' || \
+             has '^frontend/src-tauri/(plugins|patches)/' || \
+             has '^frontend/mls-core/' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/scripts/android-app-compile\.sh$'; then
+            echo "android_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android_app=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- MLS cross-version compatibility --
@@ -700,6 +724,25 @@ jobs:
         env:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- session-push-end.integration
+
+      # A USER WRITE UPDATES ITS COLUMNS AND NEVER SAVES THE ROW IT READ: each user write with a
+      # concurrent writer committed between its read and its write. Its own tables, in a throwaway
+      # schema, so the boot's database is all it needs (docs/wiki/services/core-service.md).
+      - name: User writes against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- user-write-gone.integration
+
+      # A PLATFORM CONFIG WRITE UPDATES THE COLUMNS IT NAMES: two administrators editing different
+      # settings keep both. Its own table, in a throwaway schema (docs/wiki/services/core-service.md).
+      - name: Platform config writes against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- platform-config-write.integration
 
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
@@ -1087,19 +1130,7 @@ jobs:
           bun run check
           bun run format:check
 
-      # `test:coverage` runs the exact same suite as `test` (coverage only instruments and
-      # reports, it does not change which tests exist), so a plain run first caught nothing a
-      # failure here would not - it only doubled the frontend suite's wall-clock cost every run.
-      - name: Run Vitest with coverage
-        working-directory: frontend
-        run: bun run test:coverage
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: frontend-coverage
-          path: frontend/coverage/
+      # THE VITEST SUITE RUNS IN `test-frontend-shards`, below.
 
       # THE PRODUCTION FRONTEND IS BUILT ON `main`, AND ON A PULL REQUEST THAT TOUCHES WHAT THE BUILD
       # CONSUMES (dependencies, build config, the serving image: `frontend_build` in `changes`), NOT
@@ -1121,6 +1152,57 @@ jobs:
       - name: Assert what the build carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+
+  # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
+  # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
+  # and the build stay in `test-frontend`; the suite is split with vitest's own `--shard=i/N`, which
+  # partitions the test FILES deterministically. Each shard repeats the ~1.5 min setup (dependencies,
+  # wasm, protobuf) rather than sharing an artefact. Coverage is uploaded per shard; no threshold is
+  # enforced anywhere. `CI passed` needs this job and `ci-passed-gate.test.mjs` fails if it stops.
+  test-frontend-shards:
+    name: Test Frontend (shard ${{ matrix.shard }}/4)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-frontend == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Sync SvelteKit
+        working-directory: frontend
+        run: bun run sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Run Vitest shard with coverage
+        working-directory: frontend
+        run: bun run test:coverage --shard=${{ matrix.shard }}/4
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: frontend-coverage-${{ matrix.shard }}
+          path: frontend/coverage/
 
   # =================================================================================================
   # THE ANDROID UNIT TESTS, WHICH HAD NEVER RUN ON ANY MACHINE
@@ -1178,6 +1260,65 @@ jobs:
 
       - name: Run the Android unit tests
         run: bash .github/scripts/android-unit-tests.sh
+
+  # THE GATE THE CEILING WAS WAITING FOR (2026-10-30). Until now nothing on a pull request configured
+  # the `:app` module, so `lib/ceiling.sh` refused EVERY Gradle update to `gen/android` - the
+  # wrapper, AndroidX and Firebase bumps sat blocked with auto-merge armed. This compiles `:app` for
+  # real: the app crate's build script generates `tauri.settings.gradle` (as `tauri android build`
+  # does), a committed STUB stands in for the `google-services.json` secret, so it runs on a
+  # Dependabot pull request, which gets no secrets. `android-app-compile.sh` holds the whole
+  # account and ASSERTS the Kotlin task executed - a Gradle run matching no task exits 0.
+  compile-android-app:
+    name: Compile Android app
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-android-app == 'true' }}
+    runs-on: ubuntu-24.04
+    # The repository default is write; this job reads a checkout and nothing else.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      # THE WRAPPER JAR IS BINARY CODE a bump of the wrapper replaces (#2564), and this job runs it.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # NO `toolchain:` - the action reads `rust-toolchain.toml` (1.97.0), the same compiler every
+      # other job here uses. `rustflags: ''` for the reason `build-mls-wasm` gives: this action
+      # exports its default `-D warnings` into every later step of the job, and a vendored path
+      # dependency would then compile under our lint bar.
+      #
+      # ITS OWN CACHE, AND THAT IS NOT AN OVERSIGHT. `test-rust` caches the repository-root
+      # `target` (which `frontend/src-tauri` does not even build into) keyed on every lock, for
+      # host-triple artefacts that cannot serve an `aarch64-linux-android` check. Reusing that key
+      # would restore a large directory this job never reads. The Swatinem cache this action
+      # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: aarch64-linux-android
+          cache-workspaces: frontend/src-tauri
+          rustflags: ''
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-app-${{ runner.os }}-
+
+      - name: Compile the Android app module
+        run: bash .github/scripts/android-app-compile.sh
 
   # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS
@@ -1357,9 +1498,24 @@ jobs:
           # answered empty, so a rehearsal recorded there would have lifted nothing.
           # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
           # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
+          # The dev and local compose files because an image's statefulness is read from EVERY
+          # compose file (`ceiling_image_may_cross_major`), and an absent one refuses every major.
+          # `ci.yml` because `ceiling.test.sh` asserts the `compile-android-app` job behind the
+          # `gen/android` allowance: without it that self-test failed on EVERY Dependabot pull
+          # request from 2026-10-30, so the step that decides never ran (#2742, 2026-10-31).
+          #
+          # THE BASE, NOT THE PULL REQUEST, AND THIS LINE IS WHAT MAKES THE MAJOR COMPARISON MEAN
+          # ANYTHING. A `pull_request` checkout is the MERGE ref, which already carries Dependabot's
+          # new pin - so `16-alpine -> 18-alpine` read the major "the stack runs" as 18 out of the
+          # bumped file and passed as same-major (#2742, measured 2026-10-31). The major running
+          # is the one on the base branch. `ceiling.test.sh` asserts this `ref`.
+          ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
             .github/scripts
+            .github/workflows/ci.yml
             infrastructure/docker-compose.prod.yml
+            infrastructure/docker-compose.dev.yml
+            infrastructure/local/docker-compose.yml
             infrastructure/dev/version-gap.yml
             infrastructure/authentik/compose.yml
 
@@ -1510,7 +1666,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

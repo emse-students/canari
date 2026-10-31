@@ -52,6 +52,8 @@ import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { refusalOrigin } from '$lib/utils/apiJson';
+import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -221,6 +223,19 @@ onAppForegroundChange((foreground) => {
 });
 
 /**
+ * A refused refresh's JSON body, read from a CLONE, or `null` when it is not JSON - which names no
+ * revoked device, so the refusal stays an ordinary dead session.
+ */
+async function readRefusalBody(res: Response): Promise<unknown> {
+  try {
+    return (await res.clone().json()) as unknown;
+  } catch (e) {
+    alog(`refresh refusal body is not JSON (${res.status}) - it names no revoked device: ${e}`);
+    return null;
+  }
+}
+
+/**
  * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
  * Callers must distinguish this from transient network errors to avoid retrying
  * a definitively dead session.
@@ -229,6 +244,33 @@ export class SessionExpiredError extends Error {
   constructor() {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+  }
+}
+
+/**
+ * The refresh endpoint said WHY the session is dead: its OWNER REVOKED THIS DEVICE
+ * (`DEVICE_REVOKED_BY_OWNER` on the 401, core-service `device_revoked_sessions`).
+ *
+ * A {@link SessionExpiredError}, so every consumer that stops on a dead session still stops - and a
+ * distinct type, because this one dead session is answered with a full local reset rather than a
+ * sign-out that keeps the stores (`wipeRevokedDevice`). It is the device's ONLY way to learn its
+ * revocation once the revocation has ended its session: the revocation check is asked with an access
+ * token that died with that session, so it can only be answered here (DEV-2, 2026-10-25).
+ */
+export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
+  /**
+   * @param revoked The device and account the refusal names - the device the session was bound to,
+   *   which is not necessarily the device asking (its id may have rotated since the session opened).
+   */
+  constructor(readonly revoked: RevokedDeviceIdentity) {
+    super();
+    this.message = 'A device was revoked by its owner - this session has ended';
+    this.name = 'SessionEndedByDeviceRevocationError';
+  }
+
+  /** Whether the revoked device is `userId:deviceId` - the only case a reset may follow. */
+  names(userId: string, deviceId: string): boolean {
+    return this.revoked.userId === userId && this.revoked.deviceId === deviceId;
   }
 }
 
@@ -300,6 +342,14 @@ let _sessionExpiredNotified = false;
 let _refreshCredentialProvenDead = false;
 
 /**
+ * Latched with {@link _refreshCredentialProvenDead} when the server said the session died BECAUSE
+ * its owner revoked the device it was bound to - WHICH device and account, as the refusal names
+ * them - and cleared with it. Read by whoever must choose between a sign-out that keeps the stores and
+ * the full reset ({@link revokedDeviceOfEndedSession}), which follows only when it names THIS device.
+ */
+let _sessionEndedByDeviceRevocation: RevokedDeviceIdentity | null = null;
+
+/**
  * True once the SERVER has proven this client's refresh credential dead, and no new one has arrived.
  *
  * Exported so a caller can decline work the answer makes pointless BEFORE starting it, rather than
@@ -314,6 +364,20 @@ let _refreshCredentialProvenDead = false;
  */
 export function isRefreshCredentialProvenDead(): boolean {
   return _refreshCredentialProvenDead;
+}
+
+/**
+ * The device (and account) whose revocation by its owner ended this client's session, as the
+ * SERVER named it, or `null` - no such answer, or a new credential since.
+ *
+ * THE DISCRIMINATOR, CARRIED TO WHERE THE DECISION IS MADE: the session-expired reaction reads it to
+ * choose the full reset over the sign-out that keeps every store, and resets only when it names THIS
+ * device and the saved account. Read from the latch rather than passed through the notification, so
+ * it does not matter which path reaches that reaction first - the notifier, a login that met the dead
+ * session, or a late handler registration replaying the verdict.
+ */
+export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
+  return _sessionEndedByDeviceRevocation;
 }
 
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
@@ -342,6 +406,7 @@ export function setSignOutHandler(fn: (() => void) | null): void {
 /** Records that a live refresh credential exists again, voiding both verdicts above. */
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
+  _sessionEndedByDeviceRevocation = null;
   _sessionExpiredNotified = false;
 }
 
@@ -376,7 +441,11 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
   _sessionExpiredNotified = true;
-  awarn('session dead → logout');
+  awarn(
+    _sessionEndedByDeviceRevocation
+      ? 'session dead: a device was revoked by its owner → reset if it is this one'
+      : 'session dead → logout'
+  );
   if (_sessionExpiredHandler) {
     _sessionExpiredHandler();
     return;
@@ -384,7 +453,7 @@ function notifySessionExpired(): void {
   // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
   // anyway rather than leave the user on a shell that can no longer load anything.
   awarn('no session-expired handler registered - redirecting directly');
-  void import('$app/navigation').then(({ goto }) => goto('/login', { replaceState: true }));
+  void import('$app/navigation').then(({ goto }) => goto('/login', { replace: true }));
 }
 
 /**
@@ -910,7 +979,7 @@ export async function leaveSignedOut(): Promise<void> {
       );
     }
   }
-  await goto(loginPath, { replaceState: true });
+  await goto(loginPath, { replace: true });
 }
 
 /**
@@ -941,8 +1010,11 @@ export async function signOutByChoice(): Promise<void> {
  * Both of the warning's reasons are moot here (`ssr = false`), so this buys nothing but the silence -
  * which is the point. Every other caller uses the global `fetch`. A refresh already in flight is
  * joined whatever `fetch` the joiner brought, since the question and its answer are the same.
+ *
+ * `why` is what made the caller ask (`getToken`: no token, or one about to expire), printed on the
+ * `refresh→` line only when a request actually leaves - a joiner or a held caller logs nothing.
  */
-export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function refresh(fetchImpl: typeof fetch = fetch, why?: string): Promise<string> {
   // A SIGN-OUT IS REVOKING THIS CREDENTIAL RIGHT NOW: the answer is known, and a 200 racing the
   // revocation would rotate the very session being ended. Nothing is announced - the sign-out IS the
   // outcome - and the caller gets a type of its own, never a dead-session verdict it would act on.
@@ -953,9 +1025,13 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
   // The server already answered this question about this exact cookie. Repeating the request is a
   // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
   if (_refreshCredentialProvenDead) {
-    alog('refresh✗latched (cookie already proven dead - not asking again)');
+    alog(
+      `refresh✗latched (cookie already proven dead${_sessionEndedByDeviceRevocation ? ' by this device revocation' : ''} - not asking again)`
+    );
     notifySessionExpired();
-    throw new SessionExpiredError();
+    throw _sessionEndedByDeviceRevocation
+      ? new SessionEndedByDeviceRevocationError(_sessionEndedByDeviceRevocation)
+      : new SessionExpiredError();
   }
   // A STANDING IDENTITY SPLIT ANSWERS THIS TOO: the credential is alive but belongs to somebody
   // else than the local state, and asking again would rotate it for the same verdict. Only a
@@ -987,13 +1063,13 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
     throw _noNetworkSpellFailure;
   }
   if (_pendingRefresh) return _pendingRefresh;
-  _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
+  _pendingRefresh = _doRefresh(fetchImpl, why).finally(() => {
     _pendingRefresh = null;
   });
   return _pendingRefresh;
 }
 
-async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
+async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string> {
   // The build doing the asking, carried the way `users/me/announcement` already carries it: as a
   // query parameter, because nothing in a request states a client's version. It is here for the
   // server's REPORT, not for any decision. A refused refresh has causes that only the version tells
@@ -1003,7 +1079,7 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // four services, and this needs none.
   const endpoint =
     `${coreUrl()}/api/auth/refresh` + `?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
-  alog(`refresh→ ${endpoint}`);
+  alog(`refresh→ ${endpoint}${why ? ` (${why})` : ''}`);
   const t0 = Date.now();
   // WHO WAS SIGNED IN WHEN THIS ASKED: a sign-in completing while the request is in flight changes
   // the local identity under it, and the answer is then about the PREVIOUS credential, not a split.
@@ -1105,12 +1181,20 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     // Only 401/403 prove the refresh cookie is dead. Any other status (e.g. 502/503
     // while the backend restarts during a deploy) is transient: throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
-    if (res.status === 401 || res.status === 403) {
-      // The proof, latched: only a new credential can change this answer.
+    // ...and only when core-service SAID it: an edge's HTML 403 (a WAF ban page, a portal) is a
+    // verdict on the network path, never on the credential, so it is transient like a 5xx. Read
+    // from Nest's error envelope, not the header alone: an edge can answer in JSON too.
+    if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
+      // The proof, latched: only a new credential can change this answer. WHY it is dead is latched
+      // with it, from the refusal's CODE and the device it NAMES - the one cause a device answers
+      // with a full reset, and only when the device named is itself.
+      const revoked = revokedDeviceOfRefusal(await readRefusalBody(res));
       _refreshCredentialProvenDead = true;
+      _sessionEndedByDeviceRevocation = revoked;
       noteSessionAnswered(null);
+      // AFTER both latches: the reaction reads the cause from them.
       notifySessionExpired();
-      throw new SessionExpiredError();
+      throw revoked ? new SessionEndedByDeviceRevocationError(revoked) : new SessionExpiredError();
     }
     throw new RefreshFailedError(res.status);
   }
@@ -1205,16 +1289,20 @@ function jwtExpiresAt(token: string): number | null {
  * the next 60 seconds.
  */
 export async function getToken(): Promise<string> {
+  // THE REASON TRAVELS WITH THE REQUEST, NOT WITH EVERY CALLER. Each caller that found no token used
+  // to log `token→refresh` before `refresh()` decided anything - joined the refresh in flight,
+  // answered from the no-network spell, refused on a latch - so the line counted callers: 653 of it
+  // for 51 refreshes actually sent (production 1.5.1, one phone). Only the request leaving says it
+  // (`refresh→ <endpoint> (<why>)`), and every other outcome of `refresh()` already has its own line.
+  let why = 'no token in memory';
   if (_accessToken) {
     const exp = jwtExpiresAt(_accessToken);
     const remaining = exp !== null ? exp - Math.floor(Date.now() / 1000) : null;
     if (remaining === null || remaining >= 60) return _accessToken;
-    alog(`token exp=${remaining}s→refresh`);
+    why = `token exp=${remaining}s`;
     _accessToken = null;
-  } else {
-    alog('token→refresh');
   }
-  return await refresh();
+  return await refresh(fetch, why);
 }
 
 /** Override the in-memory token (used when a token is received externally). */

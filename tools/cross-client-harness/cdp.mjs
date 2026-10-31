@@ -18,7 +18,7 @@
  *
  * Usage:
  *   bun cdp.mjs --port 9223 targets
- *   bun cdp.mjs --port 9223 nav https://canari-emse.fr
+ *   bun cdp.mjs --port 9223 nav https://dev.canari-emse.fr
  *   bun cdp.mjs --port 9223 snapshot            # compact list of interactive elements
  *   bun cdp.mjs --port 9223 eval "location.href"
  *   bun cdp.mjs --port 9223 click "text=Se connecter"
@@ -36,6 +36,7 @@
  * - A per-page WebSocket survives same-target navigations, which is all this campaign needs.
  */
 
+import { EstateRefusedError, refuseForeignPage, registeredAttachOrigin } from './estate-target.mjs';
 import { WebKitInputUnsupported, isWebKitInputTarget, webkitInput } from './webkit-input.mjs';
 
 /** True only when this file is the process entry point, so it can also be imported as a module. */
@@ -154,12 +155,64 @@ export const RESOLVE = `(function (sel) {
  * and still short enough that a poll loop keeps polling.
  */
 export async function listTargets(p = port, timeoutMs = 2000) {
-  const res = await fetch(`http://127.0.0.1:${p}/json/list`, {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const pages = await pagesOn(p, timeoutMs);
+  // THE ONE ATTACH PATH REFUSES A FOREIGN PAGE (R1 review, 2026-10-24). Every runner finds the tab it
+  // drives here, so a profile still sitting on production - or on any page that is not the estate,
+  // a Tauri scheme, an inert page or an identity provider - stops the run before a CDP socket exists.
+  // An ALLOWLIST: the denylist it replaced let `https://canari-emse.fr./chat` through.
+  await ensureEstate();
+  for (const t of pages) refuseForeignPage(String(t.url));
+  return pages;
+}
+
+/** Every page target on a devtools endpoint, bounded (see {@link listTargets}), judged by nobody yet. */
+async function pagesOn(p, timeoutMs) {
+  const res = await fetch(`http://127.0.0.1:${p}/json/list`, { signal: AbortSignal.timeout(timeoutMs) });
   const all = await res.json();
   return all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
 }
+
+/**
+ * The pages of a browser the rig does NOT own, for a caller that will attach to ONE of them: the
+ * phone's own Chrome, where the IdP form opens beside whatever tabs the phone's user left there
+ * (R1 low finding). Judging every tab there would stop a sign-in on a news page nobody drives.
+ *
+ * NOTHING IS WEAKENED FOR WHAT THE RIG DRIVES: the caller picks its candidates, and every one it
+ * connects to goes through {@link judgedTarget} first; every navigation it sends is judged by
+ * `connect` as before. A browser the rig launches and drives is listed with {@link listTargets}.
+ */
+export async function untrustedBrowserPages(p = port, timeoutMs = 2000) {
+  await ensureEstate();
+  return pagesOn(p, timeoutMs);
+}
+
+/** `target` unchanged once its page passes the allowlist, or a refusal - for {@link untrustedBrowserPages}. */
+export function judgedTarget(target) {
+  refuseForeignPage(String(target.url));
+  return target;
+}
+
+/**
+ * Loads `site.mjs` - the only door to `SITE`, which registers the estate pages are judged against -
+ * when nothing in this process has yet. Dynamic, so this module stays importable on a checkout with
+ * no `names.mjs` (the CI self-tests import it and never attach to a page).
+ */
+async function ensureEstate() {
+  if (!registeredAttachOrigin()) await import('./site.mjs');
+}
+
+/**
+ * For a poll that reads "nothing answered" as "no tab yet": a transport failure becomes `[]`, a
+ * REFUSAL of a foreign page is rethrown - it is an answer, and swallowing it would make the guard a
+ * silent "no tab" instead of a stop.
+ */
+export function noTargetsOnTransportFailure(e) {
+  if (e instanceof EstateRefusedError) throw e;
+  return [];
+}
+
+/** CDP methods that send a page somewhere, and the parameter that says where. */
+const NAVIGATIONS = { 'Page.navigate': 'url', 'Target.createTarget': 'url' };
 
 /**
  * Opens a CDP connection. `ready` is BOUNDED, which is the half that was missing.
@@ -178,6 +231,8 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   let nextId = 1;
   const pending = new Map();
   const events = [];
+  /** Synchronous subscribers by method - see `on` below. */
+  const listeners = new Map();
   const ready = new Promise((resolve, reject) => {
     // Unref'd for the reason the command timer below is: an armed timer keeps Node alive, so a run
     // that had finished would still sit here until it fired.
@@ -213,6 +268,15 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       } else resolve(msg.result);
     } else if (msg.method) {
       events.push(msg);
+      for (const fn of listeners.get(msg.method) ?? []) {
+        // A listener that throws must not stop the others or the transport; it is LOGGED, because
+        // a swallowed branch leaves nothing else.
+        try {
+          fn(msg.params ?? {}, msg);
+        } catch (e) {
+          console.log(`  [cdp] listener for ${msg.method} threw: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
     }
   });
   // The timer MUST be cleared on the reply, and unref'd besides: an armed 30 s timeout keeps
@@ -265,8 +329,21 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   // connection, from `CANARI_PHONE=ios` and the bridge port; every other connection keeps `cdpSend`
   // itself, unwrapped.
   const webkit = isWebKitInputTarget(wsUrl);
-  const send = webkit ? webkitInput(cdpSend) : cdpSend;
-  return { ready, send, events, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
+  // A NAVIGATION IS JUDGED BEFORE IT IS SENT, by the same allowlist as an attach: a runner's
+  // `--url` or a stale literal must not take an attached page to production.
+  const guarded = (method, params = {}) =>
+    NAVIGATIONS[method] ? ensureEstate().then(() => (refuseForeignPage(String(params[NAVIGATIONS[method]])), cdpSend(method, params))) : cdpSend(method, params);
+  const send = webkit ? webkitInput(guarded) : guarded;
+  // AN EVENT THAT MUST BE ANSWERED, NOT ONLY OBSERVED. `events` is a log a waiter scans; a paused
+  // `Fetch.requestPaused` holds the page's request until somebody answers it, so polling the log
+  // would add the poll interval to EVERY intercepted request. `on` calls the subscriber as the frame
+  // arrives and returns the unsubscribe (`fault.mjs` is its first user).
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, new Set());
+    listeners.get(method).add(fn);
+    return () => listeners.get(method)?.delete(fn);
+  };
+  return { ready, send, events, on, close: () => ws.close(), isOpen: () => ws.readyState === 1, webkitInput: webkit };
 }
 
 /** Evaluates an expression in the page and returns its value, awaiting promises. */
@@ -1085,6 +1162,7 @@ async function main() {
     ? targets.find((t) => t.url.includes(targetMatch) || t.title.includes(targetMatch))
     : targets[targetIndex];
   if (!target) throw new Error(`no target matching ${targetMatch ?? targetIndex}`);
+  // `listTargets` above refused a foreign page, and `send` refuses a foreign navigation.
 
   const cx = connect(target.webSocketDebuggerUrl);
   await cx.ready;

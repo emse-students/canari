@@ -89,7 +89,8 @@ prod_env() {
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
     LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
     LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
-    LYDIA_ENV=production
+    LYDIA_ENV=production \
+    LYDIA_PROVIDER_PRIVATE_TOKEN=test-provider-private-token
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -225,15 +226,26 @@ for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
   fi
 done
 
-# THE LIVE SWITCH IS CLOSED ON PRODUCTION AND OPEN ON DEV, read from the RENDERED files for the reason
-# the ports are: the template says `false`, so a dev render that forgot to override would look right
-# in every file but the one the estate reads (docs/wiki/services/lives.md).
+# THE LIVE SWITCH IS OPEN ON BOTH ESTATES since the production flip (owner, 2026-10-30), read from
+# the RENDERED files for the reason the ports are: the compose default is `false`, so a render that
+# dropped the key would look right in every file but the one the estate reads. What closes lives on
+# an estate is the runtime `platform_config.lives_mode` (docs/wiki/services/lives.md).
 live_prod="$(port_of "$TMP/ports-prod.env" LIVE_ENABLED)"
 live_dev="$(port_of "$TMP/ports-dev.env" LIVE_ENABLED)"
-if [ "$live_prod" = "false" ] && [ "$live_dev" = "true" ]; then
-  pass "LIVE_ENABLED renders false on production and true on dev"
+if [ "$live_prod" = "true" ] && [ "$live_dev" = "true" ]; then
+  pass "LIVE_ENABLED renders true on production and on dev"
 else
-  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - production must be false, dev true"
+  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - both estates must be true (lives_mode is the runtime switch)"
+fi
+
+# THE LYDIA RECONCILIATION SWITCH, by the same rule: production asks Lydia nothing on its own until
+# the signed amount format is measured (docs/wiki/lydia-api.md section 7).
+reconcile_prod="$(port_of "$TMP/ports-prod.env" LYDIA_RECONCILE_ENABLED)"
+reconcile_dev="$(port_of "$TMP/ports-dev.env" LYDIA_RECONCILE_ENABLED)"
+if [ "$reconcile_prod" = "false" ] && [ "$reconcile_dev" = "true" ]; then
+  pass "LYDIA_RECONCILE_ENABLED renders false on production and true on dev"
+else
+  fail "LYDIA_RECONCILE_ENABLED renders prod='$reconcile_prod' dev='$reconcile_dev' - production must be false, dev true"
 fi
 
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
@@ -250,10 +262,10 @@ fi
 # whose result would have to escape a subshell.
 reserved_host_ports() {
   cat <<'PORTS'
-22 the DSI sshd
-80 the host nginx, which fronts all eight vhosts
-443 the host nginx, which fronts all eight vhosts
-8080 CrowdSec's Local API
+22 the host's ssh service
+80 the host nginx, which fronts every vhost on the host
+443 the host nginx, which fronts every vhost on the host
+8080 a host security service
 PORTS
 }
 
@@ -691,6 +703,13 @@ for key in LYDIA_PROVIDER_TOKEN LYDIA_PROVIDER_PRIVATE_TOKEN; do
     fail "$key is not rendered in dev - a Lydia onboarding cannot be tried there"
   fi
 done
+# The Provider private token signs `business/addcashier` (enrolment lot 2, the Responsable step):
+# production without it cannot finish an enrolment, so the render refuses the deploy instead.
+if [ "$(manifest_field LYDIA_PROVIDER_PRIVATE_TOKEN 2)" = "required" ]; then
+  pass "LYDIA_PROVIDER_PRIVATE_TOKEN is required in production"
+else
+  fail "LYDIA_PROVIDER_PRIVATE_TOKEN is not required in production - a Responsable could never be added"
+fi
 if grep -qE '^      LYDIA_ENV: homologation$' infrastructure/docker-compose.dev.yml; then
   pass "dev pins LYDIA_ENV=homologation as a literal, so it can never address Lydia's production"
 else

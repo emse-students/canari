@@ -9,7 +9,7 @@ function counting(body: string) {
   const urls: string[] = [];
   const fetchImpl: MlsDeliveryFetch = async (input) => {
     urls.push(String(input));
-    return new Response(body, { status: 200 });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const api = new MlsDeliveryApi({
     historyUrl: 'https://test.local',
@@ -37,6 +37,17 @@ describe('simultaneous identical reads', () => {
     expect(urls).toHaveLength(1);
     // Nothing is held past the answer: a roster read after it is a fresh read.
     await api.getGroupUserMembers('g1');
+    expect(urls).toHaveLength(2);
+  });
+
+  it('a fresh user-members read neither joins nor is joined by one already on the wire', async () => {
+    const { api, urls } = counting(JSON.stringify([{ userId: 'a' }]));
+    await Promise.all([
+      api.getGroupUserMembers('g1'),
+      api.getGroupUserMembers('g1', { fresh: true }),
+      api.getGroupUserMembers('g1'),
+    ]);
+    // the two plain askers share one request, the fresh one sent its own
     expect(urls).toHaveLength(2);
   });
 

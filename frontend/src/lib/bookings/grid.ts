@@ -1,15 +1,16 @@
 /**
- * THE BOOKER'S GRID AND PLANNING, AS PURE FUNCTIONS (WP-B5, D14).
+ * THE BOOKER'S WEEK, AS PURE FUNCTIONS (WP-B5, D14; WP-R2, D46-D48).
  *
  * The server sends every unit of every resource with its state (`GET bookings/spaces/:id/slots`);
- * this module lays them out - the grid of one date (resources as columns, units as rows), the
- * planning (the next units one may book, per resource), the run of free steps a booking or a block
- * may cover - and says when a unit is outside the booking window. Times are read in the SPACE's
- * zone (D25: a traveller sees the space's time) through `zonedTime.ts`, the server's own clock.
+ * this module lays ONE resource's units out as a week - the days as columns, each unit placed by
+ * its wall time on a shared axis - and gives the run of free steps a booking or a block may cover,
+ * and says when a unit is outside the booking window. Times are read in the SPACE's zone (D25: a
+ * traveller sees the space's time) through `zonedTime.ts`, the server's own clock.
  *
  * A unit's DAY is the local date of its START, never `unit.date`: the server stamps a unit with the
  * date its availability WINDOW started, so the 00:30 of a "Friday 22:00 to 02:00" window is
- * Friday's on the grid (the night is one window) and Saturday's on every sentence that names a day.
+ * Saturday's column (it is a Saturday morning) while the read that holds it starts the day before
+ * (`slotsReadRange`).
  *
  * The window check is `bookingWindowRefusal`, the server's own (`bookingWindow.ts`). It only
  * DRAWS: the device's clock may be wrong, so the screen never withholds a request on it.
@@ -18,7 +19,15 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { BookerSpace, ResourceSlots, SlotUnit } from './api';
 import { bookingWindowRefusal, type WindowRefusal } from './bookingWindow';
-import { addDays, dayCount, localDate, localTime, offsetMs } from './zonedTime';
+import {
+  addDays,
+  datesBetween,
+  dayCount,
+  isoWeekMonday,
+  localDate,
+  localTime,
+  offsetMs,
+} from './zonedTime';
 
 export type { WindowRefusal } from './bookingWindow';
 
@@ -27,7 +36,8 @@ export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
 
-const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
+/** The Intl locale this client formats dates and numbers in. */
+export const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {
@@ -47,7 +57,7 @@ export function formatDay(date: string, withYear = false): string {
 }
 
 /** A calendar date, short: "sam. 7 nov.". */
-function formatShortDay(date: string): string {
+export function formatShortDay(date: string): string {
   const [y, mo, d] = date.split('-').map(Number);
   return new Intl.DateTimeFormat(intlLocale(), {
     timeZone: 'UTC',
@@ -140,55 +150,182 @@ export function windowRefusal(
   );
 }
 
-/** One row of the grid of a date: one time range, and each resource's unit on it (or none). */
-export interface GridRow {
-  key: string;
-  startMs: number;
-  endMs: number;
-  /** What the row header reads (`formatTimeRange`: a fall-back night's hours carry their offset). */
-  label: string;
-  /** The row starts after the date's midnight: part of a night window, marked as the next day. */
-  nextDay: boolean;
-  /** In the order of `resourceIds`; `null` where that resource has no unit on this range. */
-  cells: (SlotUnit | null)[];
+/**
+ * A unit that is over on the device's clock. The grid DIMS it and says nothing in it: "not
+ * bookable" is news only for a unit that is still to come, and repeating it down every past cell
+ * of the week buried the cells that were still worth reading.
+ */
+export function isPastUnit(unit: { endMs: number }, nowMs: number): boolean {
+  return unit.endMs <= nowMs;
+}
+
+/** Days of one week on the booker's page. */
+export const WEEK_DAYS = 7;
+
+/** The seven dates of the ISO week (Monday first) holding `anchor`. */
+export function weekDates(anchor: string): string[] {
+  const monday = isoWeekMonday(anchor);
+  return datesBetween(monday, addDays(monday, WEEK_DAYS - 1));
+}
+
+/** The read that holds the week of `anchor`, with the day before it (see `slotsReadRange`). */
+export function weekReadRange(anchor: string): { from: string; to: string } {
+  return slotsReadRange(isoWeekMonday(anchor), WEEK_DAYS);
+}
+
+/** "26 octobre - 1 novembre 2026", the week of `dates` in the reader's language. */
+export function formatWeekRange(dates: readonly string[]): string {
+  const at = (date: string) => {
+    const [y, mo, d] = date.split('-').map(Number);
+    return new Date(Date.UTC(y, mo - 1, d));
+  };
+  return new Intl.DateTimeFormat(intlLocale(), {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).formatRange(at(dates[0]), at(dates[dates.length - 1]));
+}
+
+/** A day's header: its short weekday ("lun.") and its day of the month. */
+export function formatDayHead(date: string): { weekday: string; num: number } {
+  const [y, mo, d] = date.split('-').map(Number);
+  return {
+    weekday: new Intl.DateTimeFormat(intlLocale(), { timeZone: 'UTC', weekday: 'short' }).format(
+      new Date(Date.UTC(y, mo - 1, d))
+    ),
+    num: d,
+  };
+}
+
+/** One unit placed on a day's column: minutes from the day's midnight, and its lane when units overlap. */
+export interface PlacedUnit {
+  unit: SlotUnit;
+  topMin: number;
+  heightMin: number;
+  /** Side by side only when two units overlap in time (two slots of a predefined list may). */
+  lane: number;
+  lanes: number;
+}
+
+/** What a day holds for a booker: nothing offered, nothing left to take, or something free. */
+export type DayState = 'closed' | 'none' | 'open';
+
+/** One day of the week: its units in time order (`cells`, what a drag walks) and where they sit. */
+export interface DayColumn {
+  date: string;
+  cells: SlotUnit[];
+  placed: PlacedUnit[];
+  state: DayState;
+}
+
+export interface WeekLayout {
+  days: DayColumn[];
+  /** The shared axis, in minutes from midnight, whole hours. Both 0 when nothing is offered. */
+  startMin: number;
+  endMin: number;
+  /** The height of one hour, in rem: tall enough that the shortest unit holds a line of text. */
+  remPerHour: number;
+}
+
+/** The wall-clock minute of the day (0..1439) an instant falls on, in `zone`. */
+function wallMinutes(instantMs: number, zone: string): number {
+  const [h, min] = localTime(instantMs, zone).split(':').map(Number);
+  return h * 60 + min;
+}
+
+const MIN_HOUR_REM = 4;
+const MAX_HOUR_REM = 12;
+/** The least height (rem) a unit may be drawn at, so its label reads. */
+const MIN_UNIT_REM = 1.75;
+
+/**
+ * Where one day's units sit. A unit sits at its start's WALL minute and is as tall as it LASTS, so a
+ * 18:00 unit is at 18:00 on every day, daylight saving included, and nothing is ever shifted: the
+ * only place wall time and elapsed time disagree is a change night. On a fall-back night the doubled
+ * 02:00 hour holds two units at the same wall time; they OVERLAP like two slots of a list and share
+ * the width in lanes, so every later unit stays on its own wall time. (Displacing the second one
+ * pushed the whole rest of the day an hour down.)
+ */
+function placeDay(units: readonly SlotUnit[], zone: string): PlacedUnit[] {
+  const placed: PlacedUnit[] = units.map((unit) => ({
+    unit,
+    topMin: wallMinutes(unit.startMs, zone),
+    heightMin: (unit.endMs - unit.startMs) / 60_000,
+    lane: 0,
+    lanes: 1,
+  }));
+  let cluster: PlacedUnit[] = [];
+  let laneEnds: number[] = [];
+  const closeCluster = () => {
+    for (const p of cluster) p.lanes = laneEnds.length;
+    cluster = [];
+    laneEnds = [];
+  };
+  for (const p of placed) {
+    if (laneEnds.length > 0 && laneEnds.every((end) => end <= p.topMin)) closeCluster();
+    let lane = laneEnds.findIndex((end) => end <= p.topMin);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(0);
+    }
+    laneEnds[lane] = p.topMin + p.heightMin;
+    p.lane = lane;
+    cluster.push(p);
+  }
+  closeCluster();
+  return placed;
 }
 
 /**
- * The grid of one WINDOW date: every distinct range any resource offers in the windows that
- * started that date, by start then end, each with the unit of every resource. In slots mode two
- * resources may offer different ranges (D3): a resource without a unit on a row has an empty cell.
+ * ONE resource's units laid out as `dates` (the week, or the one day of a phone): each unit on the
+ * date it STARTS on, the axis shared by every day so the same hour lines up. A date with no unit is
+ * `closed` (the screen folds it); one whose units are all taken, blocked or outside the booking
+ * window on the device's clock is `none`. The server decides every request on its own clock.
  */
-export function gridRows(
-  resourceIds: readonly string[],
-  slots: readonly ResourceSlots[],
-  date: string,
-  zone: string
-): GridRow[] {
-  const byResource = new Map(slots.map((r) => [r.resourceId, r.units]));
-  const rows = new Map<string, Omit<GridRow, 'label'>>();
-  resourceIds.forEach((id, column) => {
-    for (const unit of byResource.get(id) ?? []) {
-      if (unit.date !== date) continue;
-      const key = `${unit.startMs}-${unit.endMs}`;
-      let row = rows.get(key);
-      if (!row) {
-        row = {
-          key,
-          startMs: unit.startMs,
-          endMs: unit.endMs,
-          nextDay: unitDay(unit, zone) !== date,
-          cells: resourceIds.map(() => null),
-        };
-        rows.set(key, row);
-      }
-      row.cells[column] = unit;
-    }
+export function weekLayout(
+  units: readonly SlotUnit[],
+  dates: readonly string[],
+  space: Pick<BookerSpace, 'timeZone' | 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
+  nowMs: number
+): WeekLayout {
+  const zone = space.timeZone;
+  const byDay = new Map<string, SlotUnit[]>(dates.map((d) => [d, []]));
+  for (const unit of [...units].sort((a, b) => a.startMs - b.startMs)) {
+    byDay.get(unitDay(unit, zone))?.push(unit);
+  }
+  const days: DayColumn[] = dates.map((date) => {
+    const cells = byDay.get(date) ?? [];
+    const open = cells.some(
+      (u) => u.state === 'free' && windowRefusal(space, u.startMs, nowMs) === null
+    );
+    return {
+      date,
+      cells,
+      placed: placeDay(cells, zone),
+      state: cells.length === 0 ? 'closed' : open ? 'open' : 'none',
+    };
   });
-  return [...rows.values()]
-    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
-    .map((row) => ({ ...row, label: formatTimeRange(row.startMs, row.endMs, zone) }));
+  const all = days.flatMap((d) => d.placed);
+  if (all.length === 0) return { days, startMin: 0, endMin: 0, remPerHour: MIN_HOUR_REM };
+  const shortest = Math.min(...all.map((p) => p.heightMin));
+  return {
+    days,
+    startMin: Math.floor(Math.min(...all.map((p) => p.topMin)) / 60) * 60,
+    endMin: Math.ceil(Math.max(...all.map((p) => p.topMin + p.heightMin)) / 60) * 60,
+    remPerHour: Math.min(MAX_HOUR_REM, Math.max(MIN_HOUR_REM, (MIN_UNIT_REM * 60) / shortest)),
+  };
 }
 
+/** How many units of `units` a booker may take now, on the device's clock: the selector's count. */
+export function freeCount(
+  units: readonly SlotUnit[],
+  space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
+  nowMs: number
+): number {
+  return units.filter((u) => u.state === 'free' && windowRefusal(space, u.startMs, nowMs) === null)
+    .length;
+}
 /**
  * The dates to read for a view anchored on `anchor` and showing `days` days: FROM THE DAY BEFORE.
  * The server keeps a unit in a read only when its WINDOW's date is in the range (see the header),
@@ -197,25 +334,6 @@ export function gridRows(
  */
 export function slotsReadRange(anchor: string, days: number): { from: string; to: string } {
   return { from: addDays(anchor, -1), to: addDays(anchor, days - 1) };
-}
-
-/**
- * The window date the grid opens on: the date of a window that started before `today` and is
- * still running at `nowMs` (a night window after midnight), else `today`. The grid lays out a
- * window date (`gridRows`), so opening on `today` after midnight would hide the rest of the night.
- */
-export function gridOpeningDate(
-  slots: readonly ResourceSlots[],
-  today: string,
-  nowMs: number
-): string {
-  let opening = today;
-  for (const resource of slots) {
-    for (const unit of resource.units) {
-      if (unit.date < opening && unit.endMs > nowMs) opening = unit.date;
-    }
-  }
-  return opening;
 }
 
 /** A resource's units in time order (the server's order is by window; this does not rely on it). */
@@ -282,32 +400,19 @@ export function dragRange(
   return { first: Math.min(anchor, last), count: Math.abs(last - anchor) + 1 };
 }
 
+/**
+ * How many units one drag over the grid may select: a block's length on the organiser's dashboard
+ * (`blockMode`), else what one booking may cover. Above 1, a drag means something, so the screen
+ * says it; the grid and the dashboard read it from here and cannot disagree.
+ */
+export function gridUnitLimit(
+  space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>,
+  blockMode: boolean
+): number {
+  return blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space);
+}
+
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
   return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);
-}
-
-/** One resource's next units a booker may take now - the planning view (D14). */
-export interface PlanningEntry {
-  resourceId: string;
-  units: SlotUnit[];
-}
-
-/**
- * For each resource in order, its first `perResource` FREE units the booking window accepts now.
- * A resource with none is kept, empty, so the planning can say it is full rather than leave it out.
- */
-export function planning(
-  space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
-  resourceIds: readonly string[],
-  slots: readonly ResourceSlots[],
-  nowMs: number,
-  perResource: number
-): PlanningEntry[] {
-  return resourceIds.map((resourceId) => ({
-    resourceId,
-    units: unitsInOrder(slots, resourceId)
-      .filter((u) => u.state === 'free' && windowRefusal(space, u.startMs, nowMs) === null)
-      .slice(0, perResource),
-  }));
 }

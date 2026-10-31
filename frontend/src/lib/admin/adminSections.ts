@@ -119,7 +119,7 @@ const ENTRIES: readonly AdminEntry[] = [
     key: 'users',
     href: '/admin/users',
     group: 'platform',
-    label: () => m.admin_card_manage_admins_label(),
+    label: () => m.admin_card_users_label(),
     summary: () => m.admin_card_users_desc(),
     icon: UserCog,
     may: GLOBAL,

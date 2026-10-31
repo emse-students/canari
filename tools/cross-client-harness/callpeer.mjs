@@ -38,7 +38,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect, evaluate, listTargets, realClick, reloadAndWait } from './cdp.mjs';
 import { BROWSERS, isUp, startBrowser } from './launch.mjs';
-import { SITE } from './names.mjs';
+import { SITE } from './site.mjs';
 
 const args = process.argv.slice(2);
 /** The value after `--name`; a flag given with no value (or another flag after it) FAILS loudly. */

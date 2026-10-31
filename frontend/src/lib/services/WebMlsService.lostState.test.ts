@@ -47,6 +47,13 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     resolveDeviceId: proto.resolveDeviceId,
     reenrolLostState: proto.reenrolLostState,
     rotateDeviceIdentity: proto.rotateDeviceIdentity,
+    // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
+    reopenGatewaySocketAfterRotation: vi.fn(),
+    retireAbandonedIds: proto['retireAbandonedIds'],
+    deleteAbandonedDevice: proto['deleteAbandonedDevice'],
+    gatewaySocketSettled: proto['gatewaySocketSettled'],
+    isWsOpen: () => false,
+    socketStepsPending: 0,
     loadStateWithKey: proto.loadStateWithKey,
     ...overrides,
   };
@@ -84,7 +91,7 @@ describe('WebMlsService - a kept id with a lost state re-enrols as a new device'
     expect(localStorage.getItem(`mls_device_id_${USER}`)).toBe('web-u-new');
     expect(ctx.persistCheckpoint).toHaveBeenCalledTimes(1);
     expect(ctx.deleteDevice).toHaveBeenCalledTimes(1);
-    expect(ctx.deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith(USER, 'web-u-old', 'retired');
     expect(readAbandonedDeviceIds(USER)).toEqual([]);
 
     // A later round finds nothing left to retire.

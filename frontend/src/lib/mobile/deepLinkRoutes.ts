@@ -1,6 +1,7 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
-import { REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
+import { FOLLOW_REQUESTS_ROUTE, REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
+import { BOOKINGS_HREF } from '$lib/bookings/routes';
 
 /**
  * The query parameter naming the comment a post link opens at - written by the server into a
@@ -14,7 +15,8 @@ export const POST_COMMENT_PARAM = 'comment';
  *
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
- * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `notifications` (WP-L8b) and
+ * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `follow-requests` (WP-F4),
+ * `notifications` (WP-L8b), `bookings` (WP-N) and
  * `form-responses/<id>` (the organiser alert for a payment over capacity). `posts` is what a payload
  * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
  * `republication-requests` mirror `notificationHref` (the in-app bell).
@@ -52,10 +54,17 @@ export function appRouteForDeepLink(u: URL): string | null {
     // D38b: a request to let an association carry a personal post - the author's inbox.
     case 'republication-requests':
       return REPUBLICATION_REQUESTS_ROUTE;
+    // WP-F4: a person asks to follow the reader - the inbox where it is answered.
+    case 'follow-requests':
+      return FOLLOW_REQUESTS_ROUTE;
     // WP-L8b: a notice whose subject has no page - a live moderators cut (deleted at its end), a
     // suspension or a withdrawal of the right to broadcast. Its row on the list says it.
     case 'notifications':
       return '/notifications';
+    // WP-N: a booking cancelled, left, made for the reader, or about to start - Reservations,
+    // where the reader's bookings are listed.
+    case 'bookings':
+      return BOOKINGS_HREF;
     default:
       return null;
   }

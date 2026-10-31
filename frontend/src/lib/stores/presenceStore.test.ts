@@ -3,14 +3,22 @@ import { get } from 'svelte/store';
 import {
   checkPresenceNow,
   onPeersCameOnline,
+  PRESENCE_IDS_PER_REQUEST,
+  presenceChunks,
   presenceMap,
   resetPresenceForTests,
   watchUsers,
   whenAnyComesOnline,
 } from './presenceStore';
 
+/** What `/api/version` said about `POST /api/presence`: `null` is "no answer yet". */
+const capability = vi.hoisted(() => ({ presencePost: true as boolean | null }));
+
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: vi.fn() }));
 vi.mock('$lib/utils/apiUrl', () => ({ gatewayUrl: () => 'https://gw.test' }));
+vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
+  serverPresencePost: () => capability.presencePost,
+}));
 
 const { apiFetch } = await import('$lib/utils/apiFetch');
 const fetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>;
@@ -43,7 +51,15 @@ async function startWatching(userIds: string[], answer: Record<string, boolean>)
 beforeEach(() => {
   resetPresenceForTests();
   fetchMock.mockReset();
+  capability.presencePost = true;
 });
+
+/** The ids one recorded call asked about, whichever route carried them. */
+function idsOfCall(call: unknown[]): string[] {
+  const [url, init] = call as [string, RequestInit | undefined];
+  if (init?.method === 'POST') return (JSON.parse(String(init.body)) as { users: string[] }).users;
+  return new URL(url).searchParams.get('users')?.split(',') ?? [];
+}
 afterEach(() => resetPresenceForTests());
 
 describe('not stacking polls', () => {
@@ -193,7 +209,7 @@ describe('whenAnyComesOnline', () => {
 
   it('starts polling the users it waits on', () => {
     whenAnyComesOnline(['bob'], vi.fn());
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('users=bob');
+    expect(idsOfCall(fetchMock.mock.calls[0] ?? [])).toEqual(['bob']);
   });
 });
 
@@ -237,5 +253,92 @@ describe('the presence audience (WP-PRESENCE, 2026-10-18)', () => {
     expect(get(presenceMap)).toEqual({ 'user-a': true });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('503'));
     warn.mockRestore();
+  });
+});
+
+describe('the ids travel in a POST body, never in the URL (2026-10-28)', () => {
+  // A query string is written to every proxy's access log: a reverse-proxy log scanner flagged the
+  // long ones, and the ids of everybody a member watches sat in a log of a host we do not own.
+  const ID = (i: number) => i.toString(16).padStart(64, '0');
+
+  it('POSTs the watchlist as JSON, with nothing identifying in the URL', async () => {
+    await startWatching([ID(1), ID(2)], {});
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://gw.test/api/presence');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ users: [ID(1), ID(2)] });
+  });
+
+  it('splits a watchlist above the cap into requests of at most the cap, in order, and merges them', async () => {
+    const ids = Array.from({ length: PRESENCE_IDS_PER_REQUEST + 1 }, (_, i) => ID(i));
+    fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+      const asked = (JSON.parse(String(init.body)) as { users: string[] }).users;
+      return presenceResponse(Object.fromEntries(asked.map((id) => [id, false])));
+    });
+    watchUsers(ids);
+    await checkPresenceNow();
+
+    const calls = fetchMock.mock.calls.map(idsOfCall);
+    expect(calls.map((c) => c.length)).toEqual([PRESENCE_IDS_PER_REQUEST, 1]);
+    expect(calls.flat()).toEqual(ids);
+    expect(Object.keys(get(presenceMap))).toHaveLength(ids.length);
+  });
+
+  it('cuts the same watchlist the same way every time', () => {
+    const ids = Array.from({ length: 2 * PRESENCE_IDS_PER_REQUEST + 3 }, (_, i) => ID(i));
+    expect(presenceChunks(ids)).toEqual(presenceChunks(ids));
+    expect(presenceChunks(ids).map((c) => c.length)).toEqual([
+      PRESENCE_IDS_PER_REQUEST,
+      PRESENCE_IDS_PER_REQUEST,
+      3,
+    ]);
+    expect(presenceChunks([])).toEqual([]);
+  });
+
+  it('keeps the whole map when one of the requests gives no answer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ids = Array.from({ length: PRESENCE_IDS_PER_REQUEST + 1 }, (_, i) => ID(i));
+    await startWatching(ids, { [ID(0)]: true, [ID(PRESENCE_IDS_PER_REQUEST)]: true });
+
+    let n = 0;
+    fetchMock.mockImplementation(() =>
+      n++ === 0
+        ? presenceResponse({ [ID(0)]: false })
+        : Promise.resolve(new Response('{}', { status: 503 }))
+    );
+    await checkPresenceNow();
+
+    // The first half alone would have turned ID(0) off and dropped ID(1000) as "not visible".
+    expect(get(presenceMap)).toEqual({ [ID(0)]: true, [ID(PRESENCE_IDS_PER_REQUEST)]: true });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('503'));
+    warn.mockRestore();
+  });
+
+  it('asks nothing until /api/version has said which route this estate serves', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    capability.presencePost = null;
+    fetchMock.mockImplementation(() => presenceResponse({}));
+    watchUsers([ID(1)]);
+    await checkPresenceNow();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    capability.presencePost = true;
+    await checkPresenceNow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    debug.mockRestore();
+  });
+
+  it('uses the legacy GET, in ONE request, only on an estate whose gateway predates the POST', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    capability.presencePost = false;
+    await startWatching([ID(1), ID(2)], { [ID(1)]: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(url).toBe(`https://gw.test/api/presence?users=${ID(1)},${ID(2)}`);
+    expect(get(presenceMap)).toEqual({ [ID(1)]: true });
+    debug.mockRestore();
   });
 });

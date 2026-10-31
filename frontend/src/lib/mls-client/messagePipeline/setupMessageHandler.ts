@@ -15,13 +15,14 @@ import {
   cancelReAdd,
   reAddIsInFlight,
   resetReAddCooldowns,
+  type ReAddOptions,
 } from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
   clearEpochGap,
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
-import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+import { replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
@@ -44,6 +45,7 @@ import {
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
+import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
@@ -58,6 +60,7 @@ import {
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { restoredConversationRow } from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
@@ -174,9 +177,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const pendingBuffer = new Map<string, { msgs: PendingMsg[] }>();
 
   // Shared callback for all out-of-sync cases.
-  const onOutOfSync = async (groupId: string) => {
+  const onOutOfSync = async (groupId: string, opts?: ReAddOptions) => {
     log(`[PIPELINE] Out-of-sync for ${groupId.slice(0, 8)}… - requestReAdd`);
-    await requestReAdd(groupId, deps);
+    // Passed only when there is something to say: a caller that knows nothing more than the group
+    // makes the same call it always made.
+    await (opts ? requestReAdd(groupId, deps, opts) : requestReAdd(groupId, deps));
   };
 
   /**
@@ -192,8 +197,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
    * a Welcome, an external join - lands long after this frame has been answered. The callback's job
    * is to decide ACK or no-ACK, not to see the repair through.
    */
-  const startRecovery = (groupId: string): void => {
-    void onOutOfSync(groupId).then(
+  const startRecovery = (groupId: string, opts?: ReAddOptions): void => {
+    void onOutOfSync(groupId, opts).then(
       () => log(`[PIPELINE] Recovery attempt finished for ${groupId.slice(0, 8)}…`),
       (e) =>
         log(
@@ -210,6 +215,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
+      onChannelRemovalReleased: deps.onChannelRemovalReleased,
       onChannelUpdated: deps.onChannelUpdated,
       onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,
@@ -220,6 +226,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onChannelMessageDeleted: deps.onChannelMessageDeleted,
       log,
       onOutOfSync,
+      onJoinAsk: deps.onJoinAsk,
+      onJoinAskSettled: deps.onJoinAskSettled,
     });
   };
 
@@ -243,6 +251,34 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
 
       if (!groupId) return true; // ACK without group - control frame
+
+      // ── A frame THIS DEVICE sent ─────────────────────────────────────────
+      // BEFORE every branch below, because none of them can do anything with it: MLS never hands a
+      // member its own frame back, commits included. At the current epoch it says so
+      // (`CannotDecryptOwnMessage`), but at a PAST one the epoch check refuses it first, and the
+      // pipeline read that refusal as a frame this device LOST - a `LOST frame` line blaming a
+      // re-join that never happened, and a reconcile asked of the group for nothing (campaign GAP-2).
+      // The envelope already names the sender, so the answer is read from it rather than learnt by
+      // handing MLS a frame it is certain to refuse.
+      //
+      // AT WARN, BECAUSE NOTHING SHOULD REACH IT. The fan-out excludes the sending device
+      // (`isSender` in chat-delivery's `sendMessage`), so a frame here was addressed back to the
+      // device that wrote it. Two suspects, and the line names both: a rig injecting the frame
+      // (GAP-2 does, deliberately), or the sender exclusion missing - `isSender` compares
+      // `body.senderId` with the membership row's `userId` case-SENSITIVELY, while the send route
+      // accepts a `senderId` that matches the caller only case-insensitively. That mismatch is
+      // UNMEASURED: no production line has shown it, and this one is what would.
+      if (
+        isFrameFromThisDevice(
+          { userId: senderNorm, deviceId: deliveryMeta?.senderDeviceId },
+          { userId: deps.userId, deviceId: mlsService.getDeviceId() }
+        )
+      ) {
+        console.warn(
+          `[MLS] Own frame for ${groupId.slice(0, 8)}… delivered back to this device (${deliveryMeta?.channel ?? 'unknown channel'}, queue ${deliveryMeta?.queuedMessageId ?? 'none'}) - ACKed, not offered to MLS; the fan-out excludes the sending device, so either a rig injected it or the sender exclusion missed (senderId case vs the membership userId)`
+        );
+        return true;
+      }
 
       // ── A community's Graine key-distribution group ───────────────────────
       // BEFORE both branches below, and that order is the point. This group carries channel seeds
@@ -300,7 +336,35 @@ interface WelcomeArgs {
   statePersister: ReturnType<typeof createMlsStatePersister>;
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
-  startRecovery: (groupId: string) => void;
+  startRecovery: (groupId: string, opts?: ReAddOptions) => void;
+}
+
+/**
+ * Registers a key group from its `dm_groups` row: the scope when it can be named, the kind alone
+ * when it cannot - a private salon's row carries its channel, and the community behind it is known
+ * only if this session loaded that channel.
+ */
+function registerFromServerRow(
+  mlsService: MessageHandlerDeps['mlsService'],
+  groupId: string,
+  groupMeta: GroupMeta
+): void {
+  const workspaceId =
+    groupMeta.distributionWorkspaceId ??
+    (groupMeta.distributionChannelId ? workspaceForChannel(groupMeta.distributionChannelId) : null);
+  if (groupMeta.distributionWorkspaceId) {
+    mlsService.registerDistributionGroup(
+      workspaceScope(groupMeta.distributionWorkspaceId),
+      groupId
+    );
+  } else if (groupMeta.distributionChannelId && workspaceId) {
+    mlsService.registerDistributionGroup(
+      channelScope(workspaceId, groupMeta.distributionChannelId),
+      groupId
+    );
+  } else {
+    mlsService.noteDistributionGroup(groupId);
+  }
 }
 
 /**
@@ -331,32 +395,22 @@ async function handleDistributionWelcome({
   content: Uint8Array;
   groupId: string;
   ratchetTreeBytes: Uint8Array | undefined;
-  groupMeta: GroupMeta;
+  /**
+   * The server row, or `null` when it could not be read and this session already names the group
+   * as a key group - in which case the registration it holds is kept as it is.
+   */
+  groupMeta: GroupMeta | null;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
 }): Promise<boolean> {
   const { mlsService, userId, log } = deps;
   const short = groupId.slice(0, 8);
-  log(`[WELCOME] ${short}... is a KEY-DISTRIBUTION group - installing it as a seed carrier`);
+  log(
+    `[WELCOME] ${short}... is a KEY-DISTRIBUTION group (${groupMeta ? 'server row' : 'server row unreadable, named by this session'}) - installing it as a seed carrier`
+  );
 
-  // The scope when it can be named, the kind alone when it cannot: a private salon's row carries
-  // its channel, and the community behind it is known only if this session loaded that channel.
-  const workspaceId =
-    groupMeta.distributionWorkspaceId ??
-    (groupMeta.distributionChannelId ? workspaceForChannel(groupMeta.distributionChannelId) : null);
-  if (groupMeta.distributionWorkspaceId) {
-    mlsService.registerDistributionGroup(
-      workspaceScope(groupMeta.distributionWorkspaceId),
-      groupId
-    );
-  } else if (groupMeta.distributionChannelId && workspaceId) {
-    mlsService.registerDistributionGroup(
-      channelScope(workspaceId, groupMeta.distributionChannelId),
-      groupId
-    );
-  } else {
-    mlsService.noteDistributionGroup(groupId);
-  }
+  // No row: the session's own registration is what classified the group, and it stays untouched.
+  if (groupMeta) registerFromServerRow(mlsService, groupId, groupMeta);
 
   const promote = () =>
     mlsService
@@ -450,7 +504,17 @@ async function handleWelcome({
   // the client that adds a community newcomer (or grants a private salon) Welcome their devices,
   // and every step below this line would build a sidebar row for it - a "Groupe" conversation
   // carrying seeds. The `dm_groups` row says which kind it is, and it is already in hand.
-  if (groupMeta?.distributionWorkspaceId || groupMeta?.distributionChannelId) {
+  //
+  // AND WHEN THE ROW CANNOT BE READ, THIS SESSION MAY ALREADY KNOW. A restart re-delivers a key
+  // group's Welcome after the startup walk registered the group; with `getGroupMeta` answering
+  // `null` (network, any non-2xx) the row's test alone sent it down the conversation path below,
+  // which writes a sidebar row for it (`writeRowForHeldGroup`, `onGroupReady`). The row decides
+  // when it was read - the server outranks what this session remembers - and memory only when it
+  // was not; "row unreadable AND group unknown in memory" is the one case left unclassified here.
+  const isKeyGroup = groupMeta
+    ? isDistributionGroupMeta(groupMeta)
+    : mlsService.isDistributionGroup(terminalId);
+  if (isKeyGroup) {
     return handleDistributionWelcome({
       content,
       groupId: terminalId,
@@ -797,23 +861,30 @@ async function handleWelcome({
   if (deferredRecovery) {
     const rec = deferredRecovery;
     if (rec.kind === 'nomatch') {
-      // First detection: republish fresh key material so a fallback welcome_request re-add can
-      // succeed (republishKeyMaterial debounces internally); subsequent failures skip it.
+      // First detection: republish fresh key material so whichever door `requestReAdd` picks - a
+      // member's re-add or this device's external commit - meets a package it can honour
+      // (republishKeyMaterial debounces internally); subsequent failures skip it.
       if (rec.failures === 1) {
         log(
-          `[WELCOME] NoMatchingKeyPackage pour ${rec.target.slice(0, 8)}… - republish + self-heal (externalJoin/welcome_request)`
+          `[WELCOME] NoMatchingKeyPackage for ${rec.target.slice(0, 8)}… - republish, then requestReAdd (the membership row picks the door)`
         );
         await mlsService.republishKeyMaterial(deps.deviceKey()).catch(() => {});
       } else {
         log(
-          `[WELCOME] NoMatchingKeyPackage #${rec.failures} pour ${rec.target.slice(0, 8)}… - self-heal (externalJoin/welcome_request)`
+          `[WELCOME] NoMatchingKeyPackage #${rec.failures} for ${rec.target.slice(0, 8)}… - requestReAdd (the membership row picks the door)`
         );
       }
       // Reset the counter past the budget so a later desync can republish afresh.
       if (rec.failures > MAX_NOMATCH_KP_RETRIES) noMatchKpFailures.delete(rec.target);
     }
     // Not awaited: this also runs inside the inbound drain (see `startRecovery`).
-    startRecovery(rec.target);
+    //
+    // `welcomeHandled`, AND IT IS NOT OPTIONAL. This recovery starts BEFORE the handler returns
+    // `true` below, so before the drain ACKs the Welcome it just failed on: the server may still list
+    // it as queued, and the membership row would read `welcome-queued` - a wait for the very Welcome
+    // this device has spent, a whole watchdog cadence instead of the repair at once (review of
+    // #2466). The fact is known here, so it is carried to where the reading is made.
+    startRecovery(rec.target, { welcomeHandled: true });
   }
 
   return true; // Always ACKed
@@ -1300,13 +1371,13 @@ async function handleKnownGroup({
       // Either way no later attempt can succeed, so the wait below is pure delay.
       let rungOneIsExhausted = false;
       try {
-        const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
-        // Healed or not, applied commits moved the epoch: a partial replay is as durable-worthy.
-        if (replay.healed || replay.applied > 0) statePersister.persistNow();
-        if (replay.healed) {
-          clearEpochGap(groupId);
-          return true;
-        }
+        // Persisted on any applied commit, un-marked on a heal (`replayAndRecord`); the refused
+        // backlog was judged above, more narrowly than the helper would.
+        const replay = await replayAndRecord(mlsService, groupId, userId, log, {
+          persist: () => statePersister.persistNow(),
+          refusedBacklog: 'judged-by-caller',
+        });
+        if (replay.healed) return true;
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;
       } catch (e) {
         log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);

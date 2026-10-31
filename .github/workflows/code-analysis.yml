@@ -136,7 +136,7 @@ jobs:
       # string that merely looks like one. That cannot be a warning: the step fails, and the
       # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@v3.99.3
+        uses: trufflesecurity/trufflehog@v3.99.7
         with:
           path: ./
           extra_args: --debug --only-verified
@@ -252,15 +252,19 @@ jobs:
           # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
           # bun's default level; every service skips scripts and is audited at `moderate`.
           #
-          # TWO SUPPRESSIONS, 2026-10-24, and they wait on a decision rather than a reachability
-          # argument: GHSA-pfhg-q3qv-9q6r and GHSA-27mw-82g8-phjj are LOW SvelteKit advisories fixed
-          # only in `@sveltejs/kit` 3.x, and the user put the kit 3 major after the stable, as its
-          # own chantier (Dependabot's #2154). They are deleted WITH that upgrade - and the step
-          # `Every ignored advisory is still reported` below fails the day kit 3 lands and the audit
-          # stops naming them, so they cannot outlive it.
+          # ONE SUPPRESSION, 2026-10-28 (the two SvelteKit GHSAs it carried left with kit 3), and it
+          # rests on a reachability argument: GHSA-gcqx-w48m-w2h4 is LOW, `deepmerge` <= 4.3.1
+          # (`mergeObject()` lets a crafted SOURCE object poison the prototype of the result), and NO
+          # fixed version is published. Read from the lockfile: it arrives only through
+          # `@sveltejs/vite-plugin-svelte` and `@rollup/plugin-node-resolve` (under
+          # `@sveltejs/adapter-node`), build tooling; the frontend declares no dependency of its own
+          # on it, and kit 3 with adapter-node 6 still resolves 4.3.1. The inputs it merges there are
+          # the project's own configuration, which no outsider supplies. NOT verified: that no copy
+          # ends up in the shipped bundle. Retires itself - the step `Every ignored advisory is
+          # still reported` fails once the audit stops naming it.
           - tree: frontend
             install: --frozen-lockfile
-            audit: --ignore=GHSA-pfhg-q3qv-9q6r --ignore=GHSA-27mw-82g8-phjj
+            audit: --ignore=GHSA-gcqx-w48m-w2h4
           - tree: apps/core-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
@@ -273,7 +277,7 @@ jobs:
           # the assertions that void them, are below.
           - tree: apps/media-service
             install: --frozen-lockfile --ignore-scripts
-            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc
+            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-qr28-fpjm-wq7f --ignore=GHSA-528h-pc64-c93x --ignore=GHSA-hqr4-qq8f-hg3x --ignore=GHSA-mjw6-4jj6-33hc
           - tree: apps/chat-delivery-service
             install: --frozen-lockfile --ignore-scripts
             audit: --audit-level=moderate
@@ -340,6 +344,11 @@ jobs:
       # and `extract` reach - and minio's entire dist calls query-string exactly once, at
       # `helpers.js`, as `querystring.stringify(userTags)`. `stringify` never reaches `decode`.
       #
+      # GHSA-qr28-fpjm-wq7f (2026-10-29, high: quadratic replacement of percent-encoded runs, every
+      # version <= 0.5.0, fixed in 0.5.1) is the SAME function on the SAME edge, so it rides the
+      # SAME premise below. The fix is again out of reach: 0.5.1 is `type: module` too, and minio is
+      # still 8.0.7 on `query-string: ^7.1.3`.
+      #
       # THE SECOND ENTRY, ADDED 2026-09-03 WHEN IT TURNED EVERY PULL REQUEST RED.
       # GHSA-528h-pc64-c93x is a moderate denial of service in `stream-json` at every version
       # <= 3.4.0: its `pick`/`ignore`/`filter`/`replace` filters are O(depth^2) on nested input, so
@@ -387,13 +396,13 @@ jobs:
           echo "--- the premise behind media-service's ignore"
           dist="apps/media-service/node_modules/minio/dist"
           if [ ! -d "$dist" ]; then
-            echo "::error::$dist is not there, so the reachability of GHSA-vcc3-ghjq-m6fr cannot be checked. The ignore is not granted."
+            echo "::error::$dist is not there, so the reachability of GHSA-vcc3-ghjq-m6fr and GHSA-qr28-fpjm-wq7f cannot be checked. The ignores are not granted."
             failed="$failed media-service(premise)"
           else
             parses=$(grep -rlE 'querystring\.(parse|parseUrl|extract)\b' "$dist" || true)
             stringifies=$(grep -rlE 'querystring\.stringify\b' "$dist" || true)
             if [ -n "$parses" ]; then
-              echo "::error::minio now PARSES a query string, so decode-uri-component is reachable and GHSA-vcc3-ghjq-m6fr is no longer unreachable: $parses"
+              echo "::error::minio now PARSES a query string, so decode-uri-component is reachable and GHSA-vcc3-ghjq-m6fr and GHSA-qr28-fpjm-wq7f are no longer unreachable: $parses"
               failed="$failed media-service(premise)"
             elif [ -z "$stringifies" ]; then
               echo "::error::minio no longer calls querystring.stringify either - the call site the ignore was measured on is gone, so the measurement no longer describes this tree."

@@ -14,11 +14,33 @@
 
 ## Feed tabs
 
-| Tab | Content |
+| Tab (`feed=`) | Content |
 |---|---|
-| All | All posts from all associations |
-| Followed | Posts from associations the user follows |
-| Association filter | Posts from a specific association or category |
+| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
+| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
+| Tout (`all`) | Every post the reader may see |
+
+**A republication is an association publishing, so the feeds of what associations publish carry it
+(user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`
+alone, so a member's post the BDE republished (D38b) entered neither, only "Tout" under its own
+date. The client filters nothing per tab, so the server's clauses were the whole cause. The clauses
+now live in `apps/social-service/src/posts/republished-feed-sql.ts`:
+
+- a row is in Associations when an association published it OR a republication of it COUNTS for
+  the reader; in Suivis, when a followed association republished it (never an anonymous post). It
+  is an `EXISTS`, never a join, so a post carried twice is still one row;
+- it is placed at `GREATEST(publishedAt, latest counted republishedAt)` - pinned posts still first,
+  the CanaReels list with no pin;
+- a republication COUNTS only when it is by an association the reader sees
+  (`associationVisibleToUserSql`, read grants included) - and, in Suivis, one they follow - so a
+  republisher the reader cannot see neither admits a post nor moves it.
+
+Visibility of the post itself is untouched (`postVisibleToUserSql` already lets a republisher's
+audience read it), and since a member's post can now be in the Associations arm, `blockedAuthorSql`
+applies there as in the others. Proven against PostgreSQL by
+`republished-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`; only
+its place is the repost's. What a republication still does not move is in
+[backlog](../../backlog.md#p3---what-a-republication-still-does-not-move-in-the-feeds-review-of-2384-2026-10-24).
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
@@ -27,6 +49,32 @@ reel viewer at the newest reel, and the feed itself is never filtered to reels -
 filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)).
 The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
 and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
+
+### Who wrote it: "Anonyme" big, the real author small (2026-10-24)
+
+The user's two decisions, for posts, reels and comments alike:
+
+- **"Republie par X" sits on the time's line** - "2 h . [repost] Republie par BDE" - not on a line
+  of its own (`PostHeader`'s `data-post-time-line`, `ReelSlide`'s `data-reel-time-line`; the words
+  are `republishedByText`, one implementation). It names ONE republisher and counts the rest
+  ("Republie par BDE +2"), and it gives way first: on the card it truncates before the time; in the
+  reel overlay, where it shares the author's row, the time line is `contents` so the time is an
+  unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
+  they are gone. The repost glyph is `aria-hidden`; the words carry it.
+- **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
+  reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
+  the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
+  writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
+  glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
+  `revealedPostAuthor` / `commentRevealedAuthorId`). "Anonyme" itself links nowhere. In the reel
+  overlay that link is a 44 px row (`tall`) - not `tap-target`, whose enlarged box the truncating
+  overflow would clip. Everyone else
+  sees "Anonyme" alone. An anonymous comment stores no name, so the name is resolved from the id
+  (`UserName`, the app's one id-to-name reader); a post's line paints its own name columns first.
+  The media viewer's sender (`postAuthorName`) says "Anonyme" too, so it never disagrees with the
+  header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
+  Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
+  `ReelSlide`. **Read by tests only; no phone has looked at it.**
 
 **The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
 only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
@@ -56,8 +104,12 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 - **Stored**: `option.votes` is a NUMBER, and `poll.voters` is the list of accounts that voted, with
   no choice attached and **sorted**, so the list is not the order of arrival. `votesByUser` is `{}`.
 - **Served**: `servePolls` drops `voters` and adds `voted` for THAT reader. It runs at the two
-  points every served post goes through (`shapeListRow`, `toPublicPostFromEntity`) and on the vote
-  response, so a participant list is never sent to anybody - not the author, not a moderator.
+  points every served post goes through (`shapeListRow`, `toPublicPostFromEntity`), so a
+  participant list is never sent to anybody - not the author, not a moderator.
+- **The vote goes through the read's gate and the read's shaping** (2026-10-24): the route asks
+  `PostsService.assertMayVote` (`assertOpenable`, the gate `getById` uses, with the vote's
+  grant-free audience), then answers through `PostsService.serveToReader`, the shaping `getById`
+  uses. A poll id the post does not have is a 404 (`posts.controller.vote-response.spec.ts`).
 - **Final**: one vote, no change, no retraction. Changing a vote needs the previous choice, which is
   exactly what was not kept. The card therefore does not send an anonymous single-choice vote on the
   tap: it waits for the "Voter" button, as a multiple-choice poll does.
@@ -201,6 +253,36 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   video that plays by itself carries `TRANSPARENT_VIDEO_POSTER` (`utils/videoPoster.ts`), and the
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
+
+## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
+
+The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or
+`/posts?search=1`. The feed strips the parameter with a `goto(..., { replace: true })`, so no
+history entry carries it, and only then opens the composer or the search field.
+
+The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
+closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
+open through `await commit_promise; await tick(); await tick();`, and `_before_navigate` skips every
+callback while one is open, so a strip fired by the arriving page ran no hook and drained nothing.
+Kit 3 ends the navigation as soon as the page has settled (`finish_navigation`), so the strip runs
+the hooks. Since #2613 a composer opened in the same tick was therefore closed as it opened. A
+replace issued while an overlay's own history entry is under the pointer would also overwrite that
+entry: a second reason to strip first.
+
+Whether the strip landed is read off the page, never off the error. Kit rejects an overtaken
+navigation with an untyped `Error('navigation aborted')`. A strip overtaken by another navigation
+drops the command with an info line, and only a strip that failed on the feed itself is logged as
+an error.
+
+On the Mi 9T the sequence was read over CDP: the overlay pushed at 130 ms, the dialog mounted at
+134, unmounted at 164 with no popstate, and the router's replace at 180, which also overwrote the
+overlay's own history entry. No Live chip could be reached, so LIVE-WEB-2 and LIVE-STALL-1 could
+not run. The search field is not an overlay and was never closed.
+
+`page.feedCommand.svelte.test.ts` mounts the route with a `goto` double in kit 3's order (a
+microtask, the drain, the new URL). It fails on the old order. It cannot see the real router or
+the WebView's history: the phone reading is what proves the router keeps that order. The drain now
+logs how many overlays a navigation closes, which was silent.
 
 ## Key components
 
@@ -1775,7 +1857,7 @@ key would fail to open on every later read.
 was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
 `loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
 and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
-comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on the workstation, 7 reads,
 median (max):
 
 | page | sealed size | CPU 1x | CPU 6x |

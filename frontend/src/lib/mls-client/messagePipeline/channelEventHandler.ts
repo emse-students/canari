@@ -13,6 +13,8 @@ import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
+import { isJoinAskOutcome } from '../joinAskFrames';
+import { salonGrants } from '$lib/utils/chat/memberRemoval';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -20,11 +22,14 @@ import type { MessageHandlerDeps } from './deps';
  */
 export interface ChannelEventContext extends Pick<
   MessageHandlerDeps,
+  | 'onJoinAsk'
+  | 'onJoinAskSettled'
   | 'conversations'
   | 'userId'
   | 'addMessageToChat'
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
+  | 'onChannelRemovalReleased'
   | 'onChannelUpdated'
   | 'onRolePermissionsChanged'
   | 'onChannelDeleted'
@@ -71,6 +76,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     addMessageToChat,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onChannelRemovalReleased,
     onChannelUpdated,
     onRolePermissionsChanged,
     onChannelDeleted,
@@ -81,6 +87,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelMessageDeleted,
     log,
     onOutOfSync,
+    onJoinAsk,
+    onJoinAskSettled,
   } = ctx;
 
   // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
@@ -114,6 +122,47 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     return;
   }
 
+  // A new person asks to join a group conversation, announced to every online admitted member.
+  if (event.type === 'group.join_ask') {
+    const data = event.data || {};
+    const groupId = String(data.groupId || '');
+    const requesterUserId = String(data.requesterUserId || '');
+    const askId = String(data.askId || '');
+    if (!groupId || !requesterUserId || !askId) {
+      return unaddressable(
+        log,
+        event.type,
+        !groupId ? 'groupId' : !requesterUserId ? 'requesterUserId' : 'askId'
+      );
+    }
+    const requesterDeviceIds = Array.isArray(data.requesterDeviceIds)
+      ? (data.requesterDeviceIds as unknown[]).filter(
+          (d): d is string => typeof d === 'string' && !!d
+        )
+      : [];
+    onJoinAsk?.({ groupId, askId, requesterUserId, requesterDeviceIds });
+    return;
+  }
+
+  // That ask ended - answered, withdrawn or expired: the server's outcome takes it off this screen.
+  if (event.type === 'group.join_ask.settled') {
+    const data = event.data || {};
+    const groupId = String(data.groupId || '');
+    const userId = String(data.userId || '');
+    const askId = String(data.askId || '');
+    if (!groupId || !userId || !askId) {
+      return unaddressable(log, event.type, !groupId ? 'groupId' : !userId ? 'userId' : 'askId');
+    }
+    if (!isJoinAskOutcome(data.outcome)) {
+      log(
+        `[ERROR] ${event.type} carries an unknown outcome "${String(data.outcome)}" - the ask stays`
+      );
+      return;
+    }
+    onJoinAskSettled?.({ groupId, userId, askId, outcome: data.outcome });
+    return;
+  }
+
   if (event.type === 'channel.pin') {
     const data = event.data || {};
     const channelId = String(data.channelId || '');
@@ -139,6 +188,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'channel.member.joined') {
     const data = event.data || {};
+    // The grant's revision, for each person it names, orders it against a removal (`salonGrants`).
+    const granted: string[] = Array.isArray(data.grantedUserIds)
+      ? data.grantedUserIds.map(String)
+      : data.joinedBy
+        ? [String(data.joinedBy)]
+        : [];
+    salonGrants.noteGrant(String(data.channelId || ''), granted, data.accessRevision);
     onChannelMemberJoined?.({
       channelId: String(data.channelId || ''),
       channelName: data.channelName,
@@ -158,13 +214,48 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // are normalised here so a single client handler decides what is actually lost.
   if (event.type === 'channel.member.kicked' || event.type === 'channel.member.removed') {
     const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const kickedUserId = String(data.kickedUserId ?? data.removedUserId ?? '');
+    // A removal OLDER than a grant already seen for the same person and salon (a leave, then a
+    // quick re-invitation) changes nothing: acting on it would purge a salon they are back in.
+    if (channelId && salonGrants.supersedes(channelId, kickedUserId, data.accessRevision)) {
+      log(
+        `[CHANNEL] removal of ${kickedUserId.slice(0, 8)} from ${channelId.slice(0, 8)} at access revision ${data.accessRevision} is older than a grant already seen - ignored`
+      );
+      return;
+    }
     onChannelMemberKicked?.({
-      channelId: String(data.channelId || ''),
+      channelId,
       channelName: data.channelName,
       workspaceId: data.workspaceId,
-      kickedUserId: String(data.kickedUserId ?? data.removedUserId ?? ''),
+      kickedUserId,
       kickedBy: data.kickedBy ?? data.removedBy,
+      actorDeviceId: typeof data.actorDeviceId === 'string' ? data.actorDeviceId : undefined,
       channelIsPrivate: data.isPrivate === true,
+    });
+    return;
+  }
+
+  // THE ACTOR RELEASED A REMOVE IT CLAIMED (channel-encryption section 10): it did not commit it, and
+  // the scope's remaining members elect a committer - on this event, never on a guess.
+  if (event.type === 'channel.member.removal-released') {
+    const data = event.data || {};
+    const workspaceId = String(data.workspaceId || '');
+    const removedUserId = String(data.removedUserId || '');
+    // WHO released it: its leaves are out of the election, or the releaser is elected again.
+    const releasedBy = String(data.releasedBy || '');
+    // ...and BY WHICH DEVICE: only a receiver that deferred to that device's leaf re-decides.
+    const releasedByDevice = String(data.releasedByDevice || '');
+    if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
+    if (!removedUserId) return unaddressable(log, event.type, 'removedUserId');
+    if (!releasedBy) return unaddressable(log, event.type, 'releasedBy');
+    if (!releasedByDevice) return unaddressable(log, event.type, 'releasedByDevice');
+    onChannelRemovalReleased?.({
+      workspaceId,
+      channelId: String(data.channelId || ''),
+      removedUserId,
+      releasedBy,
+      releasedByDevice,
     });
     return;
   }

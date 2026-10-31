@@ -5,6 +5,7 @@ import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { Group } from '../entities/group.entity';
+import { KeyPackage } from '../entities/key-package.entity';
 
 /** One statement the REAL TypeORM query builder produced, as the driver would have sent it. */
 export interface RecordedStatement {
@@ -37,6 +38,7 @@ export async function recordingDataSource(
       GroupMember,
       GroupMembershipInterval,
       Group,
+      KeyPackage,
     ],
   });
   // Metadata only: `initialize()` would connect.

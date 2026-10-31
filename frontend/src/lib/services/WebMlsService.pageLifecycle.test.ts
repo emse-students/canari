@@ -56,7 +56,7 @@ async function connected() {
   const reconnect = vi.fn();
   service.onDisconnect(reconnect);
 
-  const promise = service.connect('token');
+  const promise = service.connect('token', service.socketFence());
   FakeSocket.last!.onopen!();
   await promise;
 

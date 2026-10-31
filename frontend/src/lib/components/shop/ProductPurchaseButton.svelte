@@ -13,8 +13,8 @@
 
   interface Props {
     product: AssociationProduct;
-    /** Custom amount in euros when the product allows a free-form price. */
-    customAmountEuros?: number;
+    /** Custom amount in cents when the product allows a free-form price. */
+    customAmountCents?: number;
     /** Override the default action label (Cotiser / Recharger / Acheter). */
     label?: string;
     class?: string;
@@ -23,7 +23,7 @@
 
   let {
     product,
-    customAmountEuros,
+    customAmountCents,
     label,
     class: className = '',
     disabled = false,
@@ -46,7 +46,7 @@
       checkingOut ||
       (product.allowCustomAmount &&
         product.amountCents === null &&
-        (customAmountEuros == null || customAmountEuros <= 0))
+        (customAmountCents == null || customAmountCents <= 0))
   );
 
   onMount(() => {
@@ -56,8 +56,8 @@
   /** Resolves custom amount in cents when applicable. */
   function resolveCustomCents(): number | undefined {
     if (product.allowCustomAmount && product.amountCents === null) {
-      if (customAmountEuros == null || customAmountEuros <= 0) return undefined;
-      return Math.round(customAmountEuros * 100);
+      if (customAmountCents == null || customAmountCents <= 0) return undefined;
+      return customAmountCents;
     }
     return undefined;
   }

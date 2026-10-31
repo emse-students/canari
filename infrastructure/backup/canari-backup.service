@@ -8,6 +8,9 @@ Type=oneshot
 User=canari
 # Chemin du depot sur le serveur de production.
 WorkingDirectory=/home/canari/canari
+# Obligatoire, sans defaut dans le depot (adresse privee) : <utilisateur>@<hote-offsite>, ou vide pour
+# desactiver la copie offsite. Une valeur absente arrete la sauvegarde.
+Environment=BACKUP_SSH_HOST=<utilisateur-backup>@<hote-offsite>
 ExecStart=/home/canari/canari/infrastructure/backup/backup.sh
 # Une sauvegarde peut etre longue (dumps + tar volumes + transfert offsite).
 TimeoutStartSec=3600

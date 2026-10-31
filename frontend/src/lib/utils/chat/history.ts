@@ -29,6 +29,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
+import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
@@ -392,7 +393,9 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  * ## The window that REMAINS, stated rather than papered over
  *
  * A kill between the checkpoint returning and this call still leaves the ratchet one step ahead. That
- * window is now microseconds instead of a whole archive walk, and it is the SAME window
+ * window is not microseconds: this call writes `localStorage`, which the browser commits to disk
+ * seconds later, so a process killed in that delay keeps the ratchet and loses the marks (KILL-2,
+ * 2026-10-25, `docs/wiki/backlog.md`). It is the SAME window
  * `commitPersisted` accepts for the send ledger, for the same reason: **the two orderings are not
  * symmetric.** A ledger ahead of a ratchet SKIPS a frame whose generation was never spent - a message
  * lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read - noise and a
@@ -1045,12 +1048,18 @@ export async function replayConversationHistory(params: {
          *
          * The USER is not the discriminator and never could be: this account's other device wrote
          * frames that are both decryptable and wanted. The device is, and the server now carries
-         * it (`sender_device_id`).
+         * it (`sender_device_id`). The user is checked too, but only so that a device id another
+         * account happens to carry is never taken for ours (`isFrameFromThisDevice`).
          *
          * The row is marked seen so later replays answer from the cheap check above, and the
          * cursor moves past it - a frame we sent is a frame we have, by definition.
          */
-        if (msg.sender_device_id && msg.sender_device_id === myDeviceId) {
+        if (
+          isFrameFromThisDevice(
+            { userId: msg.sender_id, deviceId: msg.sender_device_id },
+            { userId, deviceId: myDeviceId }
+          )
+        ) {
           ownFramesSkipped++;
           seenCipherHashes.add(rowKey);
           markSeenUpdated();

@@ -35,10 +35,13 @@ import { In } from 'typeorm';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { announceJoinAsk } from '../utils/join-ask-announce';
 import {
+  assertCallerActsOnGroup,
+  isKeyDistributionGroup,
   refuseAwaitingSeat,
   callerSeatStanding,
   endDeviceMemberships,
@@ -219,7 +222,7 @@ export class InvitationsController {
       group.id,
       callerId,
       deviceIds,
-      true
+      'awaiting_admission'
     );
     if (outcome !== 'written') {
       this.logger.warn(
@@ -234,9 +237,30 @@ export class InvitationsController {
       `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`
     );
 
-    // Put the ask to a member now instead of at their next sync: notifyWelcomeRequest forwards a
-    // welcome_request to an online member (whose client shows "X asks to join") and, if none is
-    // online, wakes one via FCM. Best-effort - the pending rows above are the durable ask.
+    // THE ASK IS PUT TO EVERY ONLINE ADMITTED MEMBER, live (`announceJoinAsk`): any member may
+    // answer it. Named by the seat just written (its id is the ask's identity); a seat a member
+    // already answered is not announced. Started, not awaited - the pending rows above are the
+    // durable ask every member's sweep reads.
+    const seat = await this.groupMemberRepo.findOne({
+      where: { groupId: group.id, userId: callerId, awaitingAdmission: true },
+      select: { id: true },
+    });
+    if (seat) {
+      announceJoinAsk(
+        this.deviceGroupRepo.manager,
+        this.redis,
+        group.id,
+        { userId: callerId, askId: seat.id },
+        deviceIds
+      );
+    } else {
+      this.logger.log(
+        `[GROUP_INVITE] group=${group.id} user=${callerId.slice(0, 8)} - the ask was answered before it could be announced`
+      );
+    }
+
+    // And the welcome_request, as before: forwarded to ONE elected online member (the device that
+    // answers a relayed request mechanically) or, if none is online, a wake of one via FCM.
     for (const deviceId of deviceIds) {
       try {
         await this.messagingService.notifyWelcomeRequest(callerId, {
@@ -295,11 +319,31 @@ export class InvitationsController {
       return [];
     }
 
+    // 1b. Only CONVERSATIONS invite by Add. A key-distribution group's devices enter by external
+    // commit and its roster is the community's, so its pending rows are no invitation a member
+    // honours - and the client, which never lists that group among its conversations, would read
+    // them as rows of a group gone from the server and end every one.
+    const conversations = await this.groupRepo.find({
+      where: {
+        id: In(myGroupIds),
+        distributionWorkspaceId: IsNull(),
+        distributionChannelId: IsNull(),
+      },
+      select: { id: true },
+    });
+    const conversationIds = conversations.map((g) => g.id);
+    if (conversationIds.length === 0) {
+      this.logger.log(
+        `[PENDING][${traceId}] DONE groups=${myGroupIds.length} conversations=0 invitations=0`
+      );
+      return [];
+    }
+
     // 2. Find all pending memberships in those groups.
     // Uses In() to generate a single WHERE groupId IN (...) AND status = 'pending' predicate
     // instead of N OR clauses (one per group), which is far more efficient in PostgreSQL.
     const pending = await this.deviceGroupRepo.find({
-      where: { groupId: In(myGroupIds), status: 'pending' as const },
+      where: { groupId: In(conversationIds), status: 'pending' as const },
     });
 
     if (pending.length === 0) {
@@ -331,7 +375,9 @@ export class InvitationsController {
     // a member is asked "X asks to join". A person absent from the tree whose seat is NOT an ask - a
     // member's invite between its roster write and its Add, a seat older than migration 038 - is
     // neither added automatically nor put to a member as an ask nobody made (review of #2358, P2-1).
-    const askers = new Set(
+    // Keyed to the seat's id, which is the ask's IDENTITY (`askId`): a member's screen settles an ask
+    // by it, so a sweep that read before a settlement cannot bring the settled ask back.
+    const askers = new Map(
       (actionable.length === 0
         ? []
         : await this.groupMemberRepo.find({
@@ -340,9 +386,9 @@ export class InvitationsController {
               userId: In([...new Set(actionable.map((a) => a.userId))]),
               awaitingAdmission: true,
             },
-            select: { groupId: true, userId: true },
+            select: { id: true, groupId: true, userId: true },
           })
-      ).map((m) => `${m.groupId}|${m.userId}`)
+      ).map((m) => [`${m.groupId}|${m.userId}`, m.id] as const)
     );
     this.logger.log(
       `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length} asks=${askers.size}`
@@ -350,6 +396,7 @@ export class InvitationsController {
     return actionable.map((a) => ({
       ...a,
       awaitingAdmission: askers.has(`${a.groupId}|${a.userId}`),
+      askId: askers.get(`${a.groupId}|${a.userId}`) ?? null,
     }));
   }
 
@@ -419,7 +466,7 @@ export class InvitationsController {
     });
 
     const pendingGroupIds = memberships.filter((m) => m.status === 'pending').map((m) => m.groupId);
-    const { welcomed, locked } = await readPendingMembershipFacts(
+    const facts = await readPendingMembershipFacts(
       this.queuedMessageRepo,
       this.redis,
       safeDeviceId,
@@ -438,8 +485,8 @@ export class InvitationsController {
 
     const answer = memberships.map((m) => ({
       ...m,
-      welcomeQueued: welcomed.has(m.groupId),
-      addInFlight: locked.has(m.groupId),
+      welcomeQueued: facts.welcomed.has(m.groupId),
+      addInFlight: addInFlightOf(facts, m.groupId),
       // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
       awaitingAdmission: m.status !== 'active' && awaiting.has(m.groupId),
     }));
@@ -449,7 +496,11 @@ export class InvitationsController {
     // only past its own window. A non-zero count here on a device that keeps asking IS the defect.
     // A seat awaiting a member's answer is not stranded: a member is the one who answers it.
     const stranded = answer.filter(
-      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight && !m.awaitingAdmission
+      (m) =>
+        m.status === 'pending' &&
+        !m.welcomeQueued &&
+        m.addInFlight === false &&
+        !m.awaitingAdmission
     ).length;
     const statuses = answer
       .map(
@@ -560,10 +611,16 @@ export class InvitationsController {
     // `group:members:{groupId}` - routable and electable to serve a Welcome it cannot produce.
     // `removedFromTreeAt: null` because nobody removed this device's leaf: it is reporting its own
     // state, no member owes it an Add, and `kickedAt` must keep whatever it already said.
-    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
-      removedFromTreeAt: null,
-      tag: 'INVITATION_STATUS',
-    });
+    //
+    // A REPORT OF `pending` DEMOTES A SEAT AND NEVER CREATES ONE, exactly as a report of `active`
+    // promotes one: a device with no seat here is refused (`no_seat`), already logged by the writer.
+    const demoted = await this.messagingService.deactivateDeviceMembership(
+      safeUserId,
+      safeDeviceId,
+      safeGroupId,
+      { removedFromTreeAt: null, tag: 'INVITATION_STATUS' }
+    );
+    if (!demoted) throw activationRefusalException('no_seat');
     return { status: 'pending' as const };
   }
 
@@ -592,6 +649,8 @@ export class InvitationsController {
     // ONE instant for the whole batch, because ONE Remove commit is what reset all of them - which
     // is why the shared writer takes the instant instead of reading the clock per device.
     const kickedAt = new Date();
+    /** The rows actually demoted: one deleted since the read above is not counted (nor re-created). */
+    const demoted: typeof memberships = [];
     for (const m of memberships) {
       // THIS LOOP USED TO SET THE TWO COLUMNS ITSELF AND CALL NO `srem`, and its sibling
       // `kickStaleDevice` fifty lines below did. So kicking a whole user's devices left every one
@@ -599,22 +658,27 @@ export class InvitationsController {
       // `welcome_request` for a group whose leaf the caller had just removed - for up to the
       // fourteen days it takes `cleanupStalePendingInvitations` to delete the row. Nothing
       // reconciles an entry AWAY, so it was permanent until then and silent throughout.
-      await this.messagingService.deactivateDeviceMembership(m.userId, m.deviceId, m.groupId, {
-        removedFromTreeAt: kickedAt,
-        tag: 'KICK_USER',
-      });
+      if (
+        await this.messagingService.deactivateDeviceMembership(m.userId, m.deviceId, m.groupId, {
+          removedFromTreeAt: kickedAt,
+          seatId: m.id,
+          tag: 'KICK_USER',
+        })
+      ) {
+        demoted.push(m);
+      }
     }
 
-    if (memberships.length > 0) {
+    if (demoted.length > 0) {
       this.logger.log(
-        `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
+        `[KICK] Reset ${demoted.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
       );
     }
 
     return {
       status: 'kicked',
-      affected: memberships.length,
-      devices: memberships.map((m) => ({
+      affected: demoted.length,
+      devices: demoted.map((m) => ({
         deviceId: m.deviceId,
         groupId: m.groupId,
       })),
@@ -653,10 +717,16 @@ export class InvitationsController {
     // at all - two opposite causes wanting opposite fixes. The caller has just removed this
     // device's leaf and owes it an Add; when that Add throws, its failure is swallowed on the
     // answering device, and `kickedAt` is the only thing left that can name the loss server-side.
-    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
-      removedFromTreeAt: new Date(),
-      tag: 'KICK_DEVICE',
-    });
+    // Only the row read above: one deleted since is not re-created, and the writer says so.
+    const demoted = await this.messagingService.deactivateDeviceMembership(
+      safeUserId,
+      safeDeviceId,
+      safeGroupId,
+      { removedFromTreeAt: new Date(), seatId: membership.id, tag: 'KICK_DEVICE' }
+    );
+    if (!demoted) {
+      return { status: 'not_found', affected: 0 };
+    }
 
     this.logger.log(
       `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`
@@ -667,24 +737,79 @@ export class InvitationsController {
 
   /**
    * Delete a specific device-group membership (e.g. when removing a device).
-   * Also deletes ALL memberships for the device if no groupId is provided.
+   *
+   * The caller ends its OWN device's row, or - as an admitted member of the group - the row of a
+   * device the group cannot add (`processPendingInvitations`); nobody else ends anybody's.
+   *
+   * **ANOTHER USER'S ROW IS ENDED ONLY WHILE IT IS NOT `active`**: the one use of that door is a
+   * pending invitation the group cannot honour, and an active row is a device IN the conversation,
+   * whose departure is its owner's (or a commit's) to make. The delete itself carries the condition
+   * (`status <> 'active'`), so a row cannot turn active between a check and the delete; a row the
+   * delete left behind is active, and is the 403 `MEMBERSHIP_NOT_ALLOWED` - the throw rolls back the
+   * Welcomes the same transaction dropped. An absent row ends nothing (`affected: 0`). The statements
+   * keep the one delete order of `utils/seat-eviction.ts` (queue, then device rows): taking the
+   * device row's lock first would invert it against every other departure and can deadlock.
+   *
+   * Another user's row in a KEY-DISTRIBUTION group is never ended here (403
+   * `KEY_DISTRIBUTION_GROUP`): its devices enter and leave through the distribution-groups routes.
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId/:groupId')
   async deleteDeviceMembership(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Param('groupId') groupId: string
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    const forAnotherUser = caller !== safeUserId && headerGlobalAdmin !== 'true';
+    if (forAnotherUser) {
+      const group = await assertCallerActsOnGroup(
+        { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+        this.logger,
+        'DEL_MEMBERSHIP',
+        safeGroupId,
+        caller
+      );
+      if (isKeyDistributionGroup(group)) {
+        this.logger.warn(
+          `[DEL_MEMBERSHIP] REFUSED key-distribution group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} (403 KEY_DISTRIBUTION_GROUP)`
+        );
+        throw new ForbiddenException(
+          refusalBody(
+            RefusalCode.KEY_DISTRIBUTION_GROUP,
+            "A key-distribution group's device rows are managed through its community."
+          )
+        );
+      }
+    }
 
     // The row and the Welcomes still queued for it, in ONE transaction ({@link endDeviceMemberships}).
-    const ended = await this.endMemberships({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-      groupId: safeGroupId,
+    const scope = { userId: safeUserId, deviceId: safeDeviceId, groupId: safeGroupId };
+    const ended = await this.deviceGroupRepo.manager.transaction(async (manager) => {
+      if (!forAnotherUser) return endDeviceMemberships(manager, scope, 'welcomes');
+      const done = await endDeviceMemberships(manager, scope, 'welcomes', 'not-active');
+      if (done.memberships > 0) return done;
+      const left = await manager.getRepository(DeviceGroupMembership).findOne({
+        where: scope,
+        select: { id: true, status: true },
+      });
+      if (left) {
+        this.logger.warn(
+          `[DEL_MEMBERSHIP] REFUSED group=${safeGroupId} caller=${cutUserId(caller)} target=${cutUserId(safeUserId)}:${cutDeviceId(safeDeviceId)} status=${left.status} - an active row is ended by its owner only (403 MEMBERSHIP_NOT_ALLOWED)`
+        );
+        throw new ForbiddenException(
+          refusalBody(
+            RefusalCode.MEMBERSHIP_NOT_ALLOWED,
+            "Cannot end another user's active device membership"
+          )
+        );
+      }
+      return done;
     });
 
     // Keep Redis message routing in sync with membership deletion.
@@ -728,16 +853,24 @@ export class InvitationsController {
   }
 
   /**
-   * Delete ALL device-group memberships for a specific device.
+   * Delete ALL device-group memberships for a specific device - one of the caller's own.
    */
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/device-memberships/:userId/:deviceId')
   async deleteAllDeviceMemberships(
     @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string
+    @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      "Cannot end another user's device memberships"
+    );
 
     // Capture affected groups before delete so we can clean Redis routing sets.
     const memberships = await this.deviceGroupRepo.find({

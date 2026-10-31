@@ -68,11 +68,17 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
     },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
+    // The groups this device holds, read by `externalJoin` under the lock. Empty: a joiner.
+    getLocalGroups: (): string[] => [],
     distributionScopeByGroup: new Map<string, string>(),
     knownDistributionGroups: new Set<string>(),
     // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.
     groupDrainedWaiters: new Map(),
     groupDrainedArmed: new Set<string>(),
+    // And it cancels the add-lock expiry wakes.
+    addLockExpiryWakes: new Map(),
+    // And it releases the socket through the platform half, which a prototype has no body for.
+    pausePlatformSocket: vi.fn(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),

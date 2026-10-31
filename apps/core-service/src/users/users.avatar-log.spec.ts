@@ -33,7 +33,8 @@ describe('GET /users/:id/avatar logging', () => {
       {} as UserBlocksService,
       {} as ProfileEditService,
       {} as ProfileCorrectionService,
-      {} as AccountErasureService
+      {} as AccountErasureService,
+      {} as never // AuthSessionsService: no admin flag route here
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);

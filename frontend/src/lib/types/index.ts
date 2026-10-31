@@ -119,6 +119,14 @@ export interface AddMessageToChatOptions {
    * (an older build, or a proof this device could not check). Shown with a marker, never refused.
    */
   restoredUnverified?: boolean;
+  /**
+   * This call is the ONLY writer the row will ever get on this device - the acting device's own
+   * visible notice (`sendVisibleNotice`), which MLS never echoes back. Such a row takes the live
+   * path even during a bulk drain, exactly as an own message does: the drain buffer is discarded
+   * without flushing by a second drain start and by `resetMessageCatchupState`, and nothing else
+   * would ever write the row again.
+   */
+  soleWriter?: boolean;
 }
 
 /**
@@ -227,6 +235,13 @@ export interface Conversation {
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */
   imageMediaId?: string | null;
+  /**
+   * This account's seat is an invitation-link ask no member has answered yet, as the server's
+   * conversation list last said - see `ConversationMeta.awaitingAdmission`. Read as a NEVER-ADMITTED
+   * conversation only while the row is `pending` (`isNeverAdmitted`, `admissionState.ts`): a row
+   * that was ever active was admitted.
+   */
+  awaitingAdmission?: boolean;
   /**
    * Unix-ms timestamp of the most recent message in this conversation.
    * Updated on every addMessageToChat / batchAddMessages call so the sidebar

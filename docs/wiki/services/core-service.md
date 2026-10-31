@@ -32,11 +32,16 @@ credential, `logout` only cleared the cookie (revoking nothing), a stolen cookie
 7 days on every use in parallel with the real user, and the single lever available was rotating
 `JWT_SECRET` — which signs every user out of all six services at once.
 
-**The access token deliberately stays stateless.** Making it a row would add a database round trip
-to every service *and* to the nginx `auth_request`. So the row backs the **refresh** token, and the
-consequence is stated rather than hidden: revoking a session stops it renewing itself immediately,
-but an access token already handed out keeps working until it expires (≤ 1 h). The settings UI says
-so in as many words.
+**The access token is never looked up by the services.** Making it a row would add a database round
+trip to every service. So the row backs the **refresh** token, and `/api/auth/verify` - nginx's
+`auth_request` - reads it by the token's `sid`, as do this service's own session routes
+(`requireAccessToken`): an access token whose session has ended is answered anonymous there, so
+revoking a session cuts its access through every `auth_request` location at once, not at the token's
+expiry. The three families that verify the token themselves - media-service's check, call-service's
+claim decoding and the gateway socket - do not read the session; the settings UI says so in as many
+words. Exact coverage, the pre-deploy token without `sid`, and the internal route
+chat-delivery calls to end a revoked device's sessions (`InternalSessionsController`) are in
+[sessions](../sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25).
 
 **The row also names the MLS device it belongs to** (`deviceId`, nullable), written once per app
 start after the client unlocks MLS — the first moment it can say which device it is. It is the only
@@ -101,7 +106,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/oidc/callback` | none | Exchange Authentik auth code for JWT + refresh cookie; upsert local user |
-| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay |
+| POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay; a session an owner's DEVICE REVOCATION ended is refused `401 DEVICE_REVOKED_BY_OWNER` ([sessions](../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) |
 | POST | `/api/auth/logout` | cookie | Delete the session row, then clear the cookie |
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
@@ -122,7 +127,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
 | GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
-| POST | `/api/users` | global admin | Create user manually |
+| POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
 | GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
@@ -130,7 +135,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
 | DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
-| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
+| PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (`{ admin: boolean }`, else `400`); never one's own (`ADMIN_SELF_DEMOTE`/`ADMIN_SELF_CHANGE`, `403`); a removal ends every session of the person |
 
 #### One request for a list the client already holds
 
@@ -434,9 +439,8 @@ fulfillment as a trigger, via an `order_ref` Canari encodes itself
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
 [backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
 since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
-requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
-`lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
-`vendor_token` is PUBLIC.
+requires. The `business/create` webhook is described in
+[payments](../frontend/modules/payments.md).
 
 **How core-service reads an association's payment account (2026-10-05).** the Lydia manual
 validation reads social-service's INTERNAL route
@@ -469,8 +473,9 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 | POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
-| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)) |
+| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). With `expectedAmountCents` the answer is VERIFIED - Lydia's signature checked with the Business key over that amount - and carries `verification` (`verified`, `mismatch`, `unsigned`, or `no-key` without asking Lydia); the reconciliation sweep's read ([lydia-api](../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`, the association's Business key) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
+| POST | `/api/payments/lydia-business-webhook` | none - UNSIGNED by Lydia, so it writes nothing | `business/create`'s `webhook`: `BUSINESS_VALIDATED` / `BUSINESS_UNVALIDATED` logged with the association holding the `vendor_token`, for a global admin who still validates by hand ([payments](../frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) |
 
 ### Health
 
@@ -498,6 +503,59 @@ can recognise a session that is not theirs; they are shown to nobody else, never
 authorization, and die with the row. The IP is taken from the **last** `X-Forwarded-For` entry, not
 the first: nginx appends the connecting address to whatever the client sent, so the head of that
 list is attacker-controlled and only the tail is what nginx actually saw.
+
+### A user write updates columns, never saves the row it read (2026-10-25)
+
+**A write to an existing `users` row is ONE column-scoped `UPDATE` keyed by its id**
+(`updateUserColumns`, `users/user-write.ts`), and `affected !== 1` throws the typed
+`UserRowGoneError` (a 404): nothing written, nothing inserted. A TypeORM `save` of a `User` read
+earlier is not that: it diffs the stale copy against the row as it stands and writes back every
+column a concurrent writer changed since the read, and it inserts the row again, every column
+included, when it was deleted in between. The sites: the notepad save, the profile `PATCH`, the admin
+flag (one `UPDATE` of `admin` and no read at all), the sign-in's refresh of its claims, and an admin
+profile edit (inside its audit transaction, so a row gone rolls the audit back).
+
+- **The notepad key** is minted by `UPDATE ... SET "notesKey" = COALESCE("notesKey", $key) ...
+  RETURNING "notesKey"`: PostgreSQL makes the second of two concurrent first calls wait and re-read
+  the row, so both answer the first key, and a note is never encrypted under a key a later write
+  replaced.
+- **The sign-in** keeps its insert for a subject with no row. Only an account erasure deletes a user
+  row, so a row read and gone before the update is answered with the erasure's own refusal
+  (`ACCOUNT_ERASURE_PENDING`/`_BLOCKED`, read again on `UserRowGoneError`) and is never re-created.
+- **A role change ends the sessions that carried it.** The admin flag travels in each access token
+  (`/api/auth/verify` hands it on as `X-Global-Admin`), so removing it ends every session of the
+  person (`revokeOthers(id, null)`): each token is answered anonymous at `/api/auth/verify` from that
+  moment (the three self-verifying families are on [sessions](../sessions.md)), and the next sign-in
+  mints tokens from the row as it stands. The revoke runs on EVERY removal, a removal of a flag
+  already off included, so a retry after a failure between the update and the revoke still ends the
+  sessions. A sign-in reads the flag AFTER its session exists (`isUserAdmin`) and signs that value,
+  never the row it read before: a role change committed in between is either read there or ends
+  that session too. Nobody writes their own flag, either way. The session store is its own
+  `SessionsModule`, imported by the auth and the user routes alike.
+- **An administrator's `create` is an insert**, `ON CONFLICT DO NOTHING`: an id that has a row is a
+  `409` (`UserIdTakenError`), as is one whose erasure is running; a save would overwrite the row.
+- **`save` stays for a row the call itself creates** (the first sign-in, a session, a block).
+- **An empty set writes nothing**: `updateUserColumns` answers at once rather than handing TypeORM an
+  `UPDATE` with no column.
+
+Proven on PostgreSQL by `users/user-write-gone.integration.spec.ts` (CI step "User writes against
+PostgreSQL"): every write above, with an admin revoke or an erasure committed between its read and its
+write from inside the service's own repository call, plus two first key calls, a flag removal read
+back at `verify`, and a `create` over an existing id. The same rule holds in social-service for
+memberships
+([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)), a tag's renewal
+([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)),
+a mute and an unmute, a report's review and a role history edit
+([social-service](social-service.md#a-member-write-updates-columns-never-saves-the-row-it-read-2026-10-25)),
+proven by `users/user-grant-write-gone.integration.spec.ts` there.
+
+**The platform config is the same rule on its one row.** `updateConfig` reads the row for its guards
+and its "from -> to" lines, then writes ONE `UPDATE` of the columns the request names and answers
+the row re-read: two administrators editing different settings keep both, where a save of the row
+read wrote back the other's setting (a kill switch included). The row is never deleted, so 0 rows
+updated is an estate error, logged at error and thrown. Proven by
+`platform/platform-config-write.integration.spec.ts` (CI step "Platform config writes against
+PostgreSQL").
 
 ### The admin announcement, shown once per account
 

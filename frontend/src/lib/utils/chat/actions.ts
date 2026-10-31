@@ -9,6 +9,7 @@ import {
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
+import type { OneDeviceAddResult } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -40,6 +41,7 @@ import {
   classifyServerStatus,
   decideAbsentGroupFate,
   isDistributionGroupMeta,
+  readStillUserMember,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
 import {
@@ -49,20 +51,39 @@ import {
 } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
-import { sameDeviceIdentity, treeHoldsDevice, treeHoldsUser } from '$lib/mls-client/leafIdentity';
+import { isCommitRaceRefusal, refusedAdmits } from '$lib/mls-client/CommitRefusedError';
+import { AddAbortedError, rebuildOnRace } from './commitRace';
+import { readConfirmedTree, type TreeReading } from './confirmedTree';
+import {
+  canonicalUserId,
+  sameDeviceIdentity,
+  treeHoldsDevice,
+  treeHoldsUser,
+} from '$lib/mls-client/leafIdentity';
+import { isDeviceAskShown } from './joinRequests.svelte';
+import { DecisionLog } from '$lib/utils/decisionLog';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
+  keyPackageFingerprintOf,
   reportDeviceTrustRefusal,
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
-import type { PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
+import { MemberNotAdmittedError, type PendingInvitationRow } from '$lib/mls-client/mlsDeliveryApi';
 import {
   isRefusedDevice,
   recordRefusedDevice,
   reportRefusedDeviceSkipped,
 } from '$lib/mls-client/refusedDevices';
+import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
+import {
+  askedDeviceKey,
+  memberDeviceAnswer,
+  rememberAskedDeviceKey,
+  withdrawMemberDeviceApproval,
+  firstSightOfFlaggedAsk,
+  type AskedDeviceKey,
+} from './memberDeviceAnswers';
 
 /**
  * A device asking to join, as an AUTOMATIC Add has to see it - the approval a member gives to bring
@@ -72,6 +93,24 @@ export interface JoinApprovalRequest {
   groupId: string;
   requesterUserId: string;
   requesterDeviceId: string;
+  /**
+   * The ask's identity, the id of the seat its link wrote, as the server row or frame raising it
+   * named it (`askId`): an ask the server settled is never raised again (`joinRequests.svelte.ts`).
+   */
+  askId?: string;
+  /**
+   * `device`: the ask is about a DEVICE this device never saw, of a user who already holds a leaf
+   * ({@link automaticAdmission}'s `unseen-device`) - answered for the device (`memberDeviceAnswers.ts`),
+   * never by withdrawing the person's seat. Absent: a new person asks to join.
+   */
+  kind?: 'device';
+  /**
+   * A `device` ask's key: the fingerprint of the signature key its KeyPackage carries
+   * (`keyPackageFingerprintOf`), shown to the member and bound into the approval.
+   */
+  keyFingerprint?: string;
+  /** A `device` ask's name, as its account registered it on the server; shown, never trusted. */
+  deviceLabel?: string;
 }
 
 /**
@@ -87,26 +126,372 @@ export interface JoinApprovalRequest {
  *
  * `unreadable`: the tree could not be read, which proves no membership, so the caller adds nothing
  * and asks no one - another member, or the next sweep, answers.
+ *
+ * `confirmed` hands it a reading of the tree CONFIRMED at the server's epoch
+ * ({@link readConfirmedTree}) instead of the local one: a tree behind a Remove still holds the
+ * removed person, and an Add decided on it re-admits someone a member just took out. A reading that
+ * could not be confirmed is `unreadable`.
+ *
+ * AND A LEAF PROVES THE USER, NOT THE DEVICE. Given `deviceId`, a member's device is `member-device`
+ * only when its own leaf is in THIS group's tree (a lost Welcome, a re-add, a replace), and
+ * `approved-device` when this member approved it this session - an Add the caller still binds to the
+ * key that approval names ({@link approvedKeyHolds}). Anything else is `unseen-device`: nothing this
+ * device can verify says the device is theirs, so its first admission is a member's gesture, as a new
+ * person's is (`memberDeviceAnswers.ts`). A PIN OF ITS KEY IS NOT "SEEN": pins are one store for
+ * every group, written by any tree this device merged or joined - another group's, a key group's, a
+ * device's own external entry - so a pin says the key was met somewhere, never that a member of THIS
+ * group admitted it. Without `deviceId` the verdict is about the user alone.
  */
-type AutomaticAdmission = 'member-device' | 'newcomer' | 'unreadable';
+type AutomaticAdmission =
+  | 'member-device'
+  | 'approved-device'
+  | 'unseen-device'
+  | 'newcomer'
+  | 'unreadable';
 
 async function automaticAdmission(deps: {
   mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
   groupId: string;
   userId: string;
+  /** The device the Add would bring in; absent, the verdict is about the user alone. */
+  deviceId?: string;
   /** The caller's log tag, so the line reads in the sequence it belongs to. */
   tag: string;
   log: (message: string) => void;
+  confirmed?: TreeReading;
 }): Promise<AutomaticAdmission> {
-  const { mlsService, groupId, userId, tag, log } = deps;
+  const { mlsService, groupId, userId, deviceId, tag, log, confirmed } = deps;
+  let identities: readonly string[];
+  if (confirmed !== undefined) {
+    if (confirmed.status === 'unconfirmed') {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... not confirmed at the server's epoch, cannot say whether ${userId} is a member - nothing added`
+      );
+      return 'unreadable';
+    }
+    identities = confirmed.identities;
+  } else {
+    try {
+      identities = await mlsService.getGroupMemberIdentities(groupId);
+    } catch (e) {
+      log(
+        `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+      );
+      return 'unreadable';
+    }
+  }
+  if (!treeHoldsUser(identities, userId)) return 'newcomer';
+  if (deviceId === undefined || treeHoldsDevice(identities, userId, deviceId)) {
+    return 'member-device';
+  }
+  if (memberDeviceAnswer(groupId, userId, deviceId)?.kind === 'approved') {
+    log(
+      `${tag} ${userId}:${deviceId.slice(0, 12)}... was approved by this member - added under the key it was approved with`
+    );
+    return 'approved-device';
+  }
+  return 'unseen-device';
+}
+
+/**
+ * {@link automaticAdmission} for a seat the server may flag as an invitation-link ask
+ * (`awaitingAdmission`), with the one verdict such a seat adds: `ask-for-a-member`.
+ *
+ * A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, whatever the tree says - only a member's gesture
+ * answers it. AND IT IS NEVER A PERSON'S ASK FOR A USER WHO ALREADY HOLDS A LEAF (review of #2594,
+ * 2026-10-27): the ask's Add re-plans the person's devices from the server's list and its Decline
+ * removes the person's leaves, so one tap on such an entry would act on a member nobody asked about.
+ * A member is not a new person; the flag is an anomaly, refused at a level that accuses, and nothing
+ * is raised. Without the flag the verdict is {@link automaticAdmission}'s.
+ */
+async function admissionOfSeat(deps: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  awaitingAdmission: boolean | undefined;
+  tag: string;
+  log: (message: string) => void;
+}): Promise<AutomaticAdmission | 'ask-for-a-member'> {
+  const { awaitingAdmission, deviceId, ...rest } = deps;
+  if (awaitingAdmission !== true) return automaticAdmission({ ...rest, deviceId });
+  const userVerdict = await automaticAdmission(rest);
+  if (userVerdict === 'newcomer' || userVerdict === 'unreadable') return userVerdict;
+  const what = `${deps.tag} ${deps.userId}'s seat in ${deps.groupId.slice(0, 8)}... is flagged as a join ask, but the user already holds a leaf there - no person's ask is raised for a member, nothing added`;
+  // SAID ONCE PER SESSION AT A LEVEL THAT ACCUSES: a removed member's leaf can outlive the removal
+  // until it is collected, and every sweep meets the same seat. The ask is raised again by the first
+  // sweep after the leaf is gone, since the verdict is read from the tree on every pass.
+  if (firstSightOfFlaggedAsk(deps.groupId, deps.userId)) console.error(what);
+  else deps.log(`${what} (already reported this session)`);
+  return 'ask-for-a-member';
+}
+
+/**
+ * Whether the package an Add of an APPROVED device would be built from carries the key the member
+ * approved (`memberDeviceAnswers.ts`) - read from the package's own bytes
+ * (`keyPackageFingerprintOf`). A package under another key - fetched after the approval, from a
+ * server that changed it - is refused, at a level that accuses, and the approval withdrawn: the
+ * device is asked about anew, under the key it now shows. Bytes that are no KeyPackage are refused.
+ */
+async function approvedKeyHolds(
+  keyPackage: Uint8Array,
+  request: { groupId: string; userId: string; deviceId: string },
+  tag: string
+): Promise<boolean> {
+  const { groupId, userId, deviceId } = request;
+  const answer = memberDeviceAnswer(groupId, userId, deviceId);
+  if (answer?.kind !== 'approved') return false;
+  let fingerprint: string;
   try {
-    const identities = await mlsService.getGroupMemberIdentities(groupId);
-    return treeHoldsUser(identities, userId) ? 'member-device' : 'newcomer';
+    fingerprint = await keyPackageFingerprintOf(keyPackage);
+  } catch (e) {
+    console.error(
+      `${tag} the package served for approved device ${userId}:${deviceId.slice(0, 12)}... is no KeyPackage - not added in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 100)}`
+    );
+    return false;
+  }
+  if (fingerprint === answer.fingerprint) return true;
+  console.error(
+    `${tag} the package served for approved device ${userId}:${deviceId.slice(0, 12)}... carries key ${fingerprint}, not the approved ${answer.fingerprint} - refused in ${groupId.slice(0, 8)}..., the approval withdrawn, the device asked about anew`
+  );
+  withdrawMemberDeviceApproval(userId, deviceId);
+  return false;
+}
+
+/**
+ * The key and name an ask about an unseen device shows, read ONCE per session from one fetched
+ * KeyPackage and kept (`askedDeviceKey`), so a sweep spends no package per pass while the ask waits.
+ * `null` when no package could be had or read - logged; nothing is asked, and the next sweep tries
+ * again.
+ */
+async function unseenDeviceKey(
+  mlsService: Pick<IMlsService, 'fetchUserDevices' | 'fetchDeviceKeyPackage'>,
+  userId: string,
+  deviceId: string,
+  tag: string,
+  log: (message: string) => void
+): Promise<AskedDeviceKey | null> {
+  const known = askedDeviceKey(userId, deviceId);
+  if (known) return known;
+  const device = `${userId}:${deviceId.slice(0, 12)}...`;
+  let target: DeviceKeyPackage | undefined;
+  try {
+    const listed = await mlsService.fetchUserDevices(userId);
+    target = listed.find((d) => d.deviceId === deviceId);
   } catch (e) {
     log(
-      `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${userId} is a member - nothing added: ${String(e).slice(0, 100)}`
+      `${tag} device list of ${userId} unreadable, falling to the device's own package: ${String(e).slice(0, 100)}`
     );
-    return 'unreadable';
+  }
+  if (!target) {
+    const answer = await mlsService.fetchDeviceKeyPackage(userId, deviceId);
+    if (answer.kind !== 'package') {
+      log(
+        `${tag} ${device} has no package to show the member (${answer.kind === 'none' ? answer.reason : answer.detail}) - not asked yet, the next sweep tries again`
+      );
+      return null;
+    }
+    target = answer.device;
+  }
+  let fingerprint: string;
+  try {
+    fingerprint = await keyPackageFingerprintOf(target.keyPackage);
+  } catch (e) {
+    console.error(
+      `${tag} the package served for ${device} is no KeyPackage - not asked about, not added: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  }
+  const label = target.deviceName?.trim() || undefined;
+  const key: AskedDeviceKey = { fingerprint, ...(label ? { label } : {}) };
+  rememberAskedDeviceKey(userId, deviceId, key);
+  return key;
+}
+
+/**
+ * The decision last SAID about an unseen device, per `group|user:device`: the key fingerprint and
+ * this device's epoch of the group it was taken against (`fingerprint@epoch`).
+ *
+ * THE SAME DECISION WAS SAID ONCE PER REQUEST (DEVREVOKE-KEYGROUP, `1.5.1-alpha.8`, 2026-10-29): a
+ * minted device's two passes of `welcome_request`, 20 s apart, made the owner's seat print the same
+ * `[WELCOME_REQ] ... is a device this one never saw` line twice for each of six conversations. What
+ * the decision rests on is the device, its key and the tree it was read from; while none of them
+ * moved and the ask is still shown, the line has nothing new to say. A new epoch (a roster change),
+ * another key, or an ask no longer on screen re-decides and says it again - never a clock. A REPEAT
+ * of the same decision is still counted and said at its 1st, 10th, 100th... occurrence
+ * ({@link DecisionLog}): a device asking again and again against one state is evidence. Bounded, and
+ * reset at sign-out ({@link resetUnseenDeviceDecisions}).
+ */
+const unseenDeviceDecidedAt = new DecisionLog(2000);
+
+/** Forgets every decision said about an unseen device (sign-out, tests). */
+export function resetUnseenDeviceDecisions(): void {
+  unseenDeviceDecidedAt.reset();
+}
+
+/**
+ * Puts the ask about a DEVICE this device never saw, of a user already in the conversation, to this
+ * device's member ({@link automaticAdmission}'s `unseen-device`) - in ANY conversation row, a 1:1
+ * included: the answer adds or refuses the device (`memberDeviceAnswers.ts`) and touches no seat.
+ * ONE ASK PER DEVICE, carrying its name and the fingerprint of the key its package names
+ * ({@link unseenDeviceKey}), so the approval binds that key. A device this member declined in this
+ * conversation is not asked about again there. No conversation row - a key group, a row not loaded
+ * yet - asks nothing: the next sweep asks again once the row is there. Said once per decision
+ * ({@link unseenDeviceDecidedAt}).
+ */
+async function askAboutUnseenDevice(
+  mlsService: Pick<IMlsService, 'fetchUserDevices' | 'fetchDeviceKeyPackage' | 'getEpoch'>,
+  conversations: ReadonlyMap<string, Conversation>,
+  request: JoinApprovalRequest,
+  tag: string,
+  log: (message: string) => void,
+  onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
+): Promise<void> {
+  const { groupId, requesterUserId, requesterDeviceId } = request;
+  const short = groupId.slice(0, 8);
+  const device = `${requesterUserId}:${requesterDeviceId.slice(0, 12)}...`;
+  if (memberDeviceAnswer(groupId, requesterUserId, requesterDeviceId)?.kind === 'declined') {
+    log(`${tag} ${device} was declined in ${short}... by this member - not added, not asked again`);
+    return;
+  }
+  if (!conversations.has(groupId)) {
+    log(
+      `${tag} ${device} is a device this one never saw - not added in ${short}..., and nobody is asked: no conversation row is loaded for it`
+    );
+    return;
+  }
+  const key = await unseenDeviceKey(mlsService, requesterUserId, requesterDeviceId, tag, log);
+  if (key === null) return;
+  // ONCE PER DECISION ({@link unseenDeviceDecidedAt}): the same device, under the same key, against
+  // the same epoch of this group, while its ask is still on screen, is the decision already said.
+  // The ask is still RAISED every time - a sweep keeps what it raised (`settleSweptJoinRequests`) and
+  // the store's own raise is idempotent - only the line is not repeated.
+  const slot = `${groupId}|${canonicalUserId(requesterUserId)}:${requesterDeviceId}`;
+  const decidedAt = `${key.fingerprint}@${mlsService.getEpoch(groupId)}`;
+  // An ask no longer on screen is decided again, whatever was said before.
+  if (!isDeviceAskShown(groupId, requesterUserId, requesterDeviceId, key.fingerprint)) {
+    unseenDeviceDecidedAt.forget(slot);
+  }
+  const noted = unseenDeviceDecidedAt.note(slot, decidedAt);
+  if (noted?.say === 'decision') {
+    log(
+      `${tag} ${device} is a device this one never saw, of a member of ${short}... - not added automatically, a member's approval of key ${key.fingerprint} is asked`
+    );
+  } else if (noted?.say === 'repeat') {
+    log(
+      `${tag} ${device} asked again in ${short}... against the same key and epoch, repeat ${noted.nth} (said at 1, 10, 100...)`
+    );
+  }
+  onJoinApprovalRequested?.({
+    ...request,
+    kind: 'device',
+    keyFingerprint: key.fingerprint,
+    ...(key.label ? { deviceLabel: key.label } : {}),
+  });
+}
+
+/** What every automatic Add of one group rests on, as one read of the server gives it. */
+interface PendingAddFacts {
+  /** The tree, confirmed at the server's epoch - or not. */
+  tree: TreeReading;
+  /** The pending rows the server still holds, or why they could not be read. */
+  rows: PendingInvitationRow[] | { unreadable: string };
+}
+
+/**
+ * Reads {@link PendingAddFacts} for one attempt of one row's Add.
+ *
+ * THE TREE IS READ ONCE PER PASS OF A GROUP, not once per row (round 3 of #2416): confirming it costs
+ * a commit-log read under the global MLS lock, and every row of a group is judged against the same
+ * tree until an epoch moves. A pass is an epoch: an Add (or the commit that beat it) moves it and the
+ * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
+ * rebuilds without moving it.
+ *
+ * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
+ * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
+ * B, staged after row A, that a device being removed is "still pending", and re-admit it.
+ */
+function pendingAddFactsOf(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  myDeviceId: string;
+}): (fresh: boolean) => Promise<PendingAddFacts> {
+  const { mlsService, groupId, userId, myDeviceId } = deps;
+  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  return async (fresh) => {
+    const epoch = mlsService.getEpoch(groupId);
+    if (fresh || pass === null || pass.epoch !== epoch) {
+      // Always confirmed: the one read serves every row, whichever user each names.
+      pass = {
+        epoch,
+        tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
+      };
+    }
+    const tree = await pass.tree;
+    const rows = await mlsService
+      .getPendingInvitations(userId, myDeviceId)
+      .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
+    return { tree, rows };
+  };
+}
+
+/**
+ * What an automatic Add of a pending device rests on, re-checked in EVERY pass of its Add
+ * (`rebuildOnRace`) - the commit that won a race may be the Remove of the very person:
+ * - the user is still a MEMBER, read from the tree confirmed at the server's epoch
+ *   ({@link automaticAdmission} on the confirmed reading) - a removed person is a new person again,
+ *   and only a member's gesture brings one in;
+ * - the pending row is still on the server - a removal deletes it, and an Add answering a row that
+ *   is gone answers nobody.
+ *
+ * Read by {@link pendingAddFactsOf}: the tree once per pass of the group, the list on every attempt.
+ *
+ * @throws {@link AddAbortedError} when either no longer holds, or cannot be read: nothing is staged
+ *   and nothing registered.
+ */
+async function confirmPendingAddPremise(deps: {
+  mlsService: IMlsService;
+  groupId: string;
+  inv: PendingInvitationRow;
+  facts: PendingAddFacts;
+  log: (message: string) => void;
+}): Promise<void> {
+  const { mlsService, groupId, inv, facts, log } = deps;
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId,
+    userId: inv.userId,
+    tag: '[PENDING]',
+    log,
+    confirmed: facts.tree,
+  });
+  if (admission === 'unreadable') {
+    throw new AddAbortedError(groupId, 'tree-unconfirmed', `membership of ${inv.userId} unknown`);
+  }
+  if (admission === 'newcomer') {
+    throw new AddAbortedError(
+      groupId,
+      'not-a-member-device',
+      `${inv.userId} holds no leaf at the server's epoch`
+    );
+  }
+  if (!Array.isArray(facts.rows)) {
+    throw new AddAbortedError(groupId, 'premise-unreadable', facts.rows.unreadable);
+  }
+  const stillPending = facts.rows.some(
+    (r) =>
+      r.groupId === groupId &&
+      r.userId === inv.userId &&
+      r.deviceId === inv.deviceId &&
+      r.status === 'pending'
+  );
+  if (!stillPending) {
+    throw new AddAbortedError(
+      groupId,
+      'invitation-withdrawn',
+      `the pending row of ${inv.deviceId} is gone from the server`
+    );
   }
 }
 
@@ -137,14 +522,14 @@ function askAMemberToAdmit(
   tag: string,
   log: (message: string) => void,
   onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
-): void {
+): boolean {
   const short = request.groupId.slice(0, 8);
   if (isAsk !== true) {
     log(
       `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
         `their seat is not an invitation-link ask (a member's invite in flight, or a seat older than the rule)`
     );
-    return;
+    return false;
   }
   const convo = conversations.get(request.groupId);
   const kind = convo ? (convo.conversationType ?? 'group') : null;
@@ -153,12 +538,80 @@ function askAMemberToAdmit(
       `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
         `${kind === null ? 'no conversation row is loaded for it' : `a ${kind} conversation`} takes no join ask`
     );
-    return;
+    return false;
   }
   log(
     `${tag} ${request.requesterUserId} has no leaf in ${short}... - a new person is not added automatically, a member's approval is asked`
   );
   onJoinApprovalRequested?.(request);
+  return true;
+}
+
+/** An ask as the server announces it to every online admitted member (`group.join_ask`). */
+export interface AnnouncedJoinAsk {
+  groupId: string;
+  /** The ask's identity, the id of the seat its link wrote. */
+  askId: string;
+  requesterUserId: string;
+  requesterDeviceIds: string[];
+}
+
+/**
+ * Raises the ask the server ANNOUNCED to every online admitted member (`group.join_ask`), so a member
+ * sees it live rather than at its next pending-invitation sweep - any admitted member may answer.
+ *
+ * The announcement is the server's word that the seat is an invitation-link ask, as the `pending`
+ * rows and the roster are ({@link askAMemberToAdmit}'s `isAsk`). What it cannot say is whether the
+ * person already holds a leaf, which is read from THIS device's tree - a person a member already
+ * added is not asked about. It adds nobody: this is the human-visible ask, and only a member's Add
+ * brings the person in. One entry per (group, person) in the store, so the elected member's
+ * `welcome_request` and the sweep raising the same ask make one entry; and an ask the server already
+ * settled (`askId`) is not raised however late this lands.
+ */
+export async function raiseAnnouncedJoinAsk(params: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  conversations: ReadonlyMap<string, Conversation>;
+  ask: AnnouncedJoinAsk;
+  log: (msg: string) => void;
+  onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+}): Promise<void> {
+  const { mlsService, conversations, ask, log, onJoinApprovalRequested } = params;
+  const admission = await automaticAdmission({
+    mlsService,
+    groupId: ask.groupId,
+    userId: ask.requesterUserId,
+    tag: '[JOIN_ASK]',
+    log,
+  });
+  if (admission === 'unreadable') return;
+  // ANY LEAF OF THE USER, not only this device's: a person's ask is never raised for a member
+  // ({@link admissionOfSeat}).
+  if (admission !== 'newcomer') {
+    log(
+      `[JOIN_ASK] ${ask.requesterUserId} already holds a leaf in ${ask.groupId.slice(0, 8)}... - a member, not a new person: nothing to ask`
+    );
+    return;
+  }
+  const [first, ...others] = ask.requesterDeviceIds;
+  if (first === undefined) {
+    log(`[JOIN_ASK] the ask of ${ask.requesterUserId} names no device - nothing to raise`);
+    return;
+  }
+  const request = { groupId: ask.groupId, requesterUserId: ask.requesterUserId, askId: ask.askId };
+  const asked = askAMemberToAdmit(
+    conversations,
+    { ...request, requesterDeviceId: first },
+    true,
+    '[JOIN_ASK]',
+    log,
+    onJoinApprovalRequested
+  );
+  // The person's other devices join the same entry; the decision above was the person's, not theirs.
+  if (asked) {
+    for (const deviceId of others) {
+      onJoinApprovalRequested?.({ ...request, requesterDeviceId: deviceId });
+    }
+  }
 }
 
 /**
@@ -347,9 +800,15 @@ export async function processPendingInvitations(params: {
   /**
    * A pending device whose USER holds no leaf in our tree is a new person, never added from a server
    * row (`automaticAdmission`): this asks a member to approve the join instead. The row is left as
-   * it is - the approval, or the next sweep, is what answers it.
+   * it is - the approval, or the next sweep, is what answers it. So is a device of a member that
+   * this device never saw (`kind: 'device'`).
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
+  /**
+   * A group whose rows this pass did NOT read through - another device held its add lock - so its
+   * silence about an ask says nothing, and the asks shown for it stay (`settleSweptJoinRequests`).
+   */
+  onGroupNotSwept?: (groupId: string) => void;
 }): Promise<boolean> {
   const {
     mlsService,
@@ -360,6 +819,7 @@ export async function processPendingInvitations(params: {
     requestReAdd,
     log,
     onJoinApprovalRequested,
+    onGroupNotSwept,
   } = params;
 
   const myDeviceId = mlsService.getDeviceId();
@@ -386,6 +846,14 @@ export async function processPendingInvitations(params: {
   }
 
   let totalWelcomes = 0;
+
+  // A DEVICE THIS SWEEP LEARNED CANNOT BE ADDED IS NOT ASKED ABOUT AGAIN. The answer - a `revoked` or
+  // `unregistered` key package, or a commit gate that did not admit it - is about the DEVICE, not the
+  // group, and the rows read at the sweep's start can name it in many groups: one revoked device
+  // cost one 404 and one line per group (DEV-3, 2026-10-25, six). Each further row is retired from
+  // the same answer, counted, and said once at the end (`reportAnsweredAgain`).
+  const cannotBeAdded = new Map<string, string>();
+  const answeredAgain = new Map<string, number>();
 
   for (const [groupId, invitations] of byGroup) {
     // "Ready to invite" = conversation active AND group present in local WASM.
@@ -425,7 +893,8 @@ export async function processPendingInvitations(params: {
     // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
-      log(`[PENDING] Group ${groupId}: lock held by another device - skip`);
+      log(`[PENDING] Group ${groupId}: lock held by another device - skip, its asks stay as shown`);
+      onGroupNotSwept?.(groupId);
       continue;
     }
 
@@ -433,20 +902,49 @@ export async function processPendingInvitations(params: {
       // ── Add pending devices ───────────────────────────────────────────────
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
+      // The server state every Add of this group is judged against, read once per pass.
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
 
       for (const inv of currentPending) {
-        const admission = await automaticAdmission({
+        const deviceKey = `${inv.userId}:${inv.deviceId}`;
+        if (cannotBeAdded.has(deviceKey)) {
+          answeredAgain.set(deviceKey, (answeredAgain.get(deviceKey) ?? 0) + 1);
+          retirePendingInvitation(mlsService, inv, groupId, log);
+          continue;
+        }
+        // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+        // ({@link admissionOfSeat}).
+        const admission = await admissionOfSeat({
           mlsService,
           groupId,
           userId: inv.userId,
+          deviceId: inv.deviceId,
+          awaitingAdmission: inv.awaitingAdmission,
           tag: '[PENDING]',
           log,
         });
-        if (admission === 'unreadable') continue;
+        if (admission === 'unreadable' || admission === 'ask-for-a-member') continue;
+        // Asked from ONE package read per session (`unseenDeviceKey`), never one per sweep.
+        if (admission === 'unseen-device') {
+          await askAboutUnseenDevice(
+            mlsService,
+            conversations,
+            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            '[PENDING]',
+            log,
+            onJoinApprovalRequested
+          );
+          continue;
+        }
         if (admission === 'newcomer') {
           askAMemberToAdmit(
             conversations,
-            { groupId, requesterUserId: inv.userId, requesterDeviceId: inv.deviceId },
+            {
+              groupId,
+              requesterUserId: inv.userId,
+              requesterDeviceId: inv.deviceId,
+              ...(inv.askId ? { askId: inv.askId } : {}),
+            },
             inv.awaitingAdmission,
             '[PENDING]',
             log,
@@ -521,6 +1019,8 @@ export async function processPendingInvitations(params: {
                       `-> cleanup; it returns by itself when it next connects`
                   : `[PENDING] Device ${inv.deviceId} cannot be added (${answer.reason}) -> cleanup`
               );
+              // Final for this id (`revoked`, `unregistered`): the rest of the sweep knows it.
+              if (!refusalIsTemporary(answer.reason)) cannotBeAdded.set(deviceKey, answer.reason);
               mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
               continue;
             }
@@ -574,20 +1074,81 @@ export async function processPendingInvitations(params: {
             continue;
           }
 
+          // AN APPROVED DEVICE IS ADDED UNDER THE KEY ITS APPROVAL NAMES, and no other: the
+          // package was fetched after the tap, and a server could have changed it since.
+          if (
+            admission === 'approved-device' &&
+            !(await approvedKeyHolds(
+              targetDevice.keyPackage,
+              { groupId, userId: inv.userId, deviceId: inv.deviceId },
+              '[PENDING]'
+            ))
+          ) {
+            continue;
+          }
+
           // One staged transaction (C7-A): stage the Add, validate the epoch server-side, then
           // merge + broadcast on accept (excluding the inviter self and the newly-welcomed device)
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
+          //
+          // A LOST RACE IS REBUILT ON PROVEN PROGRESS (`rebuildOnRace`, the rule every gesture
+          // shares): the refusal's catch-up moved the epoch, so the Add is staged again on the tree
+          // that won. One that proved nothing reaches the catch below, and the row stays pending.
+          // EVERY PASS RE-CHECKS THE PREMISE FIRST (`confirmPendingAddPremise`): the commit that won
+          // may be the Remove of this very person, and a rebuild must never re-admit them.
           packageAdded = targetDevice.keyPackage;
-          const result = await mlsService.addMember(
+          const device = targetDevice;
+          const result = await rebuildOnRace(
+            mlsService,
             groupId,
-            { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
-            [`${inv.userId}:${inv.deviceId}`]
+            `the pending Add of ${inv.deviceId}`,
+            async (attempt) => {
+              await confirmPendingAddPremise({
+                mlsService,
+                groupId,
+                inv,
+                facts: await pendingAddFacts(attempt > 0),
+                log,
+              });
+              return mlsService.addMember(
+                groupId,
+                { keyPackage: device.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
+                [`${inv.userId}:${inv.deviceId}`]
+              );
+            },
+            log
           );
 
+          // THE GATE ACCEPTED THE COMMIT AND DID NOT ADMIT THE DEVICE (`notAdmitted`): its owner
+          // revoked it while this Add was in flight. The commit merged - its leaf has no seat, and the
+          // stray sweep removes it - so the state is saved, but no member is registered, no Welcome is
+          // sent and no history goes to it: the answer said so, and nothing is learned by failing
+          // (DEV-3, 2026-10-25). Its invitation is retired, and the rest of the sweep knows it.
+          if (result.notAdmitted) {
+            log(
+              `[PENDING] Device ${inv.deviceId} was not admitted by the commit gate (${result.notAdmitted}) ` +
+                `in ${groupId} -> no Welcome, cleanup`
+            );
+            await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+            cannotBeAdded.set(deviceKey, result.notAdmitted);
+            retirePendingInvitation(mlsService, inv, groupId, log);
+            continue;
+          }
+
           // Register member on server (upsert GroupMember row), keeping server state up to date.
-          await mlsService.registerMember(groupId, inv.userId);
+          // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
+          // departure since the merge, whose own Remove takes the leaf. No Welcome, no history.
+          try {
+            await mlsService.registerMember(groupId, inv.userId);
+          } catch (e) {
+            if (!(e instanceof MemberNotAdmittedError)) throw e;
+            log(
+              `[PENDING] [WARN] ${inv.userId} holds no seat after the accepted Add of ${inv.deviceId} in ${groupId.slice(0, 8)}... (a departure since) - Welcome withheld`
+            );
+            continue;
+          }
 
           // Send the Welcome + post-merge ratchet tree to the newly added device.
           if (result.welcome) {
@@ -623,6 +1184,23 @@ export async function processPendingInvitations(params: {
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
             await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
+            continue;
+          }
+          // THE GATE REFUSED TO ADMIT THIS PERSON (`admit_refused`): the whole commit was refused,
+          // nothing advanced and nobody got a leaf. A one-device Add has nobody to rebuild without;
+          // the row stays as the server holds it, and a removal or a member's answer settles it.
+          if (refusedAdmits(e) !== null) {
+            log(
+              `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... refused: the server does not admit ${inv.userId} - nothing committed`
+            );
+            continue;
+          }
+          // THE PREMISE WENT BEFORE ANY STAGE: nothing committed, nothing registered, no history.
+          // The row is left as the server holds it - the next sweep reads it again, or finds it gone.
+          if (e instanceof AddAbortedError) {
+            log(
+              `[PENDING] Add of ${inv.deviceId} to ${groupId.slice(0, 8)}... abandoned before its stage (${e.why}) - nothing committed`
+            );
             continue;
           }
           const errStr = String(e);
@@ -670,9 +1248,11 @@ export async function processPendingInvitations(params: {
               );
             }
           } else if (
-            // The server's refusal is TYPED (`CommitRefusedError`); `WrongEpoch` is openmls's own
-            // error, raised inside the WASM engine with no type crossing that boundary.
-            (e instanceof CommitRefusedError && e.reason === 'epoch_mismatch') ||
+            // The server's refusal is TYPED (`isCommitRaceRefusal`: `epoch_mismatch` AND
+            // `concurrent_commit`, one race seen at two instants - CC-4 lost an Add to the second);
+            // `WrongEpoch` is openmls's own error, raised inside the WASM engine with no type
+            // crossing that boundary.
+            isCommitRaceRefusal(e) ||
             errStr.includes('WrongEpoch')
           ) {
             // Transient concurrent race (gap 1): another device committed simultaneously.
@@ -718,7 +1298,33 @@ export async function processPendingInvitations(params: {
   if (totalWelcomes > 0) {
     log(`[PENDING] ${totalWelcomes} Welcome(s) sent.`);
   }
+  for (const [deviceKey, count] of answeredAgain) {
+    log(
+      `[PENDING] Device ${deviceKey.split(':')[1]} cannot be added (${cannotBeAdded.get(deviceKey)}): ` +
+        `${count} more invitation(s) of it retired this sweep from that answer, not asked again`
+    );
+  }
   return true;
+}
+
+/**
+ * Retires one pending invitation of a device that cannot be added: asks the server to delete the
+ * membership row. Best-effort - a failed delete leaves the row, and the next sweep answers it again -
+ * and said when it fails.
+ */
+function retirePendingInvitation(
+  mlsService: IMlsService,
+  inv: PendingInvitationRow,
+  groupId: string,
+  log: (msg: string) => void
+): void {
+  mlsService
+    .deleteDeviceMembership(inv.userId, inv.deviceId, groupId)
+    .catch((e: unknown) =>
+      log(
+        `[PENDING] Retiring the invitation of ${inv.deviceId} to ${groupId} failed - the next sweep answers it again: ${String(e).slice(0, 100)}`
+      )
+    );
 }
 
 /**
@@ -800,6 +1406,10 @@ export async function discoverMissingGroups(params: {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
+    // ONE LINE PER SWEEP for the groups whose status went unanswered: a down service, a gateway
+    // error or a captive portal answers every group alike, and a line per group was that one fact
+    // repeated (`getGroupServerStatus` keeps the per-group status at debug).
+    const unansweredStatus: string[] = [];
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
 
@@ -815,6 +1425,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -832,22 +1443,42 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
+        // A NEVER-ADMITTED CONVERSATION THE SERVER NO LONGER LISTS was an ask that ended without an
+        // admission - a member declined it, or it expired. This device was never in it, so there is
+        // no past to keep and no exclusion to explain: the row goes. Only on a list that may be
+        // believed, the guard every destructive reading of absence takes (`groupSweep.ts`).
+        if (isNeverAdmitted(convo)) {
+          if (!snapshot.absenceIsEvidence) {
+            log(
+              `[DISCOVERY] never-admitted "${convo.id}" absent from the list, kept - ${snapshot.unusableReason}`
+            );
+            continue;
+          }
+          log(
+            `[DISCOVERY] never-admitted "${convo.id}" is no longer listed - the ask was declined or expired - removing`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            userId,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
         // other reconcilers). We only query the server for genuinely undecided cases: a conv
         // already `deletedRemotely` short-circuits without a network call.
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
-        let isStillUserMember: boolean | null = null;
         if (convo.lifecycle !== 'removed') {
           serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
-          // Anti-race: only re-validate our actual membership on a LIVE group absent from our
-          // getUserGroups snapshot (which may be stale for a group just created/joined).
-          if (serverStatus.kind === 'active') {
-            const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
-            isStillUserMember =
-              userMembers === null ? null : userMembers.some((m) => m.userId === userId);
-          }
         }
 
+        // THE KIND OF GROUP IS DECIDED BEFORE ITS ROSTER IS ASKED FOR, from the row already in hand.
+        // A key-distribution group has no conversation roster: the server refuses
+        // `user-members` on it with a 403, and asking anyway printed that refusal at every boot of a
+        // device holding such a row - a question whose answer the status read above already carried.
         if (
           (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') &&
           isDistributionGroupMeta(serverStatus.meta)
@@ -860,10 +1491,21 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
           continue;
+        }
+
+        // Anti-race: only re-validate our actual membership on a LIVE conversation group absent
+        // from our getUserGroups snapshot (which may be stale for a group just created/joined).
+        // THE ONE READER recovery uses too (`readStillUserMember`): the roster's typed 403 is a
+        // "no", logged. A swallowing `.catch(() => null)` here read it as doubt, so the exclusion
+        // branch below could never fire and the two seams disagreed (re-review of #2493).
+        let isStillUserMember: boolean | null = null;
+        if (serverStatus.kind === 'active') {
+          isStillUserMember = await readStillUserMember(mlsService, convo.id, userId, log);
         }
 
         const fate = decideAbsentGroupFate({
@@ -879,6 +1521,7 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
+            userId,
             deleteConversation,
             log,
           });
@@ -895,9 +1538,18 @@ export async function discoverMissingGroups(params: {
           continue;
         }
         // keep
+        if (serverStatus.kind === 'unknown' && convo.lifecycle !== 'removed') {
+          unansweredStatus.push(label.slice(0, 8));
+          continue;
+        }
         log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
         continue;
       }
+    }
+    if (unansweredStatus.length > 0) {
+      log(
+        `[DISCOVERY] ${unansweredStatus.length} group(s) kept - server status unanswered, nothing purged: ${unansweredStatus.join(', ')}`
+      );
     }
   }
 
@@ -943,6 +1595,21 @@ export async function discoverMissingGroups(params: {
       owedExits,
       log,
     });
+  }
+
+  // Whether each row is an invitation-link ask no member has answered, as the list says of THIS
+  // device's seat: the sidebar reads it as waiting rather than established, and the sweep above
+  // removes such a row once the list stops naming it.
+  for (const key of syncAdmissionFlags(conversations, activeServerGroups)) {
+    const state = conversations.get(key)?.awaitingAdmission
+      ? 'awaits a member admission'
+      : 'no longer awaits a member';
+    log(`[DISCOVERY] "${key}" ${state}`);
+    if (saveConversation) {
+      await saveConversation(key).catch((e) =>
+        log(`[WARN] Admission state persistence failed for ${key}: ${String(e)}`)
+      );
+    }
   }
 
   // ── Seed the group AVATAR from the server (source of truth) ───────────
@@ -1139,7 +1806,8 @@ export async function handleWelcomeRequest(params: {
   onNotReady?: (terminalGroupId: string) => void;
   /**
    * A requester whose USER holds no leaf in our tree is a new person, never added on a relayed
-   * request (`automaticAdmission`): this asks a member to approve the join instead.
+   * request (`automaticAdmission`): this asks a member to approve the join instead. So is a device
+   * of a member that this device never saw (`kind: 'device'`).
    */
   onJoinApprovalRequested?: (request: JoinApprovalRequest) => void;
 }) {
@@ -1218,19 +1886,40 @@ export async function handleWelcomeRequest(params: {
   // The roster guard above reads the server, and so does everything that brought this request
   // here. Whether the requester is a MEMBER is read from our own tree: a new person is brought in by
   // a member's gesture, never by a relayed request (`automaticAdmission`).
-  const admission = await automaticAdmission({
+  // A SEAT FLAGGED AS AN ASK IS NEVER AN AUTOMATIC ADD, nor a person's ask for a member
+  // ({@link admissionOfSeat}).
+  const seat = userMembers.find((m) => m.userId === requesterUserId);
+  const admission = await admissionOfSeat({
     mlsService,
     groupId,
     userId: requesterUserId,
+    deviceId: requesterDeviceId,
+    awaitingAdmission: seat?.awaitingAdmission,
     tag: '[WELCOME_REQ]',
     log,
   });
-  if (admission === 'unreadable') return;
+  if (admission === 'unreadable' || admission === 'ask-for-a-member') return;
+  if (admission === 'unseen-device') {
+    await askAboutUnseenDevice(
+      mlsService,
+      conversations,
+      { groupId, requesterUserId, requesterDeviceId },
+      '[WELCOME_REQ]',
+      log,
+      onJoinApprovalRequested
+    );
+    return;
+  }
   if (admission === 'newcomer') {
     askAMemberToAdmit(
       conversations,
-      { groupId, requesterUserId, requesterDeviceId },
-      userMembers.find((m) => m.userId === requesterUserId)?.awaitingAdmission,
+      {
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        ...(seat?.askId ? { askId: seat.askId } : {}),
+      },
+      seat?.awaitingAdmission,
       '[WELCOME_REQ]',
       log,
       onJoinApprovalRequested
@@ -1329,6 +2018,18 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] KeyPackage retrieved via fallback for ${requesterDeviceId} (> 30 days)`);
     }
 
+    // An approved device is added under the key its approval names, and no other.
+    if (
+      admission === 'approved-device' &&
+      !(await approvedKeyHolds(
+        targetDevice.keyPackage,
+        { groupId, userId: requesterUserId, deviceId: requesterDeviceId },
+        '[WELCOME_REQ]'
+      ))
+    ) {
+      return;
+    }
+
     // ── Check if the device's leaf is already in the MLS tree ────────────
     // Do not check status='active' here: sendWelcome marks the device active
     // optimistically before the phone processes the Welcome. If the device loses its
@@ -1396,7 +2097,7 @@ export async function handleWelcomeRequest(params: {
     };
     packageSent = invitee.keyPackage;
     const exclude = [`${requesterUserId}:${requesterDeviceId}`];
-    let result: { welcome?: Uint8Array; ratchetTree?: Uint8Array };
+    let result: OneDeviceAddResult;
     if (leafPresent === true) {
       result = await mlsService.replaceMember(groupId, invitee, exclude);
     } else {
@@ -1428,7 +2129,26 @@ export async function handleWelcomeRequest(params: {
         result = await mlsService.replaceMember(groupId, invitee, exclude);
       }
     }
-    await mlsService.registerMember(groupId, requesterUserId);
+    // The commit merged but the gate did not admit the requester (revoked while this was in flight):
+    // the state is saved, and no member, Welcome or history follows (`OneDeviceAddResult`).
+    if (result.notAdmitted) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... was not admitted by the commit gate (${result.notAdmitted}) in ${groupId} - no Welcome`
+      );
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+      return;
+    }
+    // NOT ADMITTED: the commit admitted them, and the server holds no seat for them now - a
+    // departure since the merge, whose own Remove takes the leaf. No Welcome, no history.
+    try {
+      await mlsService.registerMember(groupId, requesterUserId);
+    } catch (e) {
+      if (!(e instanceof MemberNotAdmittedError)) throw e;
+      log(
+        `[WELCOME_REQ] [WARN] ${requesterUserId} holds no seat after the accepted Add of ${requesterDeviceId.slice(0, 12)}... in ${groupId.slice(0, 8)}... (a departure since) - Welcome withheld`
+      );
+      return;
+    }
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
     if (result.welcome) {
@@ -1460,6 +2180,14 @@ export async function handleWelcomeRequest(params: {
     if (e instanceof DeviceTrustRefusedError) {
       reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
       await recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e, mlsService);
+      return;
+    }
+    // THE GATE REFUSED TO ADMIT THE REQUESTER (`admit_refused`): nothing advanced, nobody got a
+    // leaf, and this request is not answered - only a member's Add brings the person back.
+    if (refusedAdmits(e) !== null) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... refused: the server does not admit ${requesterUserId} in ${groupId.slice(0, 8)}... - nothing committed`
+      );
       return;
     }
     const errStr = String(e);

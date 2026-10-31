@@ -1,11 +1,10 @@
+import { copyText, type CopyResult } from '$lib/utils/clipboard';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
 
-/** Copies a public Canari URL for the given SPA path to the clipboard. */
-export async function copyPublicShareLink(path: string): Promise<void> {
-  const url = publicAppUrl(path);
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(url);
-    return;
-  }
-  throw new Error('Clipboard unavailable');
+/**
+ * Copies a public Canari URL for the given SPA path, with the helper's confirmation toast.
+ * The public origin is what the link needs here; the write and its feedback are {@link copyText}.
+ */
+export function copyPublicShareLink(path: string): Promise<CopyResult> {
+  return copyText(publicAppUrl(path), { what: 'link' });
 }

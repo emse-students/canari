@@ -23,7 +23,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
-import { DataSource, LessThan } from 'typeorm';
+import { DataSource } from 'typeorm';
 import type Redis from 'ioredis';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -44,8 +44,9 @@ import { MembersController } from '../controllers/members.controller';
 import { InternalController } from '../controllers/internal.controller';
 import { CallsService } from './calls.service';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
-import { expireUnansweredAsks, seatKey } from '../utils/group-membership';
-import { STALE_PENDING_INVITATION_MS } from '../retention.constants';
+import { AppController } from '../app.controller';
+import { JOIN_ASK_PUBLISH_LUA } from './addressing';
+import { finishJoinAskWorkInFlight, joinAskAnnouncementsSettled } from '../utils/join-ask-announce';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -53,6 +54,7 @@ const maybe = URL ? describe : describe.skip;
 const dir = join(__dirname, '..', 'migrations');
 const MIGRATION_036 = readFileSync(join(dir, '036_seat_evictions.sql'), 'utf8');
 const MIGRATION_038 = readFileSync(join(dir, '038_group_member_awaiting_admission.sql'), 'utf8');
+const MIGRATION_039 = readFileSync(join(dir, '039_departure_seat_generation.sql'), 'utf8');
 
 const GROUP = '00000000-0000-4000-8000-0000000000a8';
 const MEMBER = { userId: 'member', deviceId: 'dev-m' };
@@ -101,13 +103,14 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     smismember: async (key: string, ...members: string[]) =>
       members.map((m) => (setOf(key).has(m) ? 1 : 0)),
     set: async () => 'OK',
-    eval: async () => 1,
+    eval: async (..._args: unknown[]) => 1,
     hdel: async () => 0,
+    hset: async () => 1,
     hgetall: async () => ({}),
     mget: async (...keys: string[]) => keys.flat().map(() => null),
     // Every member device is online, so a welcome_request is forwarded rather than stored.
-    exists: async () => 1,
-    publish: async () => 1,
+    exists: async (_key: string) => 1,
+    publish: async (_channel: string, _payload: string) => 1,
   };
 
   const invitations = () =>
@@ -170,6 +173,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds.getRepository(MlsGroupInfo),
       ds.getRepository(QueuedMessage),
       ds.getRepository(RevokedDevice),
+      // The revoked-device bindings are read by the revoked-leaves question alone, not on this path.
+      null as unknown as never,
       redis as unknown as Redis,
       ds
     );
@@ -185,24 +190,27 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     return Number(row.n);
   };
   /**
-   * The stale-pending purge as `AppController.cleanupStalePendingInvitations` runs it: the asks
-   * nobody answered expire whole, and only the other stale rows lose their device row alone.
+   * The stale-pending purge - THE cron itself, `AppController.cleanupStalePendingInvitations`, not a
+   * copy of it: the asks nobody answered expire whole (and are announced), and only the other stale
+   * rows lose their device row alone.
    */
-  const purgeStalePending = async () => {
-    const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
-    const stale = await ds.getRepository(DeviceGroupMembership).find({
-      where: { status: 'pending', pendingSince: LessThan(expiry) },
-    });
-    const { awaiting: asks } = await expireUnansweredAsks(ds.manager, stale, expiry);
-    for (const row of stale) {
-      if (asks.has(seatKey(row.groupId, row.userId))) continue;
-      await ds.getRepository(DeviceGroupMembership).delete({
-        userId: row.userId,
-        deviceId: row.deviceId,
-        groupId: row.groupId,
-      });
-    }
-  };
+  const purgeStalePending = () =>
+    (
+      new AppController(
+        ds.getRepository(QueuedMessage),
+        ds.getRepository(KeyPackage),
+        ds.getRepository(OneTimeKeyPackage),
+        ds.getRepository(Group),
+        ds.getRepository(GroupMember),
+        ds.getRepository(DeviceGroupMembership),
+        ds.getRepository(RevokedDevice),
+        ds.getRepository(PushToken),
+        ds.getRepository(MlsGroupInfo),
+        ds.getRepository(MlsCommitLog),
+        redis as unknown as Redis,
+        service
+      ) as unknown as { cleanupStalePendingInvitations(): Promise<void> }
+    ).cleanupStalePendingInvitations();
   const acceptLink = async () => {
     const invite = await ds
       .getRepository(GroupInvite)
@@ -252,6 +260,12 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // The column as production gets it: the entity already made it, so the migration must replay
     // as a no-op on a table that has it.
     await q(MIGRATION_038);
+    await q(MIGRATION_039);
+    // core-service's table, as its migration shapes it: an awaiting seat a commit admits is asked
+    // for a block like any newcomer (`enrolAdmittedPeople`).
+    await q(
+      `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
+    );
     service = new MessagingService(
       ds.getRepository(QueuedMessage),
       ds.getRepository(GroupMember),
@@ -276,6 +290,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
   });
 
   beforeEach(async () => {
+    // An announcement a previous case started reads rows this one is about to delete.
+    await joinAskAnnouncementsSettled();
     for (const set of routes.values()) set.clear();
     await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [GROUP]);
     await q(`DELETE FROM mls_commit_log`);
@@ -303,6 +319,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
   });
 
   afterAll(async () => {
+    await joinAskAnnouncementsSettled();
     jest.restoreAllMocks();
     if (ds?.isInitialized) await ds.destroy();
     if (!admin) return;
@@ -392,9 +409,16 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
     expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
     expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(0);
-    // Never in, so nothing of a removal is recorded: no eviction, no exclusion interval left behind.
+    // Never in, so no exclusion interval is left behind; the one record is the generation the
+    // Decline moved the group to, which an Add built before it is ordered by (review of #2419).
     expect(await rowsOf('dm_group_membership_intervals', JOINER)).toBe(0);
-    expect(await rowsOf('dm_seat_evictions', JOINER)).toBe(0);
+    const [stamp]: { declinedAtSeatGeneration: number | null; owedDeparture: number | null }[] =
+      await q(
+        `SELECT "declinedAtSeatGeneration", "owedDeparture" FROM dm_seat_evictions
+         WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, JOINER.userId]
+      );
+    expect(stamp).toEqual({ declinedAtSeatGeneration: 1, owedDeparture: null });
     await expect(refusalOf(service.getGroupInfo(GROUP, JOINER.userId))).resolves.toMatchObject({
       status: 403,
     });
@@ -430,63 +454,13 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(interval.leftAt).toBeNull();
   });
 
-  it('an Add and a Decline racing each other leave one consistent answer, never a leaf with no seat', async () => {
-    for (let round = 0; round < 5; round++) {
-      await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [GROUP]);
-      await q(`DELETE FROM mls_commit_log`);
-      await q(`DELETE FROM dm_device_group_memberships WHERE "userId" = $1`, [JOINER.userId]);
-      await q(`DELETE FROM dm_group_members WHERE "userId" = $1`, [JOINER.userId]);
-      await acceptLink();
-
-      const [added, declined] = await Promise.allSettled([
-        memberCommit(3, [JOINER]),
-        decline(MEMBER),
-      ]);
-
-      const admittedRows: { admittedAtEpoch: number | null }[] = await q(
-        `SELECT "admittedAtEpoch" FROM dm_device_group_memberships
-         WHERE "groupId" = $1 AND "userId" = $2`,
-        [GROUP, JOINER.userId]
-      );
-      const observed = {
-        declined: declined.status === 'fulfilled' ? declined.value.outcome : 'rejected',
-        added: added.status,
-        seat: await awaiting(JOINER),
-        devices: await rowsOf('dm_device_group_memberships', JOINER),
-        admittedRows,
-      };
-      // Two orders, each with ONE consistent end state - chosen by what the Decline answered, and
-      // asserted whole, so no expectation is skipped on either side.
-      // - The Decline went first: the ask is gone whole. An Add accepted after it is an ordinary
-      //   invitation by that member - its own admitted row, the roster row its client registers
-      //   next - never a leftover of the withdrawn ask: a Decline does not undo a later Add.
-      // - The Add went first: the Decline answers `already-admitted` and leaves the person whole.
-      const declineFirst = {
-        declined: 'withdrawn',
-        added: added.status,
-        seat: null,
-        // Not this order's question: the admitted rows below are.
-        devices: observed.devices,
-        admittedRows: added.status === 'fulfilled' ? [{ admittedAtEpoch: 4 }] : [],
-      };
-      const addFirst = {
-        declined: 'already-admitted',
-        added: 'fulfilled',
-        seat: false,
-        devices: 1,
-        // Not this order's question: one device row is.
-        admittedRows: observed.admittedRows,
-      };
-      expect(observed).toEqual(observed.declined === 'withdrawn' ? declineFirst : addFirst);
-    }
-  });
-
   /**
-   * (2) A MEMBER WHOSE CLIENT PREDATES `admits` STILL ADMITS: it Adds from the `pending` row with a
-   * commit that declares nobody, then sends the Welcome apart. The Welcome it stores lifts the ask, so
-   * the joiner's device turns active under no flag and commits like any member.
+   * (2) A WELCOME SENT APART ADMITS NOBODY (ADM-3). Only the accepted commit admits a new person, by
+   * the `admits` it declares - which every client at the version floor sends - so a commit that
+   * declares nobody, followed by a Welcome, leaves the ask standing: the Welcome is refused, nothing
+   * is stored, and the joiner can neither report itself active nor commit.
    */
-  it("an old client's Add - a commit with no admits, then a separate Welcome - admits the joiner", async () => {
+  it('a commit with no admits, then a separate Welcome, does NOT admit the joiner', async () => {
     await acceptLink();
     // Before any Welcome, the joiner may not report itself active: a 409, never a 403.
     await expect(
@@ -498,34 +472,28 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
     expect(await awaiting(JOINER)).toBe(true);
     await expect(
-      service.sendWelcome(MEMBER.userId, {
-        groupId: GROUP,
-        targetUserId: JOINER.userId,
-        targetDeviceId: JOINER.deviceId,
-        senderUserId: MEMBER.userId,
-        welcomePayload: 'V0VMQ09NRQ==',
-      })
-    ).resolves.toEqual({ status: 'queued' });
+      refusalOf(
+        service.sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+      )
+    ).resolves.toMatchObject({ status: 403 });
 
-    expect(await awaiting(JOINER)).toBe(false);
+    expect(await awaiting(JOINER)).toBe(true);
+    const [queued]: { n: string }[] = await q(
+      `SELECT COUNT(*) AS n FROM queued_message WHERE "groupId" = $1 AND "recipientId" = $2`,
+      [GROUP, JOINER.userId]
+    );
+    expect(Number(queued.n)).toBe(0);
     await expect(
       service.activateDeviceMembership(JOINER.userId, JOINER.deviceId, GROUP, {
         authority: 'report',
       })
-    ).resolves.toMatchObject({ ok: true });
-    // A member now: a commit of theirs is accepted.
-    await expect(
-      service.validateCommit(
-        {
-          groupId: GROUP,
-          deviceId: JOINER.deviceId,
-          baseEpoch: 4,
-          proto: memberCommitFrame(GROUP, 4n),
-          senderId: JOINER.userId,
-        },
-        JOINER.userId
-      )
-    ).resolves.toMatchObject({ accepted: true });
+    ).resolves.toMatchObject({ ok: false, reason: 'awaiting_admission' });
   });
 
   it('a person still awaiting a member may not Welcome a device of their own to lift their ask', async () => {
@@ -812,6 +780,35 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     );
   });
 
+  it("a member's pending list never names a key-distribution group's rows", async () => {
+    const KEY_GROUP = '00000000-0000-4000-8000-0000000000a9';
+    await q(
+      `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "distributionWorkspaceId")
+       VALUES ($1, true, 1, '00000000-0000-4000-8000-0000000000aa')`,
+      [KEY_GROUP]
+    );
+    try {
+      // The member's device is in the key group, and another device - one with a key package, so
+      // nothing but the group's kind can exclude it - holds a pending row there.
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'active'), ($4, $5, $3, 'pending')`,
+        [MEMBER.userId, MEMBER.deviceId, KEY_GROUP, JOINER.userId, JOINER.deviceId]
+      );
+
+      const rows = await invitations().getPendingInvitations(
+        MEMBER.userId,
+        MEMBER.deviceId,
+        MEMBER.userId
+      );
+
+      expect(rows.filter((r) => r.groupId === KEY_GROUP)).toEqual([]);
+    } finally {
+      await q(`DELETE FROM dm_device_group_memberships WHERE "groupId" = $1`, [KEY_GROUP]);
+      await q(`DELETE FROM dm_groups WHERE id = $1`, [KEY_GROUP]);
+    }
+  });
+
   /**
    * (6) A WAITING DEVICE ASKS ON EVERY RECOVERY CADENCE FOR UP TO 14 DAYS (review of #2358, P2-3):
    * every relay is still made, and its lines are said at the 1st, 10th, 100th... ask of that device.
@@ -836,5 +833,298 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       .map(([line]) => String(line))
       .filter((line) => line.includes('[WELCOME_REQ]') && line.includes('START'));
     expect(starts.map((line) => /repeat=(\d+)/.exec(line)?.[1])).toEqual(['1', '10']);
+  });
+
+  /**
+   * THE ASK IS PUT TO EVERY ONLINE ADMITTED MEMBER, LIVE (dev, 2026-10-25): the `welcome_request`
+   * election reached ONE member, and the others - the owner with the conversation open included -
+   * learned of the ask only at their next sweep, minutes later. And the outcome reaches the same
+   * screens, so a member whose answer lost the race settles on what the server holds.
+   */
+  describe('the ask and its outcome reach every online admitted member', () => {
+    /** A second device of OTHER, which is offline. */
+    const OTHER_OFFLINE = { userId: OTHER.userId, deviceId: 'dev-o-off' };
+    /** A third device of OTHER, online on a build that predates the join-ask frames. */
+    const OTHER_OLD = { userId: OTHER.userId, deviceId: 'dev-o-old' };
+    /** Online with an active device row in the group, and no roster seat: not a member. */
+    const STRANGER = { userId: 'stranger', deviceId: 'dev-s' };
+    /** A seat that itself awaits a member: it answers nothing, so it is asked nothing. */
+    const ASKER_2 = { userId: 'asker-2', deviceId: 'dev-a2' };
+    const offline = new Set([`user:online:${OTHER_OFFLINE.userId}:${OTHER_OFFLINE.deviceId}`]);
+    /** The online devices whose sessions did NOT declare join-ask (no twin field in the gateway's hash). */
+    const withoutJoinAsk = new Set([`user:online:${OTHER_OLD.userId}:${OTHER_OLD.deviceId}`]);
+    let frames: Array<{
+      to: string;
+      type: string;
+      requires: unknown;
+      data: Record<string, unknown>;
+    }>;
+
+    const seat = async (who: { userId: string }, awaitingAdmission: boolean) =>
+      q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role, "awaitingAdmission")
+         VALUES ($1, $2, 'member', $3)`,
+        [GROUP, who.userId, awaitingAdmission]
+      );
+    const activeDevice = async (who: { userId: string; deviceId: string }) =>
+      q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'active')`,
+        [who.userId, who.deviceId, GROUP]
+      );
+    const joinerSeatId = async (): Promise<string> => {
+      const [row]: { id: string }[] = await q(
+        `SELECT id FROM dm_group_members WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, JOINER.userId]
+      );
+      return row.id;
+    };
+    /** The control frames of `type` published once every announcement has finished. */
+    const framesOf = async (type: string) => {
+      await joinAskAnnouncementsSettled();
+      return frames
+        .filter((f) => f.type === type)
+        .map((f) => ({ to: f.to, requires: f.requires, data: f.data }))
+        .sort((a, b) => a.to.localeCompare(b.to));
+    };
+    const toMembers = (data: Record<string, unknown>) =>
+      [MEMBER, OTHER].map((who) => ({
+        to: `${who.userId}:${who.deviceId}`,
+        requires: 'join-ask-1',
+        data,
+      }));
+
+    beforeEach(async () => {
+      frames = [];
+      // The join-ask check-and-publish script, as Redis would run it on this device's presence and
+      // its sessions' twin fields (the script itself is run against a real Redis in
+      // addressing.redis.spec.ts).
+      jest
+        .spyOn(redis, 'eval')
+        .mockImplementation(async (script: unknown, _keys: unknown, ...args: unknown[]) => {
+          if (script !== JOIN_ASK_PUBLISH_LUA) return 1;
+          const [presenceKey, , , channel, payload, capability] = args as string[];
+          if (capability !== 'join-ask-1') return 0;
+          if (offline.has(presenceKey) || withoutJoinAsk.has(presenceKey)) return 0;
+          if (channel) {
+            const env = JSON.parse(payload) as {
+              recipientId: string;
+              deviceId: string;
+              proto: string;
+              requiresCapability?: string;
+            };
+            const frame = JSON.parse(Buffer.from(env.proto, 'base64').toString()) as {
+              type: string;
+              data: Record<string, unknown>;
+            };
+            frames.push({
+              to: `${env.recipientId}:${env.deviceId}`,
+              type: frame.type,
+              requires: env.requiresCapability,
+              data: frame.data,
+            });
+          }
+          return 1;
+        });
+      await seat(OTHER, false);
+      await activeDevice(OTHER);
+      await activeDevice(OTHER_OFFLINE);
+      await activeDevice(OTHER_OLD);
+      await activeDevice(STRANGER);
+      await seat(ASKER_2, true);
+      await activeDevice(ASKER_2);
+    });
+
+    afterEach(async () => {
+      await joinAskAnnouncementsSettled();
+      (redis.eval as unknown as jest.SpyInstance).mockRestore();
+    });
+
+    it('tells each online device of each admitted member once - never the asker, a stranger, a waiting seat, an offline device or an older build', async () => {
+      await acceptLink();
+
+      expect(await framesOf('group.join_ask')).toEqual(
+        toMembers({
+          groupId: GROUP,
+          askId: await joinerSeatId(),
+          requesterUserId: JOINER.userId,
+          // Every device the link seated (an earlier case registered a second one).
+          requesterDeviceIds: expect.arrayContaining([JOINER.deviceId]),
+        })
+      );
+    });
+
+    it('names the ask by its seat on every read a member raises it from', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      const pending = await invitations().getPendingInvitations(
+        MEMBER.userId,
+        MEMBER.deviceId,
+        MEMBER.userId
+      );
+      const roster = await members().getGroupUserMembers(GROUP, MEMBER.userId);
+
+      expect(new Set(pending.map((r) => r.askId))).toEqual(new Set([askId]));
+      expect(roster.find((r) => r.userId === JOINER.userId)?.askId).toBe(askId);
+      expect(roster.find((r) => r.userId === MEMBER.userId)?.askId).toBeNull();
+    });
+
+    it("settles a Decline on every other member's screen, once, and a second Decline settles nothing", async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      await expect(decline(MEMBER)).resolves.toEqual({ outcome: 'withdrawn' });
+      await expect(decline(OTHER)).resolves.toEqual({ outcome: 'gone' });
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'declined' })
+      );
+    });
+
+    it('settles an Add once: a second Add and a late Decline announce nothing more', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+      await expect(memberCommit(4, [JOINER])).resolves.toMatchObject({ accepted: true });
+      await expect(decline(OTHER)).resolves.toEqual({ outcome: 'already-admitted' });
+
+      // The joiner is a member now, and still told nothing about their own ask.
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
+      );
+    });
+
+    it('a second ask of the same person after a Decline is a NEW identity', async () => {
+      await acceptLink();
+      const first = await joinerSeatId();
+      await decline(MEMBER);
+      await acceptLink();
+      const second = await joinerSeatId();
+
+      expect(second).not.toBe(first);
+      const asks = await framesOf('group.join_ask');
+      expect(asks.filter((f) => f.to === `${MEMBER.userId}:${MEMBER.deviceId}`)).toEqual([
+        expect.objectContaining({ data: expect.objectContaining({ askId: first }) }),
+        expect.objectContaining({ data: expect.objectContaining({ askId: second }) }),
+      ]);
+    });
+
+    it('settles an ask nobody answered when it expires', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      await q(
+        `UPDATE dm_device_group_memberships SET "pendingSince" = now() - interval '30 days'
+         WHERE "userId" = $1`,
+        [JOINER.userId]
+      );
+
+      await purgeStalePending();
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'expired' })
+      );
+    });
+
+    it('settles an ask its own asker withdrew', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      await members().removeGroupMember(GROUP, JOINER.userId, JOINER.userId);
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'withdrawn' })
+      );
+    });
+
+    it("settles a member's removal of somebody else's awaiting seat as declined, never withdrawn", async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+
+      await members().removeGroupMember(GROUP, JOINER.userId, MEMBER.userId);
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'declined' })
+      );
+    });
+
+    it('settles nothing through a Welcome sent apart: that door admits nobody (ADM-3)', async () => {
+      await acceptLink();
+      await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
+
+      await service
+        .sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+        .catch(() => undefined);
+
+      expect(await framesOf('group.join_ask.settled')).toEqual([]);
+    });
+
+    it('never tells the asker about their own ask, even with an active device once admitted', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      // A second device of the joiner that holds the group already: once the Add lifts the seat it
+      // is an ACTIVE device of an ADMITTED seat, so only the exclusion keeps the asker out.
+      await activeDevice({ userId: JOINER.userId, deviceId: 'dev-j-active' });
+
+      await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
+      );
+    });
+
+    /**
+     * Review of #2442 (R4): the admitted asks are taken when the commit's TRANSACTION commits, so a
+     * step after it that throws - here the parting cleanup - cannot lose the announcement of an
+     * admission that is already true on the server.
+     */
+    it('still settles an admission when a step after the commit throws', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      const clearParting = jest
+        .spyOn(service as unknown as { clearParting: () => Promise<void> }, 'clearParting')
+        .mockRejectedValueOnce(new Error('parting cleanup failed'));
+
+      await expect(memberCommit(3, [JOINER])).rejects.toThrow('parting cleanup failed');
+      clearParting.mockRestore();
+
+      expect(await awaiting(JOINER)).toBe(false);
+      expect(await framesOf('group.join_ask.settled')).toEqual(
+        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
+      );
+    });
+
+    /**
+     * The expiry cron runs its expiry and its announcements as ONE tracked unit, so the work a
+     * retiring replica waits for (`finishJoinAskWorkInFlight`, the drain's `beforeExit`) holds it
+     * from the first database read: a SIGTERM while it runs cannot leave an ask expired unannounced.
+     */
+    it('lets a drain that starts during the expiry cron wait for its announcements', async () => {
+      await acceptLink();
+      const askId = await joinerSeatId();
+      await q(
+        `UPDATE dm_device_group_memberships SET "pendingSince" = now() - interval '30 days'
+         WHERE "userId" = $1`,
+        [JOINER.userId]
+      );
+
+      // The SIGTERM lands as the cron starts: only the drain's own wait stands between this and
+      // the frames - the cron itself is not awaited before it.
+      const cron = purgeStalePending();
+      await finishJoinAskWorkInFlight();
+
+      expect(frames.filter((f) => f.type === 'group.join_ask.settled').map((f) => f.data)).toEqual([
+        { groupId: GROUP, askId, userId: JOINER.userId, outcome: 'expired' },
+        { groupId: GROUP, askId, userId: JOINER.userId, outcome: 'expired' },
+      ]);
+      await cron;
+    });
   });
 });

@@ -8,10 +8,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
-import {
-  CommitRefusedError,
-  SEAT_CLAIM_OVERTAKEN_REASON,
-} from '$lib/mls-client/CommitRefusedError';
+import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
 import { groupSkippedByReason } from '$lib/mls-client/skippedKeyPackage';
 
 /**
@@ -98,8 +95,11 @@ export function devicesToAdmit(input: {
  *   commit and joins on top of it. That base cannot exist before their `pending` seat does: the
  *   commit carries the devices it adds (`admits`, written in the SAME transaction as the epoch
  *   advance), and the base for that epoch is stored in that same transaction. From then until the
- *   lock is released below - after every Welcome - `ensureDistributionGroupFor` reads that seat
- *   with `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining.
+ *   lock is released below - after every Welcome - the newcomer's join reads that seat with
+ *   `addInFlight` (`readWelcomeOwedFromRow`) and waits for the Welcome instead of joining. It reads
+ *   the seat AFTER the base it would build on (`externalJoin`'s `welcomeOwed: 'ask'`): a seat read
+ *   before the base can predate this Add, which is how a newcomer joined over it on every kept rig
+ *   console of 2026-10-25..29 and took the Welcome for a redelivery.
  *
  * NEVER THROWS: it runs after an invitation the server has already accepted, and a failure here
  * must not report the invitation as failed. Every outcome is logged and returned.
@@ -217,7 +217,8 @@ export async function admitNewcomerToDistributionGroup(
         break;
       } catch (e) {
         const caughtUpTo = mlsService.getEpoch(groupId);
-        if (e instanceof CommitRefusedError && caughtUpTo > builtOn) {
+        const rebuild = rebuildableRefusal(e, caughtUpTo);
+        if (rebuild === 'epoch-moved' && e instanceof CommitRefusedError) {
           log(
             `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} lost to a commit (${e.reason}); caught up to ${caughtUpTo} - re-reading the tree`
           );
@@ -227,7 +228,7 @@ export async function admitNewcomerToDistributionGroup(
         // claim on every submission `runCommitTransaction` made, so the epoch is where it was and
         // the tree is re-read - an evicted device may have left it - and the Add rebuilt at once.
         // Termination is still a proof - each such refusal is an eviction that landed in between.
-        if (e instanceof CommitRefusedError && e.reason === SEAT_CLAIM_OVERTAKEN_REASON) {
+        if (rebuild === 'seat-claim-overtaken') {
           log(
             `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the Add built on epoch ${builtOn} was refused because an unrelated eviction overtook its seat claim - rebuilding`
           );

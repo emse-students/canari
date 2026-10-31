@@ -4,9 +4,14 @@
     listAssociationProductsForManage,
     listAssociationPurchases,
     grantProductPurchase,
+    quoteCashSale,
+    closePaidNotGranted,
+    SocialApiError,
     type Association,
     type AssociationProduct,
     type AssociationPurchase,
+    type CashSaleQuote,
+    type PurchaseClosingOutcome,
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -15,7 +20,12 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
+  import { productLabel, purchaseItemLabel } from '$lib/associations/productLabel';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { closingRefusalMessage, grantRefusalMessage } from '$lib/associations/purchaseClosing';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -33,6 +43,15 @@
   let grantProductId = $state('');
   let grantAmountEuros = $state<number | ''>('');
   let grantingProduct = $state(false);
+  /**
+   * What the sale records if no amount is typed, quoted by the server for the chosen pair (the
+   * preferential price when the beneficiary qualifies). Null until both are chosen and answered.
+   */
+  let grantQuote = $state<CashSaleQuote | null>(null);
+  /** Only the latest pair's answer is shown: an earlier one landing late is dropped. */
+  let quoteSeq = 0;
+  /** The purchase whose outcome is being recorded, so its two buttons cannot be clicked twice. */
+  let closingId = $state<string | null>(null);
 
   /**
    * Products a cash sale may be recorded against. A `balance_topup` is excluded on purpose: it
@@ -42,23 +61,54 @@
    */
   const grantableProducts = $derived(products.filter((p) => p.type !== 'balance_topup'));
   const grantSelectedProduct = $derived(grantableProducts.find((p) => p.id === grantProductId));
+  /** No default to record: a free amount, or a grid that does not sell to this beneficiary. */
   const grantNeedsAmount = $derived(
-    grantSelectedProduct != null && grantSelectedProduct.amountCents == null
+    grantQuote != null
+      ? grantQuote.kind !== 'priced'
+      : grantSelectedProduct != null && grantSelectedProduct.amountCents == null
   );
   const filteredPurchases = $derived(
     purchaseFilterProductId
       ? purchases.filter((p) => p.productId === purchaseFilterProductId)
       : purchases
   );
+  /** Products by id, so a purchase line can be named by its product's type (a Cercle top-up). */
+  const productsById = $derived(new Map(products.map((p) => [p.id, p])));
   const filterOptions = $derived<PickerOption[]>([
     { value: '', label: m.asso_achats_filter_all() },
-    ...products.map((p) => ({ value: p.id, label: p.name })),
+    ...products.map((p) => ({ value: p.id, label: productLabel(p) })),
   ]);
   const grantProductOptions = $derived<PickerOption[]>(
-    grantableProducts.map((p) => ({ value: p.id, label: p.name }))
+    grantableProducts.map((p) => ({ value: p.id, label: productLabel(p) }))
   );
 
   onMount(loadPurchases);
+
+  $effect(() => {
+    const userId = grantUserId.trim();
+    const productId = grantProductId;
+    // Bumped BEFORE the early return: clearing a field must also void an answer still in flight.
+    const seq = ++quoteSeq;
+    grantQuote = null;
+    if (!userId || !productId) return;
+    void loadQuote(userId, productId, seq);
+  });
+
+  /**
+   * Asks the server what a cash sale of `productId` to `userId` records by default; the answer is
+   * shown only while `seq` is still the latest selection.
+   */
+  async function loadQuote(userId: string, productId: string, seq: number) {
+    Log.d('ASSO', `quoting a cash sale of product ${productId.slice(0, 8)}`);
+    try {
+      const quote = await quoteCashSale(asso.id, productId, userId);
+      if (seq !== quoteSeq) return;
+      grantQuote = quote;
+    } catch (e) {
+      // The amount field stays open, so the cashier can still type what was paid.
+      console.error(`[ASSO] quoting a cash sale of product ${productId.slice(0, 8)} failed:`, e);
+    }
+  }
 
   async function loadPurchases() {
     purchasesLoading = true;
@@ -84,6 +134,68 @@
     return method;
   }
 
+  /** The amount of a purchase as the table shows it. */
+  function amountLabel(purchase: AssociationPurchase): string {
+    return formatAmount(purchase.amountCents);
+  }
+
+  /**
+   * Records how a payment paid for and not granted was settled, after an in-app confirmation. The
+   * server answers the updated row, which replaces this one: the mark stays, the outcome shows.
+   * `granted` grants the tier by hand on the server, replacing whatever tier the buyer holds now -
+   * unless the row is `delivered` (the tier is already held as this payment's delivery), when it only
+   * records that, and its confirmation says so.
+   *
+   * A 409 is an ANSWER about the row as the server knows it (closed meanwhile, its buyer erased, its
+   * tier gone): the list is re-read so it shows that state, then the refusal is worded. Anything
+   * else is a failure, logged as one.
+   */
+  async function handleClose(purchase: AssociationPurchase, outcome: PurchaseClosingOutcome) {
+    const buyer = purchaseBuyerName(purchase);
+    const confirmed = await showConfirm(
+      outcome === 'refunded'
+        ? m.asso_achats_close_refunded_confirm({ buyer, amount: amountLabel(purchase) })
+        : purchase.delivered
+          ? m.asso_achats_close_delivered_confirm({ buyer, item: purchase.productName })
+          : m.asso_achats_close_granted_confirm({ buyer, item: purchase.productName }),
+      {
+        confirmLabel:
+          outcome === 'refunded'
+            ? m.asso_achats_close_refunded_button()
+            : m.asso_achats_close_granted_button(),
+      }
+    );
+    if (!confirmed) return;
+    closingId = purchase.id;
+    purchasesError = '';
+    try {
+      const row = await closePaidNotGranted(
+        asso.id,
+        purchase.id,
+        outcome,
+        purchase.delivered === true
+      );
+      purchases = purchases.map((p) => (p.id === row.id ? row : p));
+      Log.i('ASSO', `purchase ${purchase.id.slice(0, 8)} closed as ${outcome}`);
+    } catch (e) {
+      if (refusalStatus(e) === 409) {
+        Log.i(
+          'ASSO',
+          `closing purchase ${purchase.id.slice(0, 8)} as ${outcome} refused (${refusalCode(e)}) - re-reading the list`
+        );
+        await loadPurchases();
+      } else {
+        console.error(
+          `[ASSO] closing purchase ${purchase.id.slice(0, 8)} as ${outcome} failed:`,
+          e
+        );
+      }
+      purchasesError = closingRefusalMessage(e);
+    } finally {
+      closingId = null;
+    }
+  }
+
   async function handleGrantProduct() {
     if (!grantUserId.trim() || !grantProductId) return;
     if (grantNeedsAmount && grantAmountEuros === '') {
@@ -95,7 +207,8 @@
     try {
       await grantProductPurchase(asso.id, grantProductId, {
         userId: grantUserId.trim(),
-        ...(grantNeedsAmount && grantAmountEuros !== ''
+        // A typed amount is always sent: it is how the cashier overrides the quoted default.
+        ...(grantAmountEuros !== ''
           ? { amountCents: Math.round(Number(grantAmountEuros) * 100) }
           : {}),
       });
@@ -104,10 +217,12 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      // An amount outside the product's bounds is typed with them: say the range, not "load error".
-      const amountRefusal = providerRefusalMessage(e);
-      Log.i('ASSO', `cash grant refused: ${amountRefusal ? 'amount out of range' : String(e)}`);
-      purchasesError = amountRefusal ?? m.common_load_error();
+      // A typed refusal (an amount out of the product's bounds, cotisations disabled, a tier not
+      // a rise...) is worded from its code; the log names that code, never a guessed cause.
+      const refusal = providerRefusalMessage(e);
+      const code = e instanceof SocialApiError ? e.code : null;
+      Log.i('ASSO', `cash grant refused: ${refusal ? `code=${code}` : String(e)}`);
+      purchasesError = refusal ?? m.common_load_error();
     } finally {
       grantingProduct = false;
     }
@@ -180,7 +295,7 @@
           density="compact"
         />
       </div>
-      {#if grantNeedsAmount}
+      {#if grantSelectedProduct}
         <div>
           <label for="grant-amount" class="text-text-muted mb-1 block text-xs font-semibold"
             >{m.asso_achats_grant_amount_label()}</label
@@ -191,16 +306,35 @@
             min="0"
             step="0.01"
             bind:value={grantAmountEuros}
-            placeholder="0.00"
+            placeholder={grantQuote?.kind === 'priced'
+              ? (grantQuote.amountCents / 100).toFixed(2)
+              : '0.00'}
             class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"
-            required
+            required={grantNeedsAmount}
           />
         </div>
       {/if}
     </div>
+    <!-- The live region stays mounted so a screen reader announces each quote as it changes; a
+         region inserted together with its text is not reliably announced. -->
+    <div aria-live="polite">
+      {#if grantQuote?.kind === 'priced'}
+        <p class="text-text-main text-xs font-semibold" data-testid="grant-quote">
+          {grantQuote.preferential
+            ? m.asso_achats_grant_quote_preferential({
+                amount: formatAmount(grantQuote.amountCents),
+              })
+            : m.asso_achats_grant_quote({ amount: formatAmount(grantQuote.amountCents) })}
+        </p>
+      {:else if grantQuote?.kind === 'not-sold'}
+        <p class="text-text-muted text-xs" data-testid="grant-quote">
+          {m.asso_achats_grant_quote_not_sold()}
+        </p>
+      {/if}
+    </div>
     <p class="text-text-muted text-xs">
-      {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
-        {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
+      {#if grantSelectedProduct?.type === 'membership'}
+        {m.asso_achats_grant_cotisation_hint({ name: grantSelectedProduct.name })}
       {:else}
         {m.asso_achats_grant_other_hint()}
       {/if}
@@ -248,7 +382,68 @@
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
               <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
-              <td class="text-text-main px-4 py-3">{purchase.productName}</td>
+              <td class="text-text-main px-4 py-3">
+                {purchaseItemLabel(purchase, productsById)}
+                {#if purchase.notGranted}
+                  <span
+                    class="bg-red-err/15 text-red-err ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                    title={m.asso_achats_not_granted_hint()}
+                  >
+                    {m.asso_achats_not_granted()}
+                  </span>
+                  {#if purchase.closedOutcome}
+                    <span
+                      class="bg-cn-bg text-text-muted ml-1 rounded-full px-2 py-0.5 text-xs font-semibold"
+                      title={purchase.closedAt
+                        ? m.asso_achats_closed_hint({
+                            date: new Date(purchase.closedAt).toLocaleString(
+                              getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                            ),
+                          })
+                        : undefined}
+                    >
+                      {purchase.closedOutcome === 'refunded'
+                        ? m.asso_achats_closed_refunded()
+                        : m.asso_achats_closed_granted()}
+                    </span>
+                  {:else}
+                    <!-- An erased buyer is no account: there is no tier to name, held or not. -->
+                    {#if purchase.grantRefusal !== 'buyer-erased'}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {purchase.buyerTier
+                          ? m.asso_achats_buyer_tier({ tier: purchase.buyerTier })
+                          : m.asso_achats_buyer_tier_none()}
+                      </span>
+                    {/if}
+                    {#if purchase.grantRefusal}
+                      <span class="text-text-muted mt-1 block text-xs">
+                        {grantRefusalMessage(purchase.grantRefusal)}
+                      </span>
+                    {/if}
+                    <span class="mt-1 flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        disabled={closingId === purchase.id}
+                        onclick={() => handleClose(purchase, 'refunded')}
+                        class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {m.asso_achats_close_refunded_button()}
+                      </button>
+                      <!-- The server refuses such a grant: only a refund can close it. -->
+                      {#if !purchase.grantRefusal}
+                        <button
+                          type="button"
+                          disabled={closingId === purchase.id}
+                          onclick={() => handleClose(purchase, 'granted')}
+                          class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                        >
+                          {m.asso_achats_close_granted_button()}
+                        </button>
+                      {/if}
+                    </span>
+                  {/if}
+                {/if}
+              </td>
               <td class="px-4 py-3">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
@@ -264,7 +459,7 @@
               <td class="text-text-muted px-4 py-3">{paymentMethodLabel(purchase.paymentMethod)}</td
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
-                {(purchase.amountCents / 100).toFixed(2)} €
+                {amountLabel(purchase)}
               </td>
             </tr>
           {/each}

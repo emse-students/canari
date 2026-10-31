@@ -45,6 +45,11 @@ import { CommentIdentityService } from './comment-identity';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
+  inAssociationsFeedSql,
+  republishedFeedAtSql,
+  republishedForViewerSql,
+} from './republished-feed-sql';
+import {
   postVisibleToViewerSql,
   readInFeedAudience,
   type PostAccessIntent,
@@ -248,11 +253,15 @@ export class PostsService {
    * full-screen list would greet every reader with the same page. Every other list keeps its pinned
    * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
    * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
+   *
+   * `at` is the instant a row is placed at: its `publishedAt`, except in the Associations feed,
+   * and "Suivis", where a carried post sits at its latest counted republication
+   * (`republishedFeedAtSql`).
    */
-  private listOrderSql(kind: PostKind | undefined): string {
+  private listOrderSql(kind: PostKind | undefined, at = 'posts."publishedAt"'): string {
     return kind === 'reel'
-      ? `ORDER BY posts."publishedAt" DESC, posts.id DESC`
-      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`;
+      ? `ORDER BY ${at} DESC, posts.id DESC`
+      : `ORDER BY posts.pinned DESC, ${at} DESC, posts.id DESC`;
   }
 
   /**
@@ -840,9 +849,9 @@ export class PostsService {
 
   /** Whether `userId` may use the feed at all - the gate's question, for `GET /posts/audience`. */
   async isInFeedAudience(userId: string): Promise<boolean> {
-    const inAudience = await readInFeedAudience(this.postRepo.manager, userId);
-    this.logger.debug(`[FEED_GATE] audience of ${userId.slice(0, 8)}: ${inAudience}`);
-    return inAudience;
+    // No line per read: the answer IS the response body, and a refusal is already logged once by
+    // `FeedAudienceGuard` where the decision that has a consequence is made.
+    return readInFeedAudience(this.postRepo.manager, userId);
   }
 
   /**
@@ -1186,9 +1195,12 @@ export class PostsService {
   }
 
   /**
-   * Returns paginated posts for one of three feeds:
+   * Returns paginated posts for one of four feeds:
+   * - "associations": what associations publish or republish, a carried post at its latest
+   *   republication (`republished-feed-sql.ts`)
    * - "all": every post, pinned first
-   * - "followed": posts from associations and users the viewer follows
+   * - "followed": posts from associations and users the viewer follows, and what a followed
+   *   association republished, placed at that republication
    * - "custom": personal posts filtered by promo year and/or formation
    *
    * Non-admin viewers with a promo year set cannot see posts published before
@@ -1283,22 +1295,23 @@ export class PostsService {
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
-      // NO `blockedAuthorSql` HERE, and deliberately: every row in this feed is an association
-      // post, which that clause exempts by design, so emitting it would be a clause that can
-      // never be true. The comments underneath ARE filtered - they carry their author's name.
+      // What associations publish AND republish (`republished-feed-sql.ts`): a member's post an
+      // association carries is in it, so `blockedAuthorSql` applies as in every other arm - it
+      // exempts association and anonymous posts by itself.
       const bp = blockedAt(promoCutoff ? 4 : 3);
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE posts."associationId" IS NOT NULL
+       WHERE ${inAssociationsFeedSql(`$${3 + tail.length}`)}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${reelFilters}
          ${serviceAccountFilter}
+         ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${3 + tail.length}`))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1335,6 +1348,9 @@ export class PostsService {
          -- author's name removes, because the leak is membership, not the name.
          OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[])
              AND NOT posts.anonymous)
+         -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
+         OR (NOT COALESCE(posts.anonymous, false)
+             AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
@@ -1343,7 +1359,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3'))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1576,16 +1592,39 @@ export class PostsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
+    const blockedIds = await this.assertOpenable(post, opts ?? {}, 'READ_OR_REACT');
+    return this.serveToReader(
+      post,
+      { viewerId: opts?.viewerId, isGlobalAdmin: opts?.isGlobalAdmin === true },
+      blockedIds
+    );
+  }
+
+  /**
+   * EVERY REFUSAL A READER MEETS ON ONE POST, BY ID - the ONE gate `getById` and the vote route
+   * (`assertMayVote`) go through, so a vote is refused on every post the read would refuse.
+   * Returns the reader's blocks, which the serving that follows needs anyway.
+   *
+   * @param intent `'VOTE'` asks the grant-free audience (`assertVisible`), as a vote requires.
+   * @throws NotFoundException for an expired reel, a post outside the reader's audience, a post
+   *   scheduled later (not the reader's), or one whose author and reader are blocked either way.
+   * @throws ForbiddenException for a post hidden by moderation.
+   */
+  private async assertOpenable(
+    post: Post,
+    opts: { allowHidden?: boolean; viewerId?: string },
+    intent: PostAccessIntent
+  ): Promise<string[]> {
     // A reel past its month is gone for everyone, a moderator and the author included: the worker
     // has only not reached it yet, and what it will delete is not worth opening.
     if (isExpiredReel(post)) {
-      this.logger.debug(`getById ${id} withheld: reel expired at ${String(post.expiresAt)}`);
+      this.logger.debug(`${intent} ${post.id} withheld: reel expired at ${String(post.expiresAt)}`);
       throw new NotFoundException('Post not found');
     }
     // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
     // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
-    await this.assertVisible(id, opts?.viewerId, 'READ_OR_REACT');
-    if (post.hiddenByModeration && !opts?.allowHidden) {
+    await this.assertVisible(post.id, opts.viewerId, intent);
+    if (post.hiddenByModeration && !opts.allowHidden) {
       throw new ForbiddenException('Post not available');
     }
     // Every listPosts query carries `scheduledAt IS NULL OR scheduledAt <= NOW()`; this read did
@@ -1595,9 +1634,11 @@ export class PostsService {
     // it. Answers "not found" rather than "forbidden" to everyone else: the existence of an
     // unpublished post is itself the thing to hide.
     const publishesLater = !!post.scheduledAt && post.scheduledAt.getTime() > Date.now();
-    const viewerOwnsIt = !!opts?.viewerId && post.authorId === opts.viewerId;
-    if (publishesLater && !viewerOwnsIt && !opts?.allowHidden) {
-      this.logger.debug(`getById ${id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`);
+    const viewerOwnsIt = !!opts.viewerId && post.authorId === opts.viewerId;
+    if (publishesLater && !viewerOwnsIt && !opts.allowHidden) {
+      this.logger.debug(
+        `${intent} ${post.id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`
+      );
       throw new NotFoundException('Post not found');
     }
     // A BLOCK REACHES THIS READ TOO, or the feed filter would be a curtain with a link around it:
@@ -1609,27 +1650,62 @@ export class PostsService {
     // is the same one that lets them open a moderation-hidden post the feed refuses them. Their
     // FEED still honours their own block - hiding a reported post from the moderator who has to
     // read it is the trap this avoids, and it is the same split `hiddenByModeration` already makes.
-    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts?.viewerId);
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts.viewerId);
     if (
       !post.associationId &&
       !post.anonymous &&
       blockedIds.includes(post.authorId) &&
-      !opts?.allowHidden
+      !opts.allowHidden
     ) {
-      this.logger.debug(`getById ${id} withheld: a block stands between the reader and its author`);
+      this.logger.debug(
+        `${intent} ${post.id} withheld: a block stands between the reader and its author`
+      );
       throw new NotFoundException('Post not found');
     }
+    return blockedIds;
+  }
 
-    const shaped = await this.toPublicPostFromEntity(
+  /**
+   * Refuses a vote on a post its voter could not open (`assertOpenable` with the vote's audience).
+   * Never `allowHidden`: a moderation-hidden post takes no votes, a platform admin's included.
+   */
+  async assertMayVote(postId: string, viewerId: string): Promise<void> {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    await this.assertOpenable(post, { viewerId }, 'VOTE');
+  }
+
+  /**
+   * ONE WHOLE POST AS ONE READER MAY SEE IT - the shaping every route that answers with a single
+   * post row goes through, so none of them hands out the stored row.
+   *
+   * The stored row carries what the served one withholds per reader (`toPublicPostFromEntity`,
+   * `CommentIdentityService.serve`), so a route answering with the entity it just wrote would skip
+   * all of it. This is `getById`'s shaping, unchanged, made reachable by the routes that write a
+   * post and answer with it. It does NOT check visibility: the caller has already done that (a
+   * write route through `assertVisible`, `getById` through its own checks).
+   *
+   * @param blockedIds the reader's blocks when the caller already read them; read here otherwise.
+   */
+  async serveToReader(
+    post: Post,
+    reader: { viewerId?: string; isGlobalAdmin?: boolean },
+    blockedIds?: string[]
+  ): Promise<Record<string, any>> {
+    const blocked = blockedIds ?? (await blockedUserIdsFor(this.postRepo.manager, reader.viewerId));
+    this.logger.debug(
+      `serveToReader ${post.id}: reader ${reader.viewerId ? 'known' : 'none'}, ${blocked.length} blocked`
+    );
+    const shaped: Record<string, any> = await this.toPublicPostFromEntity(
       post,
-      await this.viewerContext([post], opts?.viewerId, opts?.isGlobalAdmin === true)
+      await this.viewerContext([post], reader.viewerId, reader.isGlobalAdmin === true)
     );
     // The entity path carries the WHOLE comment array rather than a window and a count, so unlike
     // the feed queries it is filtered here, exactly and in one place.
-    if (blockedIds.length > 0 && Array.isArray(shaped.comments)) {
+    if (blocked.length > 0 && Array.isArray(shaped.comments)) {
       shaped.comments = shaped.comments.filter(
         (c: { userId?: string; anonymous?: boolean; association?: unknown }) =>
-          !blockedIds.includes(c?.userId ?? '') || c.anonymous === true || !!c.association
+          !blocked.includes(c?.userId ?? '') || c.anonymous === true || !!c.association
       );
     }
     // Attach author name fields (same source as listPosts - local users table).
@@ -1705,10 +1781,7 @@ export class PostsService {
       post.markdown = data.markdown;
       const saved = await this.postRepo.save(post);
       await this.invalidateListCache();
-      return this.toPublicPostFromEntity(
-        saved,
-        await this.viewerContext([saved], userId, isGlobalAdmin)
-      );
+      return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
     }
     post.markdown = data.markdown;
 
@@ -1754,10 +1827,7 @@ export class PostsService {
 
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
-    return this.toPublicPostFromEntity(
-      saved,
-      await this.viewerContext([saved], userId, isGlobalAdmin)
-    );
+    return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
   }
 
   /**

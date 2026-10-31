@@ -67,4 +67,14 @@ export class GroupMembershipInterval {
    */
   @Column({ type: 'timestamp', nullable: true })
   admittedAt: Date | null;
+
+  /**
+   * The group's `seatGeneration` when the removal that closed this stretch was written - the
+   * generation that removal moved it to, under the seat lock (`endGroupMembership`). `null` while
+   * open, and for a stretch closed before migration 039. A COUNTER, not a clock: it orders this
+   * departure against the epoch a commit was built on (`Group.epochSeatGeneration`), so an Add built
+   * before the departure enrols nobody after it (`enrolAdmittedPeople`).
+   */
+  @Column({ type: 'integer', nullable: true })
+  leftAtSeatGeneration: number | null;
 }

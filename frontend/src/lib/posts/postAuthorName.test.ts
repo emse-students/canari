@@ -3,7 +3,12 @@
  * for an association post, the profile otherwise, nowhere when the identity is hidden from the reader.
  */
 import { expect, it } from 'vitest';
-import { postAuthorHref, postAuthorLinkLabel } from './postAuthorName';
+import {
+  postAuthorHref,
+  postAuthorLinkLabel,
+  postAuthorName,
+  revealedPostAuthor,
+} from './postAuthorName';
 import { m } from '$lib/paraglide/messages';
 
 const association = { id: 'a1', name: 'BDE', slug: 'b d e', logoUrl: null };
@@ -20,7 +25,26 @@ it('a member post links the profile', () => {
   expect(postAuthorLinkLabel(post as never)).toBe(m.post_view_profile_label({ name: 'Ada L' }));
 });
 
-it('an anonymous post links nowhere for a regular reader, and the profile for those who see it', () => {
+it('an anonymous post is named "Anonyme" and links nowhere, whoever reads it', () => {
   expect(postAuthorHref({ anonymous: true } as never)).toBeNull();
-  expect(postAuthorHref({ anonymous: true, authorId: 'u1' } as never)).toBe('/profile/u1');
+  expect(postAuthorHref({ anonymous: true, authorId: 'u1' } as never)).toBeNull();
+  expect(postAuthorName({ anonymous: true } as never)).toBe(m.post_anonymous_label());
+  expect(postAuthorName({ anonymous: true, authorId: 'u1', authorFirstName: 'Ada' } as never)).toBe(
+    m.post_anonymous_label()
+  );
+});
+
+it('reveals the author of an anonymous post only when the server sent its id', () => {
+  expect(revealedPostAuthor({ anonymous: true } as never)).toBeNull();
+  expect(
+    revealedPostAuthor({
+      anonymous: true,
+      authorId: 'u1',
+      authorFirstName: 'Ada',
+      authorLastName: 'L',
+    } as never)
+  ).toEqual({ userId: 'u1', name: 'Ada L' });
+  // Nothing to reveal on a post that is not anonymous, nor on an association's.
+  expect(revealedPostAuthor({ authorId: 'u1', authorFirstName: 'Ada' } as never)).toBeNull();
+  expect(revealedPostAuthor({ association, anonymous: true, authorId: 'u1' } as never)).toBeNull();
 });

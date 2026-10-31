@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -64,7 +64,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   const txReads: string[] = [];
   // The target's roster seat as the store's transaction re-reads it, under a lock.
   const txSeat = jest.fn();
-  // The lift of `awaitingAdmission` the store makes for the Welcome's target.
+  // Who still awaits as the lift reads it, then the lift of `awaitingAdmission` itself.
+  const txAsks = jest.fn();
   const txLift = jest.fn();
   type EvictionRow = { generation: number; owedDeparture: number | null };
   /** A key-group target's `dm_seat_evictions` row when its claim is taken, before the store. */
@@ -73,12 +74,21 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   let txEvictionRow: EvictionRow | null;
   /** Whether the target's key package is still there when the store re-reads it under the lock. */
   let txKeyPackage: boolean;
+  /** The row of the same Welcome already queued, as the store finds it under its lock. */
+  let queuedCopy: unknown;
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
     cb({
       // The seat lock, and the eviction row a key-group target's claim is checked against.
-      query: jest.fn(async (sql: string) => {
+      query: jest.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('pg_advisory_xact_lock')) {
-          txReads.push(sql.includes('_shared') ? 'seat-lock-shared' : 'seat-lock');
+          const welcomeStore = String(params?.[0] ?? '').startsWith('welcome-store:');
+          txReads.push(
+            welcomeStore
+              ? 'welcome-lock'
+              : sql.includes('_shared')
+                ? 'seat-lock-shared'
+                : 'seat-lock'
+          );
           return [];
         }
         if (sql.includes('FROM dm_seat_evictions')) {
@@ -102,9 +112,13 @@ describe('MessagingService - sendWelcome does not touch membership status or the
               txReads.push('seat');
               return txSeat(q);
             }),
-            // The store lifts the invitation-link ask its Welcome answers.
-            update: jest.fn(async (where: unknown, set: unknown) => {
+            // The store lifts the invitation-link ask its Welcome answers: who awaits, then the lift.
+            find: jest.fn(async (q: unknown) => {
               txReads.push('lift');
+              return txAsks(q);
+            }),
+            update: jest.fn(async (where: unknown, set: unknown) => {
+              txReads.push('lift-write');
               return txLift(where, set);
             }),
           };
@@ -127,6 +141,11 @@ describe('MessagingService - sendWelcome does not touch membership status or the
           };
         }
         return {
+          // A copy of the same Welcome already queued (`findQueuedWelcome`) - none unless a case says.
+          findOne: jest.fn(async () => {
+            txReads.push('queued-copy');
+            return queuedCopy;
+          }),
           save: jest.fn(async (rows: unknown) => {
             txReads.push('save');
             return queuedSave(rows);
@@ -187,10 +206,12 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     jest.clearAllMocks();
     txReads.length = 0;
     txSeat.mockResolvedValue({ id: 'm-u2' });
+    txAsks.mockResolvedValue([]);
     txLift.mockResolvedValue({ affected: 0 });
     claimRow = null;
     txEvictionRow = null;
     txKeyPackage = true;
+    queuedCopy = null;
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1', userId: 'u2', deviceId: 'd2' });
     deviceGroupRepo.createQueryBuilder.mockReturnValue(insertBuilder);
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -266,32 +287,36 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       'group',
       'seat',
       'key-package',
+      'welcome-lock',
+      'queued-copy',
       'save',
       'pending-row',
-      // The invitation-link ask its Welcome answers, lifted in the same transaction.
-      'lift',
     ]);
   });
 
   /**
-   * A WELCOME STORED BY AN ADMITTED MEMBER ADMITS ITS TARGET: the ask an invitation link wrote is
-   * lifted with it, whatever client sent it - one older than `admits` declares nobody in its commit,
-   * and this is the one door that still sees its Add.
+   * A WELCOME SENT APART NEVER ADMITS ITS TARGET (ADM-3): the accepted commit is the one writer of a
+   * new person, and it lifts the ask in the transaction that accepts it. A seat still awaiting a
+   * member's admission is one no accepted commit admitted - an Add the gate refused, or one that
+   * never landed - so its Welcome is refused, nothing stored and nothing lifted.
    */
-  it("lifts the target's invitation-link ask, guarded on the flag, in the store's transaction", async () => {
-    txLift.mockResolvedValueOnce({ affected: 1 });
+  it('refuses a Welcome to a seat still awaiting admission, and lifts nothing', async () => {
+    txSeat.mockResolvedValue({ id: 'm-u2', awaitingAdmission: true });
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { code: 'WELCOME_TARGET_NOT_MEMBER', error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(txLift).not.toHaveBeenCalled();
+    expect(txReads).not.toContain('pending-row');
+  });
+
+  it('stores a Welcome to an ADMITTED seat without touching its admission', async () => {
+    txSeat.mockResolvedValue({ id: 'm-u2', awaitingAdmission: false });
 
     await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
-
-    expect(txLift).toHaveBeenCalledTimes(1);
-    const [where, set] = txLift.mock.calls[0] as [
-      { groupId: string; userId: { value: string[] }; awaitingAdmission: boolean },
-      unknown,
-    ];
-    expect(where.groupId).toBe('g1');
-    expect(where.awaitingAdmission).toBe(true);
-    expect(where.userId.value).toEqual(['u2']);
-    expect(set).toEqual({ awaitingAdmission: false });
+    expect(txLift).not.toHaveBeenCalled();
+    expect(txAsks).not.toHaveBeenCalled();
   });
 
   /**
@@ -382,10 +407,38 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
   });
 
-  it('refuses a target device that does not exist', async () => {
+  it('stores nothing when the same Welcome is already queued, and delivers THAT row again - a re-send after a lost answer', async () => {
+    queuedCopy = {
+      id: 'q-first',
+      recipientId: 'u2',
+      deviceId: 'd2',
+      groupId: 'g1',
+      isWelcome: true,
+      proto: body.welcomePayload,
+      createdAt: new Date(),
+    };
+
+    await expect(service.sendWelcome(undefined, body)).resolves.toEqual({ status: 'queued' });
+
+    expect(txReads).toContain('welcome-lock');
+    expect(txReads).not.toContain('save');
+    // The first request may have died between its store and its delivery: the re-send arms it.
+    expect(redis.publish).toHaveBeenCalledTimes(1);
+    const envelope = String(redis.publish.mock.calls[0][1]);
+    expect(JSON.parse(envelope)).toMatchObject({ isWelcome: true });
+    // THE queued row, by its id - never a second row.
+    expect(envelope).toContain('q-first');
+  });
+
+  it('refuses a target device that does not exist with a typed 404, never a 500', async () => {
     keyPackageRepo.findOne.mockResolvedValue(null);
 
-    await expect(service.sendWelcome(undefined, body)).rejects.toThrow(/not found/);
+    const refusal = await service.sendWelcome(undefined, body).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(NotFoundException);
+    expect((refusal as NotFoundException).getResponse()).toMatchObject({
+      code: 'WELCOME_TARGET_UNKNOWN',
+      error: 'welcome_target_unknown',
+    });
     expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     expect(redis.sadd).not.toHaveBeenCalled();
   });
@@ -449,6 +502,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
         'group',
         'claim',
         'key-package',
+        'welcome-lock',
+        'queued-copy',
         'save',
         'pending-row',
       ]);
@@ -525,9 +580,10 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     it('still asks dm_group_members for an ordinary conversation - an ADMITTED seat only', async () => {
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
       // A seat still awaiting a member decides nothing: its holder Welcoming a device of their own
-      // would lift their own ask.
+      // would lift their own ask - so the seat's flag is read, and only `admitted` passes.
       expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'g1', userId: 'u1', awaitingAdmission: false },
+        where: { groupId: 'g1', userId: 'u1' },
+        select: { id: true, awaitingAdmission: true },
       });
     });
 

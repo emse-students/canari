@@ -1,7 +1,12 @@
 import { m } from '$lib/paraglide/messages';
-import type { ConversationRefusal } from '$lib/utils/chat/groupCreation';
+import type {
+  BulkAdditionRefusal,
+  ConversationRefusal,
+  LostInvitationOutcome,
+} from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
+import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
  * THE ONE PLACE A REFUSAL BECOMES A SENTENCE, AND THE REASON IT IS A TABLE.
@@ -44,10 +49,99 @@ export function conversationRefusalMessage(reason: ConversationRefusal): string 
  * @returns whether the failure was that refusal and was shown.
  */
 export function reportFollowerTabRefusal(e: unknown): boolean {
-  if (!(e instanceof FollowerTabCommitError)) return false;
+  // A removal the server recorded and then could not commit carries the refusal as its cause: the
+  // member still learns WHY, by type (`MemberRemovalNotCommittedError`).
+  const refusal = e instanceof MemberRemovalNotCommittedError ? e.cause : e;
+  if (!(refusal instanceof FollowerTabCommitError)) return false;
   console.warn(
-    `[GROUP] a group action was refused in a follower tab (${e.groupId.slice(0, 8)}...)`
+    `[GROUP] a group action was refused in a follower tab (${refusal.groupId.slice(0, 8)}...)`
   );
   showToast(conversationRefusalMessage('follower-tab'));
   return true;
+}
+
+/**
+ * Tells the member what a removal they asked for came to when it did not complete - read from the
+ * error's TYPE, never its text. Two outcomes the member must not confuse:
+ *
+ * - {@link MemberRemovalNotCommittedError}: the person IS removed (the server recorded it, no message
+ *   reaches them) and only the key change is late - it completes at the next connection, by the
+ *   collector that compares the roster with the tree;
+ * - anything else: nothing was recorded, the person is still a member, and the gesture can be
+ *   retried.
+ *
+ * A follower-tab refusal is not handled here: {@link reportFollowerTabRefusal} has its own sentence.
+ *
+ * @param e - what `removeMemberAndBroadcast` threw.
+ * @returns `recorded` when the removal stands and only its commit is owed, `not-removed` otherwise.
+ */
+export function reportMemberRemovalFailure(e: unknown): 'recorded' | 'not-removed' {
+  if (e instanceof MemberRemovalNotCommittedError) {
+    showToast(m.chat_group_remove_member_keys_pending(), 'warning');
+    return 'recorded';
+  }
+  showToast(m.chat_group_remove_member_failed());
+  return 'not-removed';
+}
+
+/** Every way an invitation can add nobody, as a sentence - total for the reason the file gives. */
+const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
+  'nobody-named': () => m.chat_invite_error_nobody_named(),
+  'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
+  'no-devices': () => m.chat_invite_error_no_devices(),
+  'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
+  'no-device-added': () => m.chat_invite_error_no_device_added(),
+  'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
+  'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),
+  'tree-unconfirmed': () => m.chat_invite_error_tree_unconfirmed(),
+  'outcome-unknown': () => m.chat_invite_pending_connection(),
+  'previous-commit-unresolved': () => m.chat_invite_error_previous_commit_unresolved(),
+  failed: () => m.chat_invite_error_failed(),
+};
+
+/**
+ * Tells the member that an invitation they made added nobody, and why - read from the outcome's
+ * `reason`, never a log. AN INVITATION IS A GESTURE WITH NO DURABLE ROW: a new person enters only by
+ * a member's own Add (2026-10-23), so a refused one - a lost race, a busy add lock - is not retried by
+ * any sweep, and the member is the one who retries. Saying nothing is how CC-4 lost an Add for good.
+ *
+ * `outcome-unknown` is the one reason that is not a refusal: the commit is kept and finishes by
+ * itself (`owedInvitations.ts`), so it is said as a warning, and {@link reportLostInvitation} speaks
+ * if it does not finish.
+ *
+ * @param reason - the refusal `inviteMembersToGroup` returned.
+ */
+export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
+  console.warn(`[GROUP] an invitation added nobody (${reason})`);
+  if (reason === 'outcome-unknown') showToast(INVITE_SENTENCES[reason](), 'warning');
+  else showToast(INVITE_SENTENCES[reason]());
+}
+
+/**
+ * Tells the member how an invitation they made BEFORE A LOST CONNECTION ended, once its kept commit
+ * was found not to have landed and it was re-planned (`replanLostInvitation`). Named after the
+ * conversation, since the member is no longer looking at it. Silent when it completed - the member
+ * list shows it - when its commit is kept again, and when it waits: both end here later.
+ *
+ * Only a refusal re-inviting could lift says "invite them again": a gate refusal (`refused`, e.g.
+ * `committer_not_member`) and a retired conversation have their own sentences.
+ *
+ * @param outcome - what the re-plan came to.
+ * @param conversation - the conversation's display name.
+ */
+export function reportLostInvitation(outcome: LostInvitationOutcome, conversation: string): void {
+  if (outcome.kind === 'completed' || outcome.kind === 'kept' || outcome.kind === 'waiting') return;
+  const why = outcome.kind === 'not-completed' ? outcome.reason : outcome.kind;
+  console.warn(
+    `[INVITE_OWED] the member is told: an invitation lost a connection ago was not completed (${why}${outcome.kind === 'refused' ? `: ${outcome.reason ?? 'no reason'}` : ''})`
+  );
+  if (outcome.kind === 'refused') {
+    showToast(m.chat_invite_resumed_refused({ conversation }));
+  } else if (outcome.kind === 'conversation-gone') {
+    showToast(m.chat_invite_resumed_conversation_gone({ conversation }));
+  } else if (outcome.reason === 'removed-meanwhile') {
+    showToast(m.chat_invite_resumed_removed_meanwhile({ conversation }));
+  } else {
+    showToast(m.chat_invite_resumed_failed({ conversation }));
+  }
 }

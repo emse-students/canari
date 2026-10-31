@@ -26,6 +26,7 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
 import { CALLS_NATIVE_RING_COMPILED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
+import { readApiJson } from '$lib/utils/apiJson';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -262,7 +263,12 @@ export async function startPushService(
         const errText = await response.text().catch(() => '');
         throw new Error(`HTTP ${response.status}${errText ? `: ${errText}` : ''}`);
       }
-      const data = await response.json().catch(() => null);
+      // A 2xx that is not the API's JSON (a captive portal's page) registered NOTHING: it throws
+      // `NotFromApiError`, so this registration fails and is not counted - read as `null`, the
+      // token was taken for registered and never sent again until it rotated.
+      const data = (await readApiJson(response, 'POST /api/mls/push/register')) as {
+        pushSecret?: string;
+      } | null;
       const pushSecret: string | undefined = data?.pushSecret;
       // AWAITED, so the secret is stored before this registration counts as finished and the next
       // one may start: two stores in flight could land in either order. A store that failed makes

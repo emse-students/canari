@@ -5,7 +5,12 @@ vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `user ${id}`,
 }));
 
-import { commentAuthorHref, commentAuthorKind, commentAuthorName } from './commentAuthor';
+import {
+  commentAuthorHref,
+  commentAuthorKind,
+  commentAuthorName,
+  commentRevealedAuthorId,
+} from './commentAuthor';
 
 const base: PostComment = {
   id: 'c',
@@ -35,6 +40,7 @@ describe('commentAuthorName', () => {
   it('names an association by its card and an anonymous comment by nothing personal', () => {
     expect(commentAuthorName({ ...base, association: card })).toBe('BDE');
     expect(commentAuthorName({ ...base, anonymous: true, firstName: 'Leak' })).toBe('Anonyme');
+    expect(commentAuthorName({ ...base, anonymous: true, userId: 'u1' })).toBe('Anonyme');
   });
 
   it('says so when an anonymous comment was written by the post author', () => {
@@ -53,5 +59,19 @@ describe('commentAuthorHref', () => {
 
   it('never builds a profile link from a missing account', () => {
     expect(commentAuthorHref({ ...base })).toBeNull();
+  });
+});
+
+describe('commentRevealedAuthorId', () => {
+  it('is the writer of an anonymous comment when the server served the id, and nothing else', () => {
+    // A moderator, an admin or the writer: the id was served, so the writer is named under "Anonyme".
+    expect(commentRevealedAuthorId({ ...base, anonymous: true, userId: 'u1' })).toBe('u1');
+    // Every other reader: the server withheld it, there is nobody to name.
+    expect(commentRevealedAuthorId({ ...base, anonymous: true })).toBeNull();
+    // Not anonymous: the name line already says who wrote it.
+    expect(commentRevealedAuthorId({ ...base, userId: 'u1' })).toBeNull();
+    expect(
+      commentRevealedAuthorId({ ...base, association: card, anonymous: true, userId: 'u1' })
+    ).toBeNull();
   });
 });

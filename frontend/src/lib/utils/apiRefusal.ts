@@ -4,21 +4,9 @@ import { ApiRefusalError } from './apiRefusalError';
 
 export { ApiRefusalError };
 
-/**
- * WHO ANSWERED: our gateway (`gateway`, a JSON body) or something in front of it (`edge`: the host's
- * CrowdSec WAF 'Ban' page, a CDN or proxy error page - HTML or any non-JSON body).
- *
- * Read from the `Content-Type` HEADER, never from the body's words. The same status means opposite
- * things by origin: a gateway 403 is a verdict on the caller, an edge 403 is a verdict on the
- * network path and says nothing about the caller. Classify it at the THROW with this one helper.
- */
-export type ResponseOrigin = 'gateway' | 'edge';
-
-/** See {@link ResponseOrigin}. A response with no JSON content type was not written by the gateway. */
-export function responseOrigin(res: Pick<Response, 'headers'>): ResponseOrigin {
-  const type = res.headers.get('content-type') ?? '';
-  return /json/i.test(type) ? 'gateway' : 'edge';
-}
+// WHO ANSWERED lives beside the 2xx reader that shares it (`apiJson.ts`, no Paraglide import), and
+// is re-exported here for the refusal paths that already import it from this module.
+export { responseOrigin, type ResponseOrigin } from './apiJson';
 
 /**
  * The HTTP status an error carries, or `null` when it carries none.

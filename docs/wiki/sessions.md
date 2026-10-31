@@ -11,9 +11,11 @@ one application and apply to the other three. Per-application detail lives with 
 **An opaque token in the cookie, and one server-side row holding everything else.** Sky's model, now
 MiGallery's and the Cercle's.
 
-Canari is the one variant, deliberately: its 1 h access token stays STATELESS, because six services
-and nginx verify it without touching a database. The row backs the REFRESH token instead, and carries
-`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`). On Android a session may also
+Canari is the one variant, deliberately: its 1 h access token is a signed JWT the six services never
+look up. The row backs the REFRESH token, and carries `sid` + `jti`
+(`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the verifier every
+`auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
+locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -127,6 +129,11 @@ and read the row back. Without a flush the row had not moved, so the phone had p
 superseded token; with a HOME press before the kill it had rotated again, so the phone had presented
 the current one. The server's own log for the original failure says `Refresh token replay detected
 sid=… - session revoked`, in the same second as the phone's `refresh 401`.
+
+**A desktop browser has the same hole and no flush to close it** (KILL-2, 2026-10-25): Chrome
+commits its cookie store about every 30 s, and a hard kill inside that window, after two rotations,
+reproduced the replay and the sign-out. It is an open P2 in [backlog](backlog.md), with its
+reproduction and a candidate server-side fix.
 
 Two rules come out of it, and they generalise past Android:
 
@@ -359,6 +366,134 @@ can name a device, and a holder who never unlocks MLS never names one at all - w
 stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
 device it cannot claim.
 
+## An access token is only as alive as its session (2026-10-25)
+
+**`/api/auth/verify` answers an access token whose session has ended exactly as it answers an expired
+one: anonymous.** Every location nginx guards with `auth_request` runs that verifier, and every
+guarded route behind it reads the `X-Logged-In` it sets, so from the commit that deletes a session
+row - a sign-out, the owner removing it from the device panel, "sign out the others", a replay, a
+restore, an owner's device revocation (below) - every request through those locations carrying a
+token minted for it is a 401. The client meets that 401, renews, is refused the refresh, and signs
+out.
+
+- **One rule, one implementation.** `AuthController.sessionOfToken` decides it for `check` (the
+  verifier) and for `requireAccessToken`, the reader of core-service's own `/api/auth` routes that
+  take the bearer token themselves. `AuthSessionsService.isLive(sid, sub)` is a primary-key read
+  beside the platform config the verifier already reads. Every ending of a session DELETES its row,
+  so absence is the ended state; `expiresAt` is compared too because an idle-expired row may not have
+  been swept yet. No cache and no clock: the deletion is what flips it.
+- **A token naming no session is ACCEPTED, by construction - and the branch has a removal date.**
+  The one issuer (`signAccessToken`) always writes `sid`, so a sid-less token was minted by a release
+  older than this check, before its deploy, and dies by its own `exp` within one
+  `ACCESS_TOKEN_TTL_SECONDS` of it. Refusing it would answer every client signed in at the deploy
+  anonymous for up to that hour. No session is read for it, `X-Session-Id` stays empty, and the
+  acceptance is logged ONCE per process at `log`, not per request. The branch is deleted one token
+  lifetime after the deploy ([legacy-compatibility](legacy-compatibility.md)). The dev estate cannot
+  rehearse it: its tokens already carry `sid`.
+- **An ended session is said once.** The refusal is logged at `warn` the first time per session per
+  process (a bounded set of 4096 ids), then at `debug`: a client sends several requests before its
+  refresh is refused, and the refusal is one fact.
+- **A failed read is not an answer.** It propagates as a 5xx - nginx fails the request, and a client
+  keeps its session on a 5xx; it is never turned into "anonymous" (which would sign a user out on a
+  database hiccup) nor into "logged in" (which would let an ended session through).
+- **Exactly what it covers.** (1) Every HTTP route behind an `auth_request` location - in particular
+  every device-creating call: device registration, key-package and prekey publication, commits and
+  external joins, add locks, Welcome requests, invitation accepts, push registration. (2) The
+  `/api/auth` routes that read the bearer token themselves through `requireAccessToken`: the session
+  list, a session's revocation, "sign out the others", binding the current session to its device,
+  the account-restore registration, and the adminer session.
+- **Exactly what it does not.** Three families verify the access token THEMSELVES and do not read
+  the session: media-service's own token check, call-service's claim decoding, and the gateway
+  WebSocket, which authenticates its `canari_ws_token` cookie at the upgrade (a socket open, or
+  opened within the token's hour, is not cut by an ending). None of them creates a device. Their
+  liveness is tracked privately ([backlog](backlog.md)). The push-secret background routes are not
+  behind the verifier either: a session's ending deletes its push registration and with it the secret
+  those routes check (below). The settings panel says all three in as many words
+  (`settings_sessions_delay_note`).
+
+**An owner's device revocation ends that device's sessions server-side.** When chat-delivery records
+an OWNER's ban on a device id (`DELETE /mls/devices/:userId/:deviceId`,
+[chat-delivery](services/chat-delivery.md)), it asks core-service
+(`DELETE /api/internal/sessions/users/:userId/devices/:deviceId?exceptSession=`, internal secret)
+to end every session of that user BOUND to that device (`auth_sessions."deviceId"`, written by
+`bindDevice`) except the caller's own, through `AuthSessionsService.endDeviceSessions` - the same
+`DELETE ... RETURNING` + push-ending transaction as every other ending, cause `revoked-by-owner`. If
+that call fails the delete answers 503 (`DeviceSessionsNotEndedError`, never swallowed), after the
+ban is written and the device signalled; the device panel signs the row's logins out itself on any
+answer (`removeDeviceRow`), and a login that survives stays listed as its own row for the user's
+retry. A retirement (`reason=retired`) ends none - the id
+was the caller's own install's. Not covered, stated: a session bound to NO device, or to a different
+id - the panel's own session revocation (`DELETE /api/auth/sessions/:id`) ends those.
+
+## A refresh refused because the device was revoked says so (2026-10-25)
+
+**Ending the device's sessions destroyed the only fact the device could still learn its revocation
+from.** Measured on the rig (DEV-2, `1.4.1-alpha.4`): the `device_revoked` frame arrived; the frame's
+own check, `GET /api/mls/devices/:u/:d/revoked`, was asked with the access token the revocation had
+just killed (the verifier reads the session, above), its renewal was refused, and the client read
+that as "unreachable - NOT revoked" and logged `the server disagrees`. The device left only through
+the generic expiry sign-out, which keeps every local store by design. A device offline during the
+revocation (DEV-3) got no frame at all, and the same sign-out. Both came with the server-side session
+ending of the same release; `v1.4.0` and older do not end the device's sessions, so their check is
+answered and the frame wipes.
+
+**The cause is carried to where the device decides, from where it is known.** `endDeviceSessions`
+writes one `device_revoked_sessions` row per session it deletes (core-service migration 017), in the
+same transaction. A refresh whose session row is missing reads it by `sid` and is refused
+`401 { statusCode, code: 'DEVICE_REVOKED_BY_OWNER', userId, deviceId }` - the code from the shared
+refusal registry, the session's own account and device NAMED, and Nest's envelope kept, so an older
+client reads the 401 it always read. Every other ending (logout, the panel's session revocation, "sign out the
+others", a replay, expiry) stays the plain 401: the record answers ONE question, "did an owner's
+DEVICE revocation end this session".
+
+**Kept exactly as long as it can be asked.** A refresh token naming the session expires at most
+`SESSION_TTL_SECONDS` after its last rotation, which came before `endedAt`; past `endedAt + TTL +
+CREDENTIAL_SKEW_SECONDS` it fails to verify before the session is looked up, so the hourly session
+sweep deletes the record then - a proof, not a guess. Erased with the account.
+
+**The client** (`stores/auth.ts`) types the refusal at its throw as
+`SessionEndedByDeviceRevocationError` (a `SessionExpiredError`, so every consumer that stops on a
+dead session still stops - by `instanceof`, never by name, which is what let the subclass through to
+a reconnect ladder) and latches the device it names beside the dead-credential verdict
+(`revokedDeviceOfEndedSession`); a new credential clears both. A refusal that names no device, is not
+JSON, or carries neither Nest's envelope nor a registry code (an edge page) is no revocation. Three
+things read it, and they converge on ONE reset ([auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)):
+
+- the session-expired reaction (`handleSessionExpired` -> `settleSessionEndByRevocationImpl`) reads
+  the LATCH, not its caller, and resets ONLY when the named device is this install's current device
+  id of the saved account - a session bound to an id the install has since rotated away from, or to
+  another account, is the plain sign-out that keeps the stores. Order of arrival never matters, and
+  the offline return (no frame) is covered by the same line;
+- the frame's check (`isDeviceRevoked`) answers `true` on that typed refusal when it names the device
+  asked about, `false` on another device, any other dead session or a transport failure;
+- `wipeRevokedDevice` runs once per device: a discoverer during the run joins it, and one after it
+  finds the device in the page's completed-reset record and erases nothing again.
+
+**What a rig row must observe** on the revoked device: `[A] session dead: a device was revoked by its
+owner → reset if it is this one`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing
+of this device remains`, and on the live variant also `revocation check: the server ended this
+session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
+`the server disagrees`, and no `[WS] Gateway connection failed` after it (`Gateway inaccessible`
+before 2026-10-30).
+
+**Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
+device's one sign-out: `endExpiredSession` (the session-expired handler's decision) skips its own
+sign-out when the frame path says `alreadySignedOut` or the reset answers `true` - a reset already
+running or done is joined BEFORE the identity comparison, which reads the key the wipe deletes. A reset
+that throws before its `clearAuth` still signs out once (never zero); one that throws after it costs a
+second logout, the accepted case. A pending fetch refused with the typed error naming THIS device ends
+with one info line (the server deleted the backlog; nothing remains to drain), never an error claiming
+it stays queued, and no drain-waiter line. A Decline that wins the race against an Add is an info line
+only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
+
+**The cases this record does not reach** are a design limit, listed with what covers them in
+[backlog](backlog.md#a-revoked-device-whose-refresh-cannot-name-its-revocation). Tests:
+`auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,
+`auth.deviceRevoked.test.ts` (the named body, an HTML and an edge 401), `BaseMlsService.revokedFrame.test.ts`,
+`session/revokedDeviceReset.test.ts` (both orderings, the offline return, a late discoverer, a
+rotated device id, another account, a transport failure, a plain expiry),
+`startGatewayHandshake.test.ts` and `signOutInProgressReconnect.test.ts` (the reconnect stops).
+
 ## A session that ends takes its device's push registration with it (2026-10-22)
 
 **After any sign-out, the device stops being a push destination for the account that left - on
@@ -394,9 +529,12 @@ durable by construction:
   device whose earlier session died without an ending therefore loses that stale row with its
   current session's sign-out.
 
-**A final pass, because an access token outlives its session.** An access token minted before the
-session ended stays valid for up to one `ACCESS_TOKEN_TTL_SECONDS` and can still register under the
-ended session's id. So a pass that succeeded before `endedAt + ACCESS_TOKEN_TTL_SECONDS +
+**A final pass, because a request can be in flight across the ending.** Since 2026-10-25 an access
+token whose session has ended is answered anonymous at the verifier
+([above](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)), but a registration whose
+`auth_request` answered just before the session's deletion committed still reaches chat-delivery
+afterwards, carrying the ended session's id - and a node rolled out before that change does not check
+at all. So a pass that succeeded before `endedAt + ACCESS_TOKEN_TTL_SECONDS +
 CREDENTIAL_SKEW_SECONDS` keeps the row, due at that instant, and the row is deleted only after a pass
 that STARTED after it - the account erasure's `afterSuccess` rule, a termination proved by the
 token's own expiry. `SessionPushEndService` drains the outbox exactly as `AccountErasureService`
@@ -456,6 +594,16 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 (`utils/internalPath.ts`, tested) BEFORE `clearAuth` awaits, so the same `returnTo` the layout's own
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
+
+## A return target is held to the page's origin (2026-10-28)
+
+A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
+`<a href>` as well as `goto` and the stored sign-in return. `safeInternalPath`
+(`utils/internalPath.ts`) is the ONE gate: a target is validated against the page's origin, by the
+URL parser's own resolution rather than a reading of its first characters, and control characters
+and backslashes are refused at any position. A refused value falls back to the caller's default and
+logs its length, never the value. Tests: `internalPath.test.ts` (the function) and
+`routes/forms/create/page.backLink.svelte.test.ts` (a rendered link).
 
 ## A token that names another account than the local identity is refused (2026-10-10)
 
@@ -527,10 +675,64 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
   to whatever the client sent, so the head of the list is attacker-controlled.
 - **An upload that meets a 401 refreshes and retries ONCE; it never ends the session.** The media
   upload takes a token its caller read BEFORE a long encryption, so a 401 is usually a stale copy.
-  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) renews through the
-  single-flight `refresh()` and resends; only a 401 on the FRESH token throws `SessionExpiredError`,
-  and a failed refresh is rethrown as it came. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h
-  from a web client, each followed by logout and sign-in. The salon branch's stale `ctx.authToken`
-  copy (#1472) and the post forms (#1477) fixed WHO hands the token; this fixes the token expiring
-  between the hand-over and the request, for every caller including reels and avatars. Test:
-  `media.uploadRefreshRetry.test.ts`.
+  `fetchUpload` in `frontend/src/lib/media.ts` (every `MediaService` upload route) obeys the one rule
+  below. Prod 2026-10-06: 9 `POST /api/media/upload` 401 in 30 h from a web client, each followed by
+  logout and sign-in. The salon branch's stale `ctx.authToken` copy (#1472) and the post forms (#1477)
+  fixed WHO hands the token; this fixes the token expiring between the hand-over and the request, for
+  every caller including reels and avatars. Test: `media.uploadRefreshRetry.test.ts`.
+
+## A 401 renews the token and sends the same request once - one rule, every caller
+
+ONE implementation, `frontend/src/lib/utils/renewOn401.ts`. On a 401 to a request that carried a
+bearer: use the token in memory if another caller already renewed it (the single flight only joins a
+refresh while it is PENDING), else renew through `refresh()`; send the SAME request once more; release
+each unread 401 body (`plugin-http` holds the connection until then). The renewal is BOUNDED by the
+request it serves - it is raced against the caller's signal, so a deadline (`trackedFetch`) ends the
+request at the deadline, as a `RequestDeadlineError`, while a renewal error that settles in time
+reaches the caller as itself. What the renewal threw is rethrown as it came - a dead cookie
+(`SessionExpiredError`), a refresh answered 5xx (`RefreshFailedError`), a refresh that reached nobody
+(a transport failure, never a logout) - unless the caller types it (`renewalFailed`): the MLS delivery
+API turns the two that say only "no new token now" (`RefreshFailedError`, a transport failure) into
+`DeliveryRenewalFailedError`, a 401 refusal, because the server DID answer and the request did nothing.
+Read as "no answer", a commit used to be resubmitted into the same 401 and kept as unknown.
+
+Two more guards, both decided on durable state, never a clock:
+- **A renewed token the guard refused is never renewed again** (`RefusedRenewedToken`, the latest one
+  latched per delivery API, replaced by any other token). A later 401 on that same token answers
+  `DeliveryRefusedRenewedTokenError` at once: a guard refusing every renewed token would otherwise rotate
+  the session once per request.
+- **A request is never resent as another account.** When the refused token and the one to resend with
+  both decode to a `sub` and the two differ (a sign-in to another account landed in between), the
+  request is not sent again: `TokenAccountChangedError`, typed, not a logout.
+
+**What a 401 on the RENEWED token means is the caller's to say, because it depends on whose guard
+answered.** `apiFetch` and the media upload answer `SessionExpiredError`: core's guard IS the session
+authority. The MLS delivery API answers `DeliveryRefusedRenewedTokenError` (an `ApiRefusalError`, status
+401) - a failed request, NEVER a logout. `refresh()` has just proven the session alive, and the delivery
+guard also answers 401 for its own faults (an internal shared secret unset, an internal signature
+refused). A logout there would have reached the login's catch (`sessionAuth.ts`, which forgets the user
+and clears the restore key on `SessionExpiredError`) through the unguarded delivery steps of
+`syncConnectionAfterWsOpen` - the KeyPackage publication itself catches its failure.
+
+**The premise that makes the resend safe is a fact of today's servers, not of HTTP.** On `/api/mls/*`
+every 401 comes from the guard, before any handler. Social-service also answers 401 from INSIDE
+handlers (authorization refusals in its posts routes), where a resend is useless rather than unsafe; a
+handler-level 401 added under `/api/mls` would turn a commit's resend into a second submission (the gate
+would still answer it `duplicate`). Both server-side corrections are a P3 in
+[backlog](backlog.md#p3---a-guard-answers-5xx-for-its-own-faults-and-an-authorization-refusal-is-a-403-review-of-2420-2026-10-25).
+
+`MlsDeliveryApi` builds its own headers on an injected `fetch` (Tauri passes `plugin-http`) and takes
+the rule as a `fetch` decorator, `renewingOn401`, applied once in its constructor
+(`productionDeliveryApi`, the one construction that ships, pinned by its test). It covers every route
+of that class through the injected `fetch`, except the pending pull, which applies the rule itself
+(`resendAfter401`) OUTSIDE its page-halving ladder: a slow renewal is not a silent page, and a failed
+one is thrown as itself rather than halved. Outside the rule: the delivery keepalive POST
+(`deliveryKeepalivePost`, `null` on any failure) and the ACK queue (`ackMessagesWithRetry`, its own
+ladder); and every request that still sends a raw bearer without either wrapper -
+`ChatBackgroundService`, the fetches of `sessionAuth.ts`, `PushNotificationService`, `mediaBlobCache`,
+`segmentedMediaReader`, `mediaTouch`, and the direct fetches of the associations and forms modules.
+
+The MLS delivery API had no rule until 2026-10-25: a commit answered 401 ended an Add with the group at
+its old epoch (TOK-1; what the commit gate makes of each outcome is in
+[mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
+`mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.

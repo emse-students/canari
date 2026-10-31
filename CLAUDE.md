@@ -17,7 +17,7 @@
 | What is open, and what rule holds everywhere | this file |
 | The constraint for the area I am about to touch | [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md) |
 | How something works, in depth | `docs/wiki/` - **search it before reading source** ([index](docs/wiki/index.md)) |
-| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
+| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) + one file per new entry in [backlog.d/](docs/wiki/backlog.d/README.md) |
 | A question the code cannot answer, parked deliberately | [docs/wiki/open-questions.md](docs/wiki/open-questions.md) |
 | The story of a defect that shipped | `CHANGELOG.md` |
 | **The `1.4.1` campaign on dev: the MLS core matrix that blocks the stable, its order and its open questions** | [cross-client-campaign-1-4-1.md](docs/wiki/cross-client-campaign-1-4-1.md) |
@@ -31,7 +31,7 @@
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Where the App Store submission stands | [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
-| Private operations notes (access routes, hosts) | outside the repo, local only: `F:\Programmation\canari-private-docs` (never commit) |
+| Private operations notes (access routes, hosts) | outside the repo, local only: `../../canari-private-docs`, relative to the repository (never commit) |
 | Store texts and screenshots, refreshed without personal data | [docs/wiki/store-listings.md](docs/wiki/store-listings.md) |
 | The second estate (`dev.canari-emse.fr`, the pre-release target): isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
 | The move onto the Portail-etu host, then onto `emse.fr`: the phases, the decisions, the traps | [estate-migration.md](docs/wiki/infrastructure/estate-migration.md) |
@@ -46,7 +46,7 @@
 
 ## **AGENT DIRECTIVES**
 
-- **THIS REPOSITORY IS PUBLIC: no private address, host or account map, no unfixed weakness, no incident detail naming people or accounts, no real person or user id.** Those go to the private folder; docs that guard code keep the generic lesson. `.github/scripts/tests/docs-private-guard.test.mjs` fails `make test-ci-scripts` on a private IP or an ssh alias in a tracked markdown file.
+- **THIS REPOSITORY IS PUBLIC: no private address, host or account map, no unfixed weakness, no incident detail naming people or accounts, no real person or user id.** Those go to the private folder; docs that guard code keep the generic lesson. `.github/scripts/tests/docs-private-guard.test.mjs` fails `make test-ci-scripts` on a private IP, an ssh alias, a workstation path or a hypervisor guest id in a tracked markdown, env template, shell script or ts/mjs comment; infrastructure names come from an out-of-repo denylist (`DOCS_PRIVATE_DENYLIST_FILE`).
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - **QUESTIONS TO THE USER GO FOUR AT A TIME** (user, 2026-10-22: *"Pose moi toujours tes questions 4 par 4"*): one `AskUserQuestion` call carries up to four questions, never one at a time, never a long numbered list in prose; each has a recommended option first, and a question already answered is never asked again.
@@ -60,9 +60,9 @@
 - STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
 - CLAUDE.md HYGIENE: **INDEX FIRST** - the STATE PRUNING triplet applied to this whole file: if it grows, something in it belongs somewhere else. **The cap is ~250 lines** (back from ~350 on 2026-10-22, when the file was cleaned to an index; the raise of 2026-09-04 paid for THE DEVELOPMENT CYCLE, which the user asked to live here - *"tu consigneras le cycle de developpement dans le claude.md de Canari pour pouvoir l'utiliser en pratique"* - and those commands stay). `claude-md-cap.test.mjs` reads the number from this sentence. A cap the file itself breaks is worse than no cap.
 - DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**), updated alongside the code - stale wiki is worse than none; keep `apps/*/README.md` synced with its wiki counterpart and cross-link freely. User guides in `docs/user-guide/` (French). Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
-- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17); reasoning, measurements and what was refuted go on the wiki page it points at.
+- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17); reasoning, measurements and what was refuted go on the wiki page it points at. **A NEW BACKLOG ENTRY IS THE SAME: its own file in `docs/wiki/backlog.d/`, never a new heading in `backlog.md`** (2026-10-30, [README](docs/wiki/backlog.d/README.md)).
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
-- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The one standing exception and the installed set are in the private operations notes; the rule is in [durable-rules](docs/wiki/durable-rules.md).
+- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The installed set is in the private operations notes; the rule is in [durable-rules](docs/wiki/durable-rules.md).
 - PROD ACCESS: production, dev and the identity provider run on one shared host reached over SSH. **The aliases, the box map, the shell wiring and the database and identity-provider access routes are in the private operations notes** and nowhere in this repository. Either Bash or PowerShell reaches it, but **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost), so a binary pipe goes through Bash.
 
 ## **THE DEVELOPMENT CYCLE - THE COMMANDS, IN ORDER**
@@ -114,7 +114,7 @@ the App Store, Play and the GitHub release body through ONE implementation. Chec
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z`, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
 sequence is two releases:
 
 ```sh
@@ -124,12 +124,11 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 ```
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
-version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
+version parses; `main` contains the commit (merging after the cut is free: every bump pushes
+`release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
-rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
-SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head
-(three pre-releases for one stable, 2026-09-24, [backlog](docs/wiki/backlog.md)); dev has served it
+rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
 (stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
@@ -194,7 +193,7 @@ escapes.
 **Sky**, **MiGallery**, **Portail-etu** (**PUBLIC**) and **Le Cercle** (`../Sky`, `../MiGallery`,
 `../refonte-portail-etu`, `../le-cercle`) are COMPLETE. **P1** security or a broken user-facing path,
 **P2** correctness, **P3** hygiene. Nothing is parked (2026-08-18): a new item goes into the queue AND
-its substance into [backlog](docs/wiki/backlog.md), and BOTH are deleted the day it ships. **What only
+its substance into a [backlog.d/](docs/wiki/backlog.d/README.md) file, and BOTH are deleted the day it ships. **What only
 the USER can do is ONE table** - [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
 **CLOSED, DO NOT REOPEN** (user: record closed chantiers so nobody returns to them fifty times):
@@ -209,14 +208,14 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 
 1. **P1 - opening a community: F1-F7 built, the 200 ms budget measurement is left** ([community-open-budget](docs/wiki/frontend/community-open-budget.md), [backlog](docs/wiki/backlog.md#p1---opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026-10-14-state-re-read-2026-10-22)).
 2. **P3 - one `mls.bin` per install, shared by every account on it** ([backlog](docs/wiki/backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
-3. **`canari.emse.fr` is Canari's name; the old one serves apps only, a cost taken knowingly** ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)); SEO residue in [backlog](docs/wiki/backlog.md#three-open-items-the-claudemd-queue-alone-carried-moved-2026-10-22).
+3. **`canari.emse.fr` is Canari's name; the old one serves apps only, a cost taken knowingly** ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)); SEO residue in [backlog](docs/wiki/backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md).
 4. **P1 - communities (user, 2026-09-27): shipped; readings, one user decision, three test pairs and one native log fix are owed** ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
 5. **P1 - Graine v2: built and shipped; three rows close it** (the unsigned-row count, the rig re-run, one native refusal reading) ([backlog](docs/wiki/backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28), [legacy-compatibility](docs/wiki/legacy-compatibility.md)).
-6. **P1 - a new group member receives the whole past; decided they must not: step A merged (#2270); and a new person is admitted only by a member: merged (#2358, its review fixes, the card #2373), owed migration 038, the review findings and a second step** ([past](docs/wiki/backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not), [admission](docs/wiki/backlog.md#a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23-step-one-built)).
+6. **P1 - a new group member receives the whole past; decided they must not: step A merged (#2270); and a new person is admitted only by a member: merged (#2358, its review fixes, the card #2373), owed migration 038, the review findings and a second step** ([past](docs/wiki/backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not), [admission](docs/wiki/backlog.md#a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23-step-one-built)). **And the creation bootstrap is bound to the recorded creator (owner, 2026-10-29): built, migration 042 owed the owner's yes** ([backlog](docs/wiki/backlog.md#p1---the-creation-bootstrap-is-bound-to-the-recorded-creator-migration-042)).
 7. **Carte de la vie asso: in prod; owed an A0 export measured, then the user's look** ([backlog](docs/wiki/backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
 8. **Composer and CanaReels, and the Liquid Glass chrome: shipped, readings owed** ([composer](docs/wiki/backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken), [glass](docs/wiki/backlog.md#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)).
-9. **CanaReels in chats: RC-1/RC-2 shipped (`v1.2.2`), RC-7 shipped (#2112, `v1.3.1`), RC-3/RC-4 (#2098) and RC-5 (#2117) merged with the writer switch OFF; sharing and the reel drawers merged (#2311, #2314, #2327); the in-app camera built (#1859, `v1.2.9`). Owed before the writer switch: the durable release of a leaked upload session, the chat profile wired in, the RC-0 re-run and the readings** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
-10. **The campaign: the `1.4.1` MLS core matrix on dev BLOCKS the stable ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md)); the test tooling is reformed NOW** ([WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); rules for a run: [campaign](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check)).
+9. **CanaReels in chats: RC-1/RC-2 shipped (`v1.2.2`), RC-7 shipped (#2112, `v1.3.1`), RC-3/RC-4 (#2098) and RC-5 (#2117) merged with the writer switch OFF; sharing and the reel drawers merged (#2311, #2314, #2327); the in-app camera built (#1859, `v1.2.9`). Owed before the writer switch: the durable release of a leaked upload session, the chat profile wired in, the RC-0 re-run and the readings** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)). **And "Envoyer à..." from the camera tab to several targets, one shared file (owner, 2026-10-30): designed (RC-12..RC-14, RC-13 before the writer switch), every question answered** ([section 15](docs/wiki/frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+10. **The campaign: the MLS core matrix on dev ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md), written for a `1.4.1` stable that was never cut - `1.5.x` shipped instead); the test tooling is reformed NOW** ([WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); rules for a run: [campaign](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check)).
 11. **P2 - undated last-resort KeyPackages drain only as their owners upgrade** ([backlog](docs/wiki/backlog.md#p2---nothing-republishes-a-last-resort-packages-expiry-so-the-undated-rows-drain-only-as-their-owners-upgrade-production-re-measured-2026-10-09)).
 12. **P1 - whether the deleted placeholder left a leaf in the MLS tree** ([backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered)).
 13. **P1 - HEAL-repair heals 3 times in 10; two causes refuted, not to be re-opened** ([backlog](docs/wiki/backlog.md#messaging-convergence)).
@@ -227,10 +226,10 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 18. **P2 - legacy cotisation rows loaded, not one claim observed** ([backlog](docs/wiki/backlog.md#p2---the-legacy-cotisation-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171)).
 19. **Blocked on hardware, or on a condition named with each** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 20. **Phone campaign: lot 5 and U5 left, re-reads owed on both phones** ([phone-comparison](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30)); rendering owes REAL hardware ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-18-and-2026-09-17---what-is-still-owed)).
-21. **Calls: `CALLS_COMPILED` is `true` since #2299, so every build carries 1:1 audio; production stays closed server-side by `calls_mode` (`off`) until the readings on both phones** ([calls](docs/wiki/frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21)).
+21. **Calls are live in production: in-app 1:1 audio since `v1.5.0` (`CALLS_COMPILED = true`, #2299; the server's `calls_mode = audio`); 1:1 video (#2711) and the native ring (#2727, all five switches in ONE commit) ride `1.5.2`, video shut by `calls_mode` until its readings pass** ([calls](docs/wiki/frontend/modules/calls.md), [backlog](docs/wiki/backlog.md)).
 22. **One named starting point for every phase, step and step group** (user, 2026-08-25; [backlog](docs/wiki/backlog.md#p2---one-named-starting-point-reachable-at-every-granularity-asked-2026-08-25)).
 23. **P1 - WP-KEYGROUP-JOIN-GATE: built, owed its `503` rate** ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)); **and P2 - a new device's join before its KeyPackage: shipped (#1666 `v1.2.2`, #1700 `v1.2.3`), the production read owed** ([backlog](docs/wiki/backlog.md#p2---a-new-devices-join-of-a-communitys-key-group-reaches-the-commit-gate-before-its-keypackage-2026-08-29-cause-measured-on-production-2026-10-09)).
-24. **P3 - MiConnect: one string and one signed-in observation; the profile reform, WP5 next** ([backlog](docs/wiki/backlog.md#p3---miconnect-one-string-left-after-the-french-pass), [profiles-and-access](docs/wiki/profiles-and-access.md)).
+24. **P3 - MiConnect: one string and one signed-in observation; the profile reform, WP5 next** ([backlog](docs/wiki/backlog.md#p3---miconnect-one-string-left-after-the-french-pass), [profiles-and-access](docs/wiki/profiles-and-access.md)). **And follow requests, member reposts and follower visibility across spaces (user, 2026-10-25): decided, not built; four questions owed to the user** ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
 25. **P2 - Graine rotates on every key-group epoch: the three fixes merged (#2263, #2255, #2260), owed the rig rows, the production ratio and migration 034's yes** ([backlog](docs/wiki/backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21), [comparison](docs/wiki/protocols/dm-vs-community-encryption.md)).
 
 **Closed without a fix, readings owed** - each a row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), not queue work: a returner's community past (`v0.18.26`), the member who could not publish, a first contact's notification, a salon seed after its message and the iOS silent frames (#2000), the first iOS feedback (scroll, emoji). #752's two P2s are closed ([backlog](docs/wiki/backlog.md)).

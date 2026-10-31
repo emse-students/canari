@@ -12,13 +12,23 @@
  * client that predates a code still reads the status and the prose it always read.
  */
 export const RefusalCode = {
-  /** 403 - the device id is banned; the cure is a fresh id. */
+  /**
+   * 403 - the device id is banned. At registration it is answered ONLY for an id its own install
+   * retired (`reason: 'retired'`), whose cure is a fresh id; the commit gate answers it for any
+   * banned id, since no cure applies to a commit.
+   */
   DEVICE_REVOKED: 'DEVICE_REVOKED',
+  /**
+   * 403 - the device's OWNER revoked it (or the ban predates the recorded reason, read the same way).
+   * No cure on this device: it signs out and returns to a fresh install. A distinct code rather than
+   * a field of `DEVICE_REVOKED`, so a client that predates it does NOT read it as "enrol again".
+   */
+  DEVICE_REVOKED_BY_OWNER: 'DEVICE_REVOKED_BY_OWNER',
   /** 400 - the account already holds its maximum of live devices. */
   DEVICE_LIMIT_REACHED: 'DEVICE_LIMIT_REACHED',
   /** 400 - a key package that does not parse or names another device. Never retryable. */
   KEY_PACKAGE_IDENTITY_INVALID: 'KEY_PACKAGE_IDENTITY_INVALID',
-  /** 403 - a key-distribution group is joined through its community, not by this route. */
+  /** 403 - a key-distribution group is joined and managed only through its community. */
   KEY_DISTRIBUTION_GROUP: 'KEY_DISTRIBUTION_GROUP',
   /** 403 - a block stands between two people. Neutral: never who blocked whom. */
   USER_BLOCKED: 'USER_BLOCKED',
@@ -48,6 +58,25 @@ export const RefusalCode = {
    * commit and submit it again now.
    */
   SEAT_CLAIM_OVERTAKEN: 'SEAT_CLAIM_OVERTAKEN',
+  /**
+   * 403 - a Welcome addressed to a person the conversation's roster does not name (`POST mls/welcome`).
+   * Terminal for that Welcome: re-sending it changes nothing, and the Add that could make its target
+   * a member is a new commit with a Welcome of its own.
+   */
+  WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
+  /**
+   * 409 - `POST mls/groups/:groupId/members` named a person no accepted commit admitted: absent from
+   * the roster, or still awaiting a member's admission. The route enrols nobody (the accepted commit
+   * is the one writer of a new person); a Decline or a departure came before the Add, or no Add
+   * landed. Terminal for that call: the person needs a new Add, and the Welcome is withheld.
+   */
+  MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
+  /**
+   * 404 - a Welcome addressed to a device no key package names: never registered, or deleted since
+   * (an owner's revocation purges it) (`POST mls/welcome`). Terminal for that Welcome: the device
+   * is gone, and re-sending the same bytes cannot make it exist.
+   */
+  WELCOME_TARGET_UNKNOWN: 'WELCOME_TARGET_UNKNOWN',
 } as const;
 
 /** A stable refusal code of this service. */
