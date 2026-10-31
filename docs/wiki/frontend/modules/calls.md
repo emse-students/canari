@@ -906,6 +906,52 @@ landing in between used to find no entry, cancel no file, and let the tell hand 
 answer's facts are now kept past the ringing entry until the tell has run
 (`CanariAnsweredUntilTold`), and the End reads them there.
 
+### The handover ends an unanswered ring only when the page rings that call (2026-10-31)
+
+The second review of #2785 left four P3s; all four are closed here.
+
+**"The page holds a socket" is not "the page rings this call".** The handover judged an unanswered
+CallKit ring by the socket fact, which answers a different question: *will the page ring a call that
+arrives now*. A call rung by CallKit at the PIN gate had its invite skipped; the PIN unlock then opens
+the socket, and that page rings nothing. A re-activation in that state (Control Center, a banner)
+ended the call's only ring. The page now states a second fact, from where it is known: the call its
+`CallService` is `incoming` on (`set_page_ringing_call`, a subscription to `callState`, a change
+reported and a repeat not). The handover ends an unanswered ring only when
+`canari_ios_page_rings_call(callId)` says the page rings THAT call; the socket fact still decides
+whether the native ring stands back when a push arrives, before any invite exists. Each
+`CallService` instance states under its own holder, like each `TauriMlsService`.
+
+**A statement from a previous document is ignored.** A `set_page_gateway_socket(.., true)` sent by
+the old document and still in flight across a navigation commit used to land after
+`forget_on_page_load` and leave a holder nobody would ever withdraw. Every page load (and a dead web
+content process) now moves a document generation on; the page asks it once
+(`page_ring_document`) and names it in every statement, which stay in the order they were made
+behind that one ask; a statement naming another generation is logged and ignored. Named limitation:
+a page whose FIRST statement is made in the instant its own navigation starts would learn the next
+generation - the first statement follows the PIN unlock, seconds after the load.
+
+**A record no longer outlives its call.** `CanariAnsweredUntilTold` kept an answered call's facts
+until the tell; a call answered in the background and then ended by `call_ring_end`, by an MLS
+hangup or at its deadline, before the app became active, left its record behind. Only the
+handover's own end keeps it now (`CanariEndCallKitCallFor(.., YES)`); every other end drops it, since
+CallKit sends no End for a call it already ended.
+
+**An answered call is never ended `Unanswered`.** The ring's deadline (60 s on the FCM ring, the
+server's `ringUntil` on the VoIP ring) ended a call answered on CallKit as `Unanswered` when the app
+had not been made active in time - a call the user took, filed as missed. It is ended `Failed` now
+(`CanariEndCallKitCallAtRingDeadline`): past the server's deadline its join is refused (`room-token`
+410), and a session left open would hold a green bar for a call nobody can join. Its pending accept
+is kept, so the page, once opened, joins if the server still lets it and otherwise says the call is
+over.
+
+**Covered by** `page_ring.rs` (the holder sets, the ringing call, a stale document ignored, the
+generation's wrap), `pageGatewaySocket.test.ts` (the document named in every statement, asked once,
+the order kept while it is asked, a refusal logged), `CallService.pageRing.test.ts` (the call named
+on entering `incoming` and withdrawn on leaving, an outgoing call never, two services two holders,
+nothing in a browser) and the text pins of `incomingCallScreen.test.ts` for the Objective-C, which no
+gate here compiles. **Owed on hardware**: the iPhone at the gate with CallKit ringing, PIN entered,
+then Control Center pulled - `still rings unanswered and the page does not ring it - kept`.
+
 **Named limitations.**
 - **A socket counted as held that rings nothing.** The statement is "the page holds an open socket",
   not "the invite will ring". A connection that died without a `Close` counts as held until the

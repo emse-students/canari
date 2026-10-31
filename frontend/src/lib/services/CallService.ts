@@ -60,6 +60,8 @@ import {
   type MediaSnapshot,
 } from '$lib/utils/callStats';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -549,6 +551,11 @@ export class CallService {
   /** The group {@link releaseLeafRefreshHold} is for. */
   private leafRefreshHeldGroup: string | null = null;
 
+  /** This instance's name in the native ring's facts (`page_ring.rs`). */
+  private readonly pageRingHolder = nextPageRingHolder('call-service');
+  /** The call last told to the native side as ringing in this page, or null. */
+  private pageRingingCall: string | null = null;
+
   constructor(private mlsService: IMlsService) {
     // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
     // the media keys from the group's CURRENT epoch (`setupEncryption`), the caller before the
@@ -556,6 +563,26 @@ export class CallService {
     // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
     // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
     this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+    // THE CALL THIS PAGE RINGS, told to the native side (`page_ring.rs`): the iPhone's handover ends
+    // an unanswered CallKit ring only when the page rings THAT call. Holding the socket does not
+    // say it: the invite of a call rung at the PIN gate was skipped, and the socket the unlock then
+    // opens rings nothing (calls.md, "The handover ends an unanswered ring only when the page rings
+    // that call").
+    if (isTauriRuntime()) {
+      this.callState.subscribe((state) => this.syncPageRingingCall(state));
+    }
+  }
+
+  /**
+   * Tells the native side the call this page rings - the one it is `incoming` on - on every change,
+   * never on a repeat. `currentCallId` is set before the state moves to `incoming` and cleared after
+   * it leaves, so it names the right call on both edges.
+   */
+  private syncPageRingingCall(state: CallState): void {
+    const ringing = state === 'incoming' ? this.currentCallId : null;
+    if (ringing === this.pageRingingCall) return;
+    this.pageRingingCall = ringing;
+    reportPageRingingCall(this.pageRingHolder, ringing);
   }
 
   /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
