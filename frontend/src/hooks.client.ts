@@ -9,6 +9,8 @@
 
 import type { HandleClientError } from '@sveltejs/kit/hooks';
 import { version } from '$app/env';
+import { resolve } from '$app/paths';
+import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -61,7 +63,17 @@ markBoot('app-first-line');
  */
 export const handleError: HandleClientError = handleClientError;
 
-/** Optional init hook - called once before the app starts. No setup needed here. */
+/**
+ * Optional init hook - called once before the app starts. No setup needed here.
+ *
+ * IT STAYS SYNCHRONOUS, AND A COLD-START DEEP LINK RESTS ON THAT. Kit's `_start` sets `app`, awaits
+ * this hook, and only THEN builds the route table that `match` and `goto` read (`client.js`,
+ * `app = _app` -> `await hooks.init()` -> `routes = parse_routes()`); a `match` before it throws. The
+ * launch URL below reaches `gotoAppPath` only after a Tauri IPC reply, which arrives as a task, while
+ * everything from this module's evaluation to the route table is microtasks - as long as this hook
+ * does no I/O. An `async` init that awaited anything real would open that window and lose the link
+ * to a rejection. `coldStartOrder.test.ts` holds this hook to its synchronous signature.
+ */
 export function init(): void {}
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -281,7 +293,7 @@ if (isTauriRuntime()) {
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
 
-              const navigate = (target: string) => {
+              const navigate = (target: AppPath) => {
                 import('$app/navigation')
                   .then(({ goto }) => goto(target))
                   .catch(() => {
@@ -338,7 +350,7 @@ if (isTauriRuntime()) {
                 `[hooks] unknown deep-link host, opening notifications: ${describeDeepLink(url)}`
               );
               import('$app/navigation')
-                .then(({ goto }) => goto('/notifications'))
+                .then(({ goto }) => goto(resolve('/notifications')))
                 .catch((err) => console.error('[hooks] Notifications navigation failed', err));
               continue;
             }

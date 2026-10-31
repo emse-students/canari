@@ -1,6 +1,7 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
 import { FOLLOW_REQUESTS_ROUTE, REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
+import type { AppPath } from '$lib/utils/internalPath';
 import { BOOKINGS_HREF } from '$lib/bookings/routes';
 
 /**
@@ -24,7 +25,7 @@ export const POST_COMMENT_PARAM = 'comment';
  * Returns null for a host this table does not own (chat, callback, payment and open have their own
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
  */
-export function appRouteForDeepLink(u: URL): string | null {
+export function appRouteForDeepLink(u: URL): AppPath | null {
   if (u.protocol !== MOBILE_APP_PROTOCOL) return null;
   const id = decodeURIComponent(u.pathname.replace(/^\//, ''));
   switch (u.host) {
@@ -32,7 +33,7 @@ export function appRouteForDeepLink(u: URL): string | null {
       if (!id) return null;
       // A comment, reply or mention push names the comment: the post page scrolls to it.
       const comment = u.searchParams.get(POST_COMMENT_PARAM);
-      const route = `/posts/${encodeURIComponent(id)}`;
+      const route: AppPath = `/posts/${encodeURIComponent(id)}`;
       return comment ? `${route}?${POST_COMMENT_PARAM}=${encodeURIComponent(comment)}` : route;
     }
     case 'form':
