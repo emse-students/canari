@@ -216,6 +216,22 @@ to the owner as it is.
 | D-6 | **Whether viewers see a viewer count**, and whether the policy says the broadcaster gets no viewer list | **decided 2026-10-21: the exact count to everyone watching**; the policy says no feature shows the list (section 5) |
 | D-7 | **`minClientVersion` for lives** | **No raise** - an old build never draws a live |
 
+## Lives come back with `1.5.4`, and what an older client would do (owner, 2026-10-31)
+
+Lives are switched OFF in production (`lives_mode` `off`) by the owner and return only with `1.5.4`,
+which carries the removal of the duration cap and the trim. **No per-feature client-version gate
+exists** (checked): the only version gate is the global `minClientVersion` floor, which refuses a build
+for EVERY feature and moves only when both stores serve the target, and `lives_mode` is a global
+switch published by `/api/version`. So none was invented, and the old-client answer was dropped, not
+shimmed (`maxDurationMs` is no longer served, no row in legacy-compatibility).
+
+What a `1.5.1`-`1.5.3` client does against the new `limits` answer: **while `lives_mode` is off** it
+hides the feature (`/api/version` says so) and `GET /api/lives/limits` answers `404` anyway, so it
+never sees the new shape. **Once lives are switched back on**, its sheet computes
+`floor(undefined / 60000)` and prints "NaN minutes au plus" - cosmetic, nothing breaks (it still
+broadcasts, and a viewer is unaffected). So the order is: ship `1.5.4`, let the stores take it, switch
+`lives_mode` on; an older build left on a phone sees a wrong line, not a refusal.
+
 ## See also
 
 - [live](live.md) - the plan, the decisions, the uncapped-audience design

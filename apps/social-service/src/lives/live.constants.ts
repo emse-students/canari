@@ -23,15 +23,6 @@ export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
  */
 export const LIVE_RECONNECT_WINDOW_MS = 60_000;
 
-/**
- * THE VALUE `maxDurationMs` TAKES FOR AN INSTALLED CLIENT (owner, 2026-10-31: NO DURATION CAP, L4).
- * A live has no longest duration: nothing here reads or enforces this number. It is still served
- * because a build up to 1.5.x prints `floor(maxDurationMs / 60000)` in its sheet ("N minutes au
- * plus") and a missing field would print NaN, `null` zero. The largest integer a JS client counts
- * exactly keeps that line harmless; it leaves with the shim (legacy-compatibility.md).
- */
-export const LIVE_LEGACY_MAX_DURATION_MS = Number.MAX_SAFE_INTEGER;
-
 /** How many segments one manifest answer lists at most - a viewer polls from its last index. */
 export const LIVE_MANIFEST_WINDOW = 10;
 
@@ -291,8 +282,6 @@ export const LIVE_REACTION_PAGE = 500;
 export function liveLimits(): {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
-  /** LEGACY, never enforced: see {@link LIVE_LEGACY_MAX_DURATION_MS}. */
-  maxDurationMs: number;
   manifestWindow: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
@@ -315,7 +304,6 @@ export function liveLimits(): {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
     reconnectWindowMs: LIVE_RECONNECT_WINDOW_MS,
-    maxDurationMs: LIVE_LEGACY_MAX_DURATION_MS,
     manifestWindow: LIVE_MANIFEST_WINDOW,
     segmentMinDurationMs: LIVE_SEGMENT_MIN_DURATION_MS,
     segmentBurst: LIVE_SEGMENT_BURST,
