@@ -716,9 +716,9 @@
             <div class="relative shrink-0">
               <div class="h-24 w-24 overflow-hidden rounded-full shadow-md">
                 <GroupAvatar
+                  id={selectedWorkspaceId}
                   imageMediaId={selectedWorkspace?.imageMediaId}
                   name={selectedWorkspace?.name ?? ''}
-                  variant="community"
                   fill
                   shape="circle"
                 />
