@@ -58,7 +58,7 @@
 with the call kept alive in the background on Android and on the iPhone; video follows later.
 The flip PR (2026-10-22) compiled in-app audio calls in (an invite, the per-conversation permission control and the sibling-status request also honour `calls_mode` client-side through `callsAvailable(serverCallsMode())`) (`CALLS_COMPILED = true`); what keeps production shut is the server's `calls_mode` (`off` at deploy), and the flip is merged and shipped only when every blocker below is lifted. This section is
 the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
-2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)
+2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)
 row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
 
 **The owner's answers, 2026-10-21** - not to be re-opened:
@@ -69,7 +69,7 @@ row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
 | Q2 | A server-side kill switch (WP-C13, one data migration on `platform_config`) before the flip? | **Yes** - a hard pre-flip blocker (B12) |
 | Q3 | `minClientVersion` raised to the first calls stable once both stores serve it? | **Yes** |
 | Q4 | The iPhone `audio` mode is app-wide: may reels and voice messages keep playing with the screen locked? | **Accepted** |
-| Q5 | The privacy-policy and register wording of #2013 | **Presented to the owner later, and settled BEFORE calls ship** (B5 stays a blocker) |
+| Q5 | The privacy-policy and register wording of #2013 | **Settled 2026-10-24: merged (#2183), no human review owed** |
 | Q6 | An audio rate for `CALL_RELAY_KBPS_PER_DEVICE` on production as a stopgap? | **No.** B7 is fixed first; the production budget variable is left as it is |
 
 ### The blockers, each with its evidence
@@ -85,7 +85,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **built in the flip PR (2026-10-22)**: the two facts exist (`CALLS_NATIVE_RING_COMPILED`); the iPhone FCM alert is GENERIC - title "Canari", body "Appel entrant" / "Incoming call" from `push_token.locale` (`incomingCallAlertBody`), and the caller and conversation names are removed from the iOS data and APNs keys too (FCM merges `data` into the payload); pinned in `calls.service.spec.ts`. The iPhone's notification extension has a `call_ring` case that KEEPS the server's wording and only files it (thread, deep link without `acceptCall`, `canariCallId`, time-sensitive) - without it the type fell to the MLS ladder and the alert was overwritten; the APNs request carries `apns-expiration` (+60 s, which only bounds APNs STORE-AND-FORWARD for a phone that was off - a delivered banner stays until removed) and `apns-collapse-id` (the callId); `call_ring_end` removes the delivered banner by `canariCallId` (best effort) and so does app activation (the banner's `deepLink` is a chat link, cleared with the message banners). Android keeps its names | a draft |
 | B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
 | B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
-| B5 | **F4 - say who sees what**: each party learns the other's IP, only after the callee answers; Cloudflare sees every ANSWERED call (IPs, time) and its TURN relays some (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
+| B5 | **F4 - say who sees what**: each party learns the other's IP, only after the callee answers; Cloudflare sees every ANSWERED call (IPs, time) and its TURN relays some (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176; the `/legal/privacy` paragraphs merged in #2183 | **DONE: no human review of the wording is owed (owner, 2026-10-24)**; it is published with the next stable |
 | B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **built (#2176)**: #2011 ported onto `main` | one reading from a phone's exported log |
 | B7 | **The TURN budget counts every call as relayed at 3000 kbps per device** (`accumulateTurnUsage`): 950 GB is ~700 device-hours, ~350 call-hours a month, after which `ice-servers` answers 503 to EVERY call. Only `relayed=yes` costs in P2P, and CALL-PATH-LINE (P3) showed `relayed=` can be wrong | **being built** (another agent); the production variable stays alone (Q6) | relayed calls only, at what they cost |
 | B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`); the declaration is in `src/main/AndroidManifest.xml` since the flip PR (2026-10-22); Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings |
@@ -1555,7 +1555,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
+for a group ([backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)).
 
 ## Audio quality, measured 2026-10-19
 
@@ -2439,7 +2439,7 @@ minimising destroyed the element playing the voice and built another. `CallOverl
 the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
-backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.md#p1-blocks-calls_compiled-not-dev---a-call-does-not-survive-the-app-leaving-the-screen-on-either-phone-2026-10-19)):
+backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.d/p1-blocks-production-calls-mode-a-call-does-not-survive-the-app-leavin.md)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|
@@ -2857,7 +2857,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 
-Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.md#p3-blocked-calls-held-off---the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27).
+Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
 
 `apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
 

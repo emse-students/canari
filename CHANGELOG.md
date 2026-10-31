@@ -702,7 +702,7 @@ security fixes; CI proves the blueprints on it. See [authentik](infrastructure/a
 
 ### Documented - more decisions of the 2026-10-22 autonomy window
 
-Migrations 033-035, 036, 106 and 108 may ride the next stable, store listings are redone with fictional accounts, the phone at-rest key keeps its built design, the live key is encrypted at rest, and the iPhone call alert is generic until a native ring exists ([backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers)).
+Migrations 033-035, 036, 106 and 108 may ride the next stable, store listings are redone with fictional accounts, the phone at-rest key keeps its built design, the live key is encrypted at rest, and the iPhone call alert is generic until a native ring exists ([backlog](https://github.com/emse-students/canari/blob/51f2b358f/docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers)).
 
 ### Documentation - backlog entries for five merged changes say so
 
@@ -722,7 +722,7 @@ The background Welcome is now staged and installed only once the server accepts 
 
 ### Documented - a killed phone answers a background Welcome from a stale epoch
 
-Read on the Mi 9T: the server refuses the Welcome (`epoch_mismatch`) yet answers 201, so the phone logs success. Not fixed here; see [backlog](docs/wiki/backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22).
+Read on the Mi 9T: the server refuses the Welcome (`epoch_mismatch`) yet answers 201, so the phone logs success. Not fixed here; see [backlog](https://github.com/emse-students/canari/blob/51f2b358f/docs/wiki/backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22).
 
 ### Security - the dependency audits and the image scan answer the advisories of 2026-10-23
 
@@ -952,7 +952,7 @@ The app's script policy compiles the encryption engine under a rule WebKit learn
 
 ### Documented - the iPhone PIN unlock answers; the earlier "hang" was a stale WDA tap rectangle
 
-Read on the iPhone and on dev web: the unlock works, and a keypad with its `0` key clipped behind the fixed button (red banner, small screen) is a P3. See [backlog](docs/wiki/backlog.md#the-encryption-pin-unlock-on-the-iphone-read-2026-10-22-it-answers---the-hang-was-the-rigs-tap-and-one-p3-is-left).
+Read on the iPhone and on dev web: the unlock works, and a keypad with its `0` key clipped behind the fixed button (red banner, small screen) is a P3. See [backlog](https://github.com/emse-students/canari/blob/51f2b358f/docs/wiki/backlog.md#the-encryption-pin-unlock-on-the-iphone-read-2026-10-22-it-answers---the-hang-was-the-rigs-tap-and-one-p3-is-left).
 
 ### Fixed - a link ask reaches every online member at once, and a declined joiner's row goes
 
@@ -1568,7 +1568,7 @@ WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
 
 ### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
 
-A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.md#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22).
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md).
 
 ### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
 
@@ -1644,7 +1644,7 @@ The one writer of an `active` membership now takes the authority each caller act
 (`POST /mls/invitations/status`, `POST /mls/push/membership-active`) needs the device's own row in
 that group, free of an unanswered kick, and in a conversation its owner on the roster; otherwise it
 is refused as `NOT_A_MEMBER` and logged
-([backlog](docs/wiki/backlog.md#note---a-kicked-devices-membership-report-2026-10-22)).
+([backlog](https://github.com/emse-students/canari/blob/51f2b358f/docs/wiki/backlog.md#note---a-kicked-devices-membership-report-2026-10-22)).
 
 ### Documentation - DMs and communities compared, re-measured on production
 
@@ -1652,7 +1652,7 @@ The two encryption systems side by side, with the 2026-08-17 sizing premises re-
 
 ### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
 
-Recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers).
+Recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-22-what-outlives-the-48-hour-autonomy-w.md).
 
 ### Changed - the double tap that likes now logs what reached the card
 
@@ -2920,7 +2920,7 @@ A cold start replaying dozens of unreadable frames raised the same history ask f
 
 ### Fixed - frames parked behind a Welcome say so once, not once per frame
 
-150 frames held behind one redelivered Welcome printed 150 identical lines on a Pixel 6a cold start; the window now opens with one line and its release line carries the count ([backlog](docs/wiki/backlog.md#p3---found-reading-the-pixel-6a-on-prod-127-wi-fi-lte-offline-2026-10-14)).
+150 frames held behind one redelivered Welcome printed 150 identical lines on a Pixel 6a cold start; the window now opens with one line and its release line carries the count ([backlog](https://github.com/emse-students/canari/blob/51f2b358f/docs/wiki/backlog.md#p3---found-reading-the-pixel-6a-on-prod-127-wi-fi-lte-offline-2026-10-14)).
 
 ## [1.2.7] - 2026-10-14
 
@@ -3240,7 +3240,7 @@ The outbox asked whether the group still existed before every send (a reply reac
 
 ### Session state of 2026-10-12, and three release rules
 
-The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open)).
+The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-12.md)).
 
 ### Fixed - the typing bubble stands clear of the composer instead of sitting on its edge
 
@@ -4168,7 +4168,7 @@ The DSI replaced the CAS callback with the new host, so `auth.canari-emse.fr` an
 
 ### Changed - every navigation goes through `resolve()`, and the lint rule that enforces it is on
 
-The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled ([backlog](docs/wiki/backlog.md#p3---migallerys-resolve-bypasses-and-an-inherited-disable-is-the-only-reason-nobody-sees-them)).
+The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled ([backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md)).
 
 ### Fixed - a `returnTo` carries no base path, and a bad `?redirect=` falls back instead of throwing
 
@@ -7374,7 +7374,7 @@ quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence
 La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
-[backlog](docs/wiki/backlog.md#p3---three-services-refuse-an-unsigned-caller-three-different-ways-and-merging-them-is-a-policy-decision).
+[backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md).
 
 ### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
 

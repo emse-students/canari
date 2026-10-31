@@ -293,6 +293,26 @@ The per-tier **on-sale switch** in the Cotisations tab is the other half: `isAct
 anywhere in the UI, which is why the BDE cotisation sat unbuyable for its whole existence. The switch
 carries the reason a tier is off sale, because "inactive" alone does not say who decided it.
 
+#### A canonical cotisation created before #2205 and never withheld
+
+From migration 057 (2026-08-31) until #2205, `provisionCotisationProduct` created the canonical
+cotisation with `isActive = ready` and left `activationWithheld` at its default `false`. One created
+while payments were not ready is therefore `isActive = false, activationWithheld = false` - the
+signature of a product an admin took off sale by hand - and neither the onboarding release nor the
+provider-activated sweep of #2205 will ever put it on sale. **No backfill, by design**: that signature
+cannot tell such a row from a deliberate deactivation. **Measured on production 2026-10-21
+(read-only): 0 rows.** The query, to re-run if a case is reported:
+
+```sql
+SELECT count(*) FROM association_products
+WHERE type = 'membership' AND name = 'Cotisation'
+  AND "isActive" = false AND "activationWithheld" = false
+  AND "createdAt" >= '2026-08-31';
+```
+
+A row found this way is put on sale by its association's admin from the boutique - a manual
+`isActive` change, and so the right owner of that decision.
+
 ### A product prices on the same grid a form does
 
 `association_products.priceMatrix` is the SAME document a form carries, resolved by the same

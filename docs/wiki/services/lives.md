@@ -707,7 +707,7 @@ outlives the purge; a cut, a segment and a viewer join fired together - whicheve
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
 committed may take a seat AFTER the purge freed them: that seat lasts at most its 30 s lease (its
 next poll is a `410` that renews nothing). The same holds for every kind of end, not only a cut -
-filed in [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
+filed in [backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
 
 **Repeat offenders: [the strike ladder](#the-strike-ladder-wp-l8b)**, built 2026-10-21 on the
 decisions of 2026-10-20. Step 1 above records the cut's STRIKE, and the notice after the commit is
@@ -939,7 +939,7 @@ What is left:
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
 and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
-[backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
+[backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
 
 | Question | Decision | What it changes in what exists |
 | --- | --- | --- |

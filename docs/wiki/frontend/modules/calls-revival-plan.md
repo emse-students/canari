@@ -496,4 +496,4 @@ What this changes:
 - [chat-delivery calls](../../services/chat-delivery.md#calls) - room tokens, ICE, ring fan-out
 - [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) - the App Review letter
 - [device-verification](../../device-verification.md) - the bench and its rules
-- [backlog: calls held off](../../backlog.md#p3-blocked-calls-held-off---the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
+- [backlog: calls held off](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md)
