@@ -229,48 +229,6 @@ export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
 }
 
 /**
- * Reads the length prefix of an RFC 9420 variable-length vector (section 2.1.2): the top two bits of
- * the first byte give the prefix size (1, 2 or 4 bytes). Throws on a truncated or reserved prefix.
- */
-function readVarVector(bytes: Uint8Array, at: number): { start: number; end: number } {
-  if (at >= bytes.length) throw new Error('KeyPackage truncated before a vector');
-  const first = bytes[at];
-  const size = 1 << (first >> 6);
-  if (size === 8) throw new Error('KeyPackage carries a reserved vector length prefix');
-  if (at + size > bytes.length) throw new Error('KeyPackage truncated in a vector length');
-  let length = first & 0x3f;
-  for (let i = 1; i < size; i++) length = length * 256 + bytes[at + i];
-  const start = at + size;
-  const end = start + length;
-  if (end > bytes.length) throw new Error('KeyPackage truncated inside a vector');
-  return { start, end };
-}
-
-/**
- * The signature key a serialized KeyPackage's leaf node carries - the key a member's approval of an
- * unseen device is bound to (`memberDeviceAnswers.ts`), read from the very bytes an Add would be
- * built from.
- *
- * The RFC 9420 layout: `version` (u16), `cipher_suite` (u16), `init_key<V>`, then the leaf node,
- * whose first two fields are `encryption_key<V>` and `signature_key<V>`. The package is NOT verified
- * here - the Add vets it in Rust (`vetKeyPackage`) - this only says which key it names, so a package
- * whose key differs from the one a member approved is refused before anything is staged. Held to the
- * real WASM build (`deviceTrust.keyPackage.realWasm.test.ts`). Throws on bytes that are not a
- * KeyPackage.
- */
-export function keyPackageSignatureKey(keyPackage: Uint8Array): Uint8Array {
-  const initKey = readVarVector(keyPackage, 4);
-  const encryptionKey = readVarVector(keyPackage, initKey.end);
-  const signatureKey = readVarVector(keyPackage, encryptionKey.end);
-  return keyPackage.slice(signatureKey.start, signatureKey.end);
-}
-
-/** {@link keyFingerprintOf} of the signature key a KeyPackage carries ({@link keyPackageSignatureKey}). */
-export async function keyPackageFingerprintOf(keyPackage: Uint8Array): Promise<string> {
-  return keyFingerprintOf(keyPackageSignatureKey(keyPackage));
-}
-
-/**
  * How recently a CONTACT's key must have been first seen by the server, against the moment this
  * device learns of it, to be "X added a device". A device a heal brings back into a conversation
  * was registered long before; one its owner just added was registered minutes or hours before.

@@ -10,8 +10,6 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
-  import { pendingAskPreview } from '$lib/utils/chat/joinRequestAnswer';
-  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
   interface Props {
     /**
@@ -80,9 +78,6 @@
   const isDirect = $derived(conversationType === 'direct');
 
   let previewText = $state<string | null>(null);
-  // A member's pending join ask in this conversation replaces the preview, and nothing else: no
-  // badge, no unread change (`pendingAskPreview`).
-  const askPreview = $derived(pendingAskPreview(conversationId, globalSession.userId));
   let isOnline = $derived(isDirect ? $presenceMap[contactName] || false : false);
   let resolvedDisplayName = $state('');
 
@@ -241,7 +236,7 @@
       <EmojiText
         text={awaitingAdmission
           ? m.chat_awaiting_admission_preview()
-          : (askPreview ?? previewText) || m.chat_e2e_established_preview()}
+          : previewText || m.chat_e2e_established_preview()}
       />
     </div>
   </div>

@@ -666,62 +666,82 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
   same device), and make the request depend on a durable "already asked for this device and key",
   not on the read.
-- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
-  closes with the server row below. Delete this entry when both have shipped.
+- MEMBER SIDE GONE (2026-10-31): the member's device no longer asks anything about a member's
+  device, it adds it, so there is no decision left to say twice. The requester's re-ask closes with
+  the server row below. Delete this entry when that has shipped.
   - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
     once. Only a reset of every group's throttle does that, and its one caller is the session setup
     (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
     is read from the code, not proven.
-  - The member says its decision once per (group, device, key, epoch) while the ask is shown
-    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
-    about once a minute per group, and logs what the server did with each ask.
+  - The requester still asks on its cadence, about once a minute per group, and logs what the
+    server did with each ask; the next one after the Add finds its leaf in the tree.
   - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
     REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
     device until a reload. Stopping the re-ask waits for the server row below.
-    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-request-is-answered-by-an-automatic-add).
 
-## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built) - SUPERSEDED
+## P2 - A further device's request is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
 
-**Superseded the same day: a device of a member enters by itself, so it asks nobody and this row is moot - see [the 2026-10-30 decision](#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).** The reasoning below is kept for the ask that still exists in 1.5.2.
+**Still open as built on 2026-10-31**: a member's new device asks nobody to TAP any more, but it
+still sends a `welcome_request` that a member's device answers with its automatic Add
+([the decision](#a-new-device-of-a-member-enters-without-a-tap-owner-2026-10-30-built-2026-10-31)),
+so a device with no seat and no member's device online depends on its own cadence.
 
 - Today a further device of a member with no seat has no durable ask. The requester re-asks on its
   cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
 - The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
   and let every member's pending sweep re-raise it. The requester then stops asking once the row
-  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-request-is-answered-by-an-automatic-add).
 
-## A new device of a member ENTERS BY ITSELF, with a history and a visible trace (owner, 2026-10-30, the WhatsApp model, not built)
+## A new device of a member enters without a tap (owner, 2026-10-30), built 2026-10-31
 
 Final decision of 2026-10-30, guided by "je ne veux pas importuner les utilisateurs du tout". It
 SUPERSEDES both the 2026-10-27 interim gate (the mandatory tap) and the "one approval per device"
-decision recorded earlier the same day. Planned for the release after 1.5.2.
+decision recorded earlier the same day. **Restated by the owner on 2026-10-31**, from a screenshot of
+"Nouvel appareil de X - Ajouter / Refuser" in a DM with X: *"la barriere est une barriere
+utilisateur, pas appareil"*.
 
-1. **Entry.** A new device of a person who is already a member enters by itself. No tap and no ask,
-   from anyone: not the owner's other devices, not contacts.
+1. **Entry.** A new device of a person who is already a member enters with no tap and no ask, from
+   anyone. **BUILT (2026-10-31)**: a member's device adds it automatically (`automaticAdmission`
+   in `actions.ts` decides on the user's leaf in its own tree), and the device ask, its strings,
+   its preview and its tests are deleted
+   ([mls-protocol](protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 2. **History.** That device receives the whole history its person was entitled to, filtered on that
    person's own presence windows: the existing addressed-answer rule, rule 2, "a new device of a
    continuous member", in [history-answer-addressing](protocols/history-answer-addressing.md).
+   Untouched by the 2026-10-31 change.
 3. **Visibility.**
    - A silent system line, "X a ajouté un appareil", in each of X's conversations: no notification
-     and no unread count.
+     and no unread count. **BUILT**: every member and X's own other devices, 1:1s included, never
+     in a key group, never as the conversation list's preview (`listPreview.ts`).
    - A discreet alert, "Nouvel appareil connecté", on X's other devices, with "Ce n'est pas moi",
-     which revokes that device.
+     which revokes that device (built before).
    - This is what makes a device added through a compromised login visible. **Accepted residual
      risk, stated plainly:** such a device reads new messages and history until X reacts.
 4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
    before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
-   Add (decided 2026-10-23).
-5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
-   the release after 1.5.2.
-6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
-   row (a separate PR).
+   Add (decided 2026-10-23), asked as "X veut rejoindre la conversation - Accepter / Refuser".
+5. **Delivery.** Step A of history addressing (built, draft PR) was to ship TOGETHER with this
+   model. **Owed: the owner's word on whether the entry may ship before step A** - the entry change
+   does not touch history, so until step A ships a member's new device gets what it got before the
+   2026-10-27 interim.
+
+Owed:
+
+- **"Enters by itself" is built as "is added by a member's device, with no tap".** A further device
+  still sends a `welcome_request` rather than letting itself in (the tree-based door), so with no
+  member's device online it waits; and the Android background answer still adds nothing from a push
+  (`admit_only_a_device_this_tree_holds`). Letting the push add a member's device is a native change
+  of its own, not made on 2026-10-31.
+- A rig row: a member's second device enrolled, added with no ask, the line on every member and on
+  the owner's other device, no line in the list preview (`DEVREVOKE-KEYGROUP`'s narration was
+  updated: a device ask is now dirt there).
+- The production rate of device enrolments per week, now that none of them costs a tap.
 
 **Rejected earlier the same day:** one approval per device (a tap, account-wide and durable, plus a
 durable server row when the owner has no other device) - replaced by self-entry; self-entry on
-revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK,
-[mls-protocol](protocols/mls-protocol.md) shape B), which costs users an action.
-
-Mechanism and the superseded interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
+revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK), which
+costs users an action.
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -1688,8 +1708,9 @@ Owed before it ships:
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
 
 Built: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
-background answer alike; a member is asked "X asks to join this group. Only a member can add them." (Add / Decline), which replaces the
-group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
+background answer alike; a member is asked, as a line in that conversation, "X veut rejoindre la
+conversation - Accepter / Refuser" (a PERSON, never a device: a member's device is added with no
+ask since 2026-10-31), which replaces the group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
@@ -1699,44 +1720,32 @@ than the rule still auto-Adds a link joiner and "only by a member" holds only fr
 production once the build serves both stores; and a second step on the receiving side (private
 operations notes).
 
-## An unseen device of a member is asked about before it is added (2026-10-27): interim built
+## History withheld from a member device that let itself in (built 2026-10-27): what is still owed
 
-Built: an automatic Add no longer brings in a device of a member unless its own leaf is in that
-group's tree or a member approved it, one device at a time, under the key it showed; a pin never
-counts. A further device of a member asks a member rather than joining itself, decided on the tree
-of the GroupInfo its commit would be built on (a device whose own leaf is there, and a user's first
-device in a group, keep their own door); one that does join itself is reported and written in the
-conversation, decided per group, with "Not me" on the owner's alert, and is answered no history
-until a member vouches for it; and a waiting device shows its owner its own key
-([mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)). The user
-confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons. Owed:
+The device ask of the 2026-10-27 interim is DELETED (owner, 2026-10-31: the gate is on the user,
+never the device - [the decision](#a-new-device-of-a-member-enters-without-a-tap-owner-2026-10-30-built-2026-10-31)).
+What stays from it: a further device of a member asks a member's device to add it rather than
+letting itself in, and one that lets itself in anyway (an older client) is said, reported and
+withheld history until a member's Add of it
+([mls-protocol](protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+Owed:
 
-- the production rate of device enrolments per week (and how many are a second device of an
-  account), which is the number of taps it costs - and how often a device enrols while none of its
-  conversations has a member online, which now waits instead of joining itself;
-- **the hourly stranded report cannot tell a device waiting for a member's tap from a stranded
-  one**: both are a `pending` seat with no Welcome, no add in flight and no admission. The device
-  knows which it is (its join answers `further_device`); the report needs that fact on the seat - e.g. the
-  `welcome_request` the waiting device sends, recorded per seat - before its count can be read as
-  defects again;
-- a hardware reading of the owner's own new phone approved from the old one, the two keys compared;
-- **who can still be flagged honestly**: a device on a client older than this change still joins
-  by itself beside its user's other devices, and is flagged wherever it was never in the group - the
-  rollout's cost, until `minClientVersion` carries the tree-based door. A current client cannot be:
-  its door is the observer's predicate without the departure half. The departure record's cap
+- **the hourly stranded report cannot tell a further device waiting for a member's device to come
+  online from a stranded one**: both are a `pending` seat with no Welcome, no add in flight and no
+  admission. The device knows which it is (its join answers `further_device`); the report needs that
+  fact on the seat - e.g. the `welcome_request` the waiting device sends, recorded per seat - before
+  its count can be read as defects again;
+- **who can still be flagged honestly**: a device on a client older than the tree-based door still
+  joins by itself beside its user's other devices, and is flagged wherever it was never in the group
+  - the rollout's cost, until `minClientVersion` carries the door. The departure record's cap
   (`MAX_RECORDED_DEPARTURES`, 8192 per device, oldest evicted) and an observer that joined after a
   device left only widen what reads as `firstInGroup`, so they matter for those older clients alone;
-- **an honest device flagged during the rollout** (an older client joining by itself) that then adds
-  a new person makes that person's device withheld too, by this member, until another member's Add
-  or an approval lifts it;
+- **an honest device flagged during the rollout** that then adds a new person makes that person's
+  device withheld too, by this member, until another member's Add lifts it - and since 2026-10-31 no
+  tap lifts a withheld device any more;
 - the native background engine keeps no record of withheld devices, so it never marks a device added
   by one (`added_by_unvouched` is set by the app alone); history is answered only by the app, so
   this costs a notice, not a message;
-- **the same class, not gated**: the member-initiated paths that add a user's devices with no tree
-  to check them against (details in the private operations notes) close with the real fix;
-- the Android background welcome now stages nothing (only a device already in the tree passes its
-  rule, and the Add refuses that one): its staging is kept for the real fix, or deleted with its
-  native callers if the real fix is not built;
 - **a seal is for good, and an honest user can reach one**: a conversation is sealed (no history
   answered there by this member) when the native queue of device events overflowed for it. The
   queue holds 512 events and is emptied only by the app, so a phone whose background engine merges
@@ -1747,15 +1756,15 @@ confirmed the mandatory tap on 2026-10-27, keeping the link join for new persons
   device events taken from an account's state while it is being unbound seal their conversations in
   that account's record, for good, by the same rule - the option above would lift those as well;
 - **two tabs of one account merge their records and err towards withholding**: a tab that loaded
-  before another tab lifted a device can write that device back, and after a restart it is withheld
-  again until a member's approval lifts it once more - a cost in availability only, never an answer
-  to a device that should not have one;
+  before another tab lifted a device can write that device back - a cost in availability only, never
+  an answer to a device that should not have one;
 - **the departed bound costs detection**: past it, a conversation is sealed and the records of its
   departed withheld devices dropped, so one of them that later comes back by itself is no longer
   known as withheld there - what it then adds gets no line. History stays closed (the seal); only
   the notice is lost;
-- the real fix, a device vouched for by a user signing key (shape B, recommended on that page),
-  after which this ask remains only as a shim for users without one.
+- the Android background welcome stages nothing (only a device already in the tree passes its rule,
+  and the Add refuses that one): its staging is kept for a push that adds a member's device, or
+  deleted with its native callers if that is not built (see the decision above).
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 

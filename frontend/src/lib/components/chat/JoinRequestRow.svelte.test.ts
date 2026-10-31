@@ -142,27 +142,10 @@ describe('JoinRequestRow', () => {
     raiseJoinRequest(ask('carol'));
     render();
 
-    expect(target.textContent).toContain('Name(carol) veut rejoindre la conversation par lien');
+    expect(target.textContent).toContain('Name(carol) veut rejoindre la conversation');
+    // No disclosure, no key: a person is asked about, never a device (owner, 2026-10-31).
+    expect(target.querySelector('details')).toBeNull();
     expect(target.querySelector('[role="alert"]')).toBeNull();
-  });
-
-  it('draws a device ask as the same line, its key behind Details', () => {
-    setJoinRequestHandlers({ approve: vi.fn(), decline: vi.fn() });
-    raiseJoinRequest({
-      ...ask('dave', 'g1', 'dev1'),
-      kind: 'device',
-      keyFingerprint: 'abcd1234',
-      deviceLabel: 'Phone',
-    });
-    render();
-
-    expect(target.textContent).toContain('Nouvel appareil de Name(dave)');
-    expect(button('Ajouter')).toBeDefined();
-    const details = target.querySelector('details');
-    expect(details).not.toBeNull();
-    expect(details!.textContent).toContain('abcd 1234');
-    // The fingerprint is not inline: it lives only inside the disclosure.
-    expect(target.textContent!.replace(details!.textContent!, '')).not.toContain('abcd');
   });
 
   it('leaves a line for the member who declined, and none after an Accept', async () => {

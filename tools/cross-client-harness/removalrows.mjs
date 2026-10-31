@@ -463,13 +463,12 @@ function subjectNarration(row, ids) {
 }
 
 /**
- * DEVREVOKE-KEYGROUP's minted owner device (W3), as the owner seat W1 meets it - the admission rule
- * of 2026-10-23 working as decided: the owner is told once at first sight; the conversation the new
- * device asks to enter waits for a member's approval instead of an automatic Add (one `WELCOME_REQ`
- * and one `JOIN_REQUEST`, both naming the owner's own account); and its history ask in the row's
- * community is answered by withholding the seed of a salon riding another key group, said as
- * "withheld", never as "I hold nothing". Each once. Another account, another community, or a
- * user-level join ask (no device) stays dirt.
+ * DEVREVOKE-KEYGROUP's minted owner device (W3), as the owner seat W1 meets it: the owner is told
+ * once at first sight; the conversation the new device asks to enter ADDS it, since the gate is on
+ * the user and never the device (owner, 2026-10-31) - so no ask about it is said, and one is dirt;
+ * and its history ask in the row's community is answered by withholding the seed of a salon riding
+ * another key group, said as "withheld", never as "I hold nothing". Each once. Another account or
+ * another community stays dirt.
  *
  * @param {RemovalIds} ids
  */
@@ -478,16 +477,6 @@ function mintedDeviceNarration(ids) {
   const o = short(ids.ownerUserId);
   return [
     at(L, String.raw`\[DEVICE_NOTICE\] a new device was added to this account \(first-sight\)`, 1),
-    at(
-      L,
-      String.raw`\[WELCOME_REQ\] ${o}…:web-${o}\.\.\. is a device this one never saw, of a member of [0-9a-f]{8}\.\.\. - not added automatically, a member's approval of key [0-9a-f]{8}… is asked`,
-      1
-    ),
-    at(
-      L,
-      String.raw`\[JOIN_REQUEST\] an unseen device web-${o}\.\.\. of ${o}… asks to join [0-9a-f]{8}\.\.\. under key [0-9a-f]{8}… - a member's answer is awaited`,
-      1
-    ),
     at(
       I,
       String.raw`\[GRAINE\] withholding ${P} seed\(s\) from ${o}… on community ${ws}: ${N} of a salon riding another key group, ${N} not listed on this device`,

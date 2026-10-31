@@ -536,8 +536,8 @@ pub struct WelcomeRequest<'a> {
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `warm-process`, `stale-epoch-known`,
 /// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`, `newcomer` (the
 /// requester's user holds no leaf: a new person, whom only a member's gesture admits),
-/// `unseen-device` (the user holds a leaf but the device holds none in THIS group's tree: its first
-/// admission is a member's gesture too, see [`admit_only_a_device_this_tree_holds`]),
+/// `unseen-device` (the user holds a leaf but the device holds none in THIS group's tree: the
+/// foreground's automatic Add admits it, see [`admit_only_a_device_this_tree_holds`]),
 /// `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
 /// name the package is refused for (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
 ///
@@ -591,10 +591,11 @@ type BackgroundAdmission = fn(&MlsManager, &str, &str) -> Result<(), &'static st
 /// A user holding a leaf proves the user, not the device, and a pin of the device's key proves only
 /// that this phone met that key in SOME tree - pins are one store for every group, written by any
 /// merged commit or joined tree, a key group's or a device's own external entry included - never
-/// that a member of THIS group admitted it. The foreground's other "seen" - a member's tap on the
-/// device and its key (`memberDeviceAnswers.ts`) - lives in that session, never in `mls.bin`. So a
-/// device whose leaf is not in the tree is `unseen-device`, its first admission a member's gesture,
-/// raised by the foreground (`automaticAdmission` in `actions.ts`).
+/// that a member of THIS group admitted it. So a device whose leaf is not in the tree is
+/// `unseen-device` here, and left to the FOREGROUND, whose automatic Add admits any device of a
+/// member with no one asked (`automaticAdmission` in `actions.ts`: the gate is on the user, never
+/// the device - owner, 2026-10-31). Whether the push should add it too is a native change of its
+/// own, not made with that decision.
 ///
 /// AND THAT LEAVES THE PUSH NOTHING TO ADD TODAY: a device whose leaf is in the tree is refused by the
 /// Add itself (`already-member`), and its replacement is the foreground's (`replaceMember`). The
@@ -617,7 +618,7 @@ fn admit_only_a_device_this_tree_holds(
         Ok(true) => Ok(()),
         Ok(false) => {
             log::warn!(
-                "[BG_WELCOME] {requester} holds no leaf in group={short} - an unseen device of a member is not added from a push, a member's approval is owed"
+                "[BG_WELCOME] {requester} holds no leaf in group={short} - a further device of a member is not added from a push, the foreground's automatic Add admits it"
             );
             Err("unseen-device")
         }
@@ -3443,7 +3444,7 @@ mod tests {
 
     /// A DEVICE THIS PHONE NEVER SAW IS NOT ADDED FROM A PUSH, EVEN A MEMBER'S. Bob holds a leaf, so
     /// he is a member; `dev-x` was never pinned here, and a member holding a leaf proves the user,
-    /// not the device. Refused as `unseen-device`, nothing staged - a member's gesture admits it.
+    /// not the device. Refused as `unseen-device`, nothing staged - the foreground's Add admits it.
     #[test]
     fn an_unseen_device_of_a_member_is_not_added_from_a_push() {
         let _s = quiet_foreground();
@@ -3645,10 +3646,10 @@ mod tests {
     /// THE ACCOUNT'S OWN NEW DEVICE IS NOT ADDED FROM A PUSH EITHER. A device this phone never saw
     /// is `unseen-device` whoever it claims to belong to - an own-account id proves nothing more
     /// than a contact's. Nothing is staged,
-    /// so nothing is named for a notification: the app raises the ask in the foreground, and the
-    /// owner's alert comes from the commit the member's Add then makes. (`ownDeviceAdded` is still
-    /// computed from the stage; only a first-sight device makes it non-empty, and such a device is
-    /// admitted by a member's gesture until a device of the owner can vouch for it.)
+    /// so nothing is named for a notification: the foreground's automatic Add admits it, and the
+    /// owner's alert comes from the commit that Add makes. (`ownDeviceAdded` is still computed from
+    /// the stage; only a first-sight device makes it non-empty, and such a device is admitted by the
+    /// foreground.)
     #[test]
     fn an_own_new_device_is_not_added_from_a_push() {
         let _s = crate::concurrency::test_support::serialise();

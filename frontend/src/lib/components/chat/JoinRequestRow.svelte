@@ -4,10 +4,8 @@
     pendingJoinRequests,
     declinedJoinRequests,
     canAnswerJoinRequests,
-    isOwnDeviceAsk,
   } from '$lib/utils/chat/joinRequests.svelte';
-  import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
-  import { answerJoinRequestOrToast, deviceAskDetail } from '$lib/utils/chat/joinRequestAnswer';
+  import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import type { JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
@@ -33,9 +31,8 @@
    * nothing.
    *
    * Any member may add them: the Add is this device's own, and only one device wins the add lock.
-   * A device never seen here, of a user already in the conversation (`kind: 'device'`), is told in
-   * its own words, one line per device; its key fingerprint sits behind "Details", and its answer is
-   * about that device alone (`memberDeviceAnswers.ts`).
+   * ONLY A PERSON IS EVER ASKED ABOUT (owner, 2026-10-31): a new device of a member is added by
+   * itself, and the conversation says "X added a device" instead (`deviceNotices.svelte.ts`).
    */
   const asks = $derived(
     canAnswerJoinRequests() ? pendingJoinRequests().filter((r) => r.groupId === groupId) : []
@@ -53,55 +50,34 @@
   }
 </script>
 
-{#each asks as request (`${request.kind ?? 'person'}|${request.userId}|${request.kind === 'device' ? request.deviceIds[0] : ''}`)}
-  {@const detail = deviceAskDetail(request)}
+{#each asks as request (request.userId)}
   <div
     class="my-3 flex justify-center"
     role="group"
     aria-label={m.join_request_title()}
     data-join-request={request.userId}
-    data-join-request-kind={request.kind ?? 'person'}
   >
     <div
-      class="text-text-muted inline-flex max-w-md flex-col items-center gap-1 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5"
+      class="text-text-muted inline-flex max-w-md flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5"
     >
-      <span class="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5">
-        <Info size={14} class="shrink-0 opacity-60" aria-hidden="true" />
-        <span>
-          {#if request.kind !== 'device'}
-            {m.join_request_row_text({ user: getUserDisplayNameSync(request.userId) })}
-          {:else if isOwnDeviceAsk(request, session.userId)}
-            {m.join_request_device_row_text_own()}
-          {:else}
-            {m.join_request_device_row_text({ user: getUserDisplayNameSync(request.userId) })}
-          {/if}
-        </span>
-        <span class="text-text-main inline-flex items-center gap-2 font-semibold">
-          <button
-            type="button"
-            class="underline underline-offset-2 disabled:opacity-50"
-            disabled={busy}
-            data-join-answer="approve"
-            onclick={() => answer(request, 'approve')}
-            >{request.kind === 'device'
-              ? m.join_request_device_add()
-              : m.join_request_accept()}</button
-          >
-          <button
-            type="button"
-            class="underline underline-offset-2 disabled:opacity-50"
-            disabled={busy}
-            data-join-answer="decline"
-            onclick={() => answer(request, 'decline')}>{m.join_request_decline()}</button
-          >
-        </span>
+      <Info size={14} class="shrink-0 opacity-60" aria-hidden="true" />
+      <span>{m.join_request_row_text({ user: getUserDisplayNameSync(request.userId) })}</span>
+      <span class="text-text-main inline-flex items-center gap-2 font-semibold">
+        <button
+          type="button"
+          class="underline underline-offset-2 disabled:opacity-50"
+          disabled={busy}
+          data-join-answer="approve"
+          onclick={() => answer(request, 'approve')}>{m.join_request_accept()}</button
+        >
+        <button
+          type="button"
+          class="underline underline-offset-2 disabled:opacity-50"
+          disabled={busy}
+          data-join-answer="decline"
+          onclick={() => answer(request, 'decline')}>{m.join_request_decline()}</button
+        >
       </span>
-      {#if detail}
-        <details>
-          <summary class="cursor-pointer">{m.join_request_details()}</summary>
-          <span class="font-mono" data-device-ask-detail>{detail}</span>
-        </details>
-      {/if}
     </div>
   </div>
 {/each}
@@ -113,11 +89,7 @@
       class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5"
     >
       <Info size={14} class="shrink-0 opacity-60" aria-hidden="true" />
-      <span>
-        {line.kind === 'device'
-          ? m.join_request_device_declined_line({ user: getUserDisplayNameSync(line.userId) })
-          : m.join_request_declined_line({ user: getUserDisplayNameSync(line.userId) })}
-      </span>
+      <span>{m.join_request_declined_line({ user: getUserDisplayNameSync(line.userId) })}</span>
     </div>
   </div>
 {/each}
