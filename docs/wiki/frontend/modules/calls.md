@@ -4,69 +4,53 @@
 **Components**: `src/lib/components/calls/`, `src/lib/composables/useCallSession.svelte.ts`  
 **Service**: `src/lib/services/CallService.ts`
 
-> **SINCE THE FLIP PR (2026-10-22): IN-APP 1:1 AUDIO IS COMPILED INTO EVERY BUILD, PEER TO PEER** -
-> `CALLS_COMPILED = true`; production is held shut by the server's `calls_mode` (`off` at deploy).
-> **Video follows calls since 1.5.2** (`CALLS_VIDEO_ENABLED = CALLS_ENABLED`), held shut by
-> `calls_mode = audio_video` until its readings pass - [turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30). See [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) and
-> [the flip](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21). What this banner says
-> of the whole surface being held off still holds for **the native ring** (`CALLS_NATIVE_RING_COMPILED
-> = false`) and for the history it records.
+> **STATE, 2026-10-31: IN-APP 1:1 AUDIO IS LIVE IN PRODUCTION; 1:1 VIDEO AND THE NATIVE RING RIDE
+> 1.5.2 AND NO STABLE CARRIES THEM YET.**
 >
-> **THE WHOLE SURFACE WAS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
-> (`frontend/src/lib/features.ts`).** Everything below still describes the code exactly, and none of
-> it was deleted; none of it RUNS. The reason is that it never did: the campaign board carries twenty
-> CALL rows and not one has ever been executed, the SFU has never had a peer connection opened
-> against it, and no iPhone ever registered a PushKit token, so no CallKit ring was ever deliverable.
-> App Review refused the `voip` background mode under guideline 2.5.4 on 2026-08-31 for a VoIP
-> service it could not locate - correctly, on the build it tested.
+> - **In-app audio, peer to peer: on.** `CALLS_COMPILED = true` (`frontend/src/lib/features.ts`)
+>   since the flip PR (#2299, 2026-10-23); the first stable carrying it is `v1.5.0`. Production
+>   runs `1.5.1` with the server's `calls_mode = audio` (owner, 2026-10-31) and has carried real
+>   calls. [The flip](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21).
+> - **The server stays the kill switch.** `platform_config.calls_mode` is `off`, `audio` or
+>   `audio_video`; clients hide every call control when it says `off`
+>   ([B12](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+>   A dev build shows calls whatever the server says (`CALLS_ENABLED` also holds on `development`).
+> - **Video: compiled, shut.** `CALLS_VIDEO_ENABLED = CALLS_ENABLED` since #2711 (first in
+>   `v1.5.2-alpha.1`); production stays audio-only until `audio_video` is set, after its readings
+>   pass - [turning video on](#turning-video-on-in-production---11-video-in-152-owner-2026-10-30).
+> - **The native ring: compiled for 1.5.2, in no stable.** All five switches moved in ONE commit
+>   (#2727, 2026-10-30; `CALLS_NATIVE_RING_COMPILED = true`; `callsCompiled.test.ts` asserts they
+>   agree), so a closed or locked phone rings full screen once 1.5.2 ships -
+>   [the native ring ships in 1.5.2](#the-native-ring-ships-in-152-owner-2026-10-30).
 >
-> **Five things were switched off together, and the `audio` mode joined them on 2026-10-20; all six come back together, in one commit:**
+> **HISTORY - THE WHOLE SURFACE WAS HELD OFF FROM 0.14.15 TO 1.4.x** (`CALLS_ENABLED = false`). The
+> code below the banner was kept, not deleted. The reason was that none of it had run: no CALL row
+> of the campaign board had been executed, the SFU had never had a peer connection opened against
+> it, and no iPhone had registered a PushKit token, so no CallKit ring was deliverable. App Review
+> refused the `voip` background mode under guideline 2.5.4 on 2026-08-31 for a VoIP service it
+> could not locate - correctly, on the build it tested. The plan that brought calls back is
+> [calls-revival-plan](calls-revival-plan.md) (2026-10-15); the sections below hold each decision.
 >
-> | Switch | Where | What it holds |
-> |---|---|---|
-> | `CALLS_ENABLED` | `frontend/src/lib/features.ts` | call buttons, `startCall`, `handleCallSignal` |
-> | `kCanariCallsEnabled` | `canari_push.mm` | PushKit registry, CallKit provider, `CanariReportIncomingCall` |
-> | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | `showIncomingCallNotification` |
-> | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | PushKit tokens (absent = no token, ever) |
-> | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the locked-screen CallStyle ring |
-> | `audio` (since 2026-10-20) | `canari_iOS/Info.plist` `UIBackgroundModes` | the microphone of a hidden or locked iPhone ([WP-C-BG-I](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)); every PRE-RELEASE build gets it from `ios.yml` |
+> **Three findings of that period still bind the code:**
 >
-> **A SIXTH THING MOVED WHILE CALLS WERE OFF, AND IT IS NOT A SWITCH (2026-09-22).** A push payload
-> no longer carries `senderName` or `groupName` on a SILENT frame: those two are unbounded user text,
-> the payload is cleartext to FCM and to APNs, and nothing read them there - measured on both
-> clients. **A `call_invite` is a silent frame**, and `showIncomingCallNotification` takes both names
-> from exactly those fields, so on the day calls come back that banner would be titled with nothing.
-> Reviving them means taking the name from the device's own store (the FCM cache already holds one
-> per conversation) or delivering an invite as an alert push - **not restoring the fields**, which
-> would put every student's name back in front of Google on every read receipt.
-> ([push-payload](../../../../apps/chat-delivery-service/src/services/push-payload.ts),
-> [chat-delivery](../../services/chat-delivery.md#transport--single-gateway-fcm))
->
-> **A SEVENTH (2026-10-14): A CONVERSATION AT `none` SENDS EVERY FRAME SILENT, A CALL INVITE
-> INCLUDED.** The per-conversation level (`dm_group_members.notifLevel`) is applied in
-> `sendFcmForQueued` to whatever frame would draw, and an MLS `call_invite` is one of them: at `none`
-> it arrives silent and will NOT ring; at `mentions` it still rings, because both native handlers
-> branch on `call_invite` BEFORE the level gate is reached. **DECIDED 2026-10-18: a ring obeys the
-> conversation's own CALL PERMISSION, not the level** - see
-> [the call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
-> ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions))
-
-> The two platform declarations are the ones a store checks, and each cuts both ways: declared but
-> unused is a rejection, used but undeclared cannot work. **Revival condition: rung 15 CALL and
-> CALL-13 pass on real hardware** ([board](../../cross-client-testing.md),
-> [backlog](../../backlog.md)). `CallService.callsEnabled.test.ts` already asserts the on state, so
-> the flip has a test the day it happens.
->
-> **The ordered plan to revive calls** - the decisive tests first, the test matrix, the App Review
-> video and a server-side switch in place of the five above - is
-> [calls-revival-plan](calls-revival-plan.md) (draft, 2026-10-15).
-
-> **AN EIGHTH, AND IT IS THE NETWORK (measured 2026-10-15): FROM PRODUCTION AS BUILT, NO CALL CAN
-> CONNECT.** The host cannot send UDP to the internet, and the SFU's TURN client (webrtc-rs 0.17)
-> speaks only UDP 3478 to Cloudflare TURN; the two transports that DO leave the host (TCP 80, TLS
-> 443) are the two it cannot use. No inbound port is needed. The minimal ask to the DSI is ONE
-> outbound rule, and it belongs in the revival commit's preconditions
-> ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
+> 1. **A silent push frame carries no `senderName` or `groupName` (2026-09-22).** Both are
+>    unbounded user text, the payload is cleartext to FCM and to APNs, and nothing read them there.
+>    A `call_invite` is a silent frame, so a call banner takes the name from the device's own
+>    store or from an alert push - **never by restoring the fields**, which would put every
+>    student's name back in front of Google on every read receipt.
+>    ([push-payload](../../../../apps/chat-delivery-service/src/services/push-payload.ts),
+>    [chat-delivery](../../services/chat-delivery.md#transport--single-gateway-fcm))
+> 2. **A conversation at `none` sends every frame silent, a call invite included (2026-10-14).**
+>    At `none` it arrives silent and will NOT ring; at `mentions` it still rings, because both
+>    native handlers branch on `call_invite` BEFORE the level gate. **DECIDED 2026-10-18: a ring
+>    obeys the conversation's own CALL PERMISSION, not the level** - see
+>    [the call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
+>    ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions))
+> 3. **The network was the last blocker (measured 2026-10-15) and is behind us.** From production
+>    as built then, the host could not send UDP to the internet while the SFU's TURN client
+>    (webrtc-rs 0.17) speaks only UDP 3478 to Cloudflare TURN; the minimal ask was ONE outbound
+>    rule ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
+>    Production has carried calls since, so that ask was met.
 
 ## Turning calls on in production - audio 1:1 only (owner, 2026-10-21)
 
