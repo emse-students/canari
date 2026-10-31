@@ -1184,9 +1184,9 @@ id to the organiser and the linked account, not to a booker.
   be the start, stops before one. The server's clock still decides: if it refuses at the send, the
   sheet says the typed refusal in plain words ("Ce créneau n'est plus disponible"), never a word
   about a device, a clock or a server. A `started` or `notice` refusal also closes the sheet and
-  puts that start in `SpaceWeek`'s `refusedStarts`, never offered again by that view: the read
+  makes it `SpaceWeek`'s `lastRefusedStart` (the LATEST only: both refusals grow with time, so every start at or before it is retired too, one refusal not one per unit): the read
   carries no server time to correct the device's clock, and time only moves forward, so offering
-  it again would only replay the refusal. `SpaceGrid.past`, `SpaceGrid.drag` and `BookingSheet`
+  it again would only replay the refusal. `SpaceGrid.past`, `SpaceGrid.drag`, `SpaceWeek.refusedStart` and `BookingSheet`
   tests pin it. **Known, not done**: the sheet's run of free units stops at the edge of the week
   read, so a booking running past the last loaded day is written by the server but not offered by
   the screen. Before the screen offers it, `freeRunFrom` would need a read beyond the week. The same pass removed "encrypted on this device" from

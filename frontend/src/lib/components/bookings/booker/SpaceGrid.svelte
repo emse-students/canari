@@ -50,10 +50,11 @@
     blockMode?: boolean;
     nowMs: number;
     /**
-     * Starts the server refused as `started` or `notice`: the device's clock still takes them, but
-     * time only moves forward, so they are never offered again.
+     * The LATEST start the server refused as `started` or `notice` while the device's clock still
+     * took it. Both refusals only grow with time, so every start at or before it is refused too and
+     * is never offered again; `null` while none was refused.
      */
-    refusedStarts?: ReadonlySet<number>;
+    lastRefusedStart?: number | null;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
@@ -64,7 +65,7 @@
     mode,
     blockMode = false,
     nowMs,
-    refusedStarts = new Set<number>(),
+    lastRefusedStart = null,
     onPick,
   }: Props = $props();
 
@@ -223,9 +224,12 @@
     return blockMode || unit.state !== 'free' || bookableStart(unit);
   }
 
-  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it as a start. */
+  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
   function bookableStart(unit: SlotUnit): boolean {
-    return windowRefusal(space, unit.startMs, nowMs) === null && !refusedStarts.has(unit.startMs);
+    return (
+      windowRefusal(space, unit.startMs, nowMs) === null &&
+      (lastRefusedStart === null || unit.startMs > lastRefusedStart)
+    );
   }
 
   /** What a cell says, and whether the booking window refuses it now. */

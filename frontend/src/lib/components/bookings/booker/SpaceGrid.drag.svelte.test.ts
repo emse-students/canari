@@ -154,7 +154,7 @@ describe('SpaceGrid - drag a range', () => {
     expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 3);
   });
 
-  it('never offers a start the server refused, whatever the device clock says', async () => {
+  it('never offers the latest start the server refused, nor any start before it', async () => {
     const units = free(3);
     const app = mount(SpaceGrid, {
       target: document.body,
@@ -164,7 +164,7 @@ describe('SpaceGrid - drag a range', () => {
         layout: weekLayout(units, ['2026-11-02'], spaceOf(4), NOW),
         mode: 'day',
         nowMs: NOW,
-        refusedStarts: new Set([units[0].startMs]),
+        lastRefusedStart: units[1].startMs,
         onPick,
       },
     });
@@ -172,8 +172,10 @@ describe('SpaceGrid - drag a range', () => {
     flushSync();
     await tick();
     const cells = [...document.querySelectorAll<HTMLButtonElement>('[data-cell]')];
+    // Both refusals only grow with time: the refused start and every earlier one are retired.
     expect(cells[0].disabled).toBe(true);
-    expect(cells[1].disabled).toBe(false);
+    expect(cells[1].disabled).toBe(true);
+    expect(cells[2].disabled).toBe(false);
   });
 
   it('drags upward from the lower row, the first unit being the upper one', async () => {
