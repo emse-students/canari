@@ -26,6 +26,11 @@ vi.mock('$lib/reels/reelPreload', () => ({
     }
   },
 }));
+const captured: string[] = [];
+vi.mock('$lib/reels/reelPosters.svelte', () => ({
+  reelPosterUrl: () => null,
+  captureReelPoster: vi.fn(async (mediaId: string) => void captured.push(mediaId)),
+}));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
 }));
@@ -84,12 +89,20 @@ async function render(loadPage = vi.fn(async () => [reel('a'), reel('b'), reel('
     window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
     await settle();
   };
-  return { onClose, loadPage, playing, key };
+  /** The reel on screen reports its file whole, then its playback - what lets the next preload. */
+  const settleCurrent = async () => {
+    const stub = document.querySelector('[data-post-media-stub]')!;
+    stub.dispatchEvent(new Event('stubloaded'));
+    stub.dispatchEvent(new Event('playing'));
+    await settle();
+  };
+  return { onClose, loadPage, playing, key, settleCurrent };
 }
 
 beforeEach(() => {
   preloads.length = 0;
   stopped.length = 0;
+  captured.length = 0;
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce') }));
 });
 
@@ -101,20 +114,28 @@ afterEach(() => {
 });
 
 describe('ReelViewer', () => {
-  it('plays the touched reel first, alone, and preloads the next', async () => {
-    const { playing, loadPage } = await render();
+  it('plays the touched reel first, alone, and preloads the next once it has settled', async () => {
+    const { playing, loadPage, settleCurrent } = await render();
     expect(loadPage).toHaveBeenCalledWith(0, 10);
     // b first, then a and c from the page (b not repeated); only b has a player.
     expect(playing()).toEqual(['m-b']);
+    // Nothing competes with the reel being watched until it is whole and playing.
+    expect(preloads).toEqual([]);
+    await settleCurrent();
     expect(preloads).toEqual(['m-a']);
+    // The reel just loaded keeps its first frame, so a swipe back lands on it.
+    expect(captured).toEqual(['m-b']);
     expect(document.querySelectorAll('[data-reel-slide]').length).toBe(2);
   });
 
   it('steps down to the next reel and back up', async () => {
-    const { playing, key } = await render();
+    const { playing, key, settleCurrent } = await render();
+    await settleCurrent();
     await key('ArrowDown');
     expect(playing()).toEqual(['m-a']);
     expect(stopped).toContain('m-a');
+    expect(preloads).not.toContain('m-c');
+    await settleCurrent();
     expect(preloads).toContain('m-c');
     await key('ArrowUp');
     expect(playing()).toEqual(['m-b']);

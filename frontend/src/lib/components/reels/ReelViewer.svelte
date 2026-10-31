@@ -117,6 +117,15 @@
 
   const mounted = $derived(mountedReelIndices(index, reels.length));
 
+  /**
+   * THE REEL ON SCREEN THAT HAS SETTLED (`ReelSlide`'s `onReady`: whole and playing). The next
+   * reel preloads only behind it, never beside it: on a weak link two downloads at once would
+   * starve the one being watched. A swipe moves `index` and so withholds the preload until the new
+   * reel settles in turn.
+   */
+  let settledId = $state<string | null>(null);
+  const currentSettled = $derived(settledId !== null && settledId === reels[index]?.id);
+
   // The next page, asked for as the reader nears the end of what is loaded.
   $effect(() => {
     if (!shouldLoadMoreReels(index, reels.length, hasMore) || loadingMore || reels.length === 0) {
@@ -567,7 +576,8 @@
               post={reels[i]}
               {authToken}
               active={i === index}
-              preload={i === index + 1}
+              preload={i === index + 1 && currentSettled}
+              onReady={() => (settledId = reels[i].id)}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
               rail={railFor(reels[i])}
             />

@@ -33,8 +33,10 @@
    * reached. A paused video keeps them: there is nothing to watch.
    *
    * NO NATIVE POSTER, EVER: `poster` stays `TRANSPARENT_VIDEO_POSTER` (the Android WebView would
-   * otherwise draw its grey play button), and `VideoPoster` covers the box until `loadeddata` says
-   * the first frame is in the element.
+   * otherwise draw its grey play button), and until `loadeddata` says the first frame is in the
+   * element the box shows the caller's picture of that frame (the `poster` prop) or, without one,
+   * `VideoPoster` - except the minimal reel player, which shows black: its play button answers an
+   * autoplay REFUSAL and nothing else.
    *
    * A STREAMED `src` (a segmented video's MSE URL, `segmentedMediaStream.ts`) reaches the element
    * exactly as minted - this component never appends to a URL, so the rule `InlineVideo` states for
@@ -84,6 +86,12 @@
      * are the reel rail's (`ReelActionRail`), the sound through the same `videoSound` answer.
      */
     minimal?: boolean;
+    /**
+     * A picture of the video's first frame, drawn in its place until the element holds that frame
+     * (a reel's: `reelPosters.svelte.ts` or the publisher's ThumbHash). Given, it replaces Canari's
+     * glyph poster: a loading reel shows its picture, never a play button (owner, 2026-10-31).
+     */
+    poster?: string | null;
   }
 
   let {
@@ -96,6 +104,7 @@
     soundScope = 'app',
     safeBottom = true,
     minimal = false,
+    poster = null,
   }: Props = $props();
 
   /**
@@ -131,6 +140,14 @@
   let frameReady = $state(false);
   /** The engine refused the bytes (codec, container): said, rather than a black box. */
   let unplayable = $state(false);
+  /**
+   * THE ENGINE REFUSED TO START PLAYBACK BY ITSELF (`NotAllowedError` - iOS with sound on, a
+   * browser's autoplay policy). Only then does the minimal player draw a play button: it is the
+   * answer to a refusal, never a loading state.
+   */
+  let autoplayRefused = $state(false);
+  /** The explicit autoplay attempt is made once per mount. */
+  let autoplayTried = false;
   let controlsVisible = $state(true);
   /** Bumped by every interaction: the fade timer restarts from it. */
   let poke = $state(0);
@@ -320,6 +337,29 @@
     fullscreen = !!root && document.fullscreenElement === root;
   }
 
+  /**
+   * THE AUTOPLAY, ASKED SO ITS REFUSAL IS KNOWN. The `autoplay` attribute fails silently; `play()`
+   * answers. Asked once the element can play: a refusal is `NotAllowedError`, typed at the throw;
+   * an interruption (`AbortError`, a new `src`) is not a refusal and leaves the button off.
+   */
+  function tryAutoplay() {
+    // The full player draws its button on any pause already; only the minimal one needs the answer.
+    if (!minimal || !autoplay || autoplayTried || !video) return;
+    autoplayTried = true;
+    if (!video.paused) return;
+    video.play().catch((err: unknown) => {
+      const name = err instanceof Error ? err.name : String(err);
+      if (name === 'NotAllowedError') {
+        console.warn('[VideoPlayer] autoplay refused by the engine - the play button is shown', {
+          muted: video?.muted,
+        });
+        autoplayRefused = true;
+      } else {
+        console.debug(`[VideoPlayer] autoplay interrupted (${name})`);
+      }
+    });
+  }
+
   function onVideoError() {
     const code = video?.error?.code ?? 0;
     console.error('[VideoPlayer] the engine refused the video', {
@@ -368,10 +408,12 @@
       frameReady = true;
       sync();
     }}
+    oncanplay={tryAutoplay}
     ondurationchange={sync}
     ontimeupdate={sync}
     onprogress={sync}
     onplay={() => {
+      autoplayRefused = false;
       sync();
       poke += 1;
     }}
@@ -393,10 +435,24 @@
     </div>
   {:else}
     {#if !frameReady}
-      <VideoPoster />
+      {#if poster}
+        <!-- The first frame's picture, in the place the frame will take (`object-contain` in the
+             same box), so the frame replaces it without a jump. -->
+        <img
+          src={poster}
+          alt=""
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-0 h-full w-full object-contain select-none"
+          data-video-first-frame-poster
+        />
+      {:else if !minimal}
+        <VideoPoster />
+      {/if}
+      <!-- The minimal (reel) player with no picture yet draws its black box: a play glyph there
+           read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if paused && frameReady && !minimal}
+    {#if paused && frameReady && (!minimal || autoplayRefused)}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. -->
       <button
         type="button"
