@@ -141,8 +141,9 @@ export interface MessageHandlerDeps {
   /**
    * Called when a Welcome is processed successfully and the group is ready: resumes what the outbox
    * held for it and re-runs the invitations skipped while it was not (`sessionAuth`'s
-   * `announceGroupReady`). REQUIRED: these deps are also the pipeline's `RecoveryDeps`, whose
-   * external join raises the same seam.
+   * `announceGroupReady`, reached as `captureGroupReadyAnnouncer()` so a Welcome processed after the
+   * session ended announces nothing into the next). REQUIRED: these deps are also the pipeline's
+   * `RecoveryDeps`, whose external join raises the same seam.
    */
   onGroupReady: (groupId: string) => void;
   /**

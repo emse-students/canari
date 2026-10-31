@@ -230,8 +230,9 @@ export interface RecoveryDeps {
   /**
    * The group just became sendable through an external join: the SAME seam a processed Welcome
    * raises (`sessionAuth`'s `announceGroupReady`), so the messages held for the group are resumed at
-   * once. REQUIRED, so the compiler names every caller: the session's bags pass
-   * `announceGroupReady`, the two built outside it pass `announceGroupReadyToSession`.
+   * once. REQUIRED, so the compiler names every caller: every bag passes
+   * `captureGroupReadyAnnouncer()`, read once where it is built, so a join landing after its session
+   * ended announces nothing into the next one.
    */
   onGroupReady: (groupId: string) => void;
 }
