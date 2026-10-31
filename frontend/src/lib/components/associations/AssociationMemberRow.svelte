@@ -95,6 +95,15 @@
     FLAG_LABELS.reduce((n, { flag }) => n + (hasPermissionFlag(permissions ?? 0, flag) ? 1 : 0), 0)
   );
 
+  /** Whether the member can manage the space, in plain words: nothing, everything, or how much. */
+  const accessSummary = $derived(
+    permissionsCount === 0
+      ? m.asso_member_access_none()
+      : permissionsCount === FLAG_LABELS.length
+        ? m.asso_member_access_all()
+        : m.asso_member_access_some({ count: permissionsCount, total: FLAG_LABELS.length })
+  );
+
   let showPermissions = $state(false);
 
   function toggleFlag(flag: AssociationPermissionFlag): void {
@@ -123,19 +132,14 @@
         >
           {displayName}
         </a>
-        <div class="mt-1 flex flex-wrap items-center gap-2">
+        <!-- The role is shown ONCE: as plain text for a reader, as the field itself for an editor. -->
+        {#if !manage}
           <span
-            class="rounded-full px-2.5 py-0.5 text-xs font-semibold
- {member.isAdmin
-              ? 'bg-cn-yellow/25 text-cn-dark dark:text-cn-yellow'
-              : 'bg-cn-border/50 text-text-muted'}"
+            class="bg-cn-border/50 text-text-muted mt-1 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold"
           >
             {member.role}
           </span>
-          {#if member.isAdmin}
-            <span class="text-text-muted text-2xs font-medium tracking-wide uppercase">Admin</span>
-          {/if}
-        </div>
+        {/if}
       </div>
     </div>
 
@@ -153,12 +157,12 @@
           type="button"
           disabled={!canEditPermissions}
           onclick={() => (showPermissions = !showPermissions)}
-          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex items-center gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 {showPermissions
+          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex flex-1 items-center justify-between gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:w-44 sm:flex-none {showPermissions
             ? 'border-cn-yellow/60 bg-cn-yellow/5'
             : ''}"
           aria-expanded={showPermissions}
         >
-          {m.asso_member_permissions_label({ count: permissionsCount })}
+          {accessSummary}
           <ChevronDown
             size={14}
             class="transition-transform {showPermissions ? 'rotate-180' : ''}"
