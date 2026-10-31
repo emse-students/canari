@@ -18,11 +18,13 @@
     CameraOff,
     Eye,
     LoaderCircle,
+    Monitor,
     Radio,
     RefreshCcw,
     ShieldAlert,
     ShieldCheck,
     SwitchCamera,
+    Video,
     Timer,
     WifiOff,
     X,
@@ -143,6 +145,13 @@
     };
   });
 
+  // The share was stopped from the browser's own bar: the live ends (liveBroadcast.screenShareStopped).
+  $effect(() => {
+    if (camera.phase === 'error' && camera.fault === 'interrupted') {
+      void broadcast.screenShareStopped();
+    }
+  });
+
   onMount(() => {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
@@ -234,7 +243,8 @@
   {#key camera.stream}
     <video
       bind:this={video}
-      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user'
+      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user' &&
+      broadcast.source === 'camera'
         ? '-scale-x-100'
         : ''} {camera.phase === 'live' && frameReady
         ? 'opacity-100'
@@ -296,7 +306,7 @@
       </button>
     {/if}
 
-    {#if broadcast.phase === 'preview' && camera.phase === 'live'}
+    {#if broadcast.phase === 'preview' && camera.phase === 'live' && broadcast.source === 'camera'}
       <button
         type="button"
         class={iconButton}
@@ -319,6 +329,42 @@
           ? m.live_prelive_as_association({ name: associationName })
           : m.live_prelive_as_member()}
       </p>
+      {#if broadcast.canShareScreen}
+        <div
+          class="flex flex-col gap-2"
+          role="radiogroup"
+          aria-label={m.live_source_label()}
+          data-live-source-group
+        >
+          <div class="flex gap-2">
+            {#each ['camera', 'screen'] as const as option (option)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={broadcast.source === option}
+                disabled={broadcast.phase !== 'preview'}
+                class="{pill} flex-1 justify-center {broadcast.source === option
+                  ? 'bg-white text-black'
+                  : 'bg-white/15 hover:bg-white/25'}"
+                onclick={() => void broadcast.chooseSource(option)}
+                data-live-source={option}
+              >
+                {#if option === 'camera'}
+                  <Video size={18} strokeWidth={2.25} />
+                  {m.live_source_camera()}
+                {:else}
+                  <Monitor size={18} strokeWidth={2.25} />
+                  {m.live_source_screen()}
+                {/if}
+              </button>
+            {/each}
+          </div>
+          {#if broadcast.source === 'screen'}
+            <p class="text-sm text-white/80" data-live-source-hint>{m.live_source_screen_hint()}</p>
+          {/if}
+        </div>
+      {/if}
+
       <ul class="flex flex-col gap-2 text-sm text-white/90">
         <li class="flex items-start gap-2.5">
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
@@ -405,7 +451,11 @@
 
       {#if camera.phase === 'error' && camera.fault}
         <div class="flex items-center justify-between gap-3" role="alert">
-          <p class="text-sm text-white/80">{CAMERA_FAULT_TEXT[camera.fault]()}</p>
+          <p class="text-sm text-white/80">
+            {broadcast.source === 'screen'
+              ? m.live_source_screen_stopped()
+              : CAMERA_FAULT_TEXT[camera.fault]()}
+          </p>
           <button
             type="button"
             class="{pill} shrink-0 bg-white/15 hover:bg-white/25"

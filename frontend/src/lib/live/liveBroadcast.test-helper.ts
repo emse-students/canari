@@ -174,6 +174,8 @@ export function fakeDeps() {
     now: () => clock.t,
     sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
+    screenShareAvailable: vi.fn(() => false),
+    openScreen: vi.fn(async () => fakeStream().stream),
   } satisfies LiveBroadcastDeps;
   return {
     deps,

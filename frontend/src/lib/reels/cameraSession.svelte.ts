@@ -86,13 +86,23 @@ export class CameraSession {
    * awaited, and a stream it brings back is given back at once, since nothing is on screen to use it.
    */
   #suspended = false;
-  readonly #open: CameraOpener;
+  #open: CameraOpener;
   /** Opens a LENS ALONE, no microphone: a flip during a take keeps the take's microphone. */
   readonly #openLens: CameraOpener;
 
   constructor(open: CameraOpener = openReelCamera, openLens: CameraOpener = openPhotoCamera) {
     this.#open = open;
     this.#openLens = openLens;
+  }
+
+  /**
+   * Replaces what the next {@link start} opens - a live that broadcasts its screen instead of the
+   * camera - and returns the opener it replaces. It opens nothing itself.
+   */
+  swapOpener(open: CameraOpener): CameraOpener {
+    const previous = this.#open;
+    this.#open = open;
+    return previous;
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */

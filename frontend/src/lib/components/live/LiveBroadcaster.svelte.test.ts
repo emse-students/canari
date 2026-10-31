@@ -501,3 +501,42 @@ describe('LiveOverlay', () => {
     expect(q('[data-live-broadcaster-chat-box]')).toBeNull();
   });
 });
+
+describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
+  /** A preview on a desktop browser (can share a screen) or on a phone (cannot). */
+  function sheet(canShare: boolean) {
+    const f = fakeDeps();
+    f.deps.screenShareAvailable.mockReturnValue(canShare);
+    const cam = fakeCamera();
+    const broadcast = new LiveBroadcast(cam.session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: { broadcast, onclose: vi.fn(), readBattery: () => Promise.resolve(null) },
+      })
+    );
+    return { ...f, cam, broadcast };
+  }
+
+  it('a phone keeps the camera: no choice is drawn', async () => {
+    sheet(false);
+    await settle();
+    expect(q('[data-live-source-group]')).toBeNull();
+  });
+
+  it('a desktop browser offers Caméra and Écran, and Écran opens the screen with its hint', async () => {
+    const { broadcast, deps } = sheet(true);
+    await settle();
+    expect(q('[data-live-source="camera"]')!.textContent).toContain(m.live_source_camera());
+    expect(q('[data-live-source="screen"]')!.textContent).toContain(m.live_source_screen());
+    expect(q('[data-live-source-hint]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-source="screen"]')!.click();
+    await vi.waitFor(() => expect(broadcast.source).toBe('screen'));
+    await settle();
+    expect(deps.openScreen).toHaveBeenCalledTimes(1);
+    expect(q('[data-live-source="screen"]')!.getAttribute('aria-checked')).toBe('true');
+    expect(q('[data-live-source-hint]')!.textContent).toContain(m.live_source_screen_hint());
+  });
+});

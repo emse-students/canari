@@ -9,6 +9,7 @@
 
 import { CameraAccessError, classifyCameraError, type CameraFacing } from '$lib/reels/cameraAccess';
 import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
+import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
 import {
   LIVE_BATTERY_WARN_LEVEL,
@@ -180,4 +181,87 @@ export async function readBatteryLevel(
  */
 export function batteryWarrantsWarning(level: number | null): boolean {
   return level !== null && level < LIVE_BATTERY_WARN_LEVEL;
+}
+
+/**
+ * Whether this browser can broadcast its SCREEN instead of the camera (owner, 2026-10-31): the
+ * engine has `getDisplayMedia`, and the primary pointer is a mouse - phones and tablets keep the
+ * camera.
+ */
+export function screenShareAvailable(): boolean {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) return false;
+  return !isCoarsePointerDevice();
+}
+
+/**
+ * Opens the SCREEN for a live: the video of what the member picks (a screen, a window or a tab) at
+ * the live's size, and ONE audio track that is the microphone, mixed with the share's own audio
+ * (a tab's or the system's) when the browser offers one. The microphone is kept: a live has a
+ * voice. `audio: true` on the share only ASKS - the picker shows its "share audio" choice where
+ * the browser has one and the member decides, so a share without sound is an answer, not a failure.
+ *
+ * The mix lives in an `AudioContext`. Releasing the stream (`releaseCamera` stops every track)
+ * stops the mixed track, whose `stop` is wrapped to close the context and stop the sources it
+ * reads - nothing else would ever end them.
+ *
+ * @throws {CameraAccessError} `denied` when the picker is dismissed or the microphone refused (the
+ * caller returns to the camera on a dismissed picker), `unavailable` when the engine cannot share.
+ */
+export async function openLiveScreen(): Promise<MediaStream> {
+  console.debug('[LIVE-CAM] opening the screen');
+  const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+  if (!devices?.getDisplayMedia || !devices.getUserMedia) {
+    console.warn('[LIVE-CAM] getDisplayMedia is absent');
+    throw new CameraAccessError('unavailable', 'live screen: getDisplayMedia is not available');
+  }
+  let display: MediaStream;
+  try {
+    display = await devices.getDisplayMedia({
+      video: {
+        width: { ideal: LIVE_CAPTURE_LONG_SIDE_PX },
+        height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
+        frameRate: { ideal: LIVE_CAPTURE_FPS },
+      },
+      audio: true,
+    });
+  } catch (err) {
+    const fault = classifyCameraError(err);
+    console.warn(`[LIVE-CAM] the screen picker answered ${fault}`, err);
+    throw new CameraAccessError(fault, `live screen: ${fault}`, { cause: err });
+  }
+  let mic: MediaStream;
+  try {
+    mic = await devices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
+  } catch (err) {
+    for (const track of display.getTracks()) track.stop();
+    const fault = classifyCameraError(err);
+    console.warn(`[LIVE-CAM] the microphone for the screen share answered ${fault}`, err);
+    throw new CameraAccessError(fault, `live screen: microphone ${fault}`, { cause: err });
+  }
+  const video = display.getVideoTracks()[0];
+  const shareAudio = display.getAudioTracks();
+  const micTrack = mic.getAudioTracks()[0];
+  const sources: MediaStreamTrack[] = micTrack ? [micTrack, ...shareAudio] : [...shareAudio];
+  let audio: MediaStreamTrack | undefined = micTrack;
+  if (micTrack && shareAudio.length > 0) {
+    const context = new AudioContext();
+    const destination = context.createMediaStreamDestination();
+    context.createMediaStreamSource(new MediaStream([micTrack])).connect(destination);
+    context.createMediaStreamSource(new MediaStream([shareAudio[0]])).connect(destination);
+    audio = destination.stream.getAudioTracks()[0];
+    const stopMixed = audio.stop.bind(audio);
+    audio.stop = () => {
+      stopMixed();
+      for (const source of sources) source.stop();
+      void context.close();
+    };
+    console.debug("[LIVE-CAM] screen audio: the microphone mixed with the share's own audio");
+  } else {
+    console.debug(`[LIVE-CAM] screen audio: ${micTrack ? 'the microphone alone' : 'none'}`);
+  }
+  const settings = video?.getSettings?.();
+  console.debug(
+    `[LIVE-CAM] screen opened: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}`
+  );
+  return new MediaStream([...(video ? [video] : []), ...(audio ? [audio] : [])]);
 }

@@ -28,7 +28,7 @@
  */
 
 import { generateMediaCek } from '$lib/mediaCrypto';
-import type { CameraSession } from '$lib/reels/cameraSession.svelte';
+import type { CameraOpener, CameraSession } from '$lib/reels/cameraSession.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import {
   endLive,
@@ -43,7 +43,7 @@ import {
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
-import { ScreenWakeLock } from './liveDevice';
+import { ScreenWakeLock, openLiveScreen, screenShareAvailable } from './liveDevice';
 import {
   liveRecordingSupported,
   startLiveRecorder,
@@ -57,6 +57,9 @@ import {
   LIVE_SEGMENT_MS,
 } from './constants';
 import type { LiveEndResult, LiveLimits, LiveRulesStatus, LiveView } from './types';
+
+/** What a live broadcasts: the camera, or - on a desktop browser - the screen. */
+export type LiveSource = 'camera' | 'screen';
 
 /** Where the broadcast stands; see the diagram in the module comment. */
 export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'ending' | 'ended';
@@ -137,6 +140,10 @@ export interface LiveBroadcastDeps {
   /** Resolves after `ms`: the BOUND on a wait that has no verdict of its own, never a decision. */
   sleep: (ms: number) => Promise<void>;
   isHidden: () => boolean;
+  /** Whether this browser may broadcast its screen (desktop only). */
+  screenShareAvailable: () => boolean;
+  /** Opens the screen (and the microphone) as a live's source. */
+  openScreen: CameraOpener;
 }
 
 /** The real dependencies. */
@@ -156,6 +163,8 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     now: () => performance.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
+    screenShareAvailable,
+    openScreen: () => openLiveScreen(),
   };
 }
 
@@ -207,6 +216,12 @@ export class LiveBroadcast {
   awayProblem = $state<'unsendable' | null>(null);
   /** Whether this engine records the live's container at all (read once). */
   readonly supported: boolean;
+  /** A desktop browser that can broadcast its screen: the sheet then offers the choice. */
+  readonly canShareScreen: boolean;
+  /** What the live broadcasts; chosen in the preview ({@link chooseSource}), fixed once on air. */
+  source = $state<LiveSource>('camera');
+  /** The camera's opener, kept while the screen's stands in for it. */
+  #cameraOpener: CameraOpener | null = null;
 
   readonly #deps: LiveBroadcastDeps;
   #keyHex: string | null = null;
@@ -242,6 +257,7 @@ export class LiveBroadcast {
   ) {
     this.#deps = deps;
     this.supported = deps.recordingSupported();
+    this.canShareScreen = deps.screenShareAvailable();
     console.debug(
       `[LIVE-BROADCAST] screen for ${associationId ? `association ${associationId}` : 'the member'}, recordable ${this.supported}`
     );
@@ -390,8 +406,58 @@ export class LiveBroadcast {
     this.#goOnAir();
   }
 
+  /**
+   * Chooses what the live broadcasts, in the preview only. The screen's picker is the member's click
+   * (a browser lets `getDisplayMedia` run only on one), so this is called FROM the choice's handler.
+   * A picker that is dismissed - or a microphone that is refused - returns to the CAMERA at once: the
+   * member asked for nothing the camera does not already answer, and the camera's own fault, if any,
+   * is then the one shown.
+   */
+  async chooseSource(next: LiveSource): Promise<void> {
+    if (this.phase !== 'preview' || next === this.source) return;
+    if (next === 'screen' && !this.canShareScreen) {
+      console.warn('[LIVE-BROADCAST] the screen was chosen where it cannot be shared - ignored');
+      return;
+    }
+    console.log(`[LIVE-BROADCAST] source ${this.source} -> ${next}`);
+    this.source = next;
+    if (next === 'screen') {
+      const previous = this.camera.swapOpener(this.#deps.openScreen);
+      this.#cameraOpener ??= previous;
+    } else if (this.#cameraOpener) {
+      this.camera.swapOpener(this.#cameraOpener);
+    }
+    await this.camera.start();
+    if (next === 'screen' && this.camera.phase === 'error') {
+      console.warn(
+        `[LIVE-BROADCAST] the screen was not shared (${this.camera.fault}) - back to the camera`
+      );
+      this.source = 'camera';
+      this.camera.swapOpener(this.#cameraOpener!);
+      await this.camera.start();
+    }
+  }
+
+  /**
+   * The member stopped the share from the browser's own bar while on air: THE LIVE ENDS, cleanly,
+   * through the ordinary End. It does not fall back to the camera - a live that silently switched
+   * from what the member chose to show to their face is a surprise nobody agreed to - and it does
+   * not re-ask for a screen, which needs a click this code does not have.
+   */
+  async screenShareStopped(): Promise<void> {
+    if (this.source !== 'screen' || (this.phase !== 'live' && this.phase !== 'away')) return;
+    console.log('[LIVE-BROADCAST] the screen share was stopped from the browser - ending the live');
+    await this.end();
+  }
+
   /** The app left the screen. */
   appHidden(): void {
+    if (this.source === 'screen') {
+      // A hidden tab is the normal state of a screen share (the member is looking at what they
+      // share), and the share cannot be re-opened without a click: nothing is paused.
+      console.debug('[LIVE-BROADCAST] the page is hidden, the screen share goes on');
+      return;
+    }
     console.debug(`[LIVE-BROADCAST] app hidden in ${this.phase}`);
     ++this.#reacquireGeneration;
     if (this.phase === 'live') {
@@ -404,6 +470,7 @@ export class LiveBroadcast {
 
   /** The app is back on screen. */
   appVisible(): void {
+    if (this.source === 'screen') return;
     console.debug(`[LIVE-BROADCAST] app visible in ${this.phase}`);
     if (this.phase === 'preview' || this.phase === 'starting') {
       this.camera.resume();

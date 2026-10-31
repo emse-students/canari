@@ -1086,3 +1086,36 @@ exactness, what happens when Redis does not answer) is
 - The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
 - The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
   never draws under the iOS status bar (`LiveBroadcaster.svelte`).
+
+## Broadcasting the screen on a desktop browser (2026-10-31, owner)
+
+Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+
+- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
+  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
+  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
+  `LiveBroadcast.chooseSource`, preview only.
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
+  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
+  `start()`.
+- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
+- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
+  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
+  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
+  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
+  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
+  stops both sources and closes the context.
+- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
+  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
+  recorder takes the display's video track like a camera's, and the viewer's string is the same.
+- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
+  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
+  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
+  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
+  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
+- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
+  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
+  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
+  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
+  switch-camera button is hidden while the source is the screen.
