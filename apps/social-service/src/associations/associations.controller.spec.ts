@@ -224,12 +224,22 @@ describe('AssociationsController response shape', () => {
       service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
       const result = await controller.setLydiaAccount(
         'asso1',
-        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        {
+          lydiaAccountId: VENDOR_TOKEN,
+          lydiaDashboardUrl: DASHBOARD_URL,
+          businessPrivateToken: 'throwaway-business-key',
+        },
         'internal-secret-for-tests'
       );
       expect(result).toEqual({ ok: true });
       const body = JSON.stringify(result);
-      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+      for (const secret of [
+        VENDOR_TOKEN,
+        DASHBOARD_URL,
+        VAULT_KEY,
+        NOTES,
+        'throwaway-business-key',
+      ]) {
         expect(body).not.toContain(secret);
       }
     } finally {

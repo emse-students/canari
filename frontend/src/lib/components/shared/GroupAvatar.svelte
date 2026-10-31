@@ -2,15 +2,16 @@
   import { Users } from '@lucide/svelte';
   import { mediaUrl } from '$lib/utils/apiUrl';
   import { getInitials } from '$lib/utils/avatar';
+  import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
+    /** Stable id of the conversation, group or community: seeds the placeholder colour, never the name. */
+    id: string;
     /** Media-service ID of the avatar image. When absent, falls back to icon/initials. */
     imageMediaId?: string | null;
     /** Display name used for initials fallback. */
     name?: string;
-    /** Visual variant controls the fallback icon and color scheme. */
-    variant?: 'group' | 'community';
     /** Avatar size preset. */
     size?: 'sm' | 'md' | 'lg';
     /** When true, the avatar stretches to fill its container instead of using a preset size. */
@@ -20,9 +21,9 @@
   }
 
   let {
+    id,
     imageMediaId = null,
     name = '',
-    variant = 'group',
     size = 'md',
     fill = false,
     shape = 'soft',
@@ -46,10 +47,6 @@
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
 
   const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
-
-  const fallbackClasses = $derived(
-    variant === 'community' ? 'bg-amber-500 text-cn-ink' : 'bg-cn-ink text-cn-yellow'
-  );
 
   /**
    * The letters drawn when there is no image, or nothing when the icon should show instead.
@@ -83,14 +80,20 @@
     onerror={() => (loadFailed = true)}
   />
 {:else}
-  <div
-    class="{shapeClasses} flex shrink-0 items-center justify-center font-bold shadow-sm select-none {sizeClasses} {fallbackClasses}"
-    title={name}
-  >
-    {#if initials}
-      <span class="text-zoom-exempt">{initials}</span>
-    {:else}
+  {#if initials}
+    <AvatarPlaceholder
+      seed={id}
+      {initials}
+      class="{shapeClasses} shrink-0 shadow-sm {sizeClasses}"
+      title={name}
+    />
+  {:else}
+    <AvatarPlaceholder
+      seed={id}
+      class="{shapeClasses} shrink-0 shadow-sm {sizeClasses}"
+      title={name}
+    >
       <Users size={iconSize} />
-    {/if}
-  </div>
+    </AvatarPlaceholder>
+  {/if}
 {/if}
