@@ -702,7 +702,7 @@ never one line each; the key and segment bytes never.
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
 with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
-(read on the iPhone in check Y); no deep link to one live.
+(read on the iPhone in check Y); no deep link to one live (the Share button of both screens shares the feed's link, `live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
 
 ## The broadcaster (as built)
 

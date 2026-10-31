@@ -18,11 +18,14 @@
     CameraOff,
     Eye,
     LoaderCircle,
+    MessageCircle,
+    MessageCircleOff,
     Monitor,
     Radio,
     RefreshCcw,
     ShieldAlert,
     ShieldCheck,
+    Share2,
     SwitchCamera,
     Video,
     WifiOff,
@@ -43,6 +46,10 @@
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
   import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
+  import { currentUserId } from '$lib/stores/userState.svelte';
+  import { shareLiveLink } from '$lib/live/shareLive';
+  import LiveBadge from './LiveBadge.svelte';
+  import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
 
@@ -79,6 +86,10 @@
   let viewers = $state<number | null>(null);
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameReady = $state(false);
+  /** Whether the chat is drawn over the video; the toggle at the top right flips it. */
+  let chatOpen = $state(true);
+  /** Who broadcasts, for the corner identity: the signed-in member, or the association they speak as. */
+  const broadcasterId = $derived(currentUserId());
   let video = $state<HTMLVideoElement | null>(null);
 
   const onAir = $derived(broadcast.phase === 'live' || broadcast.phase === 'away');
@@ -278,19 +289,22 @@
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
       <div class="flex flex-col items-start gap-2" role="status">
         {#if onAir}
-          <span
-            class="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-xs font-bold tracking-wide uppercase"
-          >
-            <span class="h-2 w-2 rounded-full bg-white motion-safe:animate-pulse" aria-hidden="true"
-            ></span>
-            {m.live_on_air()}
+          <!-- Who is on air, then the badge, the time and the audience: Instagram Live's corner. -->
+          {#if broadcasterId}
+            <span class="text-sm" data-live-identity>
+              <LiveIdentity live={{ broadcasterId, associationId }} size="sm" />
+            </span>
+          {/if}
+          <span class="flex items-center gap-1.5">
+            <LiveBadge />
             <span
               role="timer"
               aria-label={m.live_elapsed_label()}
-              class="font-semibold tabular-nums">{clock(elapsedMs)}</span
+              class="bg-cn-scrim/40 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+              >{clock(elapsedMs)}</span
             >
+            <LiveViewerCount count={viewers} />
           </span>
-          <LiveViewerCount count={viewers} />
         {/if}
         {#if onAir && broadcast.health === 'retrying'}
           <span
@@ -318,17 +332,58 @@
       </button>
     {/if}
 
-    {#if broadcast.phase === 'preview' && camera.phase === 'live' && camera.canSwitch && broadcast.source === 'camera'}
-      <button
-        type="button"
-        class={iconButton}
-        aria-label={m.reels_camera_switch()}
-        title={m.reels_camera_switch()}
-        onclick={() => void camera.switchFacing()}
-      >
-        <SwitchCamera size={22} strokeWidth={2.25} />
-      </button>
-    {/if}
+    <div class="flex shrink-0 items-center gap-2">
+      {#if broadcast.phase === 'preview' && camera.phase === 'live' && camera.canSwitch && broadcast.source === 'camera'}
+        <button
+          type="button"
+          class={iconButton}
+          aria-label={m.reels_camera_switch()}
+          title={m.reels_camera_switch()}
+          onclick={() => void camera.switchFacing()}
+        >
+          <SwitchCamera size={22} strokeWidth={2.25} />
+        </button>
+      {/if}
+      {#if onAir}
+        <!-- The on-air controls, together at the top right: share the link, show or hide the chat
+             (the old eye-off icon hid ONE LINE and is now in that line's tap menu), and the small
+             End - destructive, so it asks (`confirmEnd`). -->
+        <button
+          type="button"
+          class={iconButton}
+          aria-label={m.live_share_label()}
+          title={m.live_share_label()}
+          onclick={shareLiveLink}
+          data-live-share
+        >
+          <Share2 size={20} strokeWidth={2.25} />
+        </button>
+        <button
+          type="button"
+          class={iconButton}
+          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          aria-pressed={chatOpen}
+          onclick={() => (chatOpen = !chatOpen)}
+          data-live-chat-toggle
+        >
+          {#if chatOpen}
+            <MessageCircle size={20} strokeWidth={2.25} />
+          {:else}
+            <MessageCircleOff size={20} strokeWidth={2.25} />
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="inline-flex min-h-9 items-center gap-1 rounded-full bg-red-600 px-3 text-xs font-bold outline-none hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-white"
+          onclick={() => void confirmEnd()}
+          data-live-end
+        >
+          <X size={14} strokeWidth={3} />
+          {m.live_end_button()}
+        </button>
+      {/if}
+    </div>
   </div>
 
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
@@ -510,13 +565,14 @@
        cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
   {#if onAir && broadcast.liveId && broadcast.chatKey}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/3 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)]"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-(--safe-area-inset-bottom,0px)"
       data-live-broadcaster-chat-box
     >
       {#key broadcast.liveId}
         <LiveBroadcasterChat
           liveId={broadcast.liveId}
           keyHex={broadcast.chatKey}
+          visible={chatOpen}
           onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
           onViewers={(count) => (viewers = count)}
         />
@@ -550,22 +606,6 @@
           {m.live_away_retry()}
         </button>
       {/if}
-    </div>
-  {/if}
-
-  {#if onAir}
-    <div
-      class="absolute inset-x-0 bottom-0 flex justify-center pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
-    >
-      <button
-        type="button"
-        class="{pill} bg-red-600 hover:bg-red-500"
-        onclick={() => void confirmEnd()}
-        data-live-end
-      >
-        <X size={18} strokeWidth={2.5} />
-        {m.live_end_button()}
-      </button>
     </div>
   {/if}
 
