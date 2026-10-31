@@ -448,6 +448,13 @@ same pull request.
   in one transaction committed BEFORE any send: two replicas never both send, a crash after the
   commit loses that reminder (at most once, as the forms reminder). The reference test runs two at
   once and counts one per person.
+- **The avatar of a booking notice** (owner, 2026-10-30): the bell row draws the logo of the
+  association that owns the booked space. `cancelled` / `added` already did when the organiser acted
+  (`present`); the REMINDER, which had the platform's neutral avatar, now carries `associationId`,
+  `associationLogoUrl` and the association's name as `actorName` (row columns, no migration, never
+  the push). `withdrawn` keeps the person who left. A space reached by its link only, a personal
+  space and every reminder written before this change keep the neutral avatar (Q-R5; an old row is a
+  data gap, logged at debug by the row). `reminderAssociation` decides, `NotificationRow` draws.
 - **Each person's delay** (Q-R1): the holder's from the booking request (`reminderMinutes`, absent =
   the space's default; never for an account booked on behalf of), a participant's the space's
   default; `PATCH bookings/:id/reminder { minutes }` for the holder or a participant still in,

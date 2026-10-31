@@ -3,7 +3,11 @@ import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
-import { BookingNotificationsService, reminderLine } from './booking-notifications.service';
+import {
+  BookingNotificationsService,
+  reminderAssociation,
+  reminderLine,
+} from './booking-notifications.service';
 import { Booking } from './entities/booking.entity';
 
 /** How many reminders one claim takes; a run loops until nothing is due. */
@@ -20,6 +24,10 @@ interface ClaimedReminder {
   resourceName: string;
   discoverability: string;
   timeZone: string;
+  /** The owning association, when the space has one (null for a personal space). */
+  associationId: string | null;
+  associationName: string | null;
+  associationLogoUrl: string | null;
 }
 
 /** What one run did, for the test and the log line. */
@@ -39,10 +47,12 @@ export interface BookingReminderReport {
  */
 const DUE_HOLDERS = `
   SELECT b.id AS "bookingId", b."holderId" AS "recipientId", b."startsAt",
-         s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone"
+         s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone",
+         s."associationId", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl"
     FROM bookings b
     JOIN booking_resources r ON r.id = b."resourceId"
     JOIN booking_spaces s ON s.id = r."spaceId"
+    LEFT JOIN associations a ON a.id = s."associationId"
    WHERE b."reminderSentAt" IS NULL AND b."reminderMinutes" IS NOT NULL AND b."cancelledAt" IS NULL
      AND b."startsAt" > $1::timestamptz
      AND b."startsAt" - make_interval(mins => b."reminderMinutes") <= $1::timestamptz
@@ -54,11 +64,13 @@ const DUE_HOLDERS = `
 
 const DUE_PARTICIPANTS = `
   SELECT p.id AS "rowId", b.id AS "bookingId", p."userId" AS "recipientId", b."startsAt",
-         s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone"
+         s.name AS "spaceName", r.name AS "resourceName", s.discoverability, s."timeZone",
+         s."associationId", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl"
     FROM booking_participants p
     JOIN bookings b ON b.id = p."bookingId"
     JOIN booking_resources r ON r.id = b."resourceId"
     JOIN booking_spaces s ON s.id = r."spaceId"
+    LEFT JOIN associations a ON a.id = s."associationId"
    WHERE p."reminderSentAt" IS NULL AND p."reminderMinutes" IS NOT NULL AND p."withdrawnAt" IS NULL
      AND b."cancelledAt" IS NULL
      AND b."startsAt" > $1::timestamptz
@@ -127,7 +139,12 @@ export class BookingReminderScheduler {
           // Each in its own `try`: one recipient that fails does not silence the batch.
           try {
             const line = reminderLine(row, new Date(row.startsAt), row.timeZone);
-            await this.notices.remind(row.recipientId, row.bookingId, line);
+            await this.notices.remind(
+              row.recipientId,
+              row.bookingId,
+              line,
+              reminderAssociation(row)
+            );
             report.sent += 1;
           } catch (e) {
             report.failed += 1;
