@@ -4,6 +4,8 @@
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import SlowLinkAnnouncer from '../shared/SlowLinkAnnouncer.svelte';
+  import { slowLink } from '$lib/stores/slowLink.svelte';
   import { goto } from '$app/navigation';
   import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -64,12 +66,16 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
-          title={m.nav_my_profile_title()}
-          class="tap-target rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
+          title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
+          data-slow-link={slowLink.active || undefined}
+          class="tap-target rounded-2xl ring-3 transition-all duration-200 hover:ring-amber-400 {slowLink.active
+            ? 'ring-banner-notice'
+            : 'ring-transparent'}"
           aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />
         </button>
+        <SlowLinkAnnouncer />
       {/if}
     </div>
   </div>
