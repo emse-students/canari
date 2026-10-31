@@ -21,10 +21,16 @@ describe('the association a reminder shows (owner, 2026-10-30)', () => {
     });
   });
 
-  it('is nobody on a link-only space (Q-R5), a personal space, or a vanished association', () => {
+  it('is nobody on a link-only space (Q-R5), or a personal space', () => {
     expect(reminderAssociation({ ...facts, discoverability: 'link' })).toBeNull();
     expect(reminderAssociation({ ...facts, associationId: null })).toBeNull();
-    expect(reminderAssociation({ ...facts, associationName: null })).toBeNull();
+  });
+
+  it('keeps the row when the association has no name yet, drawn under the platform name', async () => {
+    expect(reminderAssociation({ ...facts, associationName: null })).toMatchObject({
+      id: 'asso-1',
+      name: '',
+    });
   });
 
   it('rides the bell row as associationId and logo, and stays the platform without one', async () => {
