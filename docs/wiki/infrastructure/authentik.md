@@ -715,8 +715,12 @@ mail or reach a source. What the cut-over checks, in order, and refuses on:
 | a real sign-in: the password flow with PKCE, ending with a Canari core-service redeeming the code | the only check that crosses the whole chain |
 
 **Measured on production: 60 s of sign-in downtime**, 298 snapshot lines identical, no Django
-migration applied at boot (Authentik runs the same version on both majors). The 16 volume is kept
-untouched as the rollback until it is retired by name.
+migration applied at boot (Authentik runs the same version on both majors). The 16 volume was kept
+untouched as the rollback, then **retired the same day on the owner's decision**, once production had
+been re-checked on 18 (health, providers, a real sign-in) and a checksummed copy of the cut-over dump
+was confirmed kept off the host. It went BY NAME after the same checks as Canari's 2026-09-18: no
+container referencing it, `PG_VERSION` 16. The `postgres:16-alpine` image was NOT removed - another
+stack on the host still runs it. From here, the way back is the dump, not a volume.
 
 **A first attempt rolled itself back, and the cause is a trap worth knowing.** On a FRESH volume
 the postgres entrypoint starts a temporary server to initialise the cluster, listening on the unix
