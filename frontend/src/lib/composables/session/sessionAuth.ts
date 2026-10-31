@@ -317,6 +317,7 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     deviceKeyB64: ctx.getDeviceKey(),
     scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
     setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+    onCaughtUp: () => ctx.onConnectionCaughtUp(),
     setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
     processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
     log: cb.log,
@@ -1911,10 +1912,15 @@ export async function loginImpl(
     // communities API.
     const distributionChannels = new ChannelService();
     mlsService.setDistributionGroupInfoTransport({
-      fetch: async (scope) => {
-        const ref = await distributionChannels.getDistributionGroup(scope);
+      fetch: async (scope, deviceId) => {
+        const ref = await distributionChannels.getDistributionGroup(scope, deviceId);
         return ref.groupInfo !== null && ref.baseEpoch !== null
-          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch, activeEpoch: ref.activeEpoch }
+          ? {
+              groupInfo: ref.groupInfo,
+              baseEpoch: ref.baseEpoch,
+              activeEpoch: ref.activeEpoch,
+              ...(ref.seat ? { seat: ref.seat } : {}),
+            }
           : null;
       },
       publish: (scope, groupInfo, baseEpoch, deviceId) =>
@@ -2128,7 +2134,7 @@ export async function loginImpl(
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
-    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    // there is no network, and it logs "[WS] Gateway connection failed" for a device that never had one.
     let gatewayIsOpen = false;
     if (offlineSession) {
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');

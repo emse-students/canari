@@ -61,7 +61,7 @@ function makeMls(state: { declined: boolean }) {
     isDistributionGroup: vi.fn().mockReturnValue(false),
     noteDistributionGroup: vi.fn(),
     notifyConversationAvailable: vi.fn(),
-    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
   };
 }

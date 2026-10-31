@@ -20,6 +20,7 @@ import type {
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
+  OnboardingResult,
   PaymentProvider,
   PaymentProviderId,
   WireLineItem,
@@ -51,7 +52,26 @@ export class PaymentService {
     this.lydiaProvider = new LydiaPaymentProvider({
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
+      LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
     });
+  }
+
+  /**
+   * Adds the Responsable of an association's Business at Lydia with every right and reads them back
+   * (`LydiaPaymentProvider.addBusinessHolder`). Lydia-specific and independent of which provider is
+   * ACTIVE: enrolling is allowed while payments are switched off platform-wide.
+   */
+  async addLydiaBusinessHolder(
+    associationId: string,
+    vendorToken: string,
+    phone: string
+  ): Promise<void> {
+    return this.lydiaProvider.addBusinessHolder(associationId, vendorToken, phone);
+  }
+
+  /** Reads one cashier's rights at Lydia, read-only (`LydiaPaymentProvider.readCashierRights`). */
+  async readLydiaCashierRights(associationId: string, vendorToken: string, phone: string) {
+    return this.lydiaProvider.readCashierRights(associationId, vendorToken, phone);
   }
 
   /** Reads the admin-configured provider choice and returns the matching instance. */
@@ -111,7 +131,9 @@ export class PaymentService {
     existingAccountId?: string;
     /** Required by Lydia's business/create. */
     legalProfile?: BusinessLegalProfile;
-  }): Promise<{ url: string; accountId: string }> {
+    /** `OnboardingParams.onBusinessCreated`: the vendor token, before the key check and link. */
+    onBusinessCreated?: (vendorToken: string) => Promise<void>;
+  }): Promise<OnboardingResult> {
     return (await this.getProvider()).createOnboarding(params);
   }
 

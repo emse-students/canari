@@ -195,7 +195,7 @@ services:
   # Garage - S3-compatible object storage for encrypted media blobs (replaces MinIO)
   # ─────────────────────────────────────────────────────
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
       - "9000:3900"   # S3 API
@@ -246,7 +246,7 @@ services:
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      # exactly `true`. ON here, as render-env.sh renders it on both estates; lives_mode is the runtime switch.
       LIVE_ENABLED: ${LIVE_ENABLED:-true}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -372,7 +372,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      # exactly `true`. ON here, as render-env.sh renders it on both estates; lives_mode is the runtime switch.
       LIVE_ENABLED: ${LIVE_ENABLED:-true}
       # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on

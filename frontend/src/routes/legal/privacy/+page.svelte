@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="29/10/2026"
+  updated="31/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -164,6 +164,21 @@
         </dd>
       </div>
       <div>
+        <dt>Responsable du compte de paiement Lydia d'une association</dt>
+        <dd>
+          Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
+          de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
+          reçoit un SMS de Lydia et devient caissier de ce compte. Le numéro est saisi par le
+          trésorier : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle. Canari garde l'identifiant du membre, celui du trésorier qui l'a désigné,
+          la date, et le numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers
+          chiffres sont affichés. Le numéro chiffré et ses deux derniers chiffres sont effacés quand
+          le compte Lydia est délié de l'association ; les deux identifiants restent jusqu'à la
+          suppression de votre compte Canari, avec laquelle la ligne est supprimée. Lydia conserve
+          ses propres données selon sa politique.
+        </dd>
+      </div>
+      <div>
         <dt>Formulaires publics (réponses sans compte)</dt>
         <dd>
           Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
@@ -198,9 +213,12 @@
           délai de rappel que chacun choisit, et l'heure à laquelle ce rappel est parti. Le message
           qu'un organisateur joint à une annulation n'est pas conservé avec la réservation : il ne
           figure que dans la notification. Sur un espace accessible par son seul lien, la
-          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Ces
-          notifications, message compris, sont supprimées au bout de 90 jours, comme toute
-          notification dans l'application.
+          notification sur l'écran verrouillé ne nomme ni l'espace ni l'organisateur. Dans
+          l'application, la notification nomme le lieu (l'espace et la ressource, qui peut porter le
+          nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
+          créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
+          bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
+          a été supprimé entre-temps.
         </dd>
       </div>
       <div>
@@ -221,28 +239,33 @@
         </dd>
       </div>
       <div>
-        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dt>Appels audio et vidéo (quand la fonction est ouverte)</dt>
         <dd>
-          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
-          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
-          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
-          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
-          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
-          6. Une fois l'appel décroché,
+          Le son et l'image d'un appel sont chiffrés de bout en bout entre les deux appareils : ni
+          notre serveur ni Cloudflare ne peuvent les écouter ou les voir, et aucun appel n'est
+          enregistré, ni le son ni l'image. La caméra ne s'allume que pendant un appel : quand vous
+          passez ou acceptez un appel vidéo, ou quand vous l'allumez pendant l'appel. Elle s'éteint
+          quand vous la coupez, quand l'appel se termine et tant que l'application est en
+          arrière-plan (elle se rallume à votre retour si elle était allumée). Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, si l'appel est demandé en
+          vidéo (sans le conserver), qui décroche et depuis quel appareil, l'heure et la durée. Il
+          garde l'état d'un appel 4 heures au plus après son début, et ses journaux techniques en
+          gardent la trace pendant la durée indiquée en section 6. Une fois l'appel décroché,
           <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
           serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
           IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
           de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
-          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
-          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
-          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
-          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
-          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
-          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
-          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
-          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
-          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
-          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son et l'image, toujours
+          chiffrés, passent par le relais de Cloudflare (section 4), qui en voit le volume. Un appel que
+          vous ne décrochez pas ne transmet votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez
+          refuser les appels dans chaque conversation, et aucun appel n'est possible entre deux membres
+          dont l'un a bloqué l'autre. La conversation garde une ligne « appel » (heure, durée), chiffrée
+          comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
+          appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
+          fermée : il contient en clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un
+          groupe, et les identifiants techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée
+          est générique, « Appel entrant », sans nom), et sur les deux s'il s'agit d'un appel vidéo. Dans
+          cette version, un appel ne sonne que dans l'application ouverte.
         </dd>
       </div>
       <div>
@@ -432,7 +455,9 @@
         <p>
           Prestataire de paiement français. Il reçoit le montant, le nom des produits et l'adresse
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
-          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia.
+          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
+          le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
+          afin de l'ajouter comme caissier de ce compte.
         </p>
       </li>
       <li>

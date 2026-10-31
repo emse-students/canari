@@ -25,7 +25,7 @@
         : 'border-cn-border hover:border-cn-yellow/50'}"
     >
       <input type="radio" bind:group={method} value="online" class="accent-cn-yellow" />
-      <span class="text-text-main text-sm font-semibold">{m.form_view_online_label()}</span>
+      <span class="text-text-main text-sm font-semibold">{m.asso_achats_payment_online()}</span>
     </label>
     <label
       class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {method ===
@@ -34,7 +34,7 @@
         : 'border-cn-border hover:border-cn-yellow/50'}"
     >
       <input type="radio" bind:group={method} value="cash" class="accent-cn-yellow" />
-      <span class="text-text-main text-sm font-semibold">{m.form_view_cash_label()}</span>
+      <span class="text-text-main text-sm font-semibold">{m.asso_achats_payment_cash()}</span>
     </label>
   </div>
 </div>

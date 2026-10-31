@@ -33,6 +33,71 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - `trackedFetch` counts an edge page (a portal's 511, the WAF's HTML 403) as proof the server is reachable, for every REST call and the probe
+
+**The rule it breaks:** a captive portal must never prove reachability. `trackedFetch` calls
+`answered()` on ANY response, so a portal's `511` or the WAF's HTML `403` clears `isOffline`,
+fires the reconnect listeners (outbox flush, owed archive replays) and ends the reachability
+probe, all on the say-so of something that is not the server.
+
+**Why the pull alone was not changed further:** the pending pull and the history batch now clear
+`isOffline` only on the gateway's answer, and leave it as it was on an edge page
+([section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+Making the pull also MARK the server down on an edge page would flip-flop: the probe, which goes
+through `trackedFetch`, would get the same edge page, call it reachable, and undo the mark, with a
+reconnect edge each round.
+
+**Fix shape:** require a gateway answer (`responseOrigin(res) === 'gateway'`) in `trackedFetch` and
+in the probe, in ONE change, so that every route reads an edge page the same way. Measure it on
+dev, because it changes reachability for the whole app.
+
+## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
+
+One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). The
+catch-up fan-out and the transport failures logged as errors are fixed on
+`fix/catchup-transport-failure` ([offline-and-weak-network section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+These are the lines of the same log that fix does NOT cover, each with its count:
+
+- **P2 - `[QUEUE] delivery ... arrived twice` is back: 31 lines** (`BaseMlsService.ts`, `REPEAT_MEANS`,
+  ~line 2219). The ack-before-pull ordering (`ackInFlight`, CHANGELOG) was recorded as closing it; on
+  this log the ack landed before the pull and the pull still listed the row. Read which cell of
+  `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
+  cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
+- **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
+  ([architecture](frontend/architecture.md)) reached from the salon send path: a `$derived` read
+  after its owner was destroyed. Name the component whose effect outlives the send first.
+- **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
+  600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
+  rejection says why, read it from the log line before touching the code.
+- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
+  An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
+  decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
+  and say it at the level of what it is; any other rejection keeps the warn.
+- **Raised to P2: the boot restore's absent-conversation refusals** - see
+  [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
+  **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
+
+## P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)
+
+#2782 stops the heartbeat holding the foreground guard at the PIN gate. A launch that signs in
+WITHOUT the PIN still loads a manager in the background, and that page holds the guard, correctly:
+biometrics with no prompt due (`ChatBackgroundService.svelte`, `biometricLogin(..., { unattended:
+!promptDue })`), or "stay signed in" on a hardware-held key (`sessionAuth.ts`, `[PIN] Stay signed in on
+a hardware-held key`). Its Decline is then refused (`encryptQueuedMessages: ok=false (... foreground
+active ...)`) and the caller rings out. The fix is to send the decline THROUGH the page's loaded
+manager when one exists, not a second background writer. Named in
+[calls](frontend/modules/calls.md#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31).
+
+## P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)
+
+The recovery reads `mls.bin` early (`sessionAuth.ts`, `loadMlsState(userId)`), checks the PIN, then
+hands those bytes to the native login, which installs them via `mark_foreground_manager_loading`
+(`commands/mls.rs`, the `(supplied, _)` arm) - never re-reading the file under `mls_bin_write_lock`.
+With #2782 the guard is no longer held at the PIN gate, so an in-process background write (a CallKit
+Decline, a quick reply) landing during the PIN check can be erased by the recovery's next blind
+write. Mitigated by `reconcileSendRatchets`. Fix: pass `stateOnDisk` so the native side reads under
+the lock, or compare a digest of the supplied bytes under the lock and refuse on a difference.
+
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
 
 **Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
@@ -354,7 +419,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
 A production count of legacy tier tags without a consistent issuer is owed to the operator after
 the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
 
-## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix MERGED (#2647), read `PASS`, not shipped
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
 reviewed it and published it. The app's logs and the system's own records agree on two short,
@@ -367,8 +432,11 @@ unrequested opens. Nothing stayed open: the session released the late stream its
 | +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
 
 Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
-**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
-return.
+**Read `PASS` on the Mi 9T, rig build `5c362c0e1` on dev (2026-10-28)**, the same path with a
+synthetic video: one CONNECT when the camera opened and one DISCONNECT when the gallery picker
+opened, the CAMCORDER recording stopping with it; after the pick's return and after Publish, no
+CONNECT, no recording, and `appops` still dating the last camera and microphone access to the
+picker's open. Logcat's `CameraService` shows the same single pair. Owed: nothing but the release.
 
 ## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 
@@ -561,7 +629,20 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
   accusing. Pair the change with a test that a conversation's self-entry still logs at error.
 
-## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29)
+## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29) - CAUSE NAMED, the key-group spelling FIXED in `fix/welcome-redelivery-cause`; delete at the stable
+
+- **Named 2026-10-30, from the kept rig consoles: neither a lost ack nor a second mint.** On 11 of
+  11 key-group occurrences (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29), the Welcome's
+  `qId` is delivered once. In each case, `externalJoin succeeded` for the same group follows within
+  200 ms, and every member applies an external commit with `removes=1`.
+- The device had judged its seat on a roster read made before an admitter's Add. It then built on
+  the base that Add stored, and the admitter's Welcome found the group already built. The dev
+  containers had been redeployed, so the server logs were gone.
+- The fix judges the seat inside the join, from the seat the server serves with each attempt's base
+  (`welcomeOwed: 'ask'`, [channel-encryption](protocols/channel-encryption.md)).
+- The CONVERSATION spelling (`[WELCOME] <group>... already held`, the cold-start item below) is not
+  covered by this reading, and stays open.
+- Rerun SALON-REVOKE-COMMIT and the RM rows after the deploy: the line must be absent.
 
 - The handler logs the redelivery and drops it as idempotent. There are two spellings in
   `setupMessageHandler.ts`: the conversation one (`[WELCOME] <group>… already held - redelivered
@@ -591,6 +672,62 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
   same device), and make the request depend on a durable "already asked for this device and key",
   not on the read.
+- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
+  closes with the server row below. Delete this entry when both have shipped.
+  - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
+    once. Only a reset of every group's throttle does that, and its one caller is the session setup
+    (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
+    is read from the code, not proven.
+  - The member says its decision once per (group, device, key, epoch) while the ask is shown
+    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
+    about once a minute per group, and logs what the server did with each ask.
+  - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
+    REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
+    device until a reload. Stopping the re-ask waits for the server row below.
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built) - SUPERSEDED
+
+**Superseded the same day: a device of a member enters by itself, so it asks nobody and this row is moot - see [the 2026-10-30 decision](#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).** The reasoning below is kept for the ask that still exists in 1.5.2.
+
+- Today a further device of a member with no seat has no durable ask. The requester re-asks on its
+  cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
+- The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
+  and let every member's pending sweep re-raise it. The requester then stops asking once the row
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## A new device of a member ENTERS BY ITSELF, with a history and a visible trace (owner, 2026-10-30, the WhatsApp model, not built)
+
+Final decision of 2026-10-30, guided by "je ne veux pas importuner les utilisateurs du tout". It
+SUPERSEDES both the 2026-10-27 interim gate (the mandatory tap) and the "one approval per device"
+decision recorded earlier the same day. Planned for the release after 1.5.2.
+
+1. **Entry.** A new device of a person who is already a member enters by itself. No tap and no ask,
+   from anyone: not the owner's other devices, not contacts.
+2. **History.** That device receives the whole history its person was entitled to, filtered on that
+   person's own presence windows: the existing addressed-answer rule, rule 2, "a new device of a
+   continuous member", in [history-answer-addressing](protocols/history-answer-addressing.md).
+3. **Visibility.**
+   - A silent system line, "X a ajouté un appareil", in each of X's conversations: no notification
+     and no unread count.
+   - A discreet alert, "Nouvel appareil connecté", on X's other devices, with "Ce n'est pas moi",
+     which revokes that device.
+   - This is what makes a device added through a compromised login visible. **Accepted residual
+     risk, stated plainly:** such a device reads new messages and history until X reacts.
+4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
+   before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
+   Add (decided 2026-10-23).
+5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
+   the release after 1.5.2.
+6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
+   row (a separate PR).
+
+**Rejected earlier the same day:** one approval per device (a tap, account-wide and durable, plus a
+durable server row when the owner has no other device) - replaced by self-entry; self-entry on
+revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK,
+[mls-protocol](protocols/mls-protocol.md) shape B), which costs users an action.
+
+Mechanism and the superseded interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -603,6 +740,9 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   per-read class: no budget in the rig.
 - Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
   repeat of the same ask with that one decision.
+- FIXED in `fix/join-request-once` (2026-10-30), not shipped; delete this entry at the stable. Each
+  line is said once per asking device and key group, keyed on what it was decided on: which sessions
+  were withheld and why (`sayAnswerDecisionOnce` in `utils/graine/frameHandler.ts`).
 
 ## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -1361,7 +1501,12 @@ then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because
 destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
 trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
 
-## P3 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+## P2 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+
+**RAISED FROM P3 ON PRODUCTION NUMBERS (2026-10-30).** One `1.5.1` log of the owner's Pixel: **425
+absent-conversation refusals, and up to 124 unacked frames in ONE boot** - every one a second
+handling, and the gap healer holding later frames of its group until the re-pull lands. Not a dev
+campaign's corner any more: the size of the cost is the size of the backlog a phone comes back to.
 
 **Deferred past 1.4.1 on purpose.** The fix reorders Welcome and commit handling relative to the
 restore; a hang there would stop a device receiving anything, so it needs its own plan, review and
@@ -2506,7 +2651,42 @@ Reuse the bench phones with screen recording to make demo videos and screenshots
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
 built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
-Mi 9T and iPhone 12 readings.
+iPhone 12 readings, and on the Mi 9T what is listed as owed below.
+**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
+and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
+in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
+text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
+(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
+the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
+and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
+post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
+chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
+`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
+file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
+showing `share_staged` with the right type and size; deleting the three messages (one choice, a
+definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
+next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
+says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
+Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
+open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
+a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
+the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
+dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
+covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
+publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
+"Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
+read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
+was deleted from that page's menu - the viewer itself has no author menu.
+**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
+text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
+drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
+`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
+the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
+the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once the defect below was
+fixed.)
+**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
+system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
+`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
@@ -2514,6 +2694,101 @@ is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
+
+## P1 - The reel viewer's share sheet does nothing: every row reads a post id its own close erased (Mi 9T, 2026-10-28)
+
+In the CanaReels viewer, "Partager" opens `PostShareSheet`, and each of its rows - a conversation of
+the grid, "Copier le lien", "Partager via..." - closes the sheet and nothing else happens: no
+landing, no clipboard, no chooser, and the WebView logs `Uncaught TypeError: Cannot read properties
+of null (reading 'slice')` (three of three rows read, 1.5.1 `da43b8447`). **The cause, read in the
+code:** the sheet's `act()` calls `close()` BEFORE the action, and `ReelViewer` mounts the sheet with
+`postId={shareFor}` and `onClose={() => (shareFor = null)}`; the action then reads the live prop,
+now `null`, and `sendPostLinkInApp` / `copyPostLink` / `sharePostLinkOut` throw on `postId.slice`.
+The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`, which is why the
+same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
+viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
+closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
+**Fix MERGED (#2644), read `PASS` on the Mi 9T, rig build `203e46606` on dev (2026-10-28), synthetic reel:**
+a tap on a conversation of the viewer's sheet closes the viewer and opens that DM with the reel's link
+waiting in its composer, NOT sent (#2609's dismissal; `[sharePost] sending the link of <id>`, then
+`[SHARE] landing on <conversation>`). "Partager via..." opens the system chooser on the link, and
+"Copier le lien" logs `copying the public link of <id>`. No error in the window. The draft was cleared
+and the reel deleted.
+
+## P3 - A late native-library pick after "Rouvrir la camera" still reaches the review (#2655 review, 2026-10-28)
+
+On the native library path (`ReelCapture.openGallery`, the iOS app), tapping "Rouvrir la camera"
+while `pickNatively` is still pending runs `endPicking` early; the promise's later `.finally` is then
+a no-op, but a file it hands over still goes through `takePickedVideo` and replaces the live camera
+with a review. Arguably right (the member did pick it), and untested either way: owed a test that
+settles the native promise after the reopen, and a decision on whether a pick that arrives after the
+member chose the camera is kept or dropped.
+
+## P3 - Tests that read the source tree or spawn a worker time out under CPU load (2026-10-28)
+
+Tests that read the source tree or spawn a worker hit vitest's 5 s default when the machine is
+loaded: in a whole-suite local run (the CPU at 97 %), `environment.test.ts`,
+`globalChatSingleton.importCycle.test.ts`, `encryption.worker.test.ts`,
+`ChatArea.entryWindow.svelte.test.ts` and `graine/distributionGroup.test.ts` timed out, and each
+passed alone. CI was not hit. Give them an explicit timeout sized to their measured cost.
+
+## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
+
+On the Mi 9T's bench account, a reinstall surfaced a queue of "Nouvel appareil sur votre compte"
+alerts, one per enrolment of that account's other clients (dated 25 Oct 12:15, 12:20, 17:47,
+23:13, ...). Read from `NewDeviceBanner.svelte` and `deviceNotices.svelte.ts`, three things, and
+none of them is bench-only:
+
+- **One at a time.** The banner draws `pendingDeviceNotices()[0]`, and "Compris" and "Voir mes appareils"
+  dismiss that one alone, so N devices added while this one was away cost N taps. "Voir mes appareils"
+  opens the list that shows them all, yet it dismisses one.
+- **Nothing prunes an alert whose device has since left the account.** A pending alert is
+  removed by a dismissal or by "Ce n'est pas moi", never by the device's revocation elsewhere. That
+  is unread: whether the queued devices here are still enrolled.
+- **The banners sit above the full-screen CanaReels camera and the reel composer.** They take the top
+  third of the screen, and the camera's own controls start under them.
+
+Owed: one alert per batch (or "Voir mes appareils" dismisses every pending alert), an alert dropped
+when its device is no longer on the account, and the banner hidden or deferred on a full-screen
+capture surface. Read on the Mi 9T against the rig build `5c362c0e1`.
+
+## P3 - Whose is the deep-link manifest diff found in the main checkout? (2026-10-28)
+
+The main checkout held an uncommitted
+`frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml` diff, restored before an A1 build:
+`org.chromium.arc.intent.action.VIEW` added to the `signed-out` deep-link filter, and
+`android:path` entries (`/chat`, `/communities`, `/notifications`, `/calendar`, `/shop`,
+`/bookings`, ...) added under the `canari-emse.fr` host filter. The ARC action is already on `main`
+in the other filters (`git log -S`), and the paths are in `tauri.conf.json`'s deep-link config. This
+file is the one that `tauri android build` regenerates from that config (`REGENERATED_MANIFEST`,
+`tools/cross-client-harness/a1apk.mjs`). The diff was already in the checkout when the session
+started, before any build of it. An `a1apk.mjs` build of `5c362c0e1` then left the tree CLEAN,
+although neither the config nor the committed manifest differs between `fb7994232` and
+`5c362c0e1`. So which build wrote the diff, and why the same config regenerates differently, are
+both unanswered. Owed: reproduce it from a clean tree. If a build regenerates a manifest that
+differs from the committed one, the committed copy is stale and is regenerated in a pull request.
+
+## P3 - Three loose ends of the reel camera's no-start-after-leave fix (review of #2647, 2026-10-28)
+
+- **A picker that never answers leaves the camera stopped for good.** `deferOpen` is cleared when
+  the gallery picker answers, including the file input's `cancel` event; an engine without that
+  event (WebView or browser before Chromium 113, Safari before 16.4) or a native picker dismissal
+  the plugin never settles leaves it set, and the screen stays on its "starting" spinner with no
+  control to retry - the controls render only while live. Owed: a way out that is a gesture, not a
+  timer (a tap on the stand-in clears the deferral, or a reopen control while stopped and deferred),
+  and the WebView floor written down.
+- **The clear of `leaving` is untested.** The `afterNavigate` that clears it while the screen stays
+  mounted is mocked to a no-op in the tests, so deleting its body passes: capture the callback and
+  assert drain, then `afterNavigate` while mounted, then the camera opens again.
+- **`leaving` can outlive a navigation that does not happen** (theoretical): a non-shallow
+  navigation that drains the take and is then cancelled, or a bfcache restore, leaves it set. No
+  guard that cancels a navigation is mounted with the camera today.
+
+## P3 - A share already drained into the picker does not survive a kill (Mi 9T, 2026-10-28)
+
+Accepted as designed (2026-10-28): [sharing](frontend/sharing.md) promises a waiting share survives
+a kill only while the page has not taken it. Read on 1.5.1: a text share left open in "Envoyer
+a..." (`pending_share.json drained`), the app force-stopped and relaunched - nothing offered again.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
@@ -2579,6 +2854,13 @@ list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent
 the most recent conversation, so the one the member just left is at the top everywhere except
 there. Deciding: whether the forward and the share-in picker split their order, or both go to
 `'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - A toast draws over the dev-only "Environnement de test" banner (Mi 9T, 2026-10-28)
+
+On a dev build the `share_items_lost` toast lands on top of the test-environment banner at the top
+of the screen and the two texts overlap. Production carries no such banner, so only dev and tester
+builds show it; any toast placed at the top meets it the same way. Deciding: whether toasts sit
+below the banner or the banner yields while a toast shows.
 
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
@@ -2754,10 +3036,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **fill the Play Console "Foreground service permissions" declaration for `FOREGROUND_SERVICE_MICROPHONE`** (App content; in-app 1:1 calls, a description and a video of the call kept while the app is backgrounded). EXPECT the first pre-release carrying WP-C-BG-A to be refused at the `internal` upload until this form is filled - Play may refuse a bundle declaring an undeclared foreground-service permission on any track; not verified on this console. The GitHub release APK is built either way. Filled BEFORE that pre-release, the refusal never happens. Pre-release builds declare it, stables do not (`android.yml` checks) | 1 console form + a video | [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) |
-| **decide whether the feed's LEFT edge gets a gesture exclusion rect** (a swipe to the camera started in the left 30 CSS px is Android's Back: the previous page, or the app closes), like the right edge over a conversation - or nothing | 1 decision | [the tab swipe P2](#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21) |
 | **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
-| **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
 | **decide whether ruleset `22152902` gets a `code_scanning` rule (CodeQL, errors, high or higher)** - analysed, recommended, the exact `gh api` PUT written, not applied | 1 decision, 1 command | [cicd](cicd.md#a-code_scanning-rule-on-the-ruleset-analysed-2026-10-23-not-applied) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -2808,6 +3088,12 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## "Envoyer à..." from the camera tab, several targets, one shared file - decided by the owner on 2026-10-30
+
+**The decision, relayed in French:** depuis la caméra ouverte par le swipe à gauche, après une prise, le bouton principal est « Envoyer à... » ; il ouvre une liste dont la PREMIÈRE ligne est « Publier sur CanaReels » (comme « My Story » de Snapchat), puis les conversations, les groupes et les salons de communauté, avec une recherche ; on peut cocher PLUSIEURS cibles et envoyer en une fois. Stockage : UN SEUL fichier partagé pour toutes les cibles (un upload, une clé de contenu portée dans le message chiffré de chaque conversation), choisi en sachant qu'une suppression par un modérateur l'efface alors partout. **And the same day, for a take published on CanaReels AND sent to conversations, verbatim:** *"Un seul fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"* - one stored file for the feed and the chats.
+
+**Designed, not built** - the flow, the one-take-N-sends outbox, per-object holds so the file lives as long as its longest reference (the post, the 30-day chat hold), a moderator's purge erasing it everywhere (feed or salon), the purge allowlist that still names one salon, the tombstone a shared file needs, and the key: a published take's chat copies carry the post's key, so they are not end-to-end secret (acceptable only because the post's audience sees the same video). **Every question answered by the owner on 2026-10-30, the recommended option each time:** "Supprimer pour tout le monde" in one conversation deletes only that conversation's message, and the file only if that was the last send, with "Supprimer partout" offered separately on the sending device; the author's delete of the feed post leaves the chat copies in place until their 30 days, "Supprimer partout" remaining the gesture that ends everything; a photo taken in the camera tab also goes through "Envoyer à..." (an ordinary post and/or ordinary images in chats). **The additive migration is APPROVED (owner, 2026-10-30, "Oui")**: the salon message row records the reel's `mediaId` so a moderator only deletes what is in their salon. [reels-in-chat section 15](frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built). New packages RC-12 (the sheet), RC-13 (the multi-target outbox, **before** the writer switch) and RC-14 (server holds and purge, the approved migration), about 15 engineer-days with the RC-6/RC-9 amendments ([order](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
+
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
 **BUILT 2026-10-18, NOT SHIPPED.** The search goes through Canari since 2026-10-16; the GIF relay
@@ -2853,6 +3139,14 @@ Each leaked session holds, for 24 h, one of the owner's 4 open sessions, up to 2
 - **Proof:** an outbox test that cancels offline, relaunches online and sees the `DELETE`, plus one per wipe path.
 
 The mechanism and the gap are written up in [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Not built in #2117 because it is not small: it touches the sign-out and erasure wipe paths, needs a store that survives them, and adds a sweep to sign-in.
+
+## P2 - The in-app incoming ring is a media-volume beep, and the caller hears no ringback (owner's first production call, 2026-10-30, not built)
+
+The ring of a call arriving while the app is open is WebAudio tones at MEDIA volume and one 1.8 s vibration (`useNotifications.svelte.ts`, the in-app ring): silent with the media volume down, loud in silent mode, nothing like the phone's ringtone. Owed: a native ring through `CallBridge` - `RingtoneManager`'s default ringtone with `USAGE_NOTIFICATION_RINGTONE`, the ringer mode respected (silent / vibrate), a REPEATING vibration until answered, declined or ended - and a ringback tone on the caller's side while it shows "Appel...". Kept out of the audio-UX pull request of 2026-10-30, which fixed the call itself ([calls](frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)); the native ring's switches (`CALLS_NATIVE_RING_COMPILED`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`, `voip`) are a different surface and are not touched by it. Delete with its fix.
+
+## P3 - A call that loses the audio focus goes on as if nothing happened (decision owed, 2026-10-30)
+
+Since #2723 the Android call takes the audio focus (`AUDIOFOCUS_GAIN_TRANSIENT`, voice communication) and LOGS every change (`audio focus LOSS_TRANSIENT for call=...`). Nothing acts on a loss: a cellular call ringing in, or another app taking the focus, leaves the Canari call's microphone and voice running under it. Whether to HOLD the call (mute both ways and say so) or auto-mute the microphone on `LOSS_TRANSIENT`, and what `LOSS` means, is the owner's product decision; the logs from the phone readings say how often it happens ([calls](frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)). Delete with its decision.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 
@@ -4024,13 +4318,29 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **A test PAYMENT after the stable needs a validated Business, which does not exist yet** (the three Businesses made through the onboarding on 2026-10-23 wait for Lydia's validation and for the answer on how their holder signs in, [lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). Until then the payment path is proved only by the 2026-10-23 manual run (one real payment of the minimum amount through an older merchant account, its `confirm` verified), NOT by the stable. When a Business is validated: the manager pastes its private key, the global admin marks the onboarding complete, then ONE payment of the minimum amount (0.50 EUR) through a form, read to the end - the `confirm` callback arrives and verifies, `request/state` answers `1`, the answer is recorded as paid once, and the payer's return page agrees. A cancel on that paid request answers error 2 and changes nothing (measured). Refund and `end_mobile_url` stay unmeasured.
 
-**Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
+**Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook has no documented signature. Decided by the owner for lot 2 (2026-10-30, risk ACCEPTED): it marks the Business ready, and Lydia's error 5 / 2701 on a real `request/do` reverts it before any request exists; `BUSINESS_UNVALIDATED` changes nothing and notifies nobody, a WARN line its only record ([payments](frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).
 
-### Enrolment through Canari - the screen owes the path to validation (2026-10-23)
+### The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30
 
-The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
+**Context:** every Business is created by Canari's onboarding ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the first production enrolments (2026-10-23) left the manager with no next step, and the user asked for a step-by-step path nobody has to explain (2026-10-26). The 2026-10-30 homologation measurements (encoded signatures, `permissions` as an array, `api_token_id` = the Business private token, [lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)) lift the "stays OFF until a sandbox probe passes" condition.
 
-**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). **Tried on the sandbox and on one production Business (2026-10-27/28): refused with a signature error (444) across every signing variant attempted, both Provider-key and Business-key.** Outcomes-only findings are in [lydia-api](lydia-api.md#6-still-unknown). **The user sent an outcome-only message to the Lydia contact on 2026-10-29**, asking their engineer to check the server-side signature-verification log for one specific sandbox request. **The production sweep (wiring `addcashier` into enrolment) stays OFF until Lydia answers AND one sandbox probe passes with a working signature.**
+**Enrolment, in steps:** (1) association details -> `business/create`; Canari keeps `api_token_id` as the Business private key (encrypted as today) and passes a webhook URL. (2) The Responsable - the person enrolling by default, changeable to another member - is added by `addcashier` with all rights, Lydia's SMS on. (3) "Activate at Lydia": install Lydia Pro with that number and upload the documents, explained on screen. (4) Waiting for validation: the UNSIGNED `BUSINESS_VALIDATED` webhook marks the Business ready (risk accepted by the owner: error 5 / 2701 on the first `request/do` reverts it), `BUSINESS_UNVALIDATED` changes nothing and notifies nobody (a WARN line), and the admin "Valider l'onboarding" stays as the backup - the same writer ([payments](frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).
+
+**The paste-the-key field is DELETED.** Businesses already linked are migrated with the user in lot 1, a read-only count first. An outside Business still cannot be added without a database edit. **Re-running enrolment while a Business is linked is REFUSED** (unlink first, with confirmation).
+
+**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). Removal goes through Lydia's cashier-removal call (its shape is in the private operations notes), measured on homologation 2026-10-30 ([lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)); every revoke re-reads `business/getpermission` and counts only "0 rights" as success - anything else is an ERROR surfaced to the manager, never shown as success. Lot 3 ships no "add" before this revoke is proven once in production. This replaces the "reduce the rights + finish in the console" fallback, which the measurement made unnecessary.
+
+**Refunds from Canari, in this chantier:** total and partial, by `MANAGE_PAYOUT_ACCOUNT` holders, confirmed, with an audit of who refunded. A total refund withdraws the membership or frees the seat, EXCEPT a Cercle top-up, never reversed automatically (the manager is told). **Statement:** Canari's own records only, no `transaction/list`.
+
+**Not in scope:** payouts to people (`payment/send`); ease of payment (instalments) - questions to Lydia first (still offered, instalments, fees, who bears non-payment).
+
+**Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen, the Responsable (`business/addcashier`, the sealed phone), readiness from the webhook and from error 5 / 2701, the enrolment-in-flight marker, the managers' notices behind a switch (BUILT, a draft pull request; owed: review, CI, the dev pre-release, and one Responsable added on homologation); lot 3 - the Tresorier and Vendeur cashiers, changing and removing one; lot 4 - refunds.
+
+**Lot 2 carries the enrolment-in-flight marker (parked 2026-10-30, review of lot 1): BUILT** - `lydiaEnrolmentStartedAt` (migration 118), claimed before `business/create`, cleared by the link or a typed refusal, by a global admin otherwise ([payments](frontend/modules/payments.md#a-businesscreate-with-no-answer-the-outcome-is-unknown-and-the-screen-says-so)).
+
+**The production check is DONE (2026-10-30):** a cashier added by the Provider-signed `business/addcashier` gets Lydia's SMS and sees the Business in the Lydia Pro app - the 2026-10-23 blocker is lifted ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+
+**Lot 2 storage, confirmed by the owner directly on 2026-10-30: BUILT** - `lydia_cashiers` (migration 118), the phone sealed and `phoneEnd` alone readable, register entry C23 and the privacy policy in the same pull request. **The managers' notices are OFF** (`LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`) until both stores serve the build that renders `lydia_payments_active` / `lydia_payments_paused` ([legacy-compatibility](legacy-compatibility.md)).
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 
@@ -4370,7 +4680,7 @@ measurements: [lydia-api](lydia-api.md) and [payments](frontend/modules/payments
 | P2 | An out-of-range amount shows only a generic error and writes no log | fix in review (#2208) |
 | P3 | `request/state`'s `signature` was logged in clear; a free-amount product read "Libre (0-inf EUR)" | fix ready (#2209) |
 | P3 | The expired-form page has no retry control | covered by #2210 |
-| P2 | Re-running the Lydia onboarding silently replaces a linked, validated Business | open: refuse or ask for confirmation |
+| P2 | Re-running the Lydia onboarding silently replaces a linked, validated Business | decided 2026-10-30: refused while linked, lot 1 of [the enrolment chantier](#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30) |
 | P3 | A product with no price is creatable and its checkout answers 400 with no log | open |
 | Owed | The confirm callback verified with a Business key | done in production 2026-10-23 ([lydia-api](lydia-api.md#3-callbacks-confirm_url-cancel_url-expire_url)) |
 | Owed | A refund end to end, the default `expire_time` (at least 47 min), the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown); `request/cancel` on a PAID request measured 2026-10-23 (error 2, stays paid) |
@@ -4388,3 +4698,7 @@ on production. If it is 0, delete this section; otherwise a backfill migration t
 - **P2 - two shop/form facts from the owner's review of `1.5.1-alpha.7` (found 2026-10-29), not fixed**: (a) the base tier every association gets when it enables cotisations is created UNPRICED (`amountCents` null), so `tier-pricing.ts` cannot rank it (`hasFixedPrice`) and a holder of it is refused EVERY rise as `unranked` - a tier whose preferential price is linked to the base tier (dev's "Etudiant", 5 EUR for holders of "Cotisation") is therefore never sold at that price to the people it names. The shop now hides the unpriced tier itself (#2546, [cotisations](cotisations.md)); whether an unpriced base tier ranks lowest, or must be priced before a sibling may link to it, is the owner's call. (b) `FormItemDto.type` is any non-empty string and `basePrice` any number >= 0: a form written straight to the API with an item type `text` (the editor writes `short_text`) and a `basePrice` of `10` meaning euros (the wire unit is CENTS, the editor multiplies by 100) is stored as is, and the fill page then reads "Type de question non pris en charge : text" and "Payer 0,10 EUR" - the rendering is right, the row is wrong. Owed: an allowlist of item types and `@IsInt()` on `basePrice` at the DTO, with a spec each.
 
 - **P3 - the shop's amount keypad takes no physical keyboard (found 2026-10-29, #2546 review)**: `AmountPicker.svelte`'s "Autre montant" keypad is driven by its on-screen keys only, so a desktop user cannot type digits, a decimal separator or Backspace. Not cheap to do right: a window-level `keydown` would feed EVERY open picker on a page (the association page and a membership card can each hold one), so it needs the keypad to take focus (a focusable group with its own `onkeydown` mapping to the existing `applyAmountKey`) and a test that two open pickers do not both receive a key.
+
+## P3 - one-shot actions near the copy helper that were not audited for feedback (2026-10-30)
+
+The copy and share-sheet paths now confirm through one helper ([sharing](frontend/sharing.md#one-copy-helper-one-share-failure-path-2026-10-30)). The same class of "a tap that visibly does nothing" was NOT checked on: save to gallery (`ReelSaveButton`, `reels/gallery.ts`), file downloads (`fileDownload`, `FormSubmissionsTable`, `AssociationDocumentManager`, `agendaExport`, `QrCodeModal`) and booking actions (`bookings/bookingActions.ts`). Audit each for a success and a failure confirmation; fix with a shared helper only where it clearly fits.

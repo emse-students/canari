@@ -2453,6 +2453,33 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
+  responsable?: LydiaResponsable | null;
+  /** The last readiness change and its cause; null when none was ever recorded. */
+  readiness?: { cause: LydiaReadinessCause; at: string } | null;
+  /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
+  enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
+}
+
+/** The cause of the last readiness change of a Lydia Business. */
+export type LydiaReadinessCause =
+  | 'webhook-validated'
+  | 'admin'
+  | 'request-refused'
+  | 'request-blocked';
+
+/** The person recorded as the Lydia cashier of an association: the last 2 phone digits only. */
+export interface LydiaResponsable {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -2464,31 +2491,6 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
-  );
-}
-
-/**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 
@@ -2528,6 +2530,41 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
+/**
+ * Adds (`add`, also "resend the SMS") or records (`record`: an already-linked Business, read-only at
+ * Lydia, no SMS) the Responsable of the association's Lydia Business. A refusal is a
+ * {@link SocialApiError} typed at the throw: its `code` (`lydiaResponsableRefusal.ts`) is what a
+ * screen reads. `phone` is E.164.
+ */
+export async function setLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string; mode: 'add' | 'record' }
+): Promise<LydiaResponsable> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-responsable/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-responsable')) as {
+    responsable: LydiaResponsable;
+  };
+  return body.responsable;
+}
+
+/**
+ * Clears the in-flight enrolment marker (global admin only), after an admin checked with Lydia that
+ * no Business was created - or linked the one that was.
+ */
+export async function clearLydiaEnrolmentInFlight(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-enrolment-clear/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
@@ -2556,7 +2593,18 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
+/**
+ * How long the onboarding waits for its answer. core bounds its whole chain at 55 s and nginx gives
+ * up at 60 s (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`, core `lydia-payment-provider.ts`), so 75 s is above
+ * both: the screen always receives core's TYPED answer, or nginx's own, before giving up itself.
+ */
+export const LYDIA_ONBOARDING_DEADLINE_MS = 75_000;
+
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2565,15 +2613,15 @@ export async function startLydiaOnboarding(
   const res = await apiFetch(`${base}/api/payments/onboarding`, {
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
+    deadlineMs: LYDIA_ONBOARDING_DEADLINE_MS,
   });
+  if (!res.ok) throw await socialRefusal(res);
   // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
-  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
-  const body = res.ok
-    ? await readApiJson(res, 'POST /api/payments/onboarding')
-    : await res.json().catch(() => ({}));
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };

@@ -59,6 +59,8 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     // look up: `resolveNotificationHref` owns these two.
     case 'repost_proposed':
     case 'coorganise_proposed':
+    case 'lydia_payments_active':
+    case 'lydia_payments_paused':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
@@ -140,6 +142,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'booking_withdrawn',
   'booking_added',
   'booking_reminder',
+  'lydia_payments_active',
+  'lydia_payments_paused',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -170,6 +174,9 @@ export function reportUnknownNotificationType(type: string): void {
 const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   repost_proposed: 'republications',
   coorganise_proposed: 'republications',
+  // An association's Lydia payments became active / were paused: its payments section.
+  lydia_payments_active: 'payments',
+  lydia_payments_paused: 'payments',
 };
 
 /**

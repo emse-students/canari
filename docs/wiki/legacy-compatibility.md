@@ -99,6 +99,7 @@ REST: those rows need a count, then a migration.
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
+| `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -155,6 +156,24 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 **Condition:** production has run the release carrying the check for longer than one access-token
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+### No date yet - the Lydia key paste field of a build older than enrolment lot 1
+
+**Site:** `retiredLydiaBusinessKeyPaste` (`PUT :id/lydia-business-key`) and `lydiaBusinessKeyStatus`
+(`GET` on the same path) in `apps/social-service/src/associations/associations.controller.ts`, with
+`AssociationsService.isLydiaBusinessKeySet`.
+**What it humours:** since enrolment lot 1 the Business private token is captured at `business/create`
+([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) and the
+paste field is gone from the app. An APK or IPA older than that release EMBEDS the old field: it reads the
+`GET` status (kept, so the panel still shows "set" or "not set") and may `PUT` a key. The `PUT` writes
+nothing and answers `410` with the code `LYDIA_KEY_PASTE_RETIRED`; the old field shows its own "could not
+save" line for any refusal (it never reads the body), so a bare status is enough there. Each hit is
+logged at WARN, naming the association and never a value: the count of old clients still using it. The
+shim keeps the old route's throttle and `MANAGE_PAYOUT_ACCOUNT` check, so a non-manager gets the `403`
+it always got and only a manager's hit is counted.
+**The cost while it stands:** none - nothing is written; an old screen shows a save error.
+**Removal condition:** `minClientVersion` past the first build without the field, on BOTH stores. Then
+delete both routes, `isLydiaBusinessKeySet`, their spec block, and this entry.
 
 ### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
 
@@ -269,6 +288,20 @@ the version CARRYING this pull request draws all of it. That degraded display be
 the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
 stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
+
+**Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
+notices telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active or were
+paused (Lydia enrolment lot 2). They ship behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/associations/lydia-payments-notifier.service.ts`); while it is off nothing is
+written and the caller's ERROR/WARN line plus the payments screen state carry the fact. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 2 (PR to be numbered), on BOTH
+estates, once Play and the App Store serve it - then a one-line pull request sets the constant to `true` and
+changes the spec that pins it. A client older than that release draws them as the neutral unknown-type row.
+Steps 2-4 are done: the push keys and French legacy sentence, the `forms` push category, the native
+tables (Android, the iOS app and its notification extension), the client row, `KNOWN_NOTIFICATION_TYPES` and the
+`payments` section of the association edit page. The push opens the notifications list (`notifications`
+host): no deep-link host exists for an association's edit section. The type names are shared through
+`libs/contracts/lydia-refusal-codes.json`.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

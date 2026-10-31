@@ -1,4 +1,6 @@
 import { BadGatewayException, BadRequestException, HttpException } from '@nestjs/common';
+import type { LydiaReadinessCause } from '../associations/lydia-readiness';
+import { paymentsNotReady } from '../associations/lydia-readiness';
 import { describeHttpError } from './http-error-log';
 import { sanitizeLog } from './log.utils';
 
@@ -60,6 +62,36 @@ interface WarnLogger {
 
 interface CoreAnswer {
   response?: { status?: unknown; data?: unknown };
+}
+
+/**
+ * Mirrors core-service's `LYDIA_BUSINESS_NOT_VALIDATED` (`lydia-payment-provider.ts`): Lydia answered
+ * a `request/do` with error 5, the Business is not validated. No request exists (no `mobile_url`).
+ */
+export const LYDIA_BUSINESS_NOT_VALIDATED = 'LYDIA_BUSINESS_NOT_VALIDATED';
+
+/** Mirrors core-service's `LYDIA_BUSINESS_BLOCKED`: `request/do` answered error 2701, a blocked Business. */
+export const LYDIA_BUSINESS_BLOCKED = 'LYDIA_BUSINESS_BLOCKED';
+
+/** The body `code` of a failed core call, when core answered one. */
+function coreCodeOf(err: unknown): unknown {
+  const data = (err as CoreAnswer | null)?.response?.data;
+  return data && typeof data === 'object' ? (data as { code?: unknown }).code : undefined;
+}
+
+/**
+ * The readiness cause a failed `create-checkout-session` names, classified on core's typed CODE and
+ * never on Lydia's sentence: `request-refused` (error 5, not validated), `request-blocked` (error
+ * 2701), or null for every other failure. A non-null answer means the holder of the vendor token
+ * must stop being ready (`AssociationsService.revertLydiaReadinessAfterRefusal`).
+ */
+export function lydiaReadinessRefusal(
+  err: unknown
+): Extract<LydiaReadinessCause, 'request-refused' | 'request-blocked'> | null {
+  const code = coreCodeOf(err);
+  if (code === LYDIA_BUSINESS_NOT_VALIDATED) return 'request-refused';
+  if (code === LYDIA_BUSINESS_BLOCKED) return 'request-blocked';
+  return null;
 }
 
 /**
@@ -167,6 +199,14 @@ export function mapCorePaymentError(err: unknown, logger: WarnLogger, what: stri
       `[${what}] payment provider refused the amount (allowed ${body.minCents}-${body.maxCents} cents): ${describeHttpError(err)}`
     );
     return amountOutOfRange(body.minCents, body.maxCents, message);
+  }
+  const readinessCause = status === 400 ? lydiaReadinessRefusal(err) : null;
+  if (readinessCause) {
+    // Typed for the payer: the association cannot take payments, which is not their request's fault.
+    logger.warn(
+      `[${what}] Lydia refused the request: the Business is ${readinessCause === 'request-blocked' ? 'blocked' : 'not validated'}: ${describeHttpError(err)}`
+    );
+    return paymentsNotReady(readinessCause, false);
   }
   if (status !== null && status >= 400 && status < 500 && message) {
     logger.warn(`[${what}] payment provider answered ${status}: ${describeHttpError(err)}`);

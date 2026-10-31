@@ -271,6 +271,9 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
+    /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
+    associationId?: string;
+    associationLogoUrl?: string | null;
     skipPush?: boolean;
     pushData?: Record<string, string>;
   }) {
@@ -330,6 +333,8 @@ export class PostNotificationsService {
     associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
+    /** Structured facts stored on each row (never in the push), see `PostNotification.meta`. */
+    meta?: Record<string, unknown>;
     /**
      * In-app rows only, no push - a type that is deliberately never pushed (the answer to a
      * republication request, D38b) rather than one `pushContent` forgot.
@@ -350,6 +355,7 @@ export class PostNotificationsService {
           associationId: data.associationId ?? null,
           associationLogoUrl: data.associationLogoUrl ?? null,
           text: data.text,
+          meta: data.meta ?? null,
           actorName,
         })
       )

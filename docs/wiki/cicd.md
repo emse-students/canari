@@ -413,8 +413,8 @@ gap between the bump resolving the commit and the box resolving `main` again is:
 | `v0.16.6-alpha.4` (dev) | 12:45:11  | 12:50:47   | 5 min 36 s      |
 
 Auto-merge lands pull requests unattended throughout. Both boxes now reset to `inputs.sha`; the
-released commit is always an ancestor of `main` because the ruleset forbids a force-push, so
-fetching the branch makes it reachable and the reset fails loudly if it somehow does not.
+released commit is the bump on `release/vX.Y.Z` (every release since 2026-10-30), fetched by sha,
+and the reset fails loudly if it somehow is not there.
 
 **THE TEST WRITTEN TO CATCH THIS PASSED ON THE MARKER.** The assertion was `grep -q 'inputs.sha'`
 over the file, and the line satisfying it was the line making the false claim. It now derives the
@@ -758,7 +758,8 @@ It stages `git add -u`, so whatever the bump script writes is what gets committe
 #### The push this workflow makes is the ONE push to `main` that is not a pull request, and the ruleset refused it (measured 2026-09-03)
 
 **The first real release found this, and nothing before it could have.** `main` carries ruleset
-`22152902`: no direct push, `CI passed` required. The bump ends in `git push origin HEAD:main`, and
+`22152902`: no direct push, `CI passed` required. The bump then ended in `git push origin HEAD:main`
+(since 2026-10-30 it is the `land` job that pushes to `main`; the bump pushes a release branch), and
 with `GITHUB_TOKEN` that push is made by `github-actions[bot]`, which is not a bypass actor. So the
 push was refused, the run went red, and **nothing downstream started** — every arm needed the bump.
 Fail-safe, and a chain that does not run. **That accident is now the design**: the preflight sits in
@@ -867,7 +868,7 @@ asserts the ordering directly (31 assertions).
 
 ### A stable ships the latest pre-release, and `main` may move on (2026-10-02)
 
-**A PRE-RELEASE tag is still refused when `main` moved past its sha between the head read and the tag, and a rerun re-reads the same tag and cannot rescue it; a stable is immune** (it ships the latest alpha, #1367).
+**Since 2026-10-30 a pre-release is immune too** - see the next section.
 
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
@@ -880,15 +881,91 @@ _"une release n'opere que sur le tag de la derniere pre-release"_):
   asking it); 3 reads `CI passed` on it; 4 and 5 are unchanged.
 - **Bump.** The bump runs on that commit, whose `changelog.d/` holds exactly the entries it
   contains, and pushes to **`release/vX.Y.Z`** (force: a re-run rewrites it), never to `main`. The
-  stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs. Pre-releases
-  are unchanged: bump pushed to `main`.
+  stable tag is then **moved to that commit**, so `vX.Y.Z` names what production runs.
 - **Hosts** fetch the released commit BY NAME (`git fetch origin <sha>`), not `main`, since the
   shipped commit is on the release branch.
 - **Land.** The `land` job, parallel with the arms and blocking nothing, runs
-  `.github/scripts/land-release-changelog.sh`: on `main`'s head it folds ONLY the fragments the
+  `.github/scripts/land-release.sh`: on `main`'s head it folds ONLY the fragments the
   shipped commit carried, touches NO manifest (main's version is its latest pre-release's), and
   retries the push when a merge wins the race. Idempotent; a red `land` is re-run, it never holds
-  production back. Test: `land-release-changelog.test.sh`.
+  production back. Test: `land-release.test.sh`.
+
+### A pre-release is pinned on its release branch (decided 2026-10-30)
+
+**The decision.** A pre-release's bump is pushed to **`release/vX.Y.Z`** (the version without its
+suffix, force: the next alpha of that version replaces it, and the stable replaces the latest
+alpha's bump with its own, built from the same commit), exactly as a stable's has been since
+2026-10-02. **Nothing in a release's critical path pushes to `main` any more.** The pre-release tag
+stays on the commit it was cut at (on `main`, where `CI passed` ran), so a stable still resolves
+its commit from the latest pre-release tag and gates 3 and 4 read the same facts as before.
+
+**Why now - the trigger the earlier record named was met.** The section "A pre-release tag can
+still race a merge" below closed this on 2026-10-09 at ONE refusal in 108 alphas, with "reopen if
+it recurs". Measured 2026-10-30 over `gh run list --workflow release.yml`: of the last 8 release
+runs 3 failed, and two of them were exactly this - `v1.5.1-alpha.3` refused by gate 2 (`main has
+moved past 239873d0`), and `v1.5.1-alpha.5` passed the preflight and was then rejected at the push
+(`! [rejected] HEAD -> main (fetch first)`), one minute later, which no gate can see. (The third,
+2026-10-27, was an iOS build step.) The merge rate is what changed: auto-merge drains the queue
+while a release runs, which is the working rhythm, not an accident. A `durable-rules` entry asked
+humans to hold arming during the bump; a rule that asks the queue to stop is the cost being paid
+by hand.
+
+**What gate 2 keeps, and what it drops.** Gate 2 asked two things: the commit is on `main`, and
+`main` still points at it (so the bump could fast-forward). The second existed ONLY because the
+bump pushed there; with no push, `classify_main_position` (and its read of the released tree's
+version, through `node`) is deleted and gate 2 is `classify_on_main`: containment. Its intent -
+the commit reached the trunk through a pull request - is unchanged, and containment now equals
+containment at the cut because `main` is never force-pushed. Gate 3 is untouched: `CI passed` on
+that exact commit. **No bypass input and no skip flag were added.**
+
+**But the dropped half refused a STALE pre-release by accident, so that is now asked on purpose.**
+Found by the adversarial review of #2715: anything older than the newest release was behind
+`main`, so "`main` still points at it" refused it. Without that, `v1.5.1-alpha.5` refused at gate 3,
+then `alpha.6` cut and shipped, then a `gh run rerun` of alpha.5 (which this page recommends for
+gate 3) would pass every gate, force `release/v1.5.1` back to alpha.5's bump, redeploy older code to
+dev and move `dev-deployed` back, and upload store build `..05` after `..06` - App Store Connect
+refuses a `CFBundleVersion` that does not rise, Play a rollout that blocks upgrades - and the next
+stable would then be refused at gate 4 (`diverged`). So a pre-release also answers
+`classify_prerelease_currency`: every `v*` tag (`matching-refs/tags/v`) is ordered by the store band
+(`bump-app-version.sh --codes`, the one implementation; a tag the band cannot parse never reached a
+store and orders nothing), and the release is refused when the latest pre-release of its version,
+or any tag at all, carries a higher build number - including this version's own stable (the
+refusal then names the next patch's `alpha.1`). **A partial list is refused, never classified**:
+refs come back in name order, so `v1.10.*` precedes `v1.5.*` and a lost page can hold the higher
+release - the listing's exit is read (the script has no `set -e`, a pipe would hide it) and a list
+missing the release's own tag is `undecidable`. **A rerun
+therefore rescues gate 3 only while nothing newer shipped**; after that the refusal says to cut a
+new pre-release at the current head, numbered above the newest. A stable does not ask it: it
+resolves the latest pre-release of its version itself.
+
+**What `main` still owes, and why it is landed rather than dropped.** The earlier record named the
+cost of this move: `main`'s manifests would stop naming the version. They are kept accurate by the
+`land` job, which now runs for every release: a pre-release lands its version on `main`'s head
+through the same `bump-app-version.sh` that wrote it on the branch, **forward only** (the store
+band, `bump-app-version.sh --code`, orders every version; a landing re-run after a later release
+landed changes nothing), and retries a lost race; a stable lands its changelog as before. A red
+`land` is a job to re-run and holds back nothing - dev, the testers and both stores are already
+served by then.
+
+**What `dev-deployed` names.** The marker is written at the BUMP commit, which now lives on the
+release branch. Gate 4 reads containment (`compare target...dev-deployed`), so the marker one bump
+past the stable's commit still covers it (`ahead 1`). Dev serving an OLDER pre-release now reads
+`diverged` rather than `behind`; both refuse, and the refusal text says which.
+
+**Refuted alternatives.** (1) *Rebase the bump onto `main` and retry the push* - that builds and
+ships a tree `CI passed` never ran on, the fallback the earlier record forbade. (2) *Let the
+gesture name "the release" and the machine take `main` HEAD at preflight time* - the earlier
+record's suggestion; it narrows the window from minutes to the one between the preflight and the
+push (exactly where `alpha.5` died) and does nothing for a rerun. (3) *Keep pushing to `main` when
+it fast-forwards, else to the branch* - two paths for one fact, a fallback by construction.
+(4) *A pre-release tag moved to its bump commit, as the stable's is* - the bump commit carries no
+`CI passed`, so a stable resolving from it would be refused by gate 3.
+
+Tests: `release-preflight.test.sh` (gate 2's containment, `main` moving on refuses nothing; a stale
+or superseded pre-release is refused, the latest passes),
+`land-release.test.sh` (pre-release landing forward-only, idempotent and retried after a lost race;
+the stable fold), `bump-version.test.sh` (`--code`, `--codes`), `release-chain.test.sh` (no release step pushes `HEAD:main`; the
+`land` job runs for every release).
 
 ## GitHub Secrets
 
@@ -1066,7 +1143,8 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
   '- Release (release.yml), ONE run
        |
        |- preflight   five gates; a refusal ends it here, having moved nothing
-       |- bump        writes the version into 18 files, commits, pushes to main, outputs the SHA
+       |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
+       |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
        |- THE FORK, and there is only one: prerelease -> estate = dev | production
        |
@@ -1311,6 +1389,64 @@ _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une re
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
 about a decision nobody makes.
 
+### A major bump of a data store is refused, and which images may cross a major is an allowlist (#2742, 2026-10-31)
+
+Dependabot proposed `library/postgres 16-alpine -> 18-alpine` for the identity provider's stack
+(#2742), and `arm-auto-merge.yml` armed it. **Arming is not a verdict, and that was not the defect**:
+it arms every pull request and GitHub merges only once `CI passed` is green. The required check
+held, but for the wrong reason, and the reason it would have given was wrong too:
+
+- **The ceiling's self-test failed before the deciding step ran.** `ceiling.test.sh` asserts the
+  `compile-android-app` job in `ci.yml` (2026-10-30), and the job's sparse checkout did not carry
+  `ci.yml`. So every Dependabot pull request was red, and none of them showed its real decision.
+- **The deciding step would have passed it.** A `pull_request` checkout is the MERGE ref, which
+  already carries Dependabot's new pin. The datastore arm reads the major the stack runs from the
+  compose file, so it read 18 out of the bumped file and saw no crossing. It only ever refused
+  `postgres 15 -> 18` on #309 because that pull request changed a DIFFERENT file from the one the arm
+  read. The job now checks out `github.event.pull_request.base.sha`. `dependency-ceiling.test.sh`
+  runs #2742's exact trailer against both readings. **That checkout also means the job runs the
+  BASE's scripts**, so a pull request cannot change the gate that judges it: its own changes to
+  `lib/ceiling.sh` apply from the next pull request after it merges (`test-ci-scripts` still tests
+  them on the pull request itself).
+
+**Which images may cross a major unattended is an allowlist.** `ceiling_image_may_cross_major` in
+`.github/scripts/lib/ceiling.sh` lets an image cross a major only when it is PROVEN stateless:
+
+- it is not a named data store (`postgres`, `redis`, `garage`), with any registry prefix removed
+  first (`mirror.gcr.io/library/postgres` is postgres);
+- every watched compose file could be read AND parsed to at least one image (production, dev,
+  local and the identity provider, in `CEILING_WATCHED_COMPOSES`);
+- and none of those files mounts data for the image (`ceiling_compose_image_data`). Every mount is
+  data except a bind mount marked read-only: a named volume, an anonymous one, a writable bind,
+  quoted or not, short or long syntax, at any indentation. `volumes_from` is data too, and a file
+  that uses `extends` or a top-level `include` is refused outright, because it takes services from
+  a file nothing here reads.
+
+The reduction to an image name (dropping the registry, the tag and `library/`) is applied only in
+the docker ecosystems (`ceiling_dependency_subject`). A Gradle coordinate keeps its artifact:
+`com.google.firebase:firebase-messaging-ktx` is not cut down to `com.google.firebase`.
+
+The first draft counted only `- <word>:` lines at two-space indentation. A review of #2779 found
+that it read a hyphenated volume, a quoted entry, an anonymous volume, a writable bind and a
+four-space file as stateless. Each of those is now a fixture in `ceiling.test.sh`, driven through
+the branch the way `dependency-ceiling.sh` is. **One cost is accepted:** a branch for the local
+stack is compared with PRODUCTION's file (`ceiling_compose_from_ref`). So a data store that only
+the local stack runs has no readable major, and even its minor is refused.
+
+Before this, the arm matched the three names. A data store added to the dev or local stack, or one
+under a name nobody typed (`mariadb`, `valkey`), crossed a major like any stateless image. A
+Dockerfile base (`node`, `rust`) and `nginx`, `adminer` or `coturn` stay allowed across a major,
+because the suite builds them and they hold no data directory. A patch or minor of a data store
+stays allowed (`garage v2.4.1 -> v2.5.0`, `postgres 16.4 -> 16.5`), because an on-disk format is
+stable within a major.
+
+**The refusal is check output, and it names what lifts it.** It begins *"a migration plan, because a
+MAJOR bump of an image that holds data cannot be judged by any gate here"*. It ends with the remedy:
+rehearse the upgrade in place and record it in `infrastructure/dev/version-gap.yml` with
+`evidence: in_place_upgrade`. That lifts production's arm only. The identity provider's database
+has no rehearsal mechanism, so its major moves by a person's pull request, which carries the data
+migration.
+
 ### A Dependabot cargo bump that is incomplete by construction is completed and merged (WP-RUST-LOCK-AUTOMERGE, 2026-10-18)
 
 `frontend/mls-wasm` and `frontend/src-tauri` commit a `Cargo.lock` and consume `frontend/mls-core` (no lock, on purpose) by path. Dependabot's one pull request for an `mls-core/Cargo.toml` bump therefore leaves both locks stale and fails CI's `cargo metadata --locked` step. It was the last dependency update that could not merge unattended; the user decided on 2026-10-18 that a machine completes it and `CI passed` stays the only verdict. The one-workspace remedy (one `Cargo.lock` for `frontend/`) stays the structural fix and is not done.
@@ -1427,10 +1563,51 @@ what is deliberately not:
 
 | Tree | Dependabot | What gates an update |
 | --- | --- | --- |
-| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | **Nothing on a pull request**, so `ceiling_gate_for_ref` (`lib/ceiling.sh`) refuses every update there. The `:app` module cannot be configured without the generated, git-ignored `tauri.settings.gradle` and the `google-services.json` secret; only `android.yml` builds it, at release time. The refusal names the missing gate: a pull-request job that compiles `:app`. |
-| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. The only Gradle directory the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
+| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. With `gen/android` above, one of the two Gradle directories the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
 | `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
 | `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
+
+**`compile-android-app`: how `:app` is configured on a pull request with no secret (2026-10-30).**
+`:app` could not be configured in CI for two reasons, and each has a replacement that reads nothing
+secret, so the job runs on a Dependabot pull request:
+
+- `tauri.settings.gradle` and `app/tauri.build.gradle.kts` are written by the app crate's
+  `build.rs` (`tauri_build::mobile::generate_gradle_files`) when `TAURI_ANDROID_PROJECT_PATH` is
+  set, from the `DEP_*_ANDROID_LIBRARY_PATH` each plugin's build script exports. A
+  `cargo check --target aarch64-linux-android` of the app crate is therefore the same generator
+  `tauri android build` runs, not a copy of it. `android.yml` has no separate generation step to
+  factor out - the files are a side effect of that command - so the whole sequence lives in
+  `.github/scripts/android-app-compile.sh` instead.
+- `google-services.json` is the `GOOGLE_SERVICES_JSON` secret, used by `android.yml` only. The job
+  copies `gen/android/ci/google-services.compile-stub.json` (fake values, same package name) to
+  the git-ignored path. It reaches no Firebase project.
+
+The script fails unless each of the three tasks actually executed (a Gradle run matching no task
+exits 0): metadata and manifest merge are where an AndroidX bump breaks, the Kotlin compile where a
+removed API does. It refuses to run if `app/google-services.json` exists and is not the stub, so a
+developer's real file is never overwritten, and it takes the NDK from the runner's
+`ANDROID_NDK_HOME` with no fallback (`android.yml` pins none either). The job reads
+`rust-toolchain.toml`, validates the Gradle wrapper jar, and holds `contents: read` only. It keeps
+its own Rust cache: `test-rust` caches the repository-root `target`, which `frontend/src-tauri`
+does not build into, with host-triple artefacts an `aarch64-linux-android` check cannot use.
+
+It is path-filtered (`android_app` in `changes`: `gen/android`, the app crate's sources, manifest,
+lock, `build.rs`, `tauri.conf.json`, `mls-core`, the native plugins, the toolchain and the script;
+the crate's `src/` is there because this is the only pull-request Rust compile for an Android
+target) and is in `ci-passed`'s `needs`. **`ceiling.test.sh` evaluates that guard**: the job exists
+and runs the script, its `if:` reads `run-android-app`, the filter fires for `gen/android` (run
+against real paths, not grepped), and `ci-passed` needs it. A pull request that removes, disables
+or narrows the gate therefore fails `test-ci-scripts`; the guard makes the removal visible, it does
+not restore the gate. The ceiling allows only Dependabot's direct `gen/android/<branch>` shape, and
+a Gradle directory added to `dependabot.yml` later is still refused. This is evidence about the
+Kotlin and the dependency metadata, not a signed release build: a wrapper bump still wants a
+release-shaped build before it ships.
+
+*Measured 2026-10-30 on a workstation, Gradle 9.1.0 baseline then the four open bumps together
+(`webkit` 1.18.0, `firebase-messaging-ktx` 24.1.2, `work-runtime-ktx` 2.12.0, wrapper 9.7.1):
+`:app:compileArm64DebugKotlin` succeeds on both. A compile is still not a run: neither bump has
+been read on a phone.*
 
 **Why the identity provider's file needed a ceiling change before it could be watched.** Its
 PostgreSQL ran 16 while production ran 18 (2026-10-23). Dependabot proposes the highest tag with the
@@ -2234,6 +2411,9 @@ Two specimens of a squash-merged branch still on the remote: #341 (2026-09-03, p
 **GitHub re-creates a branch when something pushes to it**, so nothing failed to delete anything: the branch was deleted on merge and a workstation pushed it back (which also explains #341). The cost is not untidiness: the commit pushed there was a CHANGELOG shortening the user had asked for that evening, and it never travelled to `main` (a merged pull request does not carry another commit). **Work pushed to a merged branch is committed, pushed and unshipped, and nothing says so** - `git status` is clean and the push succeeds. The prevention is the `git branch -D` at the end of THE DEVELOPMENT CYCLE in `CLAUDE.md`: a local branch kept past its merge is the only thing that can be pushed back.
 
 ### A pre-release tag can still race a merge, between the head read and the tag
+
+**SUPERSEDED 2026-10-30: the trigger below recurred (`v1.5.1-alpha.3`, `v1.5.1-alpha.5`) and the
+bump moved off `main` - [A pre-release is pinned on its release branch](#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30).** Kept as the record of why it waited.
 
 Gate 2 of `.github/scripts/release-preflight.sh` refuses an alpha whose sha `main` has moved past, and a rerun re-reads the SAME tag, so it cannot rescue one. The stable half closed with #1367 (a stable ships the latest pre-release of its version on `release/vX.Y.Z` and the tag moves, see above). **Measured 2026-10-09 over every alpha `release.yml` ever ran (108, since 2026-09-03): ONE was refused for it** (`v0.18.22-alpha.3`, 2026-09-24, `main has moved past 774e1455`, which the refusal reported before anything moved, so the cost was one more alpha), and none in the fifteen days since - the other two failed alphas died of a docker build and of the iOS WASM check. The window is only preflight to the bump push (about a minute), and the refusal is clean and names its remedy, so nothing here is broken enough to re-architect: moving an alpha off `main` would change what `main` carries (the manifests' version) for a 1 in 100 refusal. **Reopen if it recurs, with `gh run list --workflow release.yml` showing a second one**, and then: let the gesture name "the release" and the machine take `main` HEAD, never a sha a human read seconds earlier - and never a rebase or a lenient gate 4, which are fallbacks.
 

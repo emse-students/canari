@@ -12,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FOLLOW_REQUEST_NOTIFICATION } from '../follows/follow-requests.service';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
+import { sanitizeLog } from '../common/log.utils';
 import { Post as PostEntity } from '../posts/entities/post.entity';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
@@ -270,6 +271,14 @@ export class InternalController {
       eraseSocialRows(erasureDb(manager), userId)
     );
 
+    for (const cashier of result.liveCashiersErased) {
+      // Lydia still holds this person as a cashier of that Business; Canari no longer tracks it.
+      this.logger.error(
+        `[AUDIT] [LYDIA] account erasure of user=${who} deleted a LIVE cashier row: association ` +
+          `${sanitizeLog(cashier.associationId)}, Business ${sanitizeLog(cashier.vendorToken)} - ` +
+          `Lydia still lists that cashier`
+      );
+    }
     const pins = await this.channelService.announceErasedPins(result.pinsRemoved);
     const dropped = await invalidatePostListCache(this.redis);
 

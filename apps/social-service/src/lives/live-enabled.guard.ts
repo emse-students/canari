@@ -6,9 +6,9 @@ import { readLivesMode } from './lives-mode';
 /**
  * THE DEPLOY LOCK OF THE LIVE FEATURE: `LIVE_ENABLED=true`, and nothing else, opens it.
  *
- * Rendered per estate by `infrastructure/deploy/render-env.sh` (`compute_live_enabled`): `true` on
- * dev, `false` on production, so a stable release reaches no live route whatever client calls it.
- * An unset or misspelt value is OFF. Read on every request rather than at boot so a test can flip
+ * Rendered by `infrastructure/deploy/render-env.sh` from `env-manifest.tsv`: the literal `true` on
+ * both estates since the production flip (owner, 2026-10-30); what closes lives on an estate is the
+ * runtime kill switch below. An unset or misspelt value is OFF. Read on every request rather than at boot so a test can flip
  * it, and because the cost is one property read.
  *
  * It is ONE of two locks: the runtime kill switch `platform_config.lives_mode` ({@link LiveEnabledGuard},

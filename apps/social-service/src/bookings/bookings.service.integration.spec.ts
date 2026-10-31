@@ -114,6 +114,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     actorId: string;
     associationId?: string;
     bookingId: string;
+    meta?: Record<string, unknown>;
   }[] = [];
   /** Every PUSH the pipeline would send - what a lock screen shows - one entry per recipient. */
   const pushed: {
@@ -233,6 +234,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       associationLogoMediaId?: string | null;
       postId: string;
       skipPush?: boolean;
+      meta?: Record<string, unknown>;
     };
     const push = (d: Omit<Notice, 'postId' | 'recipientIds'>, to: string[]) => {
       for (const id of to) {
@@ -259,6 +261,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             actorId: d.actorId,
             associationId: d.associationId,
             bookingId: d.postId,
+            meta: d.meta,
           });
         }
         if (!d.skipPush) push(d, to);
@@ -277,6 +280,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           text: d.text,
           actorName: d.actorName,
           actorId: d.actorId,
+          associationId: d.associationId,
           bookingId: d.postId,
         });
         push(d, [d.recipientId]);
@@ -1184,6 +1188,24 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       }
     });
 
+    // Owner, 2026-10-30: the forms' "ne detient pas" reaches a space through the same predicate - a
+    // space for people WITHOUT the cotisation is neither listed to a holder nor usable by one.
+    it('keeps a space for non-holders of a cotisation from a holder, listed and read', async () => {
+      const notCotisants = await setup({
+        name: '0008 not cotisants',
+        audience: { notCotisation: { anyTier: true } },
+      });
+      const mine = [notCotisants.space.id];
+      facts.set(BOB, { promo: null, formation: null, cotisationTiers: [], answers: {} });
+      expect(await listedAmong(BOB, mine)).toEqual(mine);
+      await expect(service.getSpace(notCotisants.space.id, as(BOB))).resolves.toBeDefined();
+      facts.set(BOB, { promo: null, formation: null, cotisationTiers: [null], answers: {} });
+      expect(await listedAmong(BOB, mine)).toEqual([]);
+      expect(await refusal(service.getSpace(notCotisants.space.id, as(BOB)))).toEqual({
+        code: 'audience',
+      });
+    });
+
     it("hands the calendar link to the booking's people alone, never for a cancelled one", async () => {
       const { space, resourceIds } = await setup();
       const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
@@ -1959,6 +1981,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         participantIds: [DAN],
       });
       expect(tos('booking_added')).toEqual([CAROL, DAN]);
+      expect(
+        told.every(
+          (t) =>
+            t.text === t.meta?.place &&
+            t.meta.word === '' &&
+            t.meta.startsAt === new Date(on('11:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
+        )
+      ).toBe(true);
     });
 
     it("the organiser's cancellation tells the holder and the participants still in, with its word", async () => {
@@ -1971,9 +2002,32 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.cancel(id, as(ORGA), NOW, 'Salle inondee');
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
-      expect(told.every((t) => t.text === 'Salle inondee' && t.actorName === 'Club Musique')).toBe(
-        true
-      );
+      // `text` is what it always was (the word, else the place) so an older client still names
+      // something; the client of this column reads place, slot, zone and word from `meta`.
+      expect(
+        told.every(
+          (t) =>
+            t.text === 'Salle inondee' &&
+            t.actorName === 'Club Musique' &&
+            typeof t.meta?.place === 'string' &&
+            (t.meta.place as string).startsWith(space.name) &&
+            t.meta.word === 'Salle inondee' &&
+            t.meta.startsAt === new Date(on('10:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
+        )
+      ).toBe(true);
+      // Without a word, `text` is the place (as before this column) and `meta.word` is empty.
+      const second = await book(space.id, resourceIds[0], '11:00', '11:30', ALICE);
+      told.length = 0;
+      await service.cancel(second.id, as(ORGA), NOW);
+      expect(told).toHaveLength(1);
+      expect(told[0].text.startsWith(space.name)).toBe(true);
+      expect(told[0].text).toBe(told[0].meta?.place);
+      expect(told[0].meta).toMatchObject({
+        word: '',
+        startsAt: new Date(on('11:00')).toISOString(),
+        timeZone: 'UTC',
+      });
     });
 
     it("the holder's cancellation tells the participants (Q-R2), and carries no word of theirs", async () => {
@@ -1996,6 +2050,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       told.length = 0;
       await service.withdraw(id, as(BOB), NOW);
       expect(told.map((t) => [t.type, t.to])).toEqual([['booking_withdrawn', ALICE]]);
+      expect(told[0].text).toBe(told[0].meta?.place);
+      expect(told[0].meta).toMatchObject({
+        word: '',
+        startsAt: new Date(on('10:00')).toISOString(),
+        timeZone: 'UTC',
+      });
     });
 
     it('a space reached by its link only is never named on a lock screen (Q-R5)', async () => {
@@ -2013,6 +2073,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         '10:00',
         '10:00',
       ]);
+      // ...and its reminder row names no association either (Q-R5).
+      expect(told.filter((t) => t.type === 'booking_reminder').map((t) => t.associationId)).toEqual(
+        [undefined, undefined]
+      );
 
       // The ORGANISER acts: the push names nobody - no association, no logo, no person - and the
       // organiser's word reaches the bell row only, never the lock screen (Q-R3 on Q-R5).
@@ -2038,6 +2102,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ).toEqual(
         [ALICE, BOB].map((to) => [to, 'Le cabinet est ferme', 'Canari', 'system', undefined])
       );
+      // The bell row names no place (Q-R5) but still carries the slot.
+      expect(told.map((t) => t.meta)).toEqual(
+        [ALICE, BOB].map(() => ({
+          place: '',
+          startsAt: new Date(on('10:00')).toISOString(),
+          timeZone: 'UTC',
+          word: 'Le cabinet est ferme',
+        }))
+      );
 
       // An organiser booking for someone on that space names nobody either.
       pushed.length = 0;
@@ -2059,6 +2132,18 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await sent.mock.results[0].value;
       sent.mockRestore();
       expect(tos('booking_cancelled')).toEqual([ALICE, BOB]);
+      // The deleted space's SQL (`deletedBookingNotices`) carries the slot too, read before the
+      // delete: only the 10:00 booking is coming and live (the 11:00 one was cancelled).
+      expect(
+        told.every(
+          (t) =>
+            t.text === t.meta?.place &&
+            (t.meta.place as string).startsWith(space.name) &&
+            t.meta.word === '' &&
+            t.meta.startsAt === new Date(on('10:00')).toISOString() &&
+            t.meta.timeZone === 'UTC'
+        )
+      ).toBe(true);
     });
 
     it('THE REFERENCE: a reminder run twice sends once, to each person, at its instant', async () => {
@@ -2080,6 +2165,13 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(tos('booking_reminder')).toEqual([ALICE, BOB]);
       expect(told.find((t) => t.type === 'booking_reminder')?.text).toContain('10:00');
       expect(told.every((t) => t.bookingId === id)).toBe(true);
+      // The row carries the owning association, so the bell draws its logo (owner, 2026-10-30).
+      // (`told` also holds the booking's own `booking_added` notice, where the actor is a person.)
+      expect(
+        told
+          .filter((t) => t.type === 'booking_reminder')
+          .every((t) => t.associationId === space.associationId)
+      ).toBe(true);
     });
 
     it('no reminder for a cancelled booking, a withdrawn participant, or one made inside its delay (Q-R6)', async () => {

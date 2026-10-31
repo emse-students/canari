@@ -23,7 +23,6 @@
     FileText,
     Pencil,
     Link,
-    Check,
     QrCode,
     Trash2,
     ChevronUp,
@@ -37,7 +36,6 @@
   import { submitterName } from '$lib/forms/submissionTable';
   import FormSubmissionsTable from '$lib/components/forms/FormSubmissionsTable.svelte';
 
-  let copiedId = $state<string | null>(null);
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
 
@@ -48,10 +46,6 @@
 
   function copyFormLink(id: string) {
     void copyPublicShareLink(formPath(id));
-    copiedId = id;
-    setTimeout(() => {
-      copiedId = null;
-    }, 2000);
   }
 
   let forms = $state<Form[]>([]);
@@ -274,15 +268,9 @@
               <button
                 onclick={() => copyFormLink(form.id)}
                 class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={copiedId === form.id
-                  ? m.form_list_link_copied()
-                  : m.form_list_share_button()}
+                title={m.form_list_share_button()}
               >
-                {#if copiedId === form.id}
-                  <Check size={16} class="text-green-ok" />
-                {:else}
-                  <Link size={16} />
-                {/if}
+                <Link size={16} />
               </button>
               <button
                 onclick={() => (qrForm = form)}

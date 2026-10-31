@@ -10,6 +10,7 @@
   import AudienceConditionEditor from '$lib/components/forms/AudienceConditionEditor.svelte';
   import SpacePosterField from './SpacePosterField.svelte';
   import WeekPainter from './WeekPainter.svelte';
+  import TemplatePicker from './TemplatePicker.svelte';
   import { createSpace } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
@@ -20,9 +21,11 @@
   } from '$lib/bookings/availability';
   import {
     applyTemplate,
+    editRun,
     paintRows,
     weekRunsOf,
     type PaintMode,
+    type SelectedRun,
     type TemplateKey,
   } from '$lib/bookings/availabilityPaint';
   import {
@@ -110,29 +113,6 @@
     draft.slotMode === 'step' && 60 % draft.stepMinutes === 0 ? draft.stepMinutes : 15
   );
 
-  const TEMPLATES: { key: TemplateKey; name: () => string; sub: () => string }[] = [
-    {
-      key: 'always',
-      name: () => m.bookings_avail_tpl_always(),
-      sub: () => m.bookings_avail_tpl_always_sub(),
-    },
-    {
-      key: 'weekdays',
-      name: () => m.bookings_avail_tpl_weekdays(),
-      sub: () => m.bookings_avail_tpl_weekdays_sub(),
-    },
-    {
-      key: 'event',
-      name: () => m.bookings_avail_tpl_event(),
-      sub: () => m.bookings_avail_tpl_event_sub(),
-    },
-    {
-      key: 'empty',
-      name: () => m.bookings_avail_tpl_empty(),
-      sub: () => m.bookings_avail_tpl_empty_sub(),
-    },
-  ];
-
   function useTemplate(key: TemplateKey) {
     Log.d('BOOKINGS', `wizard template=${key}`);
     draft.template = key;
@@ -143,6 +123,14 @@
   function paint(dayA: number, dayB: number, slotA: number, slotB: number, mode: PaintMode) {
     const next = paintRows(draft.rows, dayA, dayB, slotA, slotB, mode);
     if (next !== draft.rows) draft.rows = [...next];
+  }
+
+  /** The painter's exact hours of a run: the wizard's week is always runs (a step space). */
+  function editRunOf(run: SelectedRun, start: number, end: number): boolean {
+    const next = editRun(draft.rows, run.day, [run.start, run.end], start, end);
+    if (next === null) return false;
+    if (next !== draft.rows) draft.rows = [...next];
+    return true;
   }
 
   function hoursProblem(): string {
@@ -185,6 +173,20 @@
     }
   }
 
+  /**
+   * "Je regle tout moi-meme": hands the name back. Without one it is the wizard's own name field
+   * that complains - back on the first step, where the field is - never a banner under it.
+   */
+  function skip() {
+    const name = draft.name.trim();
+    if (!name) {
+      step = 1;
+      tried = true;
+      return;
+    }
+    onSkip(name);
+  }
+
   async function create() {
     const payload = wizardPayload(draft);
     if (posterBusy) return;
@@ -221,7 +223,7 @@
     </h3>
     <button
       type="button"
-      onclick={() => onSkip(draft.name.trim())}
+      onclick={skip}
       disabled={creating}
       class="text-text-muted hover:text-text-main text-sm font-semibold underline underline-offset-2 disabled:opacity-40"
     >
@@ -229,19 +231,32 @@
     </button>
   </div>
 
-  <ol class="flex flex-wrap gap-2" aria-label={m.bookings_wizard_steps_label()}>
+  <!-- The mockup's stepper: a numbered disc per step, joined by a bar, the done ones ticked. On a
+       phone only the current step keeps its word, the discs and bars say the rest. -->
+  <ol class="flex items-center gap-2" aria-label={m.bookings_wizard_steps_label()}>
     {#each STEPS as label, i (i)}
+      {#if i > 0}
+        <li
+          aria-hidden="true"
+          class="h-0.5 min-w-3 flex-1 rounded-full {step > i ? 'bg-cn-yellow' : 'bg-cn-border'}"
+        ></li>
+      {/if}
       <li
         aria-current={step === i + 1 ? 'step' : undefined}
-        class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold {step ===
-        i + 1
-          ? 'bg-cn-yellow text-cn-ink'
-          : step > i + 1
-            ? 'bg-control-fill text-text-main'
-            : 'text-text-muted border-cn-border border'}"
+        class="flex shrink-0 items-center gap-1.5 text-xs font-semibold {step === i + 1
+          ? 'text-text-main'
+          : 'text-text-muted'}"
       >
-        {#if step > i + 1}<Check size={12} />{:else}<span>{i + 1}</span>{/if}
-        {label()}
+        <span
+          class="grid size-6 place-items-center rounded-full text-xs font-bold {step === i + 1
+            ? 'bg-cn-yellow text-cn-ink'
+            : step > i + 1
+              ? 'bg-green-ok/15 text-green-ok'
+              : 'bg-control-fill'}"
+        >
+          {#if step > i + 1}<Check size={12} />{:else}{i + 1}{/if}
+        </span>
+        <span class={step === i + 1 ? '' : 'max-sm:sr-only'}>{label()}</span>
       </li>
     {/each}
   </ol>
@@ -288,23 +303,7 @@
       >
         {m.bookings_section_resources()}
       </h4>
-      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {#each TEMPLATES as tpl (tpl.key)}
-          <button
-            type="button"
-            data-template={tpl.key}
-            aria-pressed={draft.template === tpl.key}
-            onclick={() => useTemplate(tpl.key)}
-            class="bg-cn-surface hover:border-cn-yellow/40 flex min-h-11 flex-col items-start rounded-xl border px-3 py-2 text-left transition-colors {draft.template ===
-            tpl.key
-              ? 'border-cn-yellow'
-              : 'border-cn-border'}"
-          >
-            <span class="text-text-main text-sm font-bold">{tpl.name()}</span>
-            <span class="text-text-muted text-xs">{tpl.sub()}</span>
-          </button>
-        {/each}
-      </div>
+      <TemplatePicker selected={draft.template} onPick={useTemplate} />
 
       {#if draft.template === 'event'}
         <ul class="space-y-3">
@@ -350,7 +349,14 @@
           {/each}
         </ul>
       {:else}
-        <WeekPainter {week} {dayNames} {shortDayNames} onPaint={paint} />
+        <WeekPainter
+          {week}
+          {dayNames}
+          {shortDayNames}
+          onPaint={paint}
+          step={timeStep}
+          onEdit={editRunOf}
+        />
       {/if}
       <p class={CONTROL_HINT_CLASS}>{m.bookings_wizard_when_hint()}</p>
 

@@ -4,6 +4,7 @@ import type {
   IMlsService,
   UserGroupRow,
   DeviceMembershipRow,
+  WelcomeRequestAnswer,
 } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
@@ -935,6 +936,12 @@ export async function requestReAdd(
   }
 
   // A FURTHER DEVICE OF A MEMBER: its door is a member's Add, asked for here.
+  // ASKED ON THE CADENCE, NOT ONCE: no answer the server gives makes the ask durable. A `forwarded`
+  // ask lives on one member's screen, a `stored` one is drained to a member's screen at its next
+  // connection, and a screen that reloads before deciding loses it; nothing on this device can see
+  // that happen, so a record of "already asked" would strand the device in a quiet group. The member
+  // says its decision once and counts repeats (`askAboutUnseenDevice`). The durable shape - the ask as
+  // a server row, re-raised by every member's sweep - is on the backlog.
   if (outcome.reason === 'further_device') {
     await askAMemberToReAddUs(
       groupId,
@@ -1191,14 +1198,24 @@ async function askAMemberToReAddUs(
   deps: RecoveryDeps,
   context: string
 ): Promise<void> {
-  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest… (${context})`);
-  await deps.mlsService
-    .sendWelcomeRequest(groupId)
-    .catch((e) =>
-      deps.log(`[READD] welcome_request failed for ${groupId.slice(0, 8)}...: ${String(e)}`)
-    );
+  const short = groupId.slice(0, 8);
+  deps.log(`[READD] ${short}... sendWelcomeRequest… (${context})`);
+  let answer: WelcomeRequestAnswer;
+  try {
+    answer = await deps.mlsService.sendWelcomeRequest(groupId);
+  } catch (e) {
+    deps.log(`[READD] welcome_request failed for ${short}...: ${String(e)}`);
+    return;
+  }
+  // WHAT THE SERVER DID, NOT "SENT": a request that reached nobody used to read exactly like one a
+  // member holds. Neither answer is a durable ask - a forwarded one lives on one member's screen, a
+  // stored one is drained to a member's screen at its next connection - so the cadence asks again.
   deps.log(
-    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    !answer
+      ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
+      : answer.status === 'stored'
+        ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+        : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
 }
 
