@@ -272,7 +272,7 @@ for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose
   # `|| true` because a missing key is the case this assertion EXISTS for, and under `pipefail`
   # grep's exit 1 would otherwise kill the script before it could say so - failing the suite with no
   # diagnostic at all, which is how a guard costs more than it buys.
-  project="$(grep -E '^name:[[:space:]]*' "$file" 2>/dev/null | head -1 |
+  project="$(grep -E '^name:[[:space:]]*' "$file" 2>/dev/null | sed -n 1p |
     sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
   if [ -z "$project" ]; then
     fail "$file declares no top-level 'name:', so its project is the directory it sits in - which is the same directory as the other deployed estate"
