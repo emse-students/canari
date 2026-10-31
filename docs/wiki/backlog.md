@@ -413,7 +413,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
 A production count of legacy tier tags without a consistent issuer is owed to the operator after
 the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
 
-## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix MERGED (#2647), read `PASS`, not shipped
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
 reviewed it and published it. The app's logs and the system's own records agree on two short,
@@ -426,8 +426,11 @@ unrequested opens. Nothing stayed open: the session released the late stream its
 | +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
 
 Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
-**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
-return.
+**Read `PASS` on the Mi 9T, rig build `5c362c0e1` on dev (2026-10-28)**, the same path with a
+synthetic video: one CONNECT when the camera opened and one DISCONNECT when the gallery picker
+opened, the CAMCORDER recording stopping with it; after the pick's return and after Publish, no
+CONNECT, no recording, and `appops` still dating the last camera and microphone access to the
+picker's open. Logcat's `CameraService` shows the same single pair. Owed: nothing but the release.
 
 ## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 
@@ -2642,7 +2645,42 @@ Reuse the bench phones with screen recording to make demo videos and screenshots
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
 built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
-Mi 9T and iPhone 12 readings.
+iPhone 12 readings, and on the Mi 9T what is listed as owed below.
+**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
+and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
+in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
+text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
+(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
+the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
+and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
+post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
+chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
+`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
+file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
+showing `share_staged` with the right type and size; deleting the three messages (one choice, a
+definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
+next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
+says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
+Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
+open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
+a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
+the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
+dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
+covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
+publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
+"Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
+read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
+was deleted from that page's menu - the viewer itself has no author menu.
+**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
+text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
+drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
+`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
+the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
+the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once the defect below was
+fixed.)
+**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
+system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
+`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
@@ -2650,6 +2688,101 @@ is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
+
+## P1 - The reel viewer's share sheet does nothing: every row reads a post id its own close erased (Mi 9T, 2026-10-28)
+
+In the CanaReels viewer, "Partager" opens `PostShareSheet`, and each of its rows - a conversation of
+the grid, "Copier le lien", "Partager via..." - closes the sheet and nothing else happens: no
+landing, no clipboard, no chooser, and the WebView logs `Uncaught TypeError: Cannot read properties
+of null (reading 'slice')` (three of three rows read, 1.5.1 `da43b8447`). **The cause, read in the
+code:** the sheet's `act()` calls `close()` BEFORE the action, and `ReelViewer` mounts the sheet with
+`postId={shareFor}` and `onClose={() => (shareFor = null)}`; the action then reads the live prop,
+now `null`, and `sendPostLinkInApp` / `copyPostLink` / `sharePostLinkOut` throw on `postId.slice`.
+The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`, which is why the
+same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
+viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
+closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
+**Fix MERGED (#2644), read `PASS` on the Mi 9T, rig build `203e46606` on dev (2026-10-28), synthetic reel:**
+a tap on a conversation of the viewer's sheet closes the viewer and opens that DM with the reel's link
+waiting in its composer, NOT sent (#2609's dismissal; `[sharePost] sending the link of <id>`, then
+`[SHARE] landing on <conversation>`). "Partager via..." opens the system chooser on the link, and
+"Copier le lien" logs `copying the public link of <id>`. No error in the window. The draft was cleared
+and the reel deleted.
+
+## P3 - A late native-library pick after "Rouvrir la camera" still reaches the review (#2655 review, 2026-10-28)
+
+On the native library path (`ReelCapture.openGallery`, the iOS app), tapping "Rouvrir la camera"
+while `pickNatively` is still pending runs `endPicking` early; the promise's later `.finally` is then
+a no-op, but a file it hands over still goes through `takePickedVideo` and replaces the live camera
+with a review. Arguably right (the member did pick it), and untested either way: owed a test that
+settles the native promise after the reopen, and a decision on whether a pick that arrives after the
+member chose the camera is kept or dropped.
+
+## P3 - Tests that read the source tree or spawn a worker time out under CPU load (2026-10-28)
+
+Tests that read the source tree or spawn a worker hit vitest's 5 s default when the machine is
+loaded: in a whole-suite local run (the CPU at 97 %), `environment.test.ts`,
+`globalChatSingleton.importCycle.test.ts`, `encryption.worker.test.ts`,
+`ChatArea.entryWindow.svelte.test.ts` and `graine/distributionGroup.test.ts` timed out, and each
+passed alone. CI was not hit. Give them an explicit timeout sized to their measured cost.
+
+## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
+
+On the Mi 9T's bench account, a reinstall surfaced a queue of "Nouvel appareil sur votre compte"
+alerts, one per enrolment of that account's other clients (dated 25 Oct 12:15, 12:20, 17:47,
+23:13, ...). Read from `NewDeviceBanner.svelte` and `deviceNotices.svelte.ts`, three things, and
+none of them is bench-only:
+
+- **One at a time.** The banner draws `pendingDeviceNotices()[0]`, and "Compris" and "Voir mes appareils"
+  dismiss that one alone, so N devices added while this one was away cost N taps. "Voir mes appareils"
+  opens the list that shows them all, yet it dismisses one.
+- **Nothing prunes an alert whose device has since left the account.** A pending alert is
+  removed by a dismissal or by "Ce n'est pas moi", never by the device's revocation elsewhere. That
+  is unread: whether the queued devices here are still enrolled.
+- **The banners sit above the full-screen CanaReels camera and the reel composer.** They take the top
+  third of the screen, and the camera's own controls start under them.
+
+Owed: one alert per batch (or "Voir mes appareils" dismisses every pending alert), an alert dropped
+when its device is no longer on the account, and the banner hidden or deferred on a full-screen
+capture surface. Read on the Mi 9T against the rig build `5c362c0e1`.
+
+## P3 - Whose is the deep-link manifest diff found in the main checkout? (2026-10-28)
+
+The main checkout held an uncommitted
+`frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml` diff, restored before an A1 build:
+`org.chromium.arc.intent.action.VIEW` added to the `signed-out` deep-link filter, and
+`android:path` entries (`/chat`, `/communities`, `/notifications`, `/calendar`, `/shop`,
+`/bookings`, ...) added under the `canari-emse.fr` host filter. The ARC action is already on `main`
+in the other filters (`git log -S`), and the paths are in `tauri.conf.json`'s deep-link config. This
+file is the one that `tauri android build` regenerates from that config (`REGENERATED_MANIFEST`,
+`tools/cross-client-harness/a1apk.mjs`). The diff was already in the checkout when the session
+started, before any build of it. An `a1apk.mjs` build of `5c362c0e1` then left the tree CLEAN,
+although neither the config nor the committed manifest differs between `fb7994232` and
+`5c362c0e1`. So which build wrote the diff, and why the same config regenerates differently, are
+both unanswered. Owed: reproduce it from a clean tree. If a build regenerates a manifest that
+differs from the committed one, the committed copy is stale and is regenerated in a pull request.
+
+## P3 - Three loose ends of the reel camera's no-start-after-leave fix (review of #2647, 2026-10-28)
+
+- **A picker that never answers leaves the camera stopped for good.** `deferOpen` is cleared when
+  the gallery picker answers, including the file input's `cancel` event; an engine without that
+  event (WebView or browser before Chromium 113, Safari before 16.4) or a native picker dismissal
+  the plugin never settles leaves it set, and the screen stays on its "starting" spinner with no
+  control to retry - the controls render only while live. Owed: a way out that is a gesture, not a
+  timer (a tap on the stand-in clears the deferral, or a reopen control while stopped and deferred),
+  and the WebView floor written down.
+- **The clear of `leaving` is untested.** The `afterNavigate` that clears it while the screen stays
+  mounted is mocked to a no-op in the tests, so deleting its body passes: capture the callback and
+  assert drain, then `afterNavigate` while mounted, then the camera opens again.
+- **`leaving` can outlive a navigation that does not happen** (theoretical): a non-shallow
+  navigation that drains the take and is then cancelled, or a bfcache restore, leaves it set. No
+  guard that cancels a navigation is mounted with the camera today.
+
+## P3 - A share already drained into the picker does not survive a kill (Mi 9T, 2026-10-28)
+
+Accepted as designed (2026-10-28): [sharing](frontend/sharing.md) promises a waiting share survives
+a kill only while the page has not taken it. Read on 1.5.1: a text share left open in "Envoyer
+a..." (`pending_share.json drained`), the app force-stopped and relaunched - nothing offered again.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
@@ -2715,6 +2848,13 @@ list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent
 the most recent conversation, so the one the member just left is at the top everywhere except
 there. Deciding: whether the forward and the share-in picker split their order, or both go to
 `'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - A toast draws over the dev-only "Environnement de test" banner (Mi 9T, 2026-10-28)
+
+On a dev build the `share_items_lost` toast lands on top of the test-environment banner at the top
+of the screen and the two texts overlap. Production carries no such banner, so only dev and tester
+builds show it; any toast placed at the top meets it the same way. Deciding: whether toasts sit
+below the banner or the banner yields while a toast shows.
 
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
