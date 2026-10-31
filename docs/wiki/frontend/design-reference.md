@@ -3302,6 +3302,8 @@ comment in `PostComments` (`commentArrivals`: one new id plays the entrance - ne
 never a page of older comments, never the swap of the reader's local id for the server's row), and
 the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.
 
+Two more (owner, 2026-10-31): the feed tab pill is ONE measured element moved by `transform` with `--motion-slow` (`FeedTabRow`; the first placement and a re-layout never slide), and the reel viewer grows out of the clapper button (`reels/expandFrom.ts`): a view transition named `reel-open` (button and `[data-reel-viewer]`, `::view-transition` is `pointer-events: none`), else `motion-expand-in` scaling from the button's centre; the fallback is logged at debug, and reduced motion starts neither.
+
 ## Avatar placeholders: eight gradient hues, picked from the entity's ID (user, 2026-10-30)
 
 Every avatar without a photo or logo (a person, a group or community, an association) used to be yellow initials on the same navy disc. It is now ONE component, `AvatarPlaceholder.svelte`, used by `Avatar`, `GroupAvatar` and `AssociationAvatar` (the anonymous-post avatar stays an icon on navy on purpose: it is nobody).
