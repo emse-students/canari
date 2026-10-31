@@ -703,7 +703,9 @@ else; a failure to apply it answers 503 to ask for a retry, and so does a VALIDA
 PENDING token of an enrolment: `business/create` answered it and the link has not run yet. Core
 records that token on the association (`lydiaEnrolmentVendorToken`, migration 118) through
 `lydia-enrolment-vendor-token` BEFORE the key check and the link; the link, a typed refusal and the
-admin's clear erase it. Any OTHER unknown token is a 200 that writes nothing, at WARN, so one stuck
+admin's clear erase it. That 503 carries the typed code `LYDIA_ENROLMENT_PENDING` (shared contract),
+so core logs the expected retry at WARN; every other failure to apply carries none and stays an
+ERROR, also answered 503. Any OTHER unknown token is a 200 that writes nothing, at WARN, so one stuck
 enrolment never turns every unknown token into a retry; failing to record the pending token is an
 ERROR and the enrolment goes on. **That Lydia retries a 503 is UNMEASURED.** An unsigned VALIDATED never clears a holder whose cause is Lydia's own answer
 (`request-refused`, `request-blocked`): 200, nothing written, a WARN - only the global admin's

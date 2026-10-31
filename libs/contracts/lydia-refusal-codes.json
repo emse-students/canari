@@ -18,6 +18,7 @@
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
     "paymentsBlocked": "PAYMENTS_BLOCKED",
     "enrolmentInFlight": "LYDIA_ENROLMENT_IN_FLIGHT",
+    "enrolmentPending": "LYDIA_ENROLMENT_PENDING",
     "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET",
     "responsablePhoneLocked": "LYDIA_RESPONSABLE_PHONE_LOCKED",
     "responsableInFlight": "LYDIA_RESPONSABLE_IN_FLIGHT",

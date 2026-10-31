@@ -41,6 +41,13 @@ export const PAYMENTS_BLOCKED = 'PAYMENTS_BLOCKED';
 export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
 
 /**
+ * The `code` of the 503 the internal readiness route answers for a `BUSINESS_VALIDATED` naming the
+ * PENDING token of an enrolment not linked yet: an expected retry, which core logs at WARN. Every
+ * other failure to apply carries no such code and stays an ERROR.
+ */
+export const LYDIA_ENROLMENT_PENDING = 'LYDIA_ENROLMENT_PENDING';
+
+/**
  * The typed 409 for a payment target that is not ready: `PAYMENTS_BLOCKED` when the target's last
  * readiness cause is Lydia's "blocked" answer, `PAYMENTS_NOT_ACTIVATED` otherwise. ONE builder for
  * `assertPaymentsReady`, `preparePurchase`, `decidePurchase` and the checkout refusals, so the payer

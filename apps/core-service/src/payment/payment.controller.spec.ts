@@ -27,6 +27,7 @@ import {
   PaymentController,
   SESSION_ID_RE,
 } from './payment.controller';
+import { LYDIA_ENROLMENT_PENDING } from './webhook.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
@@ -1070,6 +1071,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       noBusiness: LYDIA_NO_BUSINESS,
     }).toEqual(contract.core);
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
+    expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
   });

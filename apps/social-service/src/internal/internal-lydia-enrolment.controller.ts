@@ -16,6 +16,7 @@ import {
   type LydiaResponsableView,
 } from '../associations/associations.service';
 import { ProductsService } from '../associations/products.service';
+import { LYDIA_ENROLMENT_PENDING } from '../associations/lydia-readiness';
 import { assertInternalSecret } from './internal-secret.util';
 
 /** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
@@ -72,8 +73,12 @@ export class InternalLydiaEnrolmentController {
       path: 'webhook',
     });
     if (outcome.kind === 'no-holder-enrolment-in-flight') {
-      // A retry is asked for; whether Lydia honours a 503 is unmeasured.
-      throw new ServiceUnavailableException('An enrolment is in flight; retry later');
+      // A retry is asked for, TYPED so core logs it as expected; whether Lydia honours a 503 is
+      // unmeasured.
+      throw new ServiceUnavailableException({
+        code: LYDIA_ENROLMENT_PENDING,
+        message: 'The Business of an enrolment in flight is not linked yet; retry later',
+      });
     }
     if (!('associationId' in outcome)) return { outcome: 'no-holder', associationId: null };
     return { outcome: outcome.kind, associationId: outcome.associationId };

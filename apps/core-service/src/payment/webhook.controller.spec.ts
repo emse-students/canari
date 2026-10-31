@@ -5,6 +5,7 @@ import * as bodyParser from 'body-parser';
 import { Logger, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
+  LYDIA_ENROLMENT_PENDING,
   PaymentWebhookController,
   describeContentType,
   describeFieldNames,
@@ -663,11 +664,42 @@ describe('POST /api/payments/lydia-business-webhook - VALIDATED marks ready, not
     expect(error).not.toHaveBeenCalled();
   });
 
-  it('a VALIDATED that could not be APPLIED answers 503, so Lydia retries it', async () => {
-    mockedAxios.post.mockRejectedValue(new Error('social unreachable'));
+  it.each([
+    ['social-service unreachable', new Error('social unreachable')],
+    [
+      'a social-service 5xx',
+      Object.assign(new Error('Request failed with status code 500'), {
+        response: { status: 500, data: { message: 'boom' } },
+      }),
+    ],
+    [
+      'a social-service 503 without the pending code',
+      Object.assign(new Error('Request failed with status code 503'), {
+        response: { status: 503, data: { message: 'down' } },
+      }),
+    ],
+  ])('a VALIDATED that could not be APPLIED (%s) answers 503 at ERROR', async (_, failure) => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    mockedAxios.post.mockRejectedValue(failure);
     const res = await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
     expect(res.status).toBe(503);
-    expect(lines.join(' | ')).toContain('could not be applied');
+    expect(error.mock.calls.flat().map(String).join(' | ')).toContain('could not be applied');
+  });
+
+  it('the PENDING enrolment token answers 503 at WARN, never ERROR', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 503'), {
+        response: { status: 503, data: { code: LYDIA_ENROLMENT_PENDING, message: 'retry' } },
+      })
+    );
+    const res = await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
+    expect(res.status).toBe(503);
+    expect(warn.mock.calls.flat().map(String).join(' | ')).toContain(
+      'names the Business of an enrolment not linked yet'
+    );
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('an oversized body is refused by the bounded parser and writes nothing', async () => {

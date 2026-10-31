@@ -24,6 +24,13 @@ import {
 } from './social-internal-client';
 import { describeHttpError } from '../common/http-error-log';
 
+/**
+ * The `code` of social-service's 503 for a `BUSINESS_VALIDATED` naming the pending token of an
+ * enrolment not linked yet (`libs/contracts/lydia-refusal-codes.json`, `social.enrolmentPending`):
+ * an expected retry, logged at WARN. Any other failure to apply is an ERROR.
+ */
+export const LYDIA_ENROLMENT_PENDING = 'LYDIA_ENROLMENT_PENDING';
+
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
 /** Validates a submissionId before embedding in a URL path. */
@@ -369,12 +376,22 @@ export class PaymentWebhookController {
         );
         applied = data ?? {};
       } catch (err: unknown) {
-        // A 503 asks Lydia for a retry; that it retries is unmeasured.
-        this.logger.error(
-          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied (or names the pending ' +
-            'Business of an enrolment not linked yet) - answered 503; whether Lydia retries is unmeasured',
-          describeHttpError(err as Error)
-        );
+        // A 503 asks Lydia for a retry either way; that it retries is unmeasured. Only social's
+        // TYPED pending-enrolment answer is expected; anything else failed to apply.
+        const answer = (err as { response?: { status?: number; data?: { code?: unknown } } })
+          .response;
+        if (answer?.status === 503 && answer.data?.code === LYDIA_ENROLMENT_PENDING) {
+          this.logger.warn(
+            '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED names the Business of an enrolment not ' +
+              'linked yet - answered 503 to ask for a retry; whether Lydia retries is unmeasured'
+          );
+        } else {
+          this.logger.error(
+            '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied - answered 503; ' +
+              'whether Lydia retries is unmeasured',
+            describeHttpError(err as Error)
+          );
+        }
         throw new ServiceUnavailableException('Failed to apply the business event');
       }
       if (applied.outcome === 'no-holder') {

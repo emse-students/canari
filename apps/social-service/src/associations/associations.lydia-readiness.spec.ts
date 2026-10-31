@@ -14,7 +14,11 @@ import {
   LYDIA_RESPONSABLE_PHONE_LOCKED,
 } from './associations.service';
 import { AssociationProduct } from './entities/association-product.entity';
-import { LYDIA_ENROLMENT_IN_FLIGHT, LYDIA_READINESS_LOG_TAG } from './lydia-readiness';
+import {
+  LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_ENROLMENT_PENDING,
+  LYDIA_READINESS_LOG_TAG,
+} from './lydia-readiness';
 import {
   LYDIA_PAYMENTS_PAUSED_TYPE,
   LydiaPaymentsNotifier,
@@ -791,11 +795,13 @@ describe('the Responsable codes social-service answers follow the shared contrac
       responsablePhoneLocked: LYDIA_RESPONSABLE_PHONE_LOCKED,
       responsableInFlight: LYDIA_RESPONSABLE_IN_FLIGHT,
       businessChanged: LYDIA_BUSINESS_CHANGED,
+      enrolmentPending: LYDIA_ENROLMENT_PENDING,
     }).toEqual({
       responsableAlreadySet: contract.social.responsableAlreadySet,
       responsablePhoneLocked: contract.social.responsablePhoneLocked,
       responsableInFlight: contract.social.responsableInFlight,
       businessChanged: contract.social.businessChanged,
+      enrolmentPending: contract.social.enrolmentPending,
     });
   });
 });
