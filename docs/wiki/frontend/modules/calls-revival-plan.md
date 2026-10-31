@@ -195,7 +195,7 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
 (`frontend/src/lib/utils/callStats.ts`; tests in `callStats.test.ts` and `CallService.p2p.test.ts`):
 
 ```
-[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms=<tap->first remote audio> engine=<[tauri-<shell>/]Chrome/N|Safari/N|iOS/N|Firefox/N>
+[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= ring_ms=<ring start->answer> connect_ms=<answer->first E2E proof> engine=<[tauri-<shell>/]Chrome/N|Safari/N|iOS/N|Firefox/N>
   ice=<state> pair=<local type>/<proto>-><remote type>/<proto> relayed=<yes|no> [relay_proto=] [rtt_ms=] turn=<host:port, no credential>
   out_kbps= in_kbps= loss_in_pct= jitter_ms= audio_level_out= audio_level_in=
   e2e=<on|-> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
@@ -216,15 +216,24 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
   stamped and READ at the hangup, while the peer connection and the worker are still alive (cleanup
   releases them when the 1.5 s summary closes), and WRITTEN after a tick still in flight, so no tick
   line follows it. Nothing waits on it: teardown is unchanged, and a read that fails says
-  `WARN call report (end) not written`. A call that never built a peer connection writes none.
+  `WARN call report (end) not written`. A call whose peer connection never met its peer (the
+  caller's, built during a ring nobody answered) writes none.
 
 - `call=` is the room id, the same value as the SFU's `room=` - the only join key between the halves
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.
-- `setup_ms` and `audio_level_in > 0` are the two numbers a "the call connected but nobody heard
+- **`ring_ms` and `connect_ms` (2026-10-31) replace `setup_ms`**, which ran from the tap to the first
+  remote audio and so counted a person taking 40 s to answer as 40 s of setup. `ring_ms` is the
+  ring - the caller's tap, or the callee's page starting to ring, to the answer (the callee's tap,
+  the caller's first `PeerReady`) - a HUMAN's time, never a defect. `connect_ms` is the app's: the
+  answer to the first E2E proof (`[Call] E2E proven ... (connect_ms=N)`), the moment the screen
+  shows the shield. A call answered from a system surface rings the page only for its join, so its
+  callee `ring_ms` is near 0 by construction. Both are `-` until they happen. A build before this
+  split writes `setup_ms`; never compare the two.
+- `connect_ms` and `audio_level_in > 0` are the two numbers a "the call connected but nobody heard
   anything" report needs; `dec_fail` with `dec_frames=0` separates an E2E key mismatch from no media.
 - No SDP, no candidate string, no credential, no name in the line (the in-app log is exported).
 - Server side: `[ring] rang=N/M`, `[call] ice connected after_ms=`, `session end disposition=` exist;
-  add the client's `setup_ms` nowhere else - the two are joined by `room=`, never duplicated.
+  add the client's `ring_ms` / `connect_ms` nowhere else - the two are joined by `room=`, never duplicated.
 
 ## 7. The test matrix
 
@@ -270,7 +279,9 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
 | K11 | Rejoin after a network change (N7; ENDS the call until WP-C10) |
 | K12 | Decline / cancel / unanswered 60 s / second call while busy (CALL-4, -5, -7, -17) |
 
-**Observables, every cell:** ICE selected pair type and transport, `setup_ms`, in/out bitrate, inbound
+**Observables, every cell:** ICE selected pair type and transport, `connect_ms` (the app's time,
+answer to E2E proof - the number a cell is judged on) with `ring_ms` beside it (a human's, never
+judged), in/out bitrate, inbound
 loss, audio level both ways (non-zero), E2E `dec_frames > 0` and `dec_fail = 0`, the SFU `session end`
 disposition (`client-close` or `sibling-evicted` only). Until WP-C2 lands, WP-C1 reads the same from a
 local-only `getStats` dump and `chrome://webrtc-internals`.
