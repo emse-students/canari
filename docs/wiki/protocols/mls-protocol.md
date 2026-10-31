@@ -573,7 +573,7 @@ Nothing is replayed to it at that promotion, and nothing is replayed at any othe
 - **The delivery service, before the membership gate** (`assertExternalRemoveIsOwnPriorLeaf`, `messaging.service.ts`): `readCommitFrame` reads the index of every Remove from the clear proposals, and the gate reads whose leaf it is from the tree of the stored base (`groupInfoLeafIdentity`, `utils/mls-group-info.ts`) - the GroupInfo the joiner was served. With no base at or past the commit's epoch the leaf cannot be named, and the commit is refused (`commit_identity_mismatch`). **A base PAST the commit's epoch is a race the commit lost, and it is the epoch gate's to answer**: a legitimate resync built on base N and submitted after the group moved to N+1 reads `epoch_mismatch` and rebuilds, where a 403 would end its retry. That is only left to the epoch gate while the group's `activeEpoch` is past the commit too - it never moves back, so the gate is certain to refuse; a base ahead of a group still at the commit's epoch is refused here. Identities are compared in `canonicalDeviceKey` form (`utils/sanitize.ts`), the one this service uses everywhere.
 - **The send routes relay only private (application) frames; a public handshake frame goes through the commit route.** `POST /mls/send` (`clientSendRefusal`) and `POST /mls/push/send` refuse a `PublicMessage` (`isPublicMlsFrame`) with `public_frame_refused` and an ERROR line, so no external commit reaches members without the gate above. No legitimate sender is refused: every client seals with `create_message` in `mls-core` (web through WASM, Android and iOS background sends through `send_authored_message`), and no group sets a wire-format policy, so openmls's default `PURE_CIPHERTEXT` makes every application frame and proposal a `PrivateMessage`; commits, external ones included, go to `POST /mls/commit`.
 
-**"The joiner's own" means the same DEVICE identity (`userId:deviceId`, user half compared ignoring ASCII case), not the same user.** The only Remove our joins carry is the one openmls's external-commit builder adds by itself: the leaf holding the joiner's own signature key, which one device holds under one credential (`welcome.rs`). A further device of the same user enters beside its siblings, never in place of one ([An unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)). A device that lost its state presents a NEW key, so its join carries no Remove at all. Pinned by `mls-core/tests/external_commit_remove_rule.rs` (a fresh join, the resync through `join_by_external_commit`, a resync built by hand, and the refused Remove of another member), `utils/mls-group-info.spec.ts`, `utils/mls-frame-epoch.spec.ts` the `an external commit carrying a Remove` cases of `messaging.commit-log.spec.ts` (which use bytes openmls produced, the lost race included), and the public-frame cases of `messaging.controller.client-fields.spec.ts` and `push.controller.commits.spec.ts`.
+**"The joiner's own" means the same DEVICE identity (`userId:deviceId`, user half compared ignoring ASCII case), not the same user.** The only Remove our joins carry is the one openmls's external-commit builder adds by itself: the leaf holding the joiner's own signature key, which one device holds under one credential (`welcome.rs`). A further device of the same user enters beside its siblings, never in place of one ([A device of a member is added](#a-device-of-a-member-is-added-never-asked-about-2026-10-31)). A device that lost its state presents a NEW key, so its join carries no Remove at all. Pinned by `mls-core/tests/external_commit_remove_rule.rs` (a fresh join, the resync through `join_by_external_commit`, a resync built by hand, and the refused Remove of another member), `utils/mls-group-info.spec.ts`, `utils/mls-frame-epoch.spec.ts` the `an external commit carrying a Remove` cases of `messaging.commit-log.spec.ts` (which use bytes openmls produced, the lost race included), and the public-frame cases of `messaging.controller.client-fields.spec.ts` and `push.controller.commits.spec.ts`.
 
 On a successful external join the device also marks its conversation `active` (external join does not go through the Welcome path that normally promotes it). The pre-join history it cannot decrypt is not asked for here: it comes from the reconciliation that every connection runs, described below.
 
@@ -964,15 +964,18 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
 
 ### New-device notices (decided by the user 2026-10-22, refined the same day)
 
-No mandatory approval of a new device - **partly reversed on 2026-10-27, confirmed by the user
-the same day: a device of a member that no member admitted waits for a member's tap**
-([an unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)). Instead, **produced by the client from the signed commit it
-processed, never from a server message** (a server that stays silent must not silence them):
+No mandatory approval of a new device - the 2026-10-27 interim that asked a member about each one
+is deleted (owner, 2026-10-31: the gate is on the user, never the device;
+[a device of a member is added](#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+Instead, **produced by the client from the signed commit it processed, never from a server
+message** (a server that stays silent must not silence them):
 
 - the account owner gets an alert "a new device was added to your account", in the app and as a
   local notification on the phone, whichever group the commit came from;
-- contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
-  groups), **never in a community or salon key group**, where it would be noise.
+- every member - contacts AND the account's own other devices (owner, 2026-10-31) - sees a discreet
+  line "X added a device" in **private conversations only** (1:1 and groups), **never in a community
+  or salon key group**, where it would be noise, and **never as the conversation list's preview**
+  (`listPreview.ts`: the row shows the message before it, or its empty preview).
 
 **What counts as a new device** is decided where the event is recorded, as a fact
 (`DeviceEvent.memberAlreadyPresent`: the user already had a leaf before the commit) and one predicate,
@@ -1003,11 +1006,28 @@ of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of
 It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
 and the device list stays the place to audit the account:
 
-| Key first seen by the server | Owner alert | Contact line |
+| Key first seen by the server | Owner alert | Line "X added a device" (contacts AND the account's own devices) |
 |---|---|---|
-| never dated (published before the key history began) | no | no |
-| before THIS device enrolled (first sight of its own key) | no | no |
+| NOT LISTED, or no ages sent (`unknown`): the server said nothing about it | yes | yes |
+| listed with no date (`before-history`: published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key; skipped when that is unknown) | no | no |
 | since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+**A server that stays silent does not silence a notice (2026-10-31 review).** The line is the one
+visible trace of a member's device added with no tap, so a key the server leaves out of its answer
+reads as NEW: the age only suppresses when the server STATES it (a date, or the key listed undated).
+An unknown own enrolment skips that one comparison rather than announcing nothing. The own-device
+LINE is bounded by the same 7 days as a contact's, so it is never written weeks late; the owner's
+alert keeps no bound.
+
+**A server that LIES about a key's age still suppresses the in-app notices.** The age is the
+server's word: a fresh key given a false old date, or listed with no date (`before-history`), reads
+as old, and neither the line nor the in-app owner alert (web, iOS, the Android foreground) is
+written. Listing it undated opens nothing a false date does not. What holds against that today is
+the **Android native owner alert**: the background engine raises it from the commit it merged, and
+only the devices it preclaimed as old at this phone's registration (`preclaimOldOwnDevices`) are
+kept quiet, so a device enrolled after that is announced whatever the server says. The hardening
+for the other platforms is on the [backlog](../backlog.d/p3-the-device-notices-trust-the-server-s-word-on-a-key-s-age.md).
 
 Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
 into a DM from a new one; the window trades a late line for no false one (the user: notices must not
@@ -1099,14 +1119,15 @@ two automatic adders - the pending-invitation sweep (`processPendingInvitations`
 - act on what the delivery service says: a `pending` row, a roster row, a relayed request. None of
 that is a member's decision. So before either builds an Add, it reads THIS device's tree: a requester
 whose USER already holds a leaf is a member's new or recovering device, and is added as before -
-unless that device holds no leaf of its own in the tree and no member approved it ([an unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)); a
+whatever the device ([a device of a member is added](#a-device-of-a-member-is-added-never-asked-about-2026-10-31)); a
 user who holds none is a new person, and is not added (`automaticAdmission` in `actions.ts`,
 `MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
 proves no membership, so nothing is added (it used to fall through to the Add).
 
 Instead, the ask is put to a member as **a discreet system line at the end of the conversation it
 concerns** (owner, 2026-10-30, replacing the app-wide banner, which is deleted): **"X veut rejoindre
-la conversation par lien - Accepter / Refuser"** (`join_request_row_text`), the same muted pill as
+la conversation - Accepter / Refuser"** (`join_request_row_text`, worded about the person, owner
+2026-10-31), the same muted pill as
 the other notices ("X added Y"), two small inline answers, never full-width colour. `JoinRequestRow`
 draws it (user decision 2026-10-24: in the conversation, any member may accept;
 `joinRequests.svelte.ts`). The line FOLLOWS the store and is not a persisted system row: a
@@ -1120,9 +1141,9 @@ completed sweep replaces the asks on screen.
 `memberAdded` notice ("Y a ajouté X au groupe", `sendVisibleNotice`) on every member's device. A
 DECLINE has no frame at all, so the member who declined sees "Vous avez refusé la demande de X" and
 no other member does - a session-only line (`declinedJoinRequests`), deliberately not a stored row.
-While an ask is pending, the conversation-list preview reads the same words ("X veut rejoindre la
-conversation par lien", or "Nouvel appareil de X"; `pendingAskPreview`, derived from the ask store, so the
-ordinary preview returns once it is answered). Preview only: no badge, no unread change, no notification.
+An ask is NEVER the conversation list's preview (owner, 2026-10-31, replacing the 2026-10-30
+`pendingAskPreview`, which turned every row a contact's devices touched into the same line): the
+preview shows the last real message (`listPreview.ts`).
 
 **Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
 `welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
@@ -1348,167 +1369,90 @@ member as `new-person`. The server takes the report from a member of the group o
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
 
-### An unseen device of a member (2026-10-27, interim)
+### A device of a member is added, never asked about (2026-10-31)
 
-**Superseded by the 2026-10-30 decision: a new device of a member enters by itself, with a history and a visible trace ([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).** What follows is the interim built in 1.5.
+**The gate is on the USER, never on the device** (owner, 2026-10-31: *"L'ajout a un groupe MLS d'un
+appareil d'un utilisateur deja present se fait automatiquement. La confirmation est demandee pour
+un utilisateur pas encore present (donc la barriere est une barriere utilisateur, pas
+appareil)."*). It applies the 2026-10-30 decision
+([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
 
-**A leaf proves the user, not the device.** "Who admits a new person" decides on the USER: one who
-already holds a leaf was a member, and any further device of theirs was added automatically. Since
-2026-10-27 **an unseen device of a member is now asked about before it is added**, exactly as a new
-person is (`automaticAdmission` returns `unseen-device`, `actions.ts`), and the user decided the same
-day to keep BOTH doors: a new person still joins by link, and the tap is mandatory for an unseen
-device of a member. Seen means exactly one of:
+- **A member's new device is added automatically**, by the same automatic adders a recovering
+  device always had: the pending-invitation sweep and the `welcome_request` handler.
+  `automaticAdmission` (`actions.ts`) answers `member-device` for any device of a user who holds a
+  leaf in THIS device's tree, `newcomer` otherwise, `unreadable` when the tree cannot be read.
+- **Everyone is told, nobody is asked**: every member, and the account's own other devices, get the
+  discreet line "X a ajoute un appareil" (`chat_system_device_added`,
+  [new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)) in
+  each 1:1 and group they share, never in a key group, and never as the conversation list's preview.
+  The owner's alert ("Nouvel appareil connecte", with "Not me") is unchanged.
+- **Only a new person is asked about**: "X veut rejoindre la conversation - Accepter / Refuser"
+  (`JoinRequestRow`), for an invitation-link ask
+  ([who admits a new person](#who-admits-a-new-person-2026-10-23)). Never in a 1:1, where the other
+  person is a member by definition.
 
-- its own leaf is in THIS group's tree - a lost Welcome, a re-add, a replace under the same id;
-- this member approved it this session, under its key (`memberDeviceAnswers.ts`, below).
+**What "is a member" rests on, and why the new device cannot claim it.** The verdict reads the leaf
+credentials of the ratchet tree this device holds (`getGroupMemberIdentities`, `treeHoldsUser`),
+which only a commit some member signed could have written - not the delivery service's roster, not
+the request, not anything the new device sends. The new device can claim to be `userId:deviceId`;
+what makes that claim hold is (a) the delivery service's authentication of the device's enrolment
+under that user's session, and (b) the Add itself, which refuses a KeyPackage whose credential names
+another device or whose key changed under a known id (`key_package_verdict`: `identity-mismatch`,
+`signature-key-changed`). So a server under hostile control still cannot bring a NEW PERSON in (no
+leaf of theirs is in any member's tree); what it can do - enrol a device under a member's account -
+is the stated residual risk of the 2026-10-30 decision, made visible by the line and the owner's
+alert rather than gated by a tap.
 
-**A pin of its key is NOT seen.** Pins (`pinnedSignatureKeys`, [device binding](#device-binding))
-are one store for every group, so a pin says the key was met somewhere, never that a member of THIS
-group admitted the device. No decision in this section reads a pin: each is taken per group.
+**The further device's own door is unchanged.** A device whose user holds a leaf in the tree of the
+GroupInfo its external commit would be built on, but none of its own, does not let itself in
+(`externalJoin(groupId, { asAFurtherDevice: 'ask' })`, `external_join_is_a_further_device` in
+`welcome.rs`): it sends a `welcome_request` and a member's device adds it. A user's first device in a
+group, and a device whose own leaf is still there, keep their own door. A device that does let
+itself in (an older client) is still said and reported (`entersAsUnvouchedDevice`,
+`[UNINVITED_ENTRY] kind=unvouched-device`, `chat_system_unvouched_device_entry`) and answered no
+history until a member's Add of it (`historyWithheld.ts`); there is no tap that lifts it any more.
 
-The rule holds on all three automatic adders: the pending sweep, the `welcome_request` handler, and
-the Android background answer, which admits only a device whose own leaf is in the tree
-(`admit_only_a_device_this_tree_holds`, `background.rs`) and refuses anything else as
-`unseen-device`. A device whose leaf is in the tree is refused there by the Add itself
-(`already-member`) and replaced by the foreground, so **a push adds nobody today**; the staging
-machinery is kept, behind that one rule, for the device a signature will vouch for (the real fix
-below), and its tests run under an explicit stand-in rule (`admit_as_if_vouched`).
+**History is the existing design's, unchanged here.** A device added by a member's Add is not
+withheld; what history it receives is decided by the history-answer rules
+([history-answer-addressing](history-answer-addressing.md)), which this change does not touch.
 
-**One entry per device, bound to its key.** The ask (`kind: 'device'` on `JoinApprovalRequest` and
-`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, drawn as the same
-discreet line (`JoinRequestRow`; the app-wide banner no longer exists, owner 2026-10-30) with its own words
-(`join_request_device_row_text` - "Nouvel appareil de X", Ajouter / Refuser - or `join_request_device_row_text_own` for the
-signed-in account's own device, `isOwnDeviceAsk`). The fingerprint is not inline: it sits behind a "Details" disclosure. It shows the device's name - the server's, a hint
-only - and the fingerprint of the signature key its KeyPackage carries, in groups of four
-(`deviceAskDetail`). The key is read once per session from one fetched package
-(`keyPackageSignatureKey`, a parse of the RFC 9420 layout held to the real WASM build by
-`deviceTrust.keyPackage.realWasm.test.ts`) and kept, so a waiting ask spends no package per sweep. It
-is raised in ANY conversation row, a 1:1 included, because neither answer touches a seat.
-The waiting device says in plain words, with no key on screen (`chat_waiting_own_device`), what its
-owner does: open the conversation on another device already in it, or ask another member to open
-it, tap Add (`join_request_accept`).
+**The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
+arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
+user-level verdict to the tree it loaded from `mls.bin`: a requester whose user holds a leaf is
+staged and sent, a new person is refused (`newcomer`), an unreadable tree adds nothing
+(`group-not-held`). It holds the same server add-lock as the foreground (`acquireAddLock`), refuses
+while a foreground or warm process owns the state, stages over the exact bytes it read
+(compare-and-swap), refuses a second staged commit and an `already-member`, and records a refused
+answer so the same bytes are not offered twice. **A seat that is still an invitation link's ask is
+never admitted from a push**: the tree cannot show the seat's flag, and a removed member's leaf can
+outlive the removal. Three layers, each the server's: no phone is woken for an ask at all
+(`notifyWelcomeRequest` sends no `welcome_request_pending` for an awaiting seat - the stored frames
+still reach every member's app); the push route refuses such a target before the lock as its cheap
+first refusal (`awaiting_admission`, `push.controller.ts`); and the GATE refuses it under the seat
+lock (`validateCommit(..., { mayAnswerAsk: false })`, `enrolAdmittedPeople`), which no ask written
+after the route's read can overtake - it would otherwise read the commit as a member's Accept and
+lift the ask. The phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the
+foreground's `admissionOfSeat` refuses the same seat. The per-device rule it had
+(`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
+path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
+still waits for a member's app. While it waits, the device says so in plain words, with no key and
+no button (`chat_waiting_own_device`): it is added as soon as another device of its user already
+in the conversation, or another member, opens the app.
 
-- **Add** records the approval of THAT device under THAT fingerprint, across conversations, and
-  starts the pending sweep without waiting for it (`setMemberDeviceSweep`; a sweep already running is
-  followed by one more, `owed`). Every Add made on the approval re-reads the key of the package it is
-  built from (`approvedKeyHolds`): a package under another key is refused at ERROR, the approval
-  withdrawn and the device asked about anew under the key it now shows. One tap never approves a set
-  of devices; an entry naming none, several, or no key approves nothing.
-- **Decline** records the refusal for that device IN THAT CONVERSATION, offers an Undo
-  (`undoMemberDeviceDecline`), and withdraws nothing on the server - the device may be the owner's,
-  and another member may know it.
+**What was deleted with the interim (2026-10-27 to 2026-10-31).** The per-device ask ("Nouvel
+appareil de X - Ajouter / Refuser", its "Details" fingerprint disclosure and its Undo), the approvals
+and declines (`memberDeviceAnswers.ts`), the key binding of an approved Add (`approvedKeyHolds`), the
+KeyPackage key parser that fed it (`keyPackageSignatureKey`), the waiting device's own key notice
+(`chat_waiting_own_device_key`) and the engine call that read that key (`ownSignatureKey`,
+`mls_own_signature_key`, `own_signature_key` in mls-core and mls-wasm), the ask's preview in the conversation list (`pendingAskPreview`),
+and the approval that lifted a withheld device's history. The interim asked about every device whose
+own leaf was not in the tree, a 1:1 included - which is how a DM peer's new phone came to be put up
+for approval in that DM (owner's screenshot, 2026-10-31).
 
-Both answers live for the session only (`resetJoinRequests` clears them at sign-out, with the sweep
-they owed): an answer lost to a restart is asked again, which never adds anything silently. An Add in
-one conversation never lifts a Decline given in another. A sweep that could not take a group's add
-lock leaves that group's asks on screen (`onGroupNotSwept`), so an ask does not blink while another
-device adds. And a person's ask is never raised for a user who already holds a leaf, whatever the
-seat's flag says (`admissionOfSeat`): that is a member, and the flag an anomaly said at ERROR.
-
-**A further device of a member does not let itself in.** The device's own recovery serves itself an
-external commit on a `pending` seat nothing follows (`unhonoured-seat`). Whether that is its door is
-NOT on the row - the server clears `admittedAtEpoch` on every transition, the demotions included -
-and NOT on the server's device rows either, which can be empty while the tree still holds the user's
-leaves (a stale demotion, a fresh start). It is decided on **the ratchet tree of the very GroupInfo
-the external commit would be built on** (`externalJoin(groupId, { asAFurtherDevice: 'ask' })`,
-`external_join_is_a_further_device` in `welcome.rs`), read again on every attempt, since each retry
-fetches a fresh GroupInfo:
-
-- **a member's Add** (`further_device`, then a `welcome_request`, whose member shows the device ask)
-  when that tree holds a leaf of this device's user and none of this device's own identity;
-- **its own door** otherwise: a 1:1 peer's first device, a user none of whose devices is in the tree,
-  or a device whose own leaf is still there (the external commit replaces it).
-
-That is the observer's predicate (`firstInGroup` + `memberAlreadyPresent` + a self-signed commit),
-read off the same tree and without the departure half, so it is the stricter of the two: **an honest
-device can no longer produce an entry its members flag** (`mls-core/tests/further_device_door.rs`
-builds both and checks them against each other). A new PERSON still joins by link and waits for a
-member's Add (`awaiting-admission`); a community key group is entered as before, never asking. While
-it waits, a further device tells its owner so in plain words (`chat_waiting_own_device`) - never on a
-person's link ask, whose member is shown a person.
-
-**And one that does is said.** A commit signed by the device it admits, whose user already held a
-leaf, for a device that was never in THIS group (`firstInGroup`: no leaf of it in the tree the commit
-was built on, and no departure of it recorded for this group - `device_trust.rs` now records one per
-removed device), is an entry no member made, decided per group whatever the pin says
-(`entersAsUnvouchedDevice`, `deviceTrust.ts`, and its Rust twin, held to one table): in a
-conversation - a 1:1 included - it is logged at ERROR, reported through `[UNINVITED_ENTRY]` as
-`kind=unvouched-device` (the server allowlists it), and written in the conversation
-(`chat_system_unvouched_device_entry`). A device coming back to a group it was in, a member-signed
-Add, a key group and this device's own join say nothing. The owner's alert "a new device was added to your
-account" carries **Not me** (`revokeNoticedDevice`): the device's revocation, as the device list does
-it - its id banned, its logins ended, its seats withdrawn - after which every member's stray collector
-removes its leaf from each conversation (`removeStrayLeaves`, revoked devices).
-
-**History is withheld from an unverified device.** A device written as `unvouched-device` in a
-conversation, or one that changed its own key by its own commit, is sent no history there
-(`historyWithheld.ts`): no answer is addressed to it, a full push sends it not even its state-only
-frame, and while any device of the conversation is withheld no answer there is broadcast, since every
-leaf reads a broadcast (a withheld device that has left the tree no longer counts). What such a
-device adds is unvouched too. The decision is taken one event at a time in commit order,
-so an entry and the Add it makes, merged in one drain, are both caught, and whether or not the
-conversation row is loaded yet (the line waits for the row, the withholding does not). It is lifted
-when a device that is not withheld there adds it, or when this member approves it under the key it
-entered with. The decision is PER MEMBER: each device withholds on its own verdict, and the record
-persists with that account's device notices. An approval is account-wide and lasts the session. A
-history answer reads the record only after every device event already merged has been decided, and
-answers nothing when they could not be (no consumer, a failed take, a failed delivery). Past its
-overall bound only records of conversations this device no longer holds are dropped, and only when
-the list of held conversations is known to describe the state - a device that left a conversation
-still held keeps its record, since it could come back; past a per-conversation bound of withheld
-devices present, or of withheld devices departed (whose records are then dropped), or when the native queue of device events dropped some of a conversation's events past its own
-bound (it keeps the oldest and marks each such conversation), or when one event could not be decided,
-that conversation is sealed and answers no history to anyone - all fail closed.
-
-**What it costs.** Every new device id is unseen by everyone, and a device id lives in the install:
-a new phone, a new browser, a reinstall or factory wipe, a device that lost its state - each enrols
-under a NEW id; only a restore from the account's backup keeps one. In a conversation whose tree
-holds another device of its user, such a device waits for one tap before it enters - its owner's,
-from another device of theirs that is online, which covers all their conversations at once;
-otherwise, a contact's in each conversation they share - where it used to join by itself on its
-unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
-joins by itself. A leaf of the user's own OLD device that stopped running counts as another device:
-a user whose only other leaf is that dead device waits for a contact's tap, and with no contact
-online, waits, for as long as that leaf stays in the tree. (Superseded 2026-10-30, not built: the device enters by itself, see [backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md).) The owner's other devices no longer serve it from a push, so the local notification
-"a device was added to your account" follows the foreground Add. The rate is owed from production:
-device ids first seen per week, and how many belong to an account that already had one. **This
-reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
-([new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)); the
-user confirmed the mandatory tap on 2026-10-27**
-([backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built)).
-
-**The same class, not gated here.** Some member-initiated paths add a user's devices without the seen
-check, because the member chose the person and there is no tree yet to have seen a device in. They
-close with the real fix below, and are named in the
-[backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built).
-
-#### The real fix: a device is vouched for by its own user (scoped, not built)
-
-The pin is trust on first use, and a first use is exactly where it says nothing
-(`device_trust.rs`, "What proof would lift a refusal": *"no per-user identity signs a user's
-devices"*; `members.rs` refuses a package only for `IdentityMismatch` or `KeyChanged`, and admits a
-first sight). What lifts the ask is a signature the member's client can verify, by something only the
-device's owner holds. Two shapes:
-
-| | A - cross-signing by another device | B - a user signing key |
-| --- | --- | --- |
-| What signs a new device | one of the same user's devices already pinned by the verifier, over `(userId, deviceId, signature key)` | a per-user Ed25519 key (USK), over the same triple |
-| Where the private half lives | each device's own state | sealed in the account's encrypted backup, under the recovery secret the vault already uses - the server holds only ciphertext |
-| What a verifier pins | nothing new (the voucher's existing pin) | the user's USK public key, first sight per USER, seeded from the trees it holds |
-| Reinstall of the user's ONLY device | nobody can vouch: the ask stays | the new device opens the backup and signs itself |
-| Owner's gesture | approve on the old device (today's ask becomes the signing tap) | none beyond the PIN / recovery code they already type |
-| Cost | a certificate extension and a verify; nothing to migrate | a new key, its rotation (signed by the old USK), a migration where existing users mint one |
-
-**Recommendation: B.** The commonest enrolment here is a single phone reinstalled or restored, and A
-leaves exactly that case on a contact's tap; B turns the existing PIN-sealed backup into the proof.
-In both, the certificate rides a leaf-node extension, is checked in `key_package_verdict` for every
-Add this device builds, and is checked for **every commit that admits a device, whoever made it**,
-in `observe_merged_commit` - a merged commit is never refused (that forks the device out), so an
-unvouched admission there becomes a `DeviceEvent` said at ERROR and shown, as `key-changed` is. The
-interim already says the narrowest case, a member device that entered by itself
-(`entersAsUnvouchedDevice`, above); the certificate turns it into the general one. The
-interim ask then remains only for users without a USK, a [legacy-compatibility](../legacy-compatibility.md)
-shim removed when the client floor carries it.
+**A device vouched for by a signature of its own user** (cross-signing, or a user signing key) was
+scoped as the interim's real fix and **rejected on 2026-10-30**: it costs users an action, and the
+owner chose visibility over a gate
+([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
 
 ## Key packages
 

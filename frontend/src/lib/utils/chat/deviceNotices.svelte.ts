@@ -9,6 +9,7 @@ import {
   deviceEventKey,
   isNewToItsOwner,
   type DeviceEvent,
+  type KeyFirstSight,
 } from '$lib/mls-client/deviceTrust';
 import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
 import {
@@ -34,6 +35,7 @@ import {
   type LeafStillIn,
   type WithheldDevice,
 } from './historyWithheld';
+import { deviceAddedLineId } from './listPreview';
 
 /**
  * THE NEW-DEVICE NOTICES (user decision 2026-10-22), built from the device events the MLS layer
@@ -45,10 +47,11 @@ import {
  *   when the app was not running - a local notification raised by the native background engine.
  *   The two share one ledger (`claim_device_notices`), so a push replaying a commit the app has
  *   already shown raises nothing.
- * - **The contact line.** A contact's new device is a discreet system line, "X added a device", in
+ * - **The contact line.** A member's new device is a discreet system line, "X added a device", in
  *   every 1:1 or group conversation they share with us - wherever the device was first seen - and
  *   never in a community or its key groups, where it would be noise (the user: "ca ferait beaucoup
- *   de bruit").
+ *   de bruit"). The account's own new device gets the same line in its own conversations, beside
+ *   the alert (owner, 2026-10-31). It is never the list's preview (`listPreview.ts`).
  * - **The refused device of my own.** A device of this account that this device refused for a
  *   changed key (`refusedDevices.ts`) is never re-added until it is reset: the owner is told so,
  *   with that remedy, until they dismiss it.
@@ -77,7 +80,7 @@ export interface OwnDeviceNotice {
  * or is not among the device's published keys at all - old either way), or `unanswered` (the server
  * could not be asked, which establishes nothing).
  */
-export type KeyAge = { kind: 'dated'; at: number } | { kind: 'undated' } | { kind: 'unanswered' };
+export type KeyAge = KeyFirstSight | { kind: 'unanswered' };
 
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
@@ -406,11 +409,6 @@ function keepUndecided(event: DeviceEvent): void {
   console.warn('[DEVICE_NOTICE] key age unanswered - the event waits for the next delivery');
 }
 
-/** The message id of a contact line: one per conversation, device and key. */
-function contactLineId(groupId: string, key: string): string {
-  return `device-added:${groupId}:${key}`;
-}
-
 /**
  * Turns device events into the notices above, one event at a time - a failure costs that event
  * alone and is logged. Owner alerts are claimed in the native ledger (phones) once recorded.
@@ -546,21 +544,31 @@ export async function deliverDeviceEvents(
         keepUndecided(event);
         continue;
       }
-      const isNew = isNewToItsOwner(age.kind === 'dated' ? age.at : null, {
-        learnedAt: ctx.now(),
-        ownEnrolledAt: enrolledAt,
-        isOwnAccount: audience === 'owner-alert',
-      });
-      if (!isNew) {
+      const evidence = { learnedAt: ctx.now(), ownEnrolledAt: enrolledAt };
+      // The line is bounded by the window, the owner's alert is not - an own device's line is not
+      // written weeks late either (2026-10-31 review).
+      const lineIsNew = isNewToItsOwner(age, { ...evidence, ownersAlert: false });
+      const alertIsNew =
+        audience === 'owner-alert' && isNewToItsOwner(age, { ...evidence, ownersAlert: true });
+      if (!lineIsNew && !alertIsNew) {
         old++;
         continue;
       }
       if (audience === 'owner-alert') {
         const deviceId = deviceIdOfLeaf(event.identity);
         const label = await ctx.deviceLabel(deviceId);
-        if (recordOwnDeviceNotice({ key, deviceId, at: ctx.now(), label })) {
+        if (alertIsNew && recordOwnDeviceNotice({ key, deviceId, at: ctx.now(), label })) {
           console.log(`[DEVICE_NOTICE] a new device was added to this account (${event.trust})`);
           claimed.push(key);
+        }
+        // AND THE SAME LINE AS EVERY MEMBER SEES, in this account's own conversations (owner,
+        // 2026-10-31): the account's other devices read "X added a device" where the contacts do.
+        if (lineIsNew && !lined.includes(key) && !owedLines.some((o) => o.key === key)) {
+          settleContactLine(
+            { event, key, since: ctx.now() },
+            await writeContactLines(event, key, ctx, trees)
+          );
+          writeStored(boundAccount);
         }
       } else {
         settleContactLine(
@@ -858,8 +866,10 @@ async function writeContactLines(
       ownDeviceId: ctx.ownDeviceId,
       isKeyDistributionGroup: ctx.isDistributionGroup(groupId),
     });
-    if (audience !== 'contact-line') continue;
-    const messageId = contactLineId(groupId, key);
+    // The account's own new device gets the line too, in its own private conversations; a key group
+    // never does, whoever's device it is.
+    if (audience === 'none' || ctx.isDistributionGroup(groupId)) continue;
+    const messageId = deviceAddedLineId(groupId, key);
     if (convo.messages.some((msg) => msg.id === messageId)) continue;
     // A row whose group this device does not hold has no tree to say who is in it, and no line.
     if (!held.has(groupId)) continue;

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * A pending join ask replaces the tile's preview line and nothing else: no badge, no unread change
- * (owner, 2026-10-30). The ordinary preview returns once the ask is answered.
+ * A SYSTEM NOTICE ABOUT A DEVICE OR AN ASK IS NEVER THE TILE'S PREVIEW (owner, 2026-10-31): a pending
+ * join ask is a line in its thread, never in the list, and "X added a device" - written in every
+ * conversation shared with X at once - is skipped for the message before it (`listPreview.ts`).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -13,16 +14,22 @@ vi.mock('$lib/utils/users/displayName', () => ({
 
 import ConversationTile from './ConversationTile.svelte';
 import { raiseJoinRequest, resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
+import {
+  deviceAddedLineId,
+  isDeviceAddedLine,
+  previewContentOf,
+} from '$lib/utils/chat/listPreview';
 import { m } from '$lib/paraglide/messages';
 
 let target: HTMLElement;
 let app: ReturnType<typeof mount> | null = null;
 
-function render() {
+function render(lastMessage?: string) {
   app = mount(ConversationTile, {
     target,
     props: {
       conversationId: 'g1',
+      ...(lastMessage !== undefined ? { lastMessage } : {}),
       contactName: 'group-1',
       displayName: 'Group',
       conversationType: 'group',
@@ -48,22 +55,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('ConversationTile - pending join ask preview', () => {
+describe('ConversationTile - what the preview line shows', () => {
   it('shows the ordinary preview when nothing is pending', () => {
     render();
     expect(target.textContent).toContain(m.chat_e2e_established_preview());
   });
 
-  it('reads the ask while pending, with no badge, and the normal preview returns after', () => {
+  it('never reads a pending join ask - the ask is a line in its thread', () => {
     raiseJoinRequest({ groupId: 'g1', requesterUserId: 'carol', requesterDeviceId: 'd1' });
     render();
-    expect(target.textContent).toContain('Name(carol) veut rejoindre la conversation par lien');
-    expect(target.querySelector('[aria-label]')?.getAttribute('aria-label') ?? '').not.toMatch(
-      /non lu|unread/i
-    );
-    resetJoinRequests();
-    flushSync();
-    expect(target.textContent).toContain(m.chat_e2e_established_preview());
     expect(target.textContent).not.toContain('veut rejoindre');
+    expect(target.textContent).toContain(m.chat_e2e_established_preview());
+  });
+});
+
+describe('previewContentOf - a device notice is never the preview', () => {
+  const said = { id: 'm1', content: 'bonjour' };
+  const notice = (n: number) => ({ id: deviceAddedLineId('g1', `peer:d${n}|fp`), content: 'x' });
+
+  it('skips the device notices for the last message before them', () => {
+    expect(previewContentOf([said, notice(1), notice(2)])).toBe('bonjour');
+    expect(isDeviceAddedLine(notice(1).id)).toBe(true);
+    expect(isDeviceAddedLine(said.id)).toBe(false);
+  });
+
+  it('is nothing when the notices are all there is', () => {
+    expect(previewContentOf([notice(1)])).toBeUndefined();
+    expect(previewContentOf([])).toBeUndefined();
   });
 });

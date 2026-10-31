@@ -157,7 +157,7 @@ global banner is deleted ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who
 
 ### Fixed - a new device's join ask is decided and logged once per state, and re-sent on the cadence while a member is online
 
-A further device of a member re-sends its ask on the recovery cadence until a member answers; the member and the history answerer each say their decision once and count its repeats ([mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence)).
+A further device of a member re-sends its ask on the recovery cadence until a member answers; the member and the history answerer each say their decision once and count its repeats ([mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md#a-further-devices-request-is-answered-by-an-automatic-add)).
 
 ### Fixed - live: the rules sheet clears the status bar, the LIVE pill no longer hides the name
 
@@ -186,7 +186,7 @@ The form's online/cash choice now reads the same `asso_achats_payment_online` / 
 The PIN forms dropped their hidden account-id username field and declare `one-time-code`, so no
 "Save password?" prompt names an id; the "waiting to be added" notice now tells the owner to open the
 conversation on another device or ask a member, compare the key, and tap Add
-([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ### Changed - a pre-release is pinned on its release branch, so a merge during a release no longer kills it
 
@@ -417,19 +417,19 @@ A derived read in the DM header's teardown stopped the open conversation's pane 
 
 A record another tab wrote after this tab's own change is adopted, and a device holds one record,
 the newest
-([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ### Fixed - the history-withholding record keeps its entries when the held conversations are not yet listed
 
 A record is dropped as "no longer held" only from a complete list of held conversations, and a seal
 written by one tab is no longer erased by another
-([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ### Fixed - a second tab no longer erases a device withheld from history by another tab
 
 The withheld devices are merged on write, as the seals are; a record leaves only by a decision of
 the tab that held it
-([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ### Fixed - the image scan's two new undici advisories are allowlisted
 
@@ -628,7 +628,7 @@ The tier form explains a discounted price linked to no other tier of the associa
 
 A device of a conversation member that no member admitted waits for a member's tap - one entry per
 device, showing its key - instead of being added automatically or joining by itself, and history is withheld from an unverified device
-([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim)).
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 
 ## [1.5.0] - 2026-10-27
 
