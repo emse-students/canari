@@ -1006,11 +1006,19 @@ of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of
 It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
 and the device list stays the place to audit the account:
 
-| Key first seen by the server | Owner alert | Contact line |
+| Key first seen by the server | Owner alert | Line "X added a device" (contacts AND the account's own devices) |
 |---|---|---|
-| never dated (published before the key history began) | no | no |
-| before THIS device enrolled (first sight of its own key) | no | no |
+| NOT LISTED, or no ages sent (`unknown`): the server said nothing about it | yes | yes |
+| listed with no date (`before-history`: published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key; skipped when that is unknown) | no | no |
 | since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+**A server that stays silent does not silence a notice (2026-10-31 review).** The line is the one
+visible trace of a member's device added with no tap, so a key the server leaves out of its answer
+reads as NEW: the age only suppresses when the server STATES it (a date, or the key listed undated).
+An unknown own enrolment skips that one comparison rather than announcing nothing. The own-device
+LINE is bounded by the same 7 days as a contact's, so it is never written weeks late; the owner's
+alert keeps no bound.
 
 Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
 into a DM from a new one; the window trades a late line for no false one (the user: notices must not
@@ -1399,16 +1407,24 @@ history until a member's Add of it (`historyWithheld.ts`); there is no tap that 
 withheld; what history it receives is decided by the history-answer rules
 ([history-answer-addressing](history-answer-addressing.md)), which this change does not touch.
 
-**The Android background answer still adds no device from a push**
-(`admit_only_a_device_this_tree_holds`, `background.rs`): a device whose leaf is not in the tree is
-refused there as `unseen-device` and left to the foreground's automatic Add of any member online.
-Letting the push add it too is a native change of its own, not made with this decision.
+**The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
+arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
+user-level verdict to the tree it loaded from `mls.bin`: a requester whose user holds a leaf is
+staged and sent, a new person is refused (`newcomer`), an unreadable tree adds nothing
+(`group-not-held`). It holds the same server add-lock as the foreground (`acquireAddLock`), refuses
+while a foreground or warm process owns the state, stages over the exact bytes it read
+(compare-and-swap), refuses a second staged commit and an `already-member`, and records a refused
+answer so the same bytes are not offered twice. The per-device rule it had
+(`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
+path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
+still waits for a member's app.
 
 **What was deleted with the interim (2026-10-27 to 2026-10-31).** The per-device ask ("Nouvel
 appareil de X - Ajouter / Refuser", its "Details" fingerprint disclosure and its Undo), the approvals
 and declines (`memberDeviceAnswers.ts`), the key binding of an approved Add (`approvedKeyHolds`), the
 KeyPackage key parser that fed it (`keyPackageSignatureKey`), the waiting device's own key notice
-(`chat_waiting_own_device_key`), the ask's preview in the conversation list (`pendingAskPreview`),
+(`chat_waiting_own_device_key`) and the engine call that read that key (`ownSignatureKey`,
+`mls_own_signature_key`, `own_signature_key` in mls-core and mls-wasm), the ask's preview in the conversation list (`pendingAskPreview`),
 and the approval that lifted a withheld device's history. The interim asked about every device whose
 own leaf was not in the tree, a 1:1 included - which is how a DM peer's new phone came to be put up
 for approval in that DM (owner's screenshot, 2026-10-31).

@@ -30,18 +30,30 @@ describe('keyAgeOf - the server first sight of the key an event names', () => {
     await expect(keyAgeOf(mls, 'bob', 'web-2', FP)).resolves.toEqual({ kind: 'dated', at: 42 });
   });
 
-  it('is undated when the history has no date for it - the key predates the history', async () => {
+  it('is before-history when the server LISTS the key with no date for it', async () => {
     const mls = mlsAnswering({ kind: 'keys', keys: [KEY], firstSeen: [] });
-    await expect(keyAgeOf(mls, 'bob', 'web-2', FP)).resolves.toEqual({ kind: 'undated' });
+    await expect(keyAgeOf(mls, 'bob', 'web-2', FP)).resolves.toEqual({
+      kind: 'before-history',
+    });
   });
 
-  it('is unanswered when the server could not be asked, or sent no ages at all', async () => {
+  it('is unknown - read as new - when the server leaves the key out, or sends no ages at all', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(
+      keyAgeOf(mlsAnswering({ kind: 'keys', keys: [], firstSeen: [] }), 'bob', 'web-2', FP)
+    ).resolves.toEqual({ kind: 'unknown' });
+    await expect(
+      keyAgeOf(mlsAnswering({ kind: 'keys', keys: [KEY] }), 'bob', 'web-2', FP)
+    ).resolves.toEqual({ kind: 'unknown' });
+    warn.mockRestore();
+  });
+
+  it('is unanswered when the server could not be asked', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(
       keyAgeOf(mlsAnswering({ kind: 'unanswered', detail: 'HTTP 502' }), 'bob', 'web-2', FP)
     ).resolves.toEqual({ kind: 'unanswered' });
-    await expect(
-      keyAgeOf(mlsAnswering({ kind: 'keys', keys: [KEY] }), 'bob', 'web-2', FP)
-    ).resolves.toEqual({ kind: 'unanswered' });
+    warn.mockRestore();
   });
 });
 

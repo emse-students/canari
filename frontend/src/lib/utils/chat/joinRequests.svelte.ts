@@ -93,7 +93,8 @@ function keyOfEntry(entry: JoinRequest): string {
  * as long as a removed member's leaf outlives the removal, and every sweep meets it again: it is said
  * once at a level that accuses, then quietly, and asked about anew after a sign-out.
  */
-const flaggedAsksSaid = new SvelteSet<string>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log dedup ledger, nothing renders it
+const flaggedAsksSaid = new Set<string>();
 
 /** Whether this is the first time this session that the flagged ask of `userId` in `groupId` is met. */
 export function firstSightOfFlaggedAsk(groupId: string, userId: string): boolean {

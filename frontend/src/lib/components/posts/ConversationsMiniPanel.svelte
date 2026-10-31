@@ -94,8 +94,10 @@
       isReady: conv.lifecycle === 'active',
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
+      // Only device lines loaded: the baseline's preview, never an empty row.
       lastMessageContent:
-        conv.messages?.length > 0 ? previewContentOf(conv.messages) : baseline?.lastMessageContent,
+        (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
+        baseline?.lastMessageContent,
     };
   }
 

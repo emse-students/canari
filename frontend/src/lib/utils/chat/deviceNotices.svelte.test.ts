@@ -369,13 +369,31 @@ describe('deliverDeviceEvents - only a device new to its owner is announced', ()
     expect(addMessageToChat).not.toHaveBeenCalled();
   });
 
-  it('a key the server history never dated is old: no line, no alert', async () => {
+  it('a key the server lists with no date predates its history: no line, no alert', async () => {
     const { ctx, addMessageToChat } = makeCtx({
-      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'undated' })),
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'before-history' })),
     });
     await deliverDeviceEvents([event(), own], ctx);
     expect(addMessageToChat).not.toHaveBeenCalled();
     expect(pendingDeviceNotices()).toEqual([]);
+  });
+
+  it('A SERVER THAT STAYS SILENT DOES NOT SILENCE IT: a key it left out gets its line and alert', async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'unknown' })),
+    });
+    await deliverDeviceEvents([event(), own], ctx);
+    expect(addMessageToChat).toHaveBeenCalled();
+    expect(pendingDeviceNotices()).toHaveLength(1);
+  });
+
+  it("the account's own device first seen weeks ago: the alert, but no line written late", async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: NOW - 8 * DAY })),
+    });
+    await deliverDeviceEvents([own], ctx);
+    expect(pendingDeviceNotices()).toHaveLength(1);
+    expect(addMessageToChat).not.toHaveBeenCalled();
   });
 
   it('a real new device: a line, and the key it names is the one dated', async () => {

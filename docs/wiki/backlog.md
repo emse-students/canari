@@ -722,17 +722,18 @@ utilisateur, pas appareil"*.
    before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
    Add (decided 2026-10-23), asked as "X veut rejoindre la conversation - Accepter / Refuser".
 5. **Delivery.** Step A of history addressing (built, draft PR) was to ship TOGETHER with this
-   model. **Owed: the owner's word on whether the entry may ship before step A** - the entry change
-   does not touch history, so until step A ships a member's new device gets what it got before the
-   2026-10-27 interim.
+   model. **The owner confirmed it on 2026-10-31 ("Non, ensemble")**: the entry ships with step A,
+   never before it.
 
 Owed:
 
 - **"Enters by itself" is built as "is added by a member's device, with no tap".** A further device
-  still sends a `welcome_request` rather than letting itself in (the tree-based door), so with no
-  member's device online it waits; and the Android background answer still adds nothing from a push
-  (`admit_only_a_device_this_tree_holds`). Letting the push add a member's device is a native change
-  of its own, not made on 2026-10-31.
+  still sends a `welcome_request` rather than letting itself in (the tree-based door). A member's
+  Android phone answers it from a push too, with the same user-level verdict (owner, 2026-10-31,
+  "aussi en arriere-plan"; BUILT the same day). **iOS has no background add path**, so a group whose
+  members' devices are all shut iPhones waits for one of them to open the app.
+- **Ships TOGETHER with step A of history addressing** (owner, 2026-10-31: "Non, ensemble"): #2791
+  stays a draft until both merge.
 - A rig row: a member's second device enrolled, added with no ask, the line on every member and on
   the owner's other device, no line in the list preview (`DEVREVOKE-KEYGROUP`'s narration was
   updated: a device ask is now dirt there).
@@ -1762,9 +1763,9 @@ Owed:
   departed withheld devices dropped, so one of them that later comes back by itself is no longer
   known as withheld there - what it then adds gets no line. History stays closed (the seal); only
   the notice is lost;
-- the Android background welcome stages nothing (only a device already in the tree passes its rule,
-  and the Add refuses that one): its staging is kept for a push that adds a member's device, or
-  deleted with its native callers if that is not built (see the decision above).
+- the Android background welcome adds a member's device since 2026-10-31 and keeps no record of
+  withheld devices, so a device added from a push by a member's phone is never marked as added by
+  an unvouched one; the app reads the commit when it next opens.
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 

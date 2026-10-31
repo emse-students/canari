@@ -9,6 +9,7 @@ import {
   deviceEventKey,
   isNewToItsOwner,
   type DeviceEvent,
+  type KeyFirstSight,
 } from '$lib/mls-client/deviceTrust';
 import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
 import {
@@ -79,7 +80,7 @@ export interface OwnDeviceNotice {
  * or is not among the device's published keys at all - old either way), or `unanswered` (the server
  * could not be asked, which establishes nothing).
  */
-export type KeyAge = { kind: 'dated'; at: number } | { kind: 'undated' } | { kind: 'unanswered' };
+export type KeyAge = KeyFirstSight | { kind: 'unanswered' };
 
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
@@ -543,25 +544,26 @@ export async function deliverDeviceEvents(
         keepUndecided(event);
         continue;
       }
-      const isNew = isNewToItsOwner(age.kind === 'dated' ? age.at : null, {
-        learnedAt: ctx.now(),
-        ownEnrolledAt: enrolledAt,
-        isOwnAccount: audience === 'owner-alert',
-      });
-      if (!isNew) {
+      const evidence = { learnedAt: ctx.now(), ownEnrolledAt: enrolledAt };
+      // The line is bounded by the window, the owner's alert is not - an own device's line is not
+      // written weeks late either (2026-10-31 review).
+      const lineIsNew = isNewToItsOwner(age, { ...evidence, ownersAlert: false });
+      const alertIsNew =
+        audience === 'owner-alert' && isNewToItsOwner(age, { ...evidence, ownersAlert: true });
+      if (!lineIsNew && !alertIsNew) {
         old++;
         continue;
       }
       if (audience === 'owner-alert') {
         const deviceId = deviceIdOfLeaf(event.identity);
         const label = await ctx.deviceLabel(deviceId);
-        if (recordOwnDeviceNotice({ key, deviceId, at: ctx.now(), label })) {
+        if (alertIsNew && recordOwnDeviceNotice({ key, deviceId, at: ctx.now(), label })) {
           console.log(`[DEVICE_NOTICE] a new device was added to this account (${event.trust})`);
           claimed.push(key);
         }
         // AND THE SAME LINE AS EVERY MEMBER SEES, in this account's own conversations (owner,
         // 2026-10-31): the account's other devices read "X added a device" where the contacts do.
-        if (!lined.includes(key) && !owedLines.some((o) => o.key === key)) {
+        if (lineIsNew && !lined.includes(key) && !owedLines.some((o) => o.key === key)) {
           settleContactLine(
             { event, key, since: ctx.now() },
             await writeContactLines(event, key, ctx, trees)

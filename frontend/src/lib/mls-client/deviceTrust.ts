@@ -229,13 +229,26 @@ export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
 }
 
 /**
- * How recently a CONTACT's key must have been first seen by the server, against the moment this
- * device learns of it, to be "X added a device". A device a heal brings back into a conversation
- * was registered long before; one its owner just added was registered minutes or hours before.
- * Past it the line is not written - a missed line rather than a false one (user: notices must not
- * become noise). The owner's alert has no such bound (`isNewToItsOwner`).
+ * How recently a key must have been first seen by the server, against the moment this device
+ * learns of it, to be the line "X added a device" - a contact's line AND the line in the account's
+ * own conversations. A device a heal brings back into a conversation was registered long before;
+ * one its owner just added was registered minutes or hours before. Past it the line is not written
+ * - a missed line rather than a false or weeks-late one (user: notices must not become noise). The
+ * owner's alert has no such bound (`isNewToItsOwner`, `ownersAlert`).
  */
 export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
+
+/**
+ * What the server answered about when it first saw one key:
+ * - `dated`: its key history recorded the key at `at`;
+ * - `before-history`: the server LISTS the key among the device's keys and its history has no date
+ *   for it - a positive statement that the key predates the history;
+ * - `unknown`: the server answered and said nothing about this key (not listed, or no ages at all).
+ */
+export type KeyFirstSight =
+  | { kind: 'dated'; at: number }
+  | { kind: 'before-history' }
+  | { kind: 'unknown' };
 
 /**
  * Whether a device this device just saw is NEW TO ITS OWNER - the evidence a notice needs beyond
@@ -245,24 +258,25 @@ export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
  *
  * The evidence is the server's first sight of the device's key (`fetchDeviceSignatureKeys`'
  * `firstSeen`), used ONLY TO SUPPRESS a notice, never to raise one - the signed commit stays the
- * only source of a notice:
- * - an undated key (`null`) predates the server's key history: old, never announced;
- * - the owner's alert needs a key first seen after THIS device enrolled (`ownEnrolledAt`, the first
- *   sight of its own key) - an old device of the account re-added on a young device says nothing,
- *   and a device registered since this one enrolled is announced however late this device learns
- *   of it;
- * - a contact's line needs both that and a key first seen within
- *   {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`.
- *
- * Unknown own enrolment announces nothing: the rule has no baseline to compare with.
+ * only source of a notice, so A SERVER THAT STAYS SILENT MUST NOT SILENCE IT (2026-10-31 review):
+ * - a key the server said nothing about (`unknown`) is new: the commit is the evidence;
+ * - a key the server lists with no date (`before-history`) predates its history: old;
+ * - a dated key is old when first seen before THIS device enrolled (`ownEnrolledAt`, the first
+ *   sight of its own key; `null`, unknown, skips that comparison) - an old device of the account
+ *   re-added on a young device says nothing;
+ * - the line ("X added a device", a contact's or the account's own) also needs a dated key first
+ *   seen within {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`; the owner's alert
+ *   (`ownersAlert`) does not, so a device registered since this one enrolled is alerted however late
+ *   this device learns of it.
  */
 export function isNewToItsOwner(
-  keyFirstSeenAt: number | null,
-  ctx: { learnedAt: number; ownEnrolledAt: number | null; isOwnAccount: boolean }
+  sight: KeyFirstSight,
+  ctx: { learnedAt: number; ownEnrolledAt: number | null; ownersAlert: boolean }
 ): boolean {
-  if (keyFirstSeenAt === null || ctx.ownEnrolledAt === null) return false;
-  if (keyFirstSeenAt < ctx.ownEnrolledAt) return false;
-  return ctx.isOwnAccount || keyFirstSeenAt >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
+  if (sight.kind === 'unknown') return true;
+  if (sight.kind === 'before-history') return false;
+  if (ctx.ownEnrolledAt !== null && sight.at < ctx.ownEnrolledAt) return false;
+  return ctx.ownersAlert || sight.at >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
 }
 
 /** Whether a verdict lets the package be added. */
