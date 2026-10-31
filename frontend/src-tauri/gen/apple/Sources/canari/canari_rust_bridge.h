@@ -108,6 +108,13 @@ char *canari_native_build_text_message_proto(
 
 char *canari_native_build_read_watermark_proto(long long at);
 
+char *canari_native_build_call_hangup_proto(
+    const char *message_id,
+    long long sent_at,
+    const char *call_id,
+    const char *device_id,
+    unsigned int end_reason);
+
 int canari_native_cleanup_pending_db(const char *files_dir);
 
 void canari_ios_on_resume(void);

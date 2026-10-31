@@ -1026,6 +1026,48 @@ describe('CallsService', () => {
       );
     });
 
+    /**
+     * A ring `ring-end` recorded as over refuses an answer INSIDE the window: a native answer whose
+     * intent outlived its call (cancelled by the caller, declined, taken by a sibling) must not join.
+     */
+    it.each(['cancelled', 'answered', 'ended'] as const)(
+      'answers 410 once ring-end recorded the ring %s, inside the window',
+      async (reason) => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+        const { roomId } = await service.initiateCall('caller', 'group-1');
+        await ring(roomId);
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+          'roomToken'
+        );
+
+        await service.endRing('caller', 'group-1', roomId, reason);
+
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+          GoneException
+        );
+        expect(captured(log)).toContain(`the ring ended (${reason})`);
+      }
+    );
+
+    /** The answering device asks for its token before its own `ring-end answered`: never refused. */
+    it('gives the answering device its token before its own ring-end, and its sibling none after', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      await ring(roomId);
+
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+      await service.endRing('callee', 'group-1', roomId, 'answered');
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
+    });
+
     /** Both halves fail for one reason, and only the caller's half used to say so. */
     it('accuses the missing room secret on the answer path too', async () => {
       delete process.env.CALL_ROOM_SECRET;

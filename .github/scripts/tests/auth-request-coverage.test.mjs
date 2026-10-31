@@ -102,6 +102,10 @@ const PUBLIC_BY_INTENT = [
     why: "global platform config ('lydia' | 'disabled'), never user-specific; social-service's resolvePaymentTarget (every checkout/purchase/delegation path) calls it directly over the Docker network, which never goes through nginx and so can never carry an x-user-id - a guard here 401ed all of them (2026-09-14)",
   },
   {
+    route: 'POST /payments/lydia-business-webhook',
+    why: "Lydia's business/create webhook: Lydia, not a signed-in user, is the caller, and it signs nothing (docs/wiki/lydia-api.md 5b); so the route WRITES NOTHING - it reads which association holds the vendor_token and logs the event for a global admin, pinned by webhook.controller.spec.ts; rate-limited by the lydia_callback zone",
+  },
+  {
     route: 'GET /media/limits',
     why: 'the upload ceiling - global platform config, never user-specific, and a number anybody discovers by attempting one upload; it exists so a client stops carrying a BUILD-TIME copy of it, and a guard here would put it behind a token the size check runs before',
   },
