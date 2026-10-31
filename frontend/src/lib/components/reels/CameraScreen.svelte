@@ -373,10 +373,6 @@
         poster={TRANSPARENT_VIDEO_POSTER}
         onloadeddata={onFrame}
         onplaying={onFrame}
-        onresize={(e) =>
-          console.debug(
-            `[camera] preview resolution ${e.currentTarget.videoWidth}x${e.currentTarget.videoHeight}`
-          )}
         autoplay
         muted
         playsinline

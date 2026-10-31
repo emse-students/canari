@@ -121,9 +121,10 @@ describe('openLiveScreen', () => {
     });
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(stream.getVideoTracks()).toEqual([video]);
-    // No share audio: the microphone alone, no AudioContext built.
+    // No share audio: the microphone alone, and the context made for the mix is closed unused.
     expect(stream.getAudioTracks()).toEqual([mic]);
-    expect(contexts).toHaveLength(0);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].close).toHaveBeenCalledTimes(1);
   });
 
   it('mixes the share audio with the microphone, and releasing the stream releases the mix', async () => {
@@ -168,7 +169,39 @@ describe('openLiveScreen', () => {
     expect(stuck.stream.getAudioTracks()).toEqual([stuck.mic]);
     expect(stuck.shareAudio.stop).toHaveBeenCalled();
     expect(contexts[0].close).toHaveBeenCalledTimes(1);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('after resume'));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('is suspended'));
+  });
+
+  it('uses the context made inside the click, never awaits a resume that stays pending, and closes it on every exit', async () => {
+    // Safari without activation: resume() never settles. Nothing may wait for it.
+    const never = new FakeAudioContext();
+    never.resume = vi.fn(() => new Promise<void>(() => {}));
+    const given = never as unknown as AudioContext;
+    const video = track('video');
+    const shareAudio = track('audio');
+    const mic = track('audio');
+    stubDevices({
+      getDisplayMedia: vi.fn(async () => streamOf(video, shareAudio)),
+      getUserMedia: vi.fn(async () => streamOf(mic)),
+    } as unknown as MediaDevices);
+    const stream = await openLiveScreen(given);
+    // Not running: the microphone alone, the context closed, no second context made.
+    expect(stream.getAudioTracks()).toEqual([mic]);
+    expect(never.close).toHaveBeenCalledTimes(1);
+    expect(contexts).toHaveLength(1);
+
+    // A dismissed picker closes the context it was given.
+    const dismissed = new FakeAudioContext();
+    stubDevices({
+      getDisplayMedia: vi.fn(async () => {
+        throw new DOMException('no', 'NotAllowedError');
+      }),
+      getUserMedia: vi.fn(),
+    } as unknown as MediaDevices);
+    await expect(openLiveScreen(dismissed as unknown as AudioContext)).rejects.toBeInstanceOf(
+      CameraAccessError
+    );
+    expect(dismissed.close).toHaveBeenCalledTimes(1);
   });
 
   it('a dismissed picker is a typed refusal and the microphone is never asked', async () => {

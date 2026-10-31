@@ -735,6 +735,37 @@ describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
     expect(cam.session.phase).not.toBe('starting');
   });
 
+  it('a stop remembered during a start that FAILS does not end the next start', async () => {
+    const { b, deps } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let fail: (e: unknown) => void = () => {};
+    deps.startLive.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    const first = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    fail(new Error('network'));
+    await first;
+    expect(b.phase).toBe('preview');
+    deps.startLive.mockImplementation(real);
+    await b.start();
+    expect(b.phase).toBe('live');
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it('makes the mixing context synchronously inside the choice, before any await', async () => {
+    const { b, deps } = await desktop();
+    let sync = false;
+    deps.createAudioContext.mockImplementation(() => {
+      sync = true;
+      return null;
+    });
+    const choosing = b.chooseSource('screen');
+    expect(sync).toBe(true);
+    await choosing;
+    expect(deps.openScreen).toHaveBeenCalledWith(null);
+  });
+
   it('the source choice is locked while the picker is open', async () => {
     const { b, deps } = await desktop();
     let answer: (s: MediaStream) => void = () => {};

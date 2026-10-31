@@ -199,28 +199,48 @@ export function screenShareAvailable(): boolean {
 }
 
 /**
- * Mixes the microphone and the share's audio into ONE track through an `AudioContext`, or answers
- * `null` (and logs why) when the context cannot run - the caller then keeps the microphone alone.
+ * Creates the context that will mix a screen share's audio, and starts its `resume()` WITHOUT
+ * waiting for it. **CALL IT SYNCHRONOUSLY INSIDE THE CLICK that opens the picker**: a context made
+ * or resumed after the picker and the microphone prompt (two awaits) has lost its user activation
+ * (Safari), and its `resume()` can stay pending forever - which is why nothing here awaits it.
+ * Answers `null` when the engine has no `AudioContext` (the share then goes out with the
+ * microphone alone).
+ */
+export function createMixContext(): AudioContext | null {
+  try {
+    const context = new AudioContext();
+    context.resume().catch((err: unknown) => {
+      console.warn('[LIVE-CAM] the audio context could not be resumed', err);
+    });
+    return context;
+  } catch (err) {
+    console.warn('[LIVE-CAM] no AudioContext - the share goes out without mixing', err);
+    return null;
+  }
+}
+
+/**
+ * Mixes the microphone and the share's audio into ONE track through `context`, or answers `null`
+ * (and logs why) when the context is not `running` - the caller then keeps the microphone alone.
+ * The context was resumed inside the click ({@link createMixContext}), so by now (a picker and a
+ * prompt later) its state is settled; it is READ, never awaited. It is CLOSED on every path that
+ * does not hand it to the returned track, whose `stop()` closes it.
  *
  * KNOWN LIMIT: the mixed track's `ended` event does NOT follow the microphone. A microphone that
  * dies mid-live (a USB headset pulled) leaves the mixed track alive and silent for the mic's half,
- * with the share's sound still in it - the recorder keeps recording, nothing ends, and the live goes
- * on with the share only. Wiring it would mean ending a live over a half of its audio that the
- * member has no way to restore from a click-less state; the live is not interrupted over it. Stopping
- * the mixed track stops every source and closes the context.
+ * with the share's sound still in it - the recorder keeps recording and nothing ends. Wiring it
+ * would end a live over half of its audio; the live is not interrupted over it.
  */
-async function mixAudio(
+function mixAudio(
+  context: AudioContext,
   mic: MediaStreamTrack,
   share: MediaStreamTrack,
   sources: MediaStreamTrack[]
-): Promise<MediaStreamTrack | null> {
-  let context: AudioContext | null = null;
+): MediaStreamTrack | null {
   try {
-    context = new AudioContext();
-    await context.resume();
     if (context.state !== 'running') {
       console.warn(
-        `[LIVE-CAM] the audio context is ${context.state} after resume - the microphone alone goes on air, without the share's sound`
+        `[LIVE-CAM] the audio context is ${context.state} - the microphone alone goes on air, without the share's sound`
       );
       void context.close();
       return null;
@@ -230,11 +250,10 @@ async function mixAudio(
     context.createMediaStreamSource(new MediaStream([share])).connect(destination);
     const track = destination.stream.getAudioTracks()[0];
     const stopMixed = track.stop.bind(track);
-    const owned = context;
     track.stop = () => {
       stopMixed();
       for (const source of sources) source.stop();
-      void owned.close();
+      void context.close();
     };
     console.debug("[LIVE-CAM] screen audio: the microphone mixed with the share's own audio");
     return track;
@@ -243,7 +262,7 @@ async function mixAudio(
       "[LIVE-CAM] mixing the share's audio failed - the microphone alone goes on air",
       err
     );
-    void context?.close();
+    void context.close();
     return null;
   }
 }
@@ -255,18 +274,26 @@ async function mixAudio(
  * voice. `audio: true` on the share only ASKS - the picker shows its "share audio" choice where
  * the browser has one and the member decides, so a share without sound is an answer, not a failure.
  *
- * The mix lives in an `AudioContext`. Releasing the stream (`releaseCamera` stops every track)
+ * The mix lives in `context`, made and resumed INSIDE the click ({@link createMixContext}) and
+ * passed down; a Retry reuses the opener with a context already closed, so a closed or absent one is
+ * replaced by a fresh (possibly not activated, then mic-only) one. It is closed on EVERY exit path
+ * here. Releasing the stream (`releaseCamera` stops every track)
  * stops the mixed track, whose `stop` is wrapped to close the context and stop the sources it
  * reads - nothing else would ever end them.
  *
  * @throws {CameraAccessError} `denied` when the picker is dismissed or the microphone refused (the
  * caller returns to the camera on a dismissed picker), `unavailable` when the engine cannot share.
  */
-export async function openLiveScreen(): Promise<MediaStream> {
+export async function openLiveScreen(
+  givenContext: AudioContext | null = null
+): Promise<MediaStream> {
   console.debug('[LIVE-CAM] opening the screen');
+  const context =
+    givenContext && givenContext.state !== 'closed' ? givenContext : createMixContext();
   const devices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
   if (!devices?.getDisplayMedia || !devices.getUserMedia) {
     console.warn('[LIVE-CAM] getDisplayMedia is absent');
+    void context?.close();
     throw new CameraAccessError('unavailable', 'live screen: getDisplayMedia is not available');
   }
   let display: MediaStream;
@@ -282,6 +309,7 @@ export async function openLiveScreen(): Promise<MediaStream> {
   } catch (err) {
     const fault = classifyCameraError(err);
     console.warn(`[LIVE-CAM] the screen picker answered ${fault}`, err);
+    void context?.close();
     throw new CameraAccessError(fault, `live screen: ${fault}`, { cause: err });
   }
   let mic: MediaStream;
@@ -289,6 +317,7 @@ export async function openLiveScreen(): Promise<MediaStream> {
     mic = await devices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
   } catch (err) {
     for (const track of display.getTracks()) track.stop();
+    void context?.close();
     const fault = classifyCameraError(err);
     console.warn(`[LIVE-CAM] the microphone for the screen share answered ${fault}`, err);
     throw new CameraAccessError(fault, `live screen: microphone ${fault}`, { cause: err });
@@ -298,14 +327,15 @@ export async function openLiveScreen(): Promise<MediaStream> {
   const micTrack = mic.getAudioTracks()[0];
   const sources: MediaStreamTrack[] = micTrack ? [micTrack, ...shareAudio] : [...shareAudio];
   let audio: MediaStreamTrack | undefined = micTrack;
-  if (micTrack && shareAudio.length > 0) {
-    // The context is built AFTER two awaits (the picker, the microphone), so the browser may have
-    // left it `suspended` (autoplay policy): a suspended context mixes NOTHING and the live would go
-    // out silent. It is resumed, and a context that will not run is given up for the microphone alone.
-    const mixed = await mixAudio(micTrack, shareAudio[0], sources);
+  if (micTrack && shareAudio.length > 0 && context) {
+    // A suspended context mixes NOTHING and the live would go out silent: one that is not running
+    // is given up for the microphone alone.
+    const mixed = mixAudio(context, micTrack, shareAudio[0], sources);
     if (mixed) audio = mixed;
     else for (const track of shareAudio) track.stop();
   } else {
+    void context?.close();
+    for (const track of shareAudio) track.stop();
     console.debug(`[LIVE-CAM] screen audio: ${micTrack ? 'the microphone alone' : 'none'}`);
   }
   const settings = video?.getSettings?.();

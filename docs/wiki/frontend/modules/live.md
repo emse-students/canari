@@ -1120,20 +1120,27 @@ Built, owed a real-browser reading (every gate here is fakes: no picker can be d
 - **Review fixes (2026-10-31)**:
   - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
     reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
-  - **The mixing `AudioContext` is resumed** (`mixAudio`): it is built after two awaits and a suspended
-    context mixes nothing (a silent live). One that is not `running` after `resume()` is closed, the
-    share's audio stopped, and the microphone goes on alone, with a `warn`.
+  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
+    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
+    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
+    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
+    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
   - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
     mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
   - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
-    `goOnAir`), instead of going on air on a dead share and re-opening the picker without a click. The
+    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
+    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
     Retry message promises "go back to the camera" only in the preview, where the source buttons are
     enabled; on air or away it says the share stopped and nothing else.
   - **The source buttons are locked while the picker is open** (`choosingSource`).
   - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
     windows included.
-  - **The preview logs its resolution** on each `resize` (`[camera] preview resolution WxH`), one line per
-    change of the display track.
+- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
+  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
+  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
+  until the bump, so it is refused. There is no override and none is to be added: set `version` in
+  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
+  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
 - **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
   switch-camera button is hidden while the source is the screen.
 
@@ -1206,5 +1213,5 @@ can be hidden before the grant) and again on `devicechange`; the listener is rem
 read that lands after `stop()` writes nothing (`#watchEpoch`).
 
 **The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
-`[CAMERA_COUNT] videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
 `videoinput=1`, the rule is wrong for that browser and the line is the evidence.

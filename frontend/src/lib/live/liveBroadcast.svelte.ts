@@ -43,7 +43,12 @@ import {
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
-import { ScreenWakeLock, openLiveScreen, screenShareAvailable } from './liveDevice';
+import {
+  ScreenWakeLock,
+  createMixContext,
+  openLiveScreen,
+  screenShareAvailable,
+} from './liveDevice';
 import {
   liveRecordingSupported,
   startLiveRecorder,
@@ -143,7 +148,10 @@ export interface LiveBroadcastDeps {
   /** Whether this browser may broadcast its screen (desktop only). */
   screenShareAvailable: () => boolean;
   /** Opens the screen (and the microphone) as a live's source. */
-  openScreen: CameraOpener;
+  /** Opens the screen with the mixing context made inside the click ({@link createAudioContext}). */
+  openScreen: (context: AudioContext | null) => Promise<MediaStream>;
+  /** Makes and resumes the mixing context; called synchronously in the click that picks the screen. */
+  createAudioContext: () => AudioContext | null;
 }
 
 /** The real dependencies. */
@@ -164,7 +172,8 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
     screenShareAvailable,
-    openScreen: () => openLiveScreen(),
+    openScreen: (context) => openLiveScreen(context),
+    createAudioContext: () => createMixContext(),
   };
 }
 
@@ -349,6 +358,8 @@ export class LiveBroadcast {
     }
     console.log(`[LIVE-BROADCAST] starting`);
     this.phase = 'starting';
+    // A stop remembered from an EARLIER start must not end this one.
+    this.#screenGoneWhileStarting = false;
     this.startProblem = null;
     this.startSuspendedUntil = null;
     let live: LiveView;
@@ -361,6 +372,7 @@ export class LiveBroadcast {
         this.rulesAcceptedHere ? this.rules?.version : undefined
       );
     } catch (e) {
+      this.#screenGoneWhileStarting = false;
       if (this.#disposed) return;
       this.startProblem = startProblemOf(e);
       if (this.startProblem === 'suspended' && e instanceof LiveRefusalError) {
@@ -425,18 +437,20 @@ export class LiveBroadcast {
     }
     console.log(`[LIVE-BROADCAST] source ${this.source} -> ${next}`);
     this.choosingSource = true;
+    // SYNCHRONOUSLY, before any await: the context needs the click's user activation to run.
+    const context = next === 'screen' ? this.#deps.createAudioContext() : null;
     try {
-      await this.#switchSource(next);
+      await this.#switchSource(next, context);
     } finally {
       this.choosingSource = false;
     }
   }
 
   /** The body of {@link chooseSource}, run with the choice locked. */
-  async #switchSource(next: LiveSource): Promise<void> {
+  async #switchSource(next: LiveSource, context: AudioContext | null): Promise<void> {
     this.source = next;
     if (next === 'screen') {
-      const previous = this.camera.swapOpener(this.#deps.openScreen);
+      const previous = this.camera.swapOpener(() => this.#deps.openScreen(context));
       this.#cameraOpener ??= previous;
     } else if (this.#cameraOpener) {
       this.camera.swapOpener(this.#cameraOpener);
