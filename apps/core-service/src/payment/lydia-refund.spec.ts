@@ -66,6 +66,28 @@ describe('LydiaPaymentProvider.refundTransaction', () => {
     expect(sent.get('signature')).toBe(signLydiaRefund(ORDER_REF, '12.50', 'business-key'));
   });
 
+  // `postForm` throws only when an error code is present: a 200 that does not say `error: "0"` must
+  // never read as a refund Lydia made.
+  it.each([
+    ['an empty object', {}],
+    ['an empty string', ''],
+    ['null', null],
+    ['a status without error', { status: 'ok' }],
+    ['an empty error', { error: '' }],
+  ])('a 200 carrying %s is UNCONFIRMED (504), never a refund', async (_name, data) => {
+    mockedAxios.post.mockResolvedValue({ data });
+    await expect(
+      provider().refundTransaction('vendor-abc', ORDER_REF, 1250, 'business-key')
+    ).rejects.toMatchObject({ status: 504, response: { code: 'LYDIA_REFUND_UNCONFIRMED' } });
+  });
+
+  it('a numeric error 0 is a confirmation too', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: 0 } });
+    await expect(
+      provider().refundTransaction('vendor-abc', ORDER_REF, 1250, 'business-key')
+    ).resolves.toBeUndefined();
+  });
+
   it('writes a partial amount of 50 cents as "0.50"', async () => {
     mockedAxios.post.mockResolvedValue({ data: { error: '0' } });
     await provider().refundTransaction('vendor-abc', ORDER_REF, 50, 'business-key');

@@ -71,3 +71,12 @@ export function lydiaRefundSignedFields(orderRef: string, amount: string): Recor
 export function signLydiaRefund(orderRef: string, amount: string, businessKey: string): string {
   return signLydiaParams(lydiaRefundSignedFields(orderRef, amount), businessKey);
 }
+
+/**
+ * Whether Lydia's answer to `transaction/refund` CONFIRMS the refund: only an explicit `error` of
+ * `0` does. A body without it (empty, `null`, `{status: "ok"}`, `{error: ""}`) confirms nothing.
+ */
+export function isLydiaRefundConfirmed(answer: unknown): boolean {
+  if (!answer || typeof answer !== 'object' || !('error' in answer)) return false;
+  return String((answer as { error: unknown }).error) === '0';
+}

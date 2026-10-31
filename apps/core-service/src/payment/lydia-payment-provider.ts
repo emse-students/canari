@@ -9,7 +9,12 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { signLydiaRequest } from './lydia-signature';
-import { LYDIA_REFUND_UNCONFIRMED, lydiaRefundRefusalCode, signLydiaRefund } from './lydia-refund';
+import {
+  isLydiaRefundConfirmed,
+  LYDIA_REFUND_UNCONFIRMED,
+  lydiaRefundRefusalCode,
+  signLydiaRefund,
+} from './lydia-refund';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
@@ -800,8 +805,9 @@ export class LydiaPaymentProvider implements PaymentProvider {
   ): Promise<void> {
     const amount = lydiaAmountString(amountCents);
     this.logger.log(`[LYDIA-REFUND] ${orderRef}: asking Lydia to refund ${amount}`);
+    let answer: unknown;
     try {
-      await this.postForm<object>('/api/transaction/refund', {
+      answer = await this.postForm<unknown>('/api/transaction/refund', {
         vendor_token: vendorToken,
         order_ref: orderRef,
         amount,
@@ -827,6 +833,19 @@ export class LydiaPaymentProvider implements PaymentProvider {
       }
       this.logger.error(
         `[LYDIA-REFUND] ${orderRef}: no usable answer to the refund of ${amount} - Lydia MAY have refunded`
+      );
+      throw new GatewayTimeoutException({
+        code: LYDIA_REFUND_UNCONFIRMED,
+        message: 'Lydia did not confirm the refund',
+      });
+    }
+    // A refund is CONFIRMED only by Lydia's explicit `error: "0"`: `postForm` throws only when an
+    // error code is present, so an empty body, `null`, `{status: "ok"}` or `{error: ""}` would
+    // otherwise read as a refund Lydia never said it made.
+    if (!isLydiaRefundConfirmed(answer)) {
+      this.logger.error(
+        `[LYDIA-REFUND] ${orderRef}: Lydia answered the refund of ${amount} without "error: 0" - ` +
+          'not a confirmation; Lydia MAY have refunded'
       );
       throw new GatewayTimeoutException({
         code: LYDIA_REFUND_UNCONFIRMED,
