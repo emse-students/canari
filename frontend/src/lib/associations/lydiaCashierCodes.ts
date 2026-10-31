@@ -9,7 +9,7 @@ export const LYDIA_CASHIER_REFUSAL = {
   /** Lydia's answer about a cashier's rights could not be trusted: nothing is counted as done. */
   READBACK_INVALID: 'LYDIA_CASHIER_READBACK_INVALID',
   /** The check before a removal refused it: nothing was removed. */
-  HOLDER_RIGHTS_MISSING: 'LYDIA_CASHIER_HOLDER_RIGHTS_MISSING',
+  REMOVAL_PRECONDITION: 'LYDIA_CASHIER_REMOVAL_PRECONDITION',
   /** Changing the Responsable's number is off while the add gate is off. */
   RESPONSABLE_NUMBER_CHANGE_DISABLED: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED',
   /** Only the Responsable themselves, or a global admin, may change their number. */
@@ -22,8 +22,8 @@ export const LYDIA_CASHIER_SOCIAL_REFUSAL = {
   NOT_A_MEMBER: 'LYDIA_CASHIER_NOT_A_MEMBER',
   ALREADY_SET: 'LYDIA_CASHIER_ALREADY_SET',
   PHONE_IN_USE: 'LYDIA_CASHIER_PHONE_IN_USE',
-  NO_HOLDER: 'LYDIA_CASHIER_NO_HOLDER',
-  LAST_HOLDER: 'LYDIA_CASHIER_LAST_HOLDER',
+  NO_RESPONSABLE: 'LYDIA_CASHIER_NO_RESPONSABLE',
+  RESPONSABLE_NUMBER: 'LYDIA_CASHIER_RESPONSABLE_NUMBER',
   NOT_FOUND: 'LYDIA_CASHIER_NOT_FOUND',
   ROLE_FIXED: 'LYDIA_CASHIER_ROLE_FIXED',
   /** The operation's hold on the association was cleared meanwhile: its outcome was not recorded. */

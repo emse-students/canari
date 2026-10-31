@@ -49,6 +49,7 @@ import {
   clearClaim,
   confirmedOf,
   lockAssociation,
+  numberHeldBy,
   writeClaim,
 } from './lydia-cashier-claim';
 import {
@@ -3692,13 +3693,16 @@ ${rejectionReason}`
    * `vendorToken`'s Business holds - its current or its other number - as the cashier steps' add does:
    * the Responsable's add would REPLACE that cashier's rights at Lydia and leave two rows on one
    * number. The rows are locked by `manager`'s transaction; a seal that does not open counts as
-   * holding the number, refused rather than risked. The phone is never logged.
+   * holding the number, refused rather than risked. At the `claim` it is a WARN: nothing was asked
+   * of Lydia yet. At the `record` it is an ERROR: Lydia has already been asked, so it has already
+   * replaced that cashier's rights. The phone is never logged.
    */
   private async assertNotAnotherCashierNumber(
     manager: EntityManager,
     id: string,
     vendorToken: string,
-    phone: string
+    phone: string,
+    step: 'claim' | 'record'
   ): Promise<void> {
     const others: Array<{ phoneSealed: string | null; previousPhoneSealed: string | null }> =
       await manager.query(
@@ -3708,31 +3712,36 @@ ${rejectionReason}`
           ORDER BY id FOR UPDATE`,
         [id, vendorToken]
       );
-    for (const other of others) {
-      for (const sealed of [other.phoneSealed, other.previousPhoneSealed]) {
-        if (!sealed) continue;
-        let held: string | null;
+    const match = numberHeldBy(
+      others.flatMap((other) => [other.phoneSealed, other.previousPhoneSealed]),
+      phone,
+      (sealed) => {
         try {
-          held = openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed);
+          return openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed);
         } catch (err: unknown) {
           this.logger.error(
-            `[LYDIA] a cashier number of ${sanitizeLog(id)} cannot be opened - counted as the ` +
-              `Responsable's: ${err instanceof Error ? err.name : String(err)}`
+            `[LYDIA] a cashier number of ${sanitizeLog(id)} cannot be opened - counted as ` +
+              `holding this number: ${err instanceof Error ? err.name : String(err)}`
           );
-          held = null;
-        }
-        if (held === null || held === phone) {
-          this.logger.warn(
-            `[LYDIA] Responsable step refused on ${sanitizeLog(id)}: the number is another ` +
-              `cashier's`
-          );
-          throw new ConflictException({
-            code: LYDIA_CASHIER_PHONE_IN_USE,
-            message: 'This number already is a cashier number',
-          });
+          return null;
         }
       }
+    );
+    if (!match) return;
+    if (step === 'record') {
+      this.logger.error(
+        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the number is another ` +
+          `cashier's - Lydia has already replaced that cashier's rights`
+      );
+    } else {
+      this.logger.warn(
+        `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: the number is another cashier's`
+      );
     }
+    throw new ConflictException({
+      code: LYDIA_CASHIER_PHONE_IN_USE,
+      message: 'This number already is a cashier number',
+    });
   }
 
   /**
@@ -3824,7 +3833,7 @@ ${rejectionReason}`
         );
         return { ...answer, numberChange: false };
       }
-      await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone);
+      await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone, 'claim');
       if (asso.claimed) {
         this.logger.warn(
           `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: another cashier operation is in flight`
@@ -3970,7 +3979,7 @@ ${rejectionReason}`
           [id]
         );
         const current = live[0];
-        await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone);
+        await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone, 'record');
         const sameBusiness = !!current && current.vendorToken === vendorToken;
         if (sameBusiness && current.userId !== userId) {
           this.logger.warn(

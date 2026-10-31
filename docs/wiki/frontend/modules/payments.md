@@ -853,7 +853,7 @@ of the constant, with this table.
 **Adding** (`POST /api/payments/lydia-cashiers/:associationId`, body `{ userId, phone, role }`, core's
 `LydiaCashiersController`): social-service checks and CLAIMS (`lydia-cashier-add-claim`) - a Business is
 linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`) and not already a live
-cashier (`LYDIA_CASHIER_ALREADY_SET`), a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_HOLDER`), and the
+cashier (`LYDIA_CASHIER_ALREADY_SET`), a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_RESPONSABLE`), and the
 number is not one a live row holds, its own or a Responsable's other number (`LYDIA_CASHIER_PHONE_IN_USE`:
 a second add of a number REPLACES its rights, so adding the Responsable's number as a Vendeur would strip
 the Responsable). Then `addCashier` sends the role's set signed, `notify=yes`, and READS IT BACK. Once the
@@ -888,9 +888,8 @@ Responsable's number is behind the same gate (below).
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.
-A holder keeps full rights: nothing is removed unless Lydia shows the association's Responsable with
-the 13 documented rights; short of that, or unreadable, it is the typed 409
-`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING`, the claim released and nothing removed. Lydia's cashier-removal call (its shape is in the private operations
+A removal runs only when its preconditions read back as expected at Lydia; otherwise, or unreadable,
+it is the typed 409 `LYDIA_CASHIER_REMOVAL_PRECONDITION`, the claim released and nothing removed. Lydia's cashier-removal call (its shape is in the private operations
 notes) is followed by a `business/getpermission` RE-READ, and only **no `access_*` at `"1"`** - the
 undocumented five included - is a removal: the row is closed (`removedAt`, every number and number ending
 cleared, as the unlink does) or the other number cleared. Anything else - rights still read, the re-read
@@ -899,7 +898,8 @@ unanswered or untrusted - is recorded as NOT confirmed (`revokeUnconfirmedAt` /
 `LYDIA_CASHIER_REVOKE_UNCONFIRMED`; repeating a removal is safe. The record applies only while the row
 still holds the number removed, compared sealed-to-opened inside the locking transaction
 (`LYDIA_CASHIER_NUMBER_CHANGED`). **The Responsable's current number is never removed**
-(`LYDIA_CASHIER_LAST_HOLDER`, also when the number to remove IS that number).
+(`LYDIA_CASHIER_RESPONSABLE_NUMBER`, also when the number to remove IS that number): it is managed by
+its own step, below.
 
 **Changing the Responsable's number** (the lot 2 route, the same person with another number). OFF while
 `LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED`, the claim
@@ -915,14 +915,13 @@ record, the row locked and the numbers compared there:
 | --- | --- | --- |
 | the current one | either | a resend; confirms an unconfirmed row |
 | a new one | yes | it becomes current, the old one the other number; core removes the other next (`removeOther`) |
-| a new one | no | the OLD number stays current with every right; the new one is only tracked as the other number |
+| a new one | no | the OLD number stays current; the new one is only tracked as the other number |
 | the other one | yes | the two swap (going BACK to the old number, or completing a retried new one); core removes the other next |
 | the other one | no | nothing changes |
 | a third one while another is tracked | - | `LYDIA_RESPONSABLE_PHONE_LOCKED` |
 | a number another live cashier holds (its current or other number) | - | `LYDIA_CASHIER_PHONE_IN_USE`, claim and record alike - also for a new Responsable after an erasure |
 
-So the old number's rights are stripped only after the new number is CONFIRMED at 13 of 13: a new number
-that fails its confirmation never displaces the live Responsable, and "Retirer cet autre numéro" then
+So the old number is removed once the new one is confirmed: a new number that fails its confirmation never displaces the live Responsable, and "Retirer cet autre numéro" then
 removes the unproven new one. Changing the Responsable to another PERSON is not offered.
 
 **One claim for every cashier operation of an association**: `associations."lydiaResponsableStartedAt"`

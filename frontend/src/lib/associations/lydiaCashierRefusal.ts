@@ -14,7 +14,7 @@ export function lydiaCashierCodeText(code: string | null | undefined): string | 
       return m.asso_lydia_cashier_err_revoke_unconfirmed();
     case LYDIA_CASHIER_REFUSAL.READBACK_INVALID:
       return m.asso_lydia_cashier_err_rights();
-    case LYDIA_CASHIER_REFUSAL.HOLDER_RIGHTS_MISSING:
+    case LYDIA_CASHIER_REFUSAL.REMOVAL_PRECONDITION:
       return m.asso_lydia_cashier_err_removal_refused();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST:
       return m.asso_lydia_cashier_err_interrupted();
@@ -28,9 +28,9 @@ export function lydiaCashierCodeText(code: string | null | undefined): string | 
       return m.asso_lydia_cashier_err_already_set();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.PHONE_IN_USE:
       return m.asso_lydia_cashier_err_phone_in_use();
-    case LYDIA_CASHIER_SOCIAL_REFUSAL.NO_HOLDER:
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.NO_RESPONSABLE:
       return m.asso_lydia_cashier_err_no_holder();
-    case LYDIA_CASHIER_SOCIAL_REFUSAL.LAST_HOLDER:
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_NUMBER:
       return m.asso_lydia_cashier_err_last_holder();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.NOT_FOUND:
       return m.asso_lydia_cashier_err_not_found();

@@ -83,7 +83,7 @@ export function lydiaResponsableErrorText(err: unknown): string {
       case LYDIA_CASHIER_REFUSAL.READBACK_INVALID:
         return m.asso_lydia_resp_err_rights();
       // Lot 3: the replaced number's removal was refused before anything was removed.
-      case LYDIA_CASHIER_REFUSAL.HOLDER_RIGHTS_MISSING:
+      case LYDIA_CASHIER_REFUSAL.REMOVAL_PRECONDITION:
         return m.asso_lydia_cashier_err_removal_refused();
       case LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED:
         return m.asso_lydia_resp_err_number_change_disabled();

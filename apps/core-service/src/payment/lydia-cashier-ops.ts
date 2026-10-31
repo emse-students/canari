@@ -85,10 +85,10 @@ export class LydiaCashierOps {
 
   /**
    * REMOVES ONE NUMBER of cashier row `cashierId` at Lydia, and proves it: social-service checks
-   * and claims (`lydia-cashier-revoke-claim`: the row, the guard that keeps the Responsable's
-   * current number, the numbers opened under the claim's lock), nothing is removed unless the
-   * Responsable still holds full rights (`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING` otherwise, nothing
-   * changed), Lydia is asked to remove the number, and its re-read decides (`removeCashier`). Only 0
+   * and claims (`lydia-cashier-revoke-claim`: the row, the Responsable's current number refused,
+   * the numbers opened under the claim's lock), the removal preconditions are checked
+   * (`LYDIA_CASHIER_REMOVAL_PRECONDITION` otherwise, nothing changed), Lydia is asked to remove the
+   * number, and its re-read decides (`removeCashier`). Only 0
    * rights is a removal: the row is closed (`current`) or the old number cleared (`previous`).
    * Anything else is recorded as a removal NOT confirmed - the row stays live, flagged - and answered
    * 502 `LYDIA_CASHIER_REVOKE_UNCONFIRMED`, at ERROR. Repeating a removal is safe, so every outcome
@@ -117,7 +117,7 @@ export class LydiaCashierOps {
         target.cashierPhone
       );
     } catch (err: unknown) {
-      // Refused before any change (no Provider key, a malformed number, the Responsable not intact):
+      // Refused before any change (no Provider key, a malformed number, a precondition not met):
       // nothing changed at Lydia.
       await this.release(associationId, target.claimToken);
       throw err;

@@ -1115,7 +1115,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       cashierAddDisabled: provider.LYDIA_CASHIER_ADD_DISABLED,
       cashierRevokeUnconfirmed: provider.LYDIA_CASHIER_REVOKE_UNCONFIRMED,
       cashierReadbackInvalid: provider.LYDIA_CASHIER_READBACK_INVALID,
-      cashierHolderRightsMissing: provider.LYDIA_CASHIER_HOLDER_RIGHTS_MISSING,
+      cashierRemovalPrecondition: provider.LYDIA_CASHIER_REMOVAL_PRECONDITION,
       responsableNumberChangeDisabled: LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED,
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
     }).toEqual(contract.core);
@@ -1327,13 +1327,13 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
   it('a refusal before the removal: the claim is released and nothing is recorded as removed', async () => {
     const { controller, paymentService } = setup({ verified: true, held: 0 });
     paymentService.removeLydiaCashier.mockRejectedValueOnce(
-      new ConflictException({ code: provider.LYDIA_CASHIER_HOLDER_RIGHTS_MISSING })
+      new ConflictException({ code: provider.LYDIA_CASHIER_REMOVAL_PRECONDITION })
     );
     await expect(
       controller.setLydiaResponsable(id, { userId: 'u1', phone: NEW, mode: 'add' }, selfReq)
     ).rejects.toMatchObject({
       status: 409,
-      response: { code: provider.LYDIA_CASHIER_HOLDER_RIGHTS_MISSING },
+      response: { code: provider.LYDIA_CASHIER_REMOVAL_PRECONDITION },
     });
     expect(postsTo('/lydia-cashier-release')[0][1]).toEqual({ claimToken: REVOKE_CLAIM });
     expect(postsTo('/lydia-cashier-revoke')).toHaveLength(0);

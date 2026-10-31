@@ -29,6 +29,7 @@ import {
   clearClaim,
   confirmedOf,
   lockAssociation,
+  numberHeldBy,
   writeClaim,
 } from './lydia-cashier-claim';
 import { coreUrl } from '../internal/service-urls';
@@ -42,9 +43,9 @@ export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
 /** The `code` (409) of adding a member who already is a live cashier of the association. */
 export const LYDIA_CASHIER_ALREADY_SET = 'LYDIA_CASHIER_ALREADY_SET';
 /** The `code` (409) when the association has no CONFIRMED Responsable: no cashier step runs before one. */
-export const LYDIA_CASHIER_NO_HOLDER = 'LYDIA_CASHIER_NO_HOLDER';
-/** The `code` (409) of removing the Responsable's current number: it keeps every right, always. */
-export const LYDIA_CASHIER_LAST_HOLDER = 'LYDIA_CASHIER_LAST_HOLDER';
+export const LYDIA_CASHIER_NO_RESPONSABLE = 'LYDIA_CASHIER_NO_RESPONSABLE';
+/** The `code` (409) of removing the Responsable's current number: it is managed by its own step. */
+export const LYDIA_CASHIER_RESPONSABLE_NUMBER = 'LYDIA_CASHIER_RESPONSABLE_NUMBER';
 /** The `code` (404) of a cashier row (or other number) that is not live on the current Business. */
 export const LYDIA_CASHIER_NOT_FOUND = 'LYDIA_CASHIER_NOT_FOUND';
 /** The `code` (409) of changing the Responsable's role: that is lot 2's step, never a role change. */
@@ -59,7 +60,7 @@ const E164_RE = /^\+[1-9]\d{7,14}$/;
 /** How long one erasure removal may take at core-service before it is given up (best effort). */
 export const ERASURE_REVOKE_TIMEOUT_MS = 30_000;
 
-/** What a removal needs from this service: the Business, the number to remove, its context, the claim. */
+/** What the call needs from this service, and the claim. */
 export interface LydiaCashierRevokeTarget {
   vendorToken: string;
   cashierPhone: string;
@@ -134,7 +135,7 @@ export class LydiaCashiersService {
 
   /**
    * The CONFIRMED Responsable's row and current number, opened. The typed 409
-   * `LYDIA_CASHIER_NO_HOLDER` when there is none (or it is not confirmed), a 503 when its seal does
+   * `LYDIA_CASHIER_NO_RESPONSABLE` when there is none (or it is not confirmed), a 503 when its seal does
    * not open.
    */
   private confirmedResponsableOrThrow(
@@ -144,7 +145,10 @@ export class LydiaCashiersService {
     const holder = rows.find((row) => row.role === 'responsable' && row.confirmedAt != null);
     if (!holder) {
       this.logger.warn(`[LYDIA-CASHIER] refused on ${sanitizeLog(id)}: no confirmed Responsable`);
-      throw conflict(LYDIA_CASHIER_NO_HOLDER, 'The Responsable must be confirmed by Lydia first');
+      throw conflict(
+        LYDIA_CASHIER_NO_RESPONSABLE,
+        'The Responsable must be confirmed by Lydia first'
+      );
     }
     const phone = this.open(id, holder.phoneSealed, "the Responsable's number");
     if (!phone) throw new ServiceUnavailableException("The Responsable's number cannot be read");
@@ -208,7 +212,7 @@ export class LydiaCashiersService {
    * The checks and claim before Lydia is asked to add `userId` (number `phone`) as a `role`: a
    * Business is linked (`LYDIA_NO_BUSINESS`), the person is a member (`LYDIA_CASHIER_NOT_A_MEMBER`)
    * and not already a live cashier (`LYDIA_CASHIER_ALREADY_SET`), a confirmed Responsable exists
-   * (`LYDIA_CASHIER_NO_HOLDER`: no cashier is added before one), and the number is not
+   * (`LYDIA_CASHIER_NO_RESPONSABLE`: no cashier is added before one), and the number is not
    * one a live row holds (`LYDIA_CASHIER_PHONE_IN_USE`: Lydia would REPLACE that cashier's rights).
    * A row whose seal does not open counts as holding the number - refused rather than risked.
    */
@@ -234,18 +238,17 @@ export class LydiaCashiersService {
         throw conflict(LYDIA_CASHIER_ALREADY_SET, 'This member already is a cashier');
       }
       this.confirmedResponsableOrThrow(id, rows);
-      for (const row of rows) {
-        for (const sealed of [row.phoneSealed, row.previousPhoneSealed]) {
-          if (!sealed) continue;
-          const phone = this.open(id, sealed, 'a cashier number');
-          if (phone === null || phone === input.phone) {
-            this.logger.warn(
-              `[LYDIA-CASHIER] add refused on ${sanitizeLog(id)}: the number is held by a live row` +
-                (phone === null ? ' (or its seal does not open)' : '')
-            );
-            throw conflict(LYDIA_CASHIER_PHONE_IN_USE, 'This number already is a cashier number');
-          }
-        }
+      const match = numberHeldBy(
+        rows.flatMap((row) => [row.phoneSealed, row.previousPhoneSealed]),
+        input.phone,
+        (sealed) => this.open(id, sealed, 'a cashier number')
+      );
+      if (match) {
+        this.logger.warn(
+          `[LYDIA-CASHIER] add refused on ${sanitizeLog(id)}: the number is held by a live row` +
+            (match === 'unreadable' ? ' (or its seal does not open)' : '')
+        );
+        throw conflict(LYDIA_CASHIER_PHONE_IN_USE, 'This number already is a cashier number');
       }
       return {};
     });
@@ -278,19 +281,20 @@ export class LydiaCashiersService {
       }
       const phone = this.open(id, row.phoneSealed, "a cashier's number");
       if (!phone) throw new ServiceUnavailableException("The cashier's number cannot be read");
-      for (const other of rows.filter((r) => r.role === 'responsable')) {
-        for (const sealed of [other.phoneSealed, other.previousPhoneSealed]) {
-          if (!sealed) continue;
-          const held = this.open(id, sealed, "a Responsable's number");
-          if (held === null || held === phone) {
-            this.logger.error(
-              `[LYDIA-CASHIER] role change refused on ${sanitizeLog(id)}: the row's number is ` +
-                `the Responsable's` +
-                (held === null ? ' (or its seal does not open)' : '')
-            );
-            throw conflict(LYDIA_CASHIER_PHONE_IN_USE, 'This number is the Responsable number');
-          }
-        }
+      const match = numberHeldBy(
+        rows
+          .filter((r) => r.role === 'responsable')
+          .flatMap((r) => [r.phoneSealed, r.previousPhoneSealed]),
+        phone,
+        (sealed) => this.open(id, sealed, "a Responsable's number")
+      );
+      if (match) {
+        this.logger.error(
+          `[LYDIA-CASHIER] role change refused on ${sanitizeLog(id)}: the row's number is ` +
+            `the Responsable's` +
+            (match === 'unreadable' ? ' (or its seal does not open)' : '')
+        );
+        throw conflict(LYDIA_CASHIER_PHONE_IN_USE, 'This number is the Responsable number');
       }
       return { phone, userId: row.userId };
     });
@@ -491,8 +495,8 @@ export class LydiaCashiersService {
    * (the row's own number) or `previous` (a Responsable's OTHER number). The row must be live on
    * the current Business (`LYDIA_CASHIER_NOT_FOUND`, also for a `previous` that is not there); the
    * Responsable's CURRENT number is never removed, by its own row or through another row holding the
-   * same number (`LYDIA_CASHIER_LAST_HOLDER`: it keeps every right); the association must have a
-   * CONFIRMED Responsable (`LYDIA_CASHIER_NO_HOLDER`). The numbers the removal needs are opened inside
+   * same number (`LYDIA_CASHIER_RESPONSABLE_NUMBER`); the association must have a
+   * CONFIRMED Responsable (`LYDIA_CASHIER_NO_RESPONSABLE`). The numbers the removal needs are opened inside
    * the transaction that locks the rows and takes the claim, and answered for core-service alone with
    * the claim token; a seal that does not open is a 503, nothing claimed.
    */
@@ -512,7 +516,7 @@ export class LydiaCashiersService {
           `[LYDIA-CASHIER] revoke refused on ${sanitizeLog(id)}: the Responsable's current number`
         );
         throw conflict(
-          LYDIA_CASHIER_LAST_HOLDER,
+          LYDIA_CASHIER_RESPONSABLE_NUMBER,
           "The Responsable's current number is not removed"
         );
       }
@@ -529,7 +533,7 @@ export class LydiaCashiersService {
             `Responsable's current number`
         );
         throw conflict(
-          LYDIA_CASHIER_LAST_HOLDER,
+          LYDIA_CASHIER_RESPONSABLE_NUMBER,
           "The Responsable's current number is not removed"
         );
       }
@@ -683,10 +687,10 @@ export class LydiaCashiersService {
 
   /**
    * What an erasure removes for row `mine`, read under the claim's lock: its numbers, each opened
-   * here, minus the Responsable's current number and any number another live row holds (removing
-   * those would strip someone else), each skip said at ERROR. `complete` is false when anything is
+   * here, minus the Responsable's current number and any number another live row holds, each skip
+   * said at ERROR. `complete` is false when anything is
    * left behind. Throws - so no claim is taken - when the row is gone or there is no confirmed
-   * Responsable (`LYDIA_CASHIER_NO_HOLDER`).
+   * Responsable (`LYDIA_CASHIER_NO_RESPONSABLE`).
    */
   private erasurePlan(
     mine: { id: string; associationId: string; vendorToken: string },
@@ -713,7 +717,7 @@ export class LydiaCashiersService {
     if (!complete) {
       this.logger.error(
         `[LYDIA-CASHIER] erasure of user=${who}: the Responsable of ${where} - their current ` +
-          `number is not removed at Lydia (the Responsable keeps every right)`
+          `number is not removed at Lydia`
       );
     }
     const targets: string[] = [];

@@ -131,8 +131,8 @@ export class InternalLydiaCashiersController {
   }
 
   /**
-   * The checks and claim before a removal; answers the number to remove and the confirmed
-   * Responsable's number, both opened, and the claim token - for core-service alone.
+   * The checks and claim before a removal; answers what the removal call needs, opened, and the
+   * claim token - for core-service alone.
    */
   @Post(':id/lydia-cashier-revoke-claim')
   @HttpCode(200)

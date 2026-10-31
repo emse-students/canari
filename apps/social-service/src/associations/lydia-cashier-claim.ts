@@ -115,6 +115,26 @@ export function claimLost(): ConflictException {
   });
 }
 
+/**
+ * Whether one of `sealedNumbers` holds `phone`: `'same'` when one opens to it, `'unreadable'` when
+ * one does not open (counted as holding the number, refused rather than risked), null when none
+ * does. Empty slots are skipped. `open` answers null for a seal that does not open and logs that
+ * itself, under its caller's tag. The ONE number match of the cashier steps and the Responsable's.
+ */
+export function numberHeldBy(
+  sealedNumbers: Iterable<string | null>,
+  phone: string,
+  open: (sealed: string) => string | null
+): 'same' | 'unreadable' | null {
+  for (const sealed of sealedNumbers) {
+    if (!sealed) continue;
+    const held = open(sealed);
+    if (held === null) return 'unreadable';
+    if (held === phone) return 'same';
+  }
+  return null;
+}
+
 /** A claim token as a body carries it: a UUID, or null. */
 export function claimTokenOf(value: unknown): string | null {
   return typeof value === 'string' &&

@@ -22,7 +22,7 @@ import {
   LYDIA_CASHIER_PERMISSIONS,
   LYDIA_CASHIER_ROLE_PERMISSIONS,
   cashierRightsDifference,
-  LYDIA_CASHIER_HOLDER_RIGHTS_MISSING,
+  LYDIA_CASHIER_REMOVAL_PRECONDITION,
   LYDIA_CASHIER_READBACK_INVALID,
   parseCashierReading,
   LYDIA_CASHIER_PERMISSIONS_INVALID,
@@ -1062,8 +1062,8 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     ...none,
     ...Object.fromEntries(names.map((n) => [n, '1'])),
   });
-  /** The Responsable reads 13 of 13: intact. */
-  const responsableIntact = { data: { error: '0', data: rightsOf(LYDIA_CASHIER_PERMISSIONS) } };
+  /** The read that meets the removal preconditions. */
+  const preconditionsMet = { data: { error: '0', data: rightsOf(LYDIA_CASHIER_PERMISSIONS) } };
 
   function withKey() {
     return new LydiaPaymentProvider({
@@ -1221,9 +1221,9 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     ]);
   });
 
-  it('a removal: the Responsable intact, then the removal, then a re-read at 0 - confirmed', async () => {
+  it('a removal: preconditions, the removal, a re-read at 0 - confirmed', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(responsableIntact)
+      .mockResolvedValueOnce(preconditionsMet)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockResolvedValueOnce({ data: { error: '0', data: none } });
     await expect(
@@ -1248,7 +1248,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
     expect(urls[2]).toMatch(/\/api\/business\/getpermission\.json$/);
   });
 
-  it('the Responsable short of 13: the typed 409 HOLDER_RIGHTS_MISSING, and nothing is removed', async () => {
+  it('a precondition not met: the typed 409 REMOVAL_PRECONDITION, and nothing is removed', async () => {
     mockedAxios.post.mockResolvedValueOnce({
       data: {
         error: '0',
@@ -1259,7 +1259,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
       withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
     ).rejects.toMatchObject({
       status: 409,
-      response: { code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING },
+      response: { code: LYDIA_CASHIER_REMOVAL_PRECONDITION },
     });
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
   });
@@ -1285,7 +1285,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
   it('a removal whose re-read still shows a right - documented or not - is NOT confirmed', async () => {
     for (const left of ['access_collect', 'access_tap2pay']) {
       mockedAxios.post
-        .mockResolvedValueOnce(responsableIntact)
+        .mockResolvedValueOnce(preconditionsMet)
         .mockResolvedValueOnce({ data: { error: '0' } })
         .mockResolvedValueOnce({ data: { error: '0', data: rightsOf([left]) } });
       await expect(
@@ -1299,7 +1299,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a removal whose re-read cannot be trusted is NOT confirmed (held unknown)', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(responsableIntact)
+      .mockResolvedValueOnce(preconditionsMet)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockResolvedValueOnce({ data: { error: '0' } });
     await expect(
@@ -1312,7 +1312,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a refused removal of a number that holds nothing reads 0 rights: confirmed by the re-read', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(responsableIntact)
+      .mockResolvedValueOnce(preconditionsMet)
       .mockResolvedValueOnce({ data: { error: '2', message: 'x' } })
       .mockResolvedValueOnce({ data: { error: '0', data: none } });
     await expect(
@@ -1325,7 +1325,7 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
 
   it('a re-read that fails is NOT confirmed (held unknown), never a throw', async () => {
     mockedAxios.post
-      .mockResolvedValueOnce(responsableIntact)
+      .mockResolvedValueOnce(preconditionsMet)
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockRejectedValueOnce(new Error('socket hang up'));
     await expect(

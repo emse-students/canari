@@ -5,8 +5,8 @@ import { of, throwError } from 'rxjs';
 import {
   LYDIA_CASHIER_ALREADY_SET,
   LYDIA_CASHIER_IN_FLIGHT,
-  LYDIA_CASHIER_LAST_HOLDER,
-  LYDIA_CASHIER_NO_HOLDER,
+  LYDIA_CASHIER_RESPONSABLE_NUMBER,
+  LYDIA_CASHIER_NO_RESPONSABLE,
   LYDIA_CASHIER_NOT_A_MEMBER,
   LYDIA_CASHIER_NOT_FOUND,
   LYDIA_CASHIER_PHONE_IN_USE,
@@ -50,8 +50,8 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
       cashierNotAMember: LYDIA_CASHIER_NOT_A_MEMBER,
       cashierAlreadySet: LYDIA_CASHIER_ALREADY_SET,
       cashierPhoneInUse: LYDIA_CASHIER_PHONE_IN_USE,
-      cashierNoHolder: LYDIA_CASHIER_NO_HOLDER,
-      cashierLastHolder: LYDIA_CASHIER_LAST_HOLDER,
+      cashierNoResponsable: LYDIA_CASHIER_NO_RESPONSABLE,
+      cashierResponsableNumber: LYDIA_CASHIER_RESPONSABLE_NUMBER,
       cashierNotFound: LYDIA_CASHIER_NOT_FOUND,
       cashierRoleFixed: LYDIA_CASHIER_ROLE_FIXED,
       cashierClaimLost: LYDIA_CASHIER_CLAIM_LOST,
@@ -288,7 +288,7 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
   it('no confirmed Responsable: no add', async () => {
     await expect(
       make([responsable({ confirmedAt: null })]).service.claimAdd(ASSO, add)
-    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NO_HOLDER } });
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NO_RESPONSABLE } });
   });
 
   it('no Business linked: the typed NO_BUSINESS', async () => {
@@ -315,11 +315,11 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     expect(asso).toMatchObject({ claimed: false, token: null });
   });
 
-  it('the last-holder guard: the Responsable CURRENT number is never removed', async () => {
+  it("the Responsable's current number is never removed", async () => {
     const { service, query, asso } = make([responsable()]);
     await expect(
       service.claimRevoke(ASSO, { cashierId: 'r1', number: 'current' })
-    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_LAST_HOLDER } });
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_RESPONSABLE_NUMBER } });
     expect(asso.claimed).toBe(false);
     expect(writes(query)).toHaveLength(0);
   });

@@ -160,8 +160,8 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   re-read shows no right left. Per association it takes the cashier claim WITHOUT waiting - another
   cashier operation in flight skips that association, at ERROR - so the numbers it opens are the
   numbers it removes, and it releases the claim after. Best effort: every failure is logged, and the
-  erasure goes on whatever Lydia answers. A Responsable's own CURRENT number is never removed (nobody
-  else manages the Business), nor a number another live row holds. Then the row naming the account is DELETED, its sealed numbers with it; a row the
+  erasure goes on whatever Lydia answers. A Responsable's own CURRENT number is never removed, nor a
+  number another live row holds. Then the row naming the account is DELETED, its sealed numbers with it; a row the
   account ADDED keeps its person and gets `addedByUserId = '[deleted]'`. A LIVE row (`removedAt`
   NULL) it deletes is read first (`liveCashiersErased`): one whose numbers Lydia confirmed removed is
   an `[AUDIT]` LOG line; any other is reported at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted

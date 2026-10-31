@@ -436,10 +436,9 @@ export class PaymentController {
    * ANOTHER NUMBER for the live Responsable is a NUMBER CHANGE (lot 3): switched off with
    * `LYDIA_CASHIER_ADD_ENABLED` (409 `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED`), and allowed only
    * to that Responsable or a global admin (403 `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN`) - both
-   * refused before Lydia is asked anything. The new number is added; only once Lydia CONFIRMS it
-   * with every right does it become the live one, and only then is the number it replaced removed
-   * (`LydiaCashierOps.revoke`, `previous`, with its own checks and re-read). Unconfirmed, the
-   * old number stays the live one with every right. Switching back to the other number tracked on
+   * refused before Lydia is asked anything. The new number is added, and the old number is removed
+   * once the new one is confirmed (`LydiaCashierOps.revoke`, `previous`, with its own checks and
+   * re-read). Unconfirmed, the old number stays the live one. Switching back to the other number tracked on
    * the row is the same path.
    */
   @Post('lydia-responsable/:associationId')
@@ -603,8 +602,8 @@ export class PaymentController {
       `Lydia Responsable of ${associationId} ${mode === 'add' ? 'added' : 'recorded'}`
     );
     if (data?.removeOther === true && data.cashierId) {
-      // Lot 3: the new number is CONFIRMED with every right; only now does the number it replaced
-      // go. A removal Lydia does not confirm answers the typed 502; the row keeps that number,
+      // Lot 3: the old number is removed once the new one is confirmed. A removal Lydia does not
+      // confirm answers the typed 502; the row keeps that number,
       // flagged, for a later removal.
       await this.removeReplacedResponsableNumber(associationId, data.cashierId, actorId);
     }

@@ -806,7 +806,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
   ] as const)(
     'a number another live cashier holds as its %s number is PHONE_IN_USE, nothing written, the claim released',
     async (_what, slot) => {
-      captureLogs();
+      const logs = captureLogs();
       const vendeur: Cashier = {
         id: 'v1',
         userId: 'user-9',
@@ -826,6 +826,10 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       });
       expect(rows).toHaveLength(1);
       expect(asso.token).toBeNull();
+      // At the record Lydia was already asked: an ERROR saying what it already did.
+      expect(
+        logs.error.some((l) => l.includes("Lydia has already replaced that cashier's rights"))
+      ).toBe(true);
     }
   );
 
@@ -981,7 +985,7 @@ describe('AssociationsService.claimLydiaResponsable - the checks and the claim o
   });
 
   it('a number another live cashier holds (a Vendeur, before or after a Responsable erasure) is PHONE_IN_USE, never claimed', async () => {
-    captureLogs();
+    const logs = captureLogs();
     const vendeur: Cashier = {
       id: 'v1',
       userId: 'user-9',
@@ -1003,6 +1007,9 @@ describe('AssociationsService.claimLydiaResponsable - the checks and the claim o
       ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
       expect(asso.token).toBeNull();
     }
+    // At the claim nothing was asked of Lydia yet: a WARN, never the record's ERROR.
+    expect(logs.warn.filter((l) => l.includes('Responsable claim refused'))).toHaveLength(2);
+    expect(logs.error.some((l) => l.includes('already replaced'))).toBe(false);
   });
 
   it('another person, a non-member or no Business is answered and never claimed', async () => {

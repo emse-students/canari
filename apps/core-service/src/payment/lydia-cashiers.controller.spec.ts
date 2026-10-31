@@ -5,7 +5,7 @@ import { InternalLydiaCashiersController } from './internal-lydia-cashiers.contr
 import {
   LYDIA_CASHIER_ADD_DISABLED,
   LYDIA_CASHIER_ADD_ENABLED,
-  LYDIA_CASHIER_HOLDER_RIGHTS_MISSING,
+  LYDIA_CASHIER_REMOVAL_PRECONDITION,
   LYDIA_CASHIER_REVOKE_UNCONFIRMED,
   LYDIA_CASHIER_RIGHTS_INCOMPLETE,
   LYDIA_UNREACHABLE,
@@ -216,11 +216,11 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
       make({
         removeLydiaCashier: jest
           .fn()
-          .mockRejectedValue(new HttpException({ code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING }, 409)),
+          .mockRejectedValue(new HttpException({ code: LYDIA_CASHIER_REMOVAL_PRECONDITION }, 409)),
       }).revokeCashier(ASSO, ROW, { number: 'current' }, req)
     ).rejects.toMatchObject({
       status: 409,
-      response: { code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING },
+      response: { code: LYDIA_CASHIER_REMOVAL_PRECONDITION },
     });
     expect(postsTo('/lydia-cashier-release')[0][1]).toEqual({ claimToken: TOKEN });
     expect(postsTo('/lydia-cashier-revoke')).toHaveLength(0);
@@ -236,17 +236,20 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
     expect(postsTo('/lydia-cashier-revoke')[0][1]).toMatchObject({ verified: false });
   });
 
-  it('the last holder: social-service refuses, and Lydia is never asked', async () => {
+  it("the Responsable's current number: social-service refuses, and Lydia is never asked", async () => {
     social({
       '/lydia-cashier-revoke-claim': {
         status: 409,
-        refusal: { code: 'LYDIA_CASHIER_LAST_HOLDER' },
+        refusal: { code: 'LYDIA_CASHIER_RESPONSABLE_NUMBER' },
       },
     });
     const removeLydiaCashier = jest.fn();
     await expect(
       make({ removeLydiaCashier }).revokeCashier(ASSO, ROW, { number: 'current' }, req)
-    ).rejects.toMatchObject({ status: 409, response: { code: 'LYDIA_CASHIER_LAST_HOLDER' } });
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'LYDIA_CASHIER_RESPONSABLE_NUMBER' },
+    });
     expect(removeLydiaCashier).not.toHaveBeenCalled();
   });
 });
