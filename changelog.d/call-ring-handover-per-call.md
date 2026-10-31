@@ -1,0 +1,3 @@
+### Fixed - the iPhone keeps a CallKit ring the page does not ring, and ends one the page does
+
+The handover ends an unanswered CallKit ring only when the page rings that very call, a page that starts ringing a call while active ends its CallKit twin, a statement from a previous page is ignored, an answered call ended before the handover leaves no record, and the ring's deadline no longer ends an answered call as `Unanswered` (reasoned, not observed, that it filed it as missed) ([calls](docs/wiki/frontend/modules/calls.md#the-handover-ends-an-unanswered-ring-only-when-the-page-rings-that-call-2026-10-31)).
