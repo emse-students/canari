@@ -101,6 +101,19 @@ describe('the statements of the page to the native ring', () => {
     );
   });
 
+  it('an invoke that throws or answers no promise never throws into the socket setter', async () => {
+    const mod = await freshModule();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const throwing = vi.fn(() => {
+      throw new Error('no bridge');
+    });
+    const noPromise = vi.fn(() => undefined as unknown as Promise<unknown>);
+    expect(() => mod.reportPageGatewaySocket('h', true, throwing)).not.toThrow();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
+    expect(() => mod.reportPageRingingCall('c', 'call-1', noPromise)).not.toThrow();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(4));
+  });
+
   it('asks the generation as the module loads in Tauri, before any statement', async () => {
     vi.resetModules();
     const invoke = vi.fn(async () => 9);

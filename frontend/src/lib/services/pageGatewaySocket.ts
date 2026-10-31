@@ -26,14 +26,22 @@ type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unkno
  */
 let documentGeneration: Promise<number> | null = null;
 
-/** Asks the generation and keeps the answer; a failure is said once and cleared for the next ask. */
+/**
+ * Asks the generation and keeps the answer; a failure is said once and cleared for the next ask.
+ *
+ * NEVER THROWS INTO ITS CALLER. It runs inside the socket's setter (`TauriMlsService.ws`), so an
+ * invoke that throws synchronously, or answers something that is not a promise, must become a
+ * rejection of the ask - never an exception that aborts the open or close of the gateway socket. A
+ * statement to the native ring is a report about the socket, and cannot be allowed to break it.
+ */
 function askDocumentGeneration(invokeFn: Invoke): Promise<number> {
-  const ask = invokeFn(PAGE_RING_DOCUMENT_COMMAND).then((document) => {
+  const ask = (async () => {
+    const document = await invokeFn(PAGE_RING_DOCUMENT_COMMAND);
     if (typeof document !== 'number') {
       throw new Error(`the document generation is not a number: ${String(document)}`);
     }
     return document;
-  });
+  })();
   documentGeneration = ask;
   ask.catch((e: unknown) => {
     console.warn(
