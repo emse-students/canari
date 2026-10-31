@@ -87,6 +87,8 @@ const proto = BaseMlsService.prototype as unknown as {
     groupId?: string
   ): boolean;
   collectFramesLeftForKeyGroup(groupId: string): void;
+  openAdmissionOfKeyGroup(groupId: string): void;
+  noteDistributionGroup(groupId: string): void;
   persistDistributionGroup(scope: DistributionScope, groupId: string): void;
   openDistributionFrame(
     groupId: string,
@@ -161,6 +163,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     refetchFramesLeftBehind: proto.refetchFramesLeftBehind,
     collectFramesLeftForKeyGroup: proto.collectFramesLeftForKeyGroup,
+    // REAL: a key group is classified OPEN where it is registered, and that is pinned below. The
+    // service it asks is a stub - the compiled rule is `admission.realWasm.test.ts`'s subject.
+    openAdmissionOfKeyGroup: proto.openAdmissionOfKeyGroup,
+    setAdmissionPolicy: vi.fn().mockResolvedValue(undefined),
     persistDistributionGroup: proto.persistDistributionGroup,
     // The route's own halves and the catch-up it runs on an epoch gap - REAL, since which frame is
     // acknowledged and when a gap closes is exactly what these cases pin.
@@ -887,6 +893,48 @@ describe('the durable registry', () => {
     expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
       expect.objectContaining({ scope: SALON, workspaceId: 'ws-1', plaintext })
     );
+  });
+});
+
+// A KEY GROUP IS CLASSIFIED OPEN WHERE IT IS REGISTERED, which is always before it is joined or
+// created. A group a conversation's rule closed would refuse every newcomer of a community, so this
+// is the half of the admission rule that must never be missing for a key group.
+describe('registering a key group opens it for the admission rule', () => {
+  beforeEach(() => resetUnackedFrames());
+
+  it('classifies the group open when a scope names it', () => {
+    const ctx = makeCtx();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-open');
+
+    expect(ctx.setAdmissionPolicy).toHaveBeenCalledWith('g-open', 'open');
+    log.mockRestore();
+  });
+
+  it('classifies a group the server named without a scope open too', () => {
+    const ctx = makeCtx();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.noteDistributionGroup.call(ctx, 'g-noted');
+
+    expect(ctx.setAdmissionPolicy).toHaveBeenCalledWith('g-noted', 'open');
+    log.mockRestore();
+  });
+
+  it('says so at WARN when it cannot, and the registration still completes', async () => {
+    const ctx = makeCtx();
+    ctx.setAdmissionPolicy = vi.fn().mockRejectedValue(new Error('wasm not ready'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(() => proto.registerDistributionGroup.call(ctx, WS, 'g-late')).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('stays unclassified'));
+    warn.mockRestore();
+    log.mockRestore();
   });
 });
 

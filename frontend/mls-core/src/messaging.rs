@@ -1,3 +1,4 @@
+use crate::admission::{AdmissionPolicy, judge_external_commit};
 use openmls::prelude::*;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
@@ -36,6 +37,9 @@ pub(crate) struct MergeObservers<'a> {
     /// This device's credential identity and signature key.
     pub(crate) own: (&'a [u8], &'a [u8]),
     pub(crate) graine_runs: &'a mut HashMap<String, GraineRun>,
+    /// Each classified group's admission policy (`crate::admission`), asked before an external
+    /// commit is merged.
+    pub(crate) admission: &'a HashMap<String, AdmissionPolicy>,
 }
 
 impl MlsManager {
@@ -177,6 +181,7 @@ impl MlsManager {
                 trust: &mut self.device_trust,
                 own: (self.credential.identity(), self.keypair.public()),
                 graine_runs: &mut self.graine_runs,
+                admission: &self.admission,
             },
         )
     }
@@ -204,6 +209,7 @@ impl MlsManager {
             trust: &mut self.device_trust,
             own: (self.credential.identity(), self.keypair.public()),
             graine_runs: &mut self.graine_runs,
+            admission: &self.admission,
         };
         messages
             .iter()
@@ -519,6 +525,21 @@ impl MlsManager {
                 }
                 // The leaves BEFORE the merge, for the device record (`crate::device_trust`).
                 let leaves_before = leaf_keys(group);
+                // A CLOSED group does not merge an external commit that brings in a user holding no
+                // leaf: no member added them, and the verdict is a function of the tree before the
+                // commit and the commit alone, so every member reaches the same one whenever it
+                // processes it (`crate::admission`). Refused here, before anything is merged, the
+                // group is left exactly as it was.
+                if external_commit {
+                    let tree_before: Vec<String> =
+                        leaves_before.iter().map(|(_, id, _)| id.clone()).collect();
+                    judge_external_commit(
+                        observers.admission.get(group_id).copied(),
+                        &tree_before,
+                        sender_identity.as_deref(),
+                        group_id,
+                    )?;
+                }
                 // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
                 // Remove took are gone (`graine_run.rs`).
                 let before = BeforeMerge::read(provider, group, &staged_commit, external_commit);

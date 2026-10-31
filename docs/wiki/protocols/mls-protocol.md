@@ -1357,8 +1357,36 @@ device honouring a server-written flag, the very trust in server rows this polic
 durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
 `[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
 commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
-production before anything is decided about such entries. The receiving side is hardened in a
-second step.
+production before anything is decided about such entries.
+
+**A closed group refuses such an entry (2026-10-24).** `mls-core`'s `admission` module judges an
+EXTERNAL commit before merging it: in a group classified `Closed`, the commit is refused
+(`MlsError::AdmissionRefused`, text `ADMISSION_REFUSED: <identity> entered by external commit`,
+`DecryptErrorKind::AdmissionRefused`) unless its user already holds a leaf in the tree BEFORE the
+commit - a new device of a member, or a device rejoining after losing its state. A member's own
+commit (`Sender::Member`) is never restricted: that is the human invitation. The verdict is a
+function of the tree at the commit's base epoch and the commit alone, so two honest members at the
+same epoch reach the same one whenever each processes it (a late replay included), and a refused
+commit leaves the group exactly as it was.
+
+- **Three states per group**, persisted in the sealed state (`PersistedState.admission`, keyed by
+  group id so it survives `forget_group` and may be set before a join): `Closed`, `Open` (a key group,
+  entered by external commit by design) and unclassified, which keeps the behaviour every group had
+  before the rule. `mls-core` cannot tell a conversation from a key group; the app can, and classifies
+  only what it positively knows: `closeConversationAdmission` closes a conversation where its row is
+  saved and at every restore (never a group `isDistributionGroup` names), and
+  `registerDistributionGroup` / `noteDistributionGroup` open a key group before it is joined.
+- **A refusal is a proof, so it FREEZES the group and never recovers it** (`admissionFreeze.ts`,
+  durable, lifted only by a person). Every way back into the group runs through the server that served
+  the commit - a commit replay is refused again, and an external join rebuilds this device from the
+  group info that holds the person - so `requestReAdd`, `recoverForkedGroup`,
+  `recoverRosterDisagreement`, `isReAddDue`, the pipeline's epoch-gap escalation and the commit replay
+  all read the freeze first. The refusal is classified BEFORE every other marker
+  (`admission-refused`), because the native layer wraps unrecognised errors as `GAP_QUEUED` and every
+  other arm ends in a recovery.
+- **The member is told** (`announceAdmissionFreeze`, wired with the device notices): one system line
+  `chat_system_admission_refused` in the conversation, written once, and a toast.
+- Tested through the compiled crate (`admission.realWasm.test.ts`, `mls-core/tests/admission_policy.rs`).
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
 (`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier

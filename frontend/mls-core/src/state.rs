@@ -69,6 +69,12 @@ pub struct PersistedState {
     /// direction, since no run means rotate.
     #[serde(default)]
     pub graine_runs: HashMap<String, GraineRun>,
+    /// How each classified group treats an external commit from a user who holds no leaf
+    /// (`crate::admission`). `#[serde(default)]`: a state written before it has no classified group,
+    /// and every group keeps the behaviour it had until a session classifies it. A build that
+    /// predates the field ignores it on read and drops it on its next write.
+    #[serde(default)]
+    pub admission: HashMap<String, crate::admission::AdmissionPolicy>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -94,6 +100,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) device_pins_pruned: &'a [String],
     pub(crate) pending_external_joins: &'a [String],
     pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
+    pub(crate) admission: &'a HashMap<String, crate::admission::AdmissionPolicy>,
 }
 
 // Struct request wrapper for serialization
@@ -226,6 +233,8 @@ pub struct MlsManager {
     pub(crate) pending_external_joins: std::collections::HashSet<String>,
     /// Graine's departure tracker, persisted with the state (`graine_run.rs`).
     pub(crate) graine_runs: HashMap<String, GraineRun>,
+    /// The admission policy of each classified group, persisted with the state (`crate::admission`).
+    pub(crate) admission: HashMap<String, crate::admission::AdmissionPolicy>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 
@@ -858,6 +867,7 @@ impl MlsManager {
                 device_trust,
                 pending_external_joins,
                 graine_runs: state.graine_runs,
+                admission: state.admission,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -979,6 +989,7 @@ impl MlsManager {
                 device_trust,
                 pending_external_joins: Default::default(),
                 graine_runs: HashMap::new(),
+                admission: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
                 fork_findings: RefCell::default(),
             })
@@ -1055,6 +1066,7 @@ impl MlsManager {
             device_pins_pruned: &device_pins_pruned,
             pending_external_joins: &pending_external_joins,
             graine_runs: &self.graine_runs,
+            admission: &self.admission,
         };
 
         let mut final_bytes = Vec::new();

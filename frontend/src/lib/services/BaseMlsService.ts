@@ -6029,6 +6029,7 @@ export abstract class BaseMlsService implements IMlsService {
     const previous = this.distributionScopeByGroup.get(groupId);
     this.distributionScopeByGroup.set(groupId, scope);
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     // Written only when it is NEWS: the community loop re-registers every group on every load, and
     // a row restored by `hydrateDistributionGroups` already says exactly this.
     if (previous === undefined || !sameScope(previous, scope)) {
@@ -6048,7 +6049,26 @@ export abstract class BaseMlsService implements IMlsService {
    */
   noteDistributionGroup(groupId: string): void {
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     this.collectFramesLeftForKeyGroup(groupId);
+  }
+
+  /**
+   * Classifies a key-distribution group as OPEN for the admission rule: its members enter by
+   * external commit by design, and a group a conversation's rule closed would refuse every newcomer
+   * of a community. Called wherever this session learns a group IS a key group, which is always
+   * BEFORE it is joined or created (the registration precedes both), and keyed by group id so it
+   * stands whether or not the group is held yet.
+   *
+   * Never throws: a failure leaves the group unclassified, which merges its external commits exactly
+   * as before - the safe side - and is said at WARN because the rule then does not apply to it.
+   */
+  private openAdmissionOfKeyGroup(groupId: string): void {
+    void this.setAdmissionPolicy(groupId, 'open').catch((e: unknown) => {
+      console.warn(
+        `[ADMISSION] key group ${groupId.slice(0, 8)}... could not be classified open (it stays unclassified): ${String(e)}`
+      );
+    });
   }
 
   /**
@@ -6679,6 +6699,15 @@ export abstract class BaseMlsService implements IMlsService {
     // accused it at ERROR, so the "comes back through a history request" line below would only be
     // a second, wrong, account of it.
     if (kind === 'sender-mismatch') return true;
+    // A KEY GROUP IS OPEN: a refused admission here means this group was classified closed by
+    // mistake, which would refuse every newcomer of a community. Acknowledged - the refusal repeats
+    // identically - and accused, so the misclassification is read rather than lived with.
+    if (kind === 'admission-refused') {
+      console.error(
+        `[GRAINE] a key group refused an admission - it is classified closed and must be open: ${groupId.slice(0, 8)}...`
+      );
+      return true;
+    }
     const permanent =
       kind === 'own-message' ||
       kind === 'secret-reuse' ||
@@ -7934,6 +7963,8 @@ export abstract class BaseMlsService implements IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
+  abstract setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void>;
+  abstract getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'>;
 
   /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
   abstract isGroupActive(groupId: string): Promise<boolean>;
