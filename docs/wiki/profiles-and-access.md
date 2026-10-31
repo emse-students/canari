@@ -1413,7 +1413,7 @@ review account. A READ across the boundary returns nothing, as for anything outs
 | Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `reviewCohortAuthorFilterSql`, `spaces/reader-spaces.ts` |
 | Comments, reactions, mentions | no notice crosses (post author, parent author, mention), and a mention across is not sent at creation or at an edit | `post-interactions.service.ts`, `posts.service.ts` |
 | Follow requests | an ask, and an acceptance of one written before the rule, refused both ways; a row written before the rule is left out of the inbox, the followers, the sent requests and the bell | `recordFollowRequest`, `follow-requests.service.ts`, `sameSideOfReviewCohortSql` |
-| Communities | no invitation link or salon invitation seats one side among the other; a roster row across the community creator's side (written before the rule) entitles nothing in its key group, so it cannot be used to join | `review-cohort-community.ts`, `channel.service.ts` |
+| Communities | no invitation link or salon invitation seats one side among the other; a roster row across the community creator's side entitles no NEW seat in its key group - the question is asked of a pending seat only, so a device already active keeps its keys | `review-cohort-community.ts`, `channel.service.ts` |
 | The shop, partnerships, an association's roster, its forms | a review account sees, buys, claims, submits and reads the roster of only the associations it is a member of - none real; nobody but an admin sees a review account on a roster, and the public roster never lists one; a personal form is not answered across | `review-cohort-reach.ts`, `products` / `partnerships` / `forms.service.ts`, `listMembers`, `listMembersPublic` |
 | Association membership and read grants | an officer cannot add a review account to a roster holding a member, nor a member to the cohort's; a read grant never opens a real association to a review account | `assertRosterStaysOnOneSide`, `readGrantReachesAssociationSql` |
 | The Minesweeper board | each side ranks among its own; a member never sees a review account on the board | `minesweeper.service.ts` |
@@ -1428,11 +1428,21 @@ nothing of the cohort. An admin reaches the cohort only by an id: a post opened 
 of the cohort could be judged by nobody. It opens the key and the manifest and nothing else: the
 admin's chat lines and reactions on that live are refused (`mayWatch`).
 
-**Rows written before the rule close themselves:** a follow (pending or accepted) or a bell row
-across the boundary is left out of every list and the bell; a community roster row across its
-creator's side entitles nothing in its key group. What the operator still does is the review
-account's OWN history - its conversation with a member is left the way the app leaves one, never by a
-raw delete. An officer cannot make a review account a member of a real association (the add is
+**Rows written before the rule: two kinds close themselves, the rest is the operator's.** A follow
+(pending or accepted) or a bell row across the boundary is left out of every list and the bell. A
+community roster row across its creator's side stops a NEW join only: entitlement is asked of a
+pending seat, never of an active one, so a device seated before the rule keeps its keys, and the row
+still shows on the roster. **So every crossing row - a community seat, an association membership, a
+booking - is removed by the operator BEFORE the secret changes, through the app (leave, remove,
+cancel), never by a raw delete.** None is filtered out of the rosters or the booking lists, and
+deliberately: counted on both estates on 2026-10-31 (read-only), there were none - no community,
+association or booking crossing the boundary, no seat - and none can be written since, because every
+writer of those rows is gated (a community row has three writers: creation, which seats its creator,
+an invitation link and a salon invitation; a booking and its participants have one, `book`). A
+filter for rows that cannot exist would be a second rule nobody exercises. The count is re-run before
+each change of the list, and a crossing row it finds is removed, not hidden. What the operator also
+does is the review account's OWN history - its conversation with a member is left the way the app
+leaves one, never by a raw delete. An officer cannot make a review account a member of a real association (the add is
 refused while the roster holds a member), so an association reaches a review account only when it is
 the cohort's own.
 
@@ -1455,8 +1465,8 @@ and the cohort cases of the products, partnerships, forms, roster, posts and com
 `refusal-codes.spec.ts` and `calls.service.spec.ts` (chat-delivery-service).
 
 **THE SECRET CHANGES IN THREE STEPS, IN THIS ORDER** (2026-10-31): (1) ship the release carrying
-the cohort code with the CURRENT one-id value - the rule runs with a one-member cohort; (2) change the
-secret to the full list (and its `DEV_` twin); (3) redeploy that same release (a rerun of its deploy
+the cohort code with the CURRENT one-id value - the rule runs with a one-member cohort; (2) once the count of
+crossing rows (below) reads zero for the full list, change the secret to the full list (and its `DEV_` twin); (3) redeploy that same release (a rerun of its deploy
 is a redeploy). Never the list before the code: a value the running code reads differently is a
 second change hidden in the first. **One window is accepted:** step 3 replaces the three services
 one after another, so for a few seconds one may read the old list and another the new one - the

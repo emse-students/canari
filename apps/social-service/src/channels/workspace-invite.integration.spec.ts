@@ -243,5 +243,36 @@ maybe('accepting a community invite link against PostgreSQL', () => {
       expect(await service.isDistributionGroupEntitled('workspace', WS, 'rev-3')).toBe(false);
       expect(await service.isDistributionGroupEntitled('workspace', WS, 'owner')).toBe(true);
     });
+
+    it('entitles no member in a community a review account created, its member row notwithstanding', async () => {
+      const REVIEW_WS = '00000000-0000-4000-8000-0000000000e4';
+      await q(
+        `INSERT INTO channel_workspaces (id, name, slug, "createdBy") VALUES ($1, 'R', 'w-review', 'rev-4')`,
+        [REVIEW_WS]
+      );
+      try {
+        const members = ds.getRepository(ChannelMember);
+        await members.save([
+          members.create({ workspaceId: REVIEW_WS, userId: 'rev-4', roleIds: [] }),
+          // A member's row written before the rule: it must buy nothing in the key group.
+          members.create({ workspaceId: REVIEW_WS, userId: 'member-y', roleIds: [] }),
+        ]);
+        process.env.SERVICE_ACCOUNT_USER_ID = 'rev-4';
+        expect(await service.isDistributionGroupEntitled('workspace', REVIEW_WS, 'member-y')).toBe(
+          false
+        );
+        expect(await service.isDistributionGroupEntitled('workspace', REVIEW_WS, 'rev-4')).toBe(
+          true
+        );
+        // With no cohort configured the same row entitles, so it is the rule that refused it.
+        delete process.env.SERVICE_ACCOUNT_USER_ID;
+        expect(await service.isDistributionGroupEntitled('workspace', REVIEW_WS, 'member-y')).toBe(
+          true
+        );
+      } finally {
+        await q(`DELETE FROM channel_members WHERE "workspaceId" = $1`, [REVIEW_WS]);
+        await q(`DELETE FROM channel_workspaces WHERE id = $1`, [REVIEW_WS]);
+      }
+    });
   });
 });
