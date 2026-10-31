@@ -1,6 +1,6 @@
 {
   "name": "chat-delivery-service",
-  "version": "1.5.2-alpha.1",
+  "version": "1.5.2-alpha.3",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
@@ -52,7 +52,8 @@
     "@protobufjs/utf8": "^1.1.1",
     "brace-expansion": "^5.0.12",
     "fast-xml-parser": "^5.10.1",
-    "glob": "^13.0.0",
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1",
     "js-yaml": "^4.2.0",
     "multer": "^2.5.0",
     "protobufjs": "^7.6.5",

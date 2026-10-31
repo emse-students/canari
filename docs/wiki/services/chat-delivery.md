@@ -1859,9 +1859,10 @@ opened the app.
   ringtone audio attributes, `setBypassDnd`). `showIncomingCallNotification` builds a
   `NotificationCompat.CallStyle.forIncomingCall` (API 31+; two-action fallback below) with
   full-screen intent (`USE_FULL_SCREEN_INTENT`), `FLAG_INSISTENT` looping ringtone,
-  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = deep link
-  `fr.emse.canari://chat/<groupId>?acceptCall=<callId>&video=<0|1>`; decline = local dismiss
-  broadcast (`ACTION_CALL_DECLINE` - group decline only means "stop ringing me").
+  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = a private intent
+  (`CallRingAnswer`: the plain `fr.emse.canari://chat/<groupId>` link plus a per-ring nonce in the
+  extras, [calls](../frontend/modules/calls.md#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30));
+  decline = the `ACTION_CALL_DECLINE` broadcast, which also tells the caller.
   `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
   (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
 - **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;

@@ -317,6 +317,7 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     deviceKeyB64: ctx.getDeviceKey(),
     scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
     setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+    onCaughtUp: () => ctx.onConnectionCaughtUp(),
     setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
     processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
     log: cb.log,

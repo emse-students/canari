@@ -271,6 +271,9 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
+    /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
+    associationId?: string;
+    associationLogoUrl?: string | null;
     skipPush?: boolean;
     pushData?: Record<string, string>;
   }) {
