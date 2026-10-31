@@ -822,10 +822,10 @@ ring is true, and the handover ends the CallKit call the moment the app is in fr
   "stay signed in" on a hardware-held key, load a manager in the background; that page holds the
   guard, correctly, and the hangup's write is refused (`ok=false (... foreground active ...)`). The
   fix is to send the decline through the loaded manager
-  ([backlog](../../backlog.md#p2---a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in-by-itself-review-of-2782-2026-10-31)).
+  ([backlog](../../backlog.d/p2-a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in.md)).
   And with the guard released at the PIN gate, an old-PIN recovery's blind install can erase a
   background write made during its PIN check
-  ([backlog](../../backlog.md#p2---an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-with-no-compare-under-the-lock-review-of-2782-2026-10-31)).
+  ([backlog](../../backlog.d/p2-an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-wit.md)).
 
 **Owed on the iPhone** (TestFlight with this change, against dev, **the app unlocked by its PIN -
 neither biometrics nor "stay signed in"**, which sign in in the background and are the limitation

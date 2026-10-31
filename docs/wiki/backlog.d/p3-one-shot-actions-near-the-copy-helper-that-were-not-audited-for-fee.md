@@ -1,0 +1,3 @@
+## P3 - one-shot actions near the copy helper that were not audited for feedback (2026-10-30)
+
+The copy and share-sheet paths now confirm through one helper ([sharing](../frontend/sharing.md#one-copy-helper-one-share-failure-path-2026-10-30)). The same class of "a tap that visibly does nothing" was NOT checked on: save to gallery (`ReelSaveButton`, `reels/gallery.ts`), file downloads (`fileDownload`, `FormSubmissionsTable`, `AssociationDocumentManager`, `agendaExport`, `QrCodeModal`) and booking actions (`bookings/bookingActions.ts`). Audit each for a success and a failure confirmation; fix with a shared helper only where it clearly fits.
