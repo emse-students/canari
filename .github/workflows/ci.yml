@@ -1302,7 +1302,7 @@ jobs:
       # would restore a large directory this job never reads. The Swatinem cache this action
       # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           target: aarch64-linux-android
           cache-workspaces: frontend/src-tauri
