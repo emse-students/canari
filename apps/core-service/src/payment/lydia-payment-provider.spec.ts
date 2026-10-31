@@ -905,10 +905,25 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
     mockedAxios.post.mockReset();
   });
 
+  it('reads the rights under the answer`s `data` object, the shape Lydia returns', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { error: '0', data: { id: '1', permission: '111', ...allRights, access_fee: '0' } },
+    });
+    const rights = await withKey().readCashierRights('asso-1', 'vendor-1', PHONE);
+    expect(Object.values(rights).filter(Boolean)).toHaveLength(
+      LYDIA_CASHIER_PERMISSIONS.length - 1
+    );
+    expect(rights.access_fee).toBe(false);
+    // CONTROL: rights at the TOP level are not Lydia's shape and grant nothing.
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '0', ...allRights } });
+    const top = await withKey().readCashierRights('asso-1', 'vendor-1', PHONE);
+    expect(Object.values(top).some(Boolean)).toBe(false);
+  });
+
   it('signs the ENCODED cashier_phone and permissions ARRAY, asks for the SMS, then reads back', async () => {
     mockedAxios.post
       .mockResolvedValueOnce({ data: { error: '0' } })
-      .mockResolvedValueOnce({ data: { error: '0', ...allRights } });
+      .mockResolvedValueOnce({ data: { error: '0', data: allRights } });
     await withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE);
     expect(mockedAxios.post.mock.calls).toHaveLength(2);
     const [url, body] = mockedAxios.post.mock.calls[0];
@@ -975,7 +990,7 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
   it('a read-back short of every right is ADDED-UNCONFIRMED, never counted as confirmed', async () => {
     mockedAxios.post
       .mockResolvedValueOnce({ data: { error: '0' } })
-      .mockResolvedValueOnce({ data: { error: '0', ...allRights, access_fee: '0' } });
+      .mockResolvedValueOnce({ data: { error: '0', data: { ...allRights, access_fee: '0' } } });
     const err = await withKey()
       .addBusinessHolder('asso-1', 'vendor-1', PHONE)
       .catch((e: unknown) => e);
@@ -1015,7 +1030,7 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(sink);
     mockedAxios.post
       .mockResolvedValueOnce({ data: { error: '0' } })
-      .mockResolvedValueOnce({ data: { error: '0', ...allRights } });
+      .mockResolvedValueOnce({ data: { error: '0', data: allRights } });
     await withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE);
     // `postForm` logs Lydia's answer; neither answer echoes the phone, and no line of ours names it.
     expect(lines.join(' | ')).not.toContain('612345678');
