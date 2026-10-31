@@ -86,6 +86,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         external fun nativeSealCacheLine(cacheKeyB64: String, line: String): String?
 
+        /**
+         * Whether the page holds the gateway socket the caller's MLS invite arrives on, and so rings
+         * an incoming call itself (Rust `page_ring`, stated by the page's socket setter, voided by
+         * every new document).
+         */
+        private external fun nativePageRingsInApp(): Boolean
+
+        /**
+         * WHETHER THE OPEN APP RINGS THIS CALL ITSELF - the one question the native ring asks before
+         * it stands back. The app being in front is not the answer: at the PIN gate the page holds
+         * no socket, the server skips the caller's invite (a transport frame, delivered to an online
+         * device only), and nothing rang at all while the push was dropped for the app being in
+         * front (Mi 9T, 1.5.2-alpha.3, 2026-10-31). A signed-in page in front holds the socket and
+         * rings from the invite; ringing natively too would ring the call twice.
+         */
+        private fun foregroundPageRings(): Boolean = MainActivity.isInForeground && nativePageRingsInApp()
+
         /** The `open_graine_push` refusals that accuse somebody, rather than miss a seed. */
         private val GRAINE_V2_REFUSALS =
             setOf("author-mismatch", "signature-missing", "signature-refused")
@@ -1038,9 +1055,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "showIncomingCallNotification: calls disabled -> ignoring ring call=$callId")
                 return
             }
-            if (MainActivity.isInForeground) {
-                Log.d(TAG, "showIncomingCallNotification: app foreground -> WS/CallOverlay rings, skip")
+            if (foregroundPageRings()) {
+                Log.d(TAG, "showIncomingCallNotification: the page in front holds the socket -> it rings in-app, skip call=$callId")
                 return
+            }
+            if (MainActivity.isInForeground) {
+                Log.i(TAG, "showIncomingCallNotification: app in front with no socket (PIN gate) -> the native ring is the only one call=$callId")
             }
             if (!activeCallRings.add(callId)) {
                 Log.d(TAG, "showIncomingCallNotification: already ringing call=$callId -> dedupe")
@@ -2853,15 +2873,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // notification, and posting one over a conversation you are reading is noise: the bubble on
         // screen already carries the reaction, delivered by the WebSocket. It is therefore suppressed
         // exactly like a message, which is what `showNotification` would do on its own anyway.
-        val showsWhileForeground = msgType == "form_reminder" || (msgType == "social" && !isReaction)
+        //
+        // A CALL RING TOUCHES NO mls.bin EITHER, and whether it shows in front is not this guard's
+        // question but `showIncomingCallNotification`'s: the page rings a call only while it holds
+        // the gateway socket, which a page at the PIN gate does not (`foregroundPageRings`).
+        val showsWhileForeground =
+            msgType == "form_reminder" || (msgType == "social" && !isReaction) || msgType == "call_ring"
         if (MainActivity.isInForeground && !showsWhileForeground) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
             return
         }
 
         // Incoming-call ring (WP-XP-5): cleartext fan-out from POST /api/calls/ring. No MLS
-        // involved - instant CallStyle ring, no Argon2/decrypt latency. Foreground already
-        // returned above (WS/CallOverlay rings there).
+        // involved - instant CallStyle ring, no Argon2/decrypt latency. An app in front whose page
+        // holds the socket rings in-app; `showIncomingCallNotification` stands back for it.
         if (msgType == "call_ring") {
             val groupId = data["groupId"] ?: ""
             val callId = data["callId"] ?: ""

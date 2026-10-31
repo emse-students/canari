@@ -608,9 +608,11 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
   are deleted and log the drop. So is the notification extension's ringing banner for an invite
   pushed as an alert (only an old or crafted client sends one; current callers send it silent): it
   is delivered blank, as a control event is.
-- **An open iPhone rings once.** A VoIP push that reaches an app in the foreground (the overlay
-  already rings over the socket) is reported to CallKit and ended at once - Apple requires the
-  report, and a second ring on top of the overlay is what it would otherwise be.
+- **An open iPhone rings once.** A VoIP push that reaches an app in the foreground whose page holds
+  the gateway socket (the overlay already rings) is reported to CallKit and ended at once - Apple
+  requires the report, and a second ring on top of the overlay is what it would otherwise be. An app
+  in front at the PIN gate holds no socket and rings on CallKit
+  ([below](#an-open-app-at-the-pin-gate-rang-nothing-153-2026-10-31)).
 - **Names come from the phone, never the payload** (decision 6), on both platforms: the server's
   `call_ring` data is ids only; Android names the caller from `display_names.json`
   (`knownCallerName`), iOS from the same file (`CanariCallerDisplayName`) on both CallKit paths -
@@ -832,6 +834,114 @@ above; one more Decline reading with each of those names it): K7 and K8 join aft
 call-service socket on the server; the Decline of a killed app ends the caller's ring at once -
 `decline call=... sent=1` and the caller's record `declined`; the End right after an Answer joins
 nothing AND ends the caller's ring the same way. Any `ok=false` now names its reason.
+
+### An open app at the PIN gate rang nothing (1.5.3, 2026-10-31)
+
+**The reading** (Mi 9T, a local debug build of `1.5.2-alpha.3`, dev). Canari open in front, on the
+PIN keypad: the server's `call_ring` arrived and was dropped by the foreground guard of
+`onMessageReceived` (`App in foreground -> MLS handled by the foreground (WS), skip background
+processing`, which exempted only `form_reminder` and `social`), and `showIncomingCallNotification`
+had a second `isInForeground` return behind it. The page logged `[CallView] held under the PIN lock`
+and nothing else: the callee saw the keypad while the caller rang out. In production since 1.5.1.
+
+**The cause: "the app is in front" was read as "the page rings".** The page rings from the caller's
+MLS `call_invite`, a transport frame the server hands only to a device whose gateway socket is open
+when it is sent (`TRANSPORT_SKIPPED_OFFLINE`). The socket opens after the unlock (`[WS] Opening
+connection` follows `Salt asked while the keypad was up`), so a page at the PIN gate is offline to
+the server: no invite, no in-app ring - and the native ring stood back for it anyway. The iPhone had
+the same two standbys (`CanariReportVoipCall` ended a VoIP push at once, the FCM `call_ring` branch
+returned, both on `canari_ios_is_in_foreground()`).
+
+**The fact carried instead: whether the page holds the gateway socket** (`page_ring.rs`). The page
+states it at the one seam that holds its socket - the setter of `TauriMlsService.ws`, which every
+open, close, pause, zombie kill and `pagehide` release already goes through - with the synchronous
+command `set_page_gateway_socket`; a change is reported, a repeat is not. Each `TauriMlsService`
+instance states it under its own holder id, and the page rings while ANY holder holds a socket: two
+instances that overlap (an account switch) cannot erase each other's statement. A document that
+starts loading voids every statement (`on_page_load`, `PageLoadEvent::Started`): a new page holds no
+socket, whatever the last one said or failed to say; on iOS a dead web content process clears them
+too, before the reload its handler asks for (`on_web_content_process_terminate`). The native ring
+reads it next to the platform's own fact:
+`foregroundPageRings()` (Kotlin, `isInForeground && nativePageRingsInApp()`) and
+`CanariForegroundPageRings()` (Objective-C, through `canari_ios_page_rings_in_app`). The foreground
+guard of `onMessageReceived` lets `call_ring` through - a ring touches no `mls.bin` - and the ring
+itself is the one place that decides. So:
+- **a signed-in page in front** holds the socket: the native ring stands back and the overlay rings
+  from the invite - one ring, as before;
+- **a page at the PIN gate** holds none: Android posts the CallStyle ring (a heads-up on a phone in
+  use), the iPhone reports to CallKit and leaves it ringing. Answer goes through the private answer
+  of [the ring's facts](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30): on Android
+  `MainActivity.onNewIntent` takes it and tells the live page (`canari:call-accept`), which holds it
+  until the unlock's catch-up; Decline sends the hangup through the background MLS path;
+- **an app in the background** rings natively, unchanged.
+
+**Two facts weighed and not taken.**
+- *A loaded MLS manager* (`live_manager_in_process`, what the heartbeat guard of #2782 reads). It
+  answers whether there is foreground memory to protect, and it outlives its page: the same logcat
+  shows a full document load over a warm manager (09:53:23, a navigation to `/chat`) drawing the PIN
+  gate at 09:53:25 with the manager still loaded. That page holds no socket and would have rung
+  nothing.
+- *An in-app ring at the gate with the answer held until the unlock.* The page has nothing to ring
+  from - the invite never reached it - so it would need the push handed up to it, and a second ring
+  surface for a case the native ring already covers with its answer, decline and caller name.
+
+**The iPhone answers from an active app.** CallKit answered while Canari is already active is
+followed by no `didBecomeActive`, so the handover (`CanariHandOverCallsToPage`: end the ANSWERED
+CallKit calls `AnsweredElsewhere`, then tell the page) runs from `performAnswerCallAction` itself
+when the app is active, after the file is written. Not observed on hardware: whether iOS resigns the
+app while its CallKit UI is up. If it does, the activation runs the handover a second time, and that
+run finds the answered call already ended and the file drained.
+
+**The handover never ends an unanswered ring the page cannot ring** (review of #2785). It used to
+end every CallKit call on `didBecomeActive`. With CallKit now ringing an app in front at the PIN
+gate, that ended the call's only ring whenever the app re-activated without an answer: a pull of
+Control Center or Notification Center, an expanded banner swiped back, or Canari opened from its
+icon while a backgrounded app rang. An unanswered call is ended there only when the page holds the
+gateway socket (the overlay owns it); otherwise it rings on, to its answer, decline, `call_ring_end`
+or timeout.
+
+**An End between the handover's end and the tell cancels the answer.** The handover ends an
+answered call asynchronously, which removes its ringing entry, and tells the page after. A user's End
+landing in between used to find no entry, cancel no file, and let the tell hand the answer over. The
+answer's facts are now kept past the ringing entry until the tell has run
+(`CanariAnsweredUntilTold`), and the End reads them there.
+
+**Named limitations.**
+- **A socket counted as held that rings nothing.** The statement is "the page holds an open socket",
+  not "the invite will ring". A connection that died without a `Close` counts as held until the
+  heartbeat kills it (three missed pings, up to ~30 s), and the server, which considers the device
+  offline, skips the invite. An invite at an epoch the page cannot decrypt yet (a commit still to be
+  absorbed) reaches the page and rings nothing. In both cases the native ring stood back and the call
+  rings nowhere: the gap this fix closes, narrowed to those two states.
+- **The narrow double-ring windows.** Two windows: a socket that opens between the push and the
+  invite (the unlock below), and an invite that reaches a page whose socket is released just after the
+  push stood back. In either, one call may show two ring surfaces, or none, for the length of the
+  overlap. The answer covers the double: either surface's answer joins the same call, and its ring-end
+  stops the other.
+- **The unlock that races the ring.** A PIN entered between the `call_ring` push and the caller's
+  invite (sent right after the ring is accepted) opens the socket in time for the invite: the overlay
+  rings over a native ring still showing. Both are the same call: the first answer joins it
+  (`answerFromSystemSurface` accepts a call already ringing in the page), and the answer's ring-end
+  stops the other. Not observed; the window is the invite's latency after the ring.
+- **A page at the gate over a warm manager still refuses the native Decline**: the heartbeat holds
+  the guard for a loaded manager, as on the iPhone's self-signing launch
+  ([above](#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31)); the
+  caller rings out its window.
+
+**Covered by** `page_ring.rs` (the statement, the page load that voids it),
+`pageGatewaySocket.test.ts` (the command, a refused report logged, the setter reporting changes
+only) and the text pins of `incomingCallScreen.test.ts` (the guard lets `call_ring` through, both
+platforms stand back on the page's fact alone, the iPhone's active-app handover). **The Kotlin is
+not compiled by any gate here and the Objective-C not at all** (the iOS CI job is its first
+compiler).
+
+**Owed on hardware.** Mi 9T, Canari in front on the PIN keypad: the call rings (heads-up) -
+`app in front with no socket (PIN gate) -> the native ring is the only one`; Answer, then the PIN:
+`call answer waits - the page was told`, then a room token and the call; Decline: `decline call=...
+sent=1` and the caller's record `declined`. Mi 9T signed in and in front: ONE ring, the overlay -
+`the page in front holds the socket -> it rings in-app, skip`, and no CallStyle notification. The
+iPhone, in front at the gate: CallKit rings - `voip push with the app in front and no socket`; Answer
+logs `handover to the page (answered with the app already active)`.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
@@ -2689,6 +2799,7 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 - 60 s timeout (`setTimeoutAfter`)
 - Answer = deep link carrying group, call, video and caller (after the keyguard, from the call screen); Decline = the ring stops and the in-app hangup (`DECLINED`) reaches the caller ([the decline reaches the caller](#a-decline-on-the-ring-reaches-the-caller-2026-10-30))
 - Caller named from `display_names.json`, photo from the avatar cache first, the network on a miss ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
+- An app in front stands back only while its page holds the gateway socket (`foregroundPageRings`); at the PIN gate it rings ([an open app at the PIN gate](#an-open-app-at-the-pin-gate-rang-nothing-153-2026-10-31))
 
 ## Ring-end (stop ringing)
 

@@ -120,6 +120,10 @@ int canari_native_cleanup_pending_db(const char *files_dir);
 void canari_ios_on_resume(void);
 void canari_ios_on_pause(void);
 
+/* Whether the page rings an incoming call itself: it holds the gateway socket the caller's invite
+   arrives on (Rust `page_ring`). An app in front at the PIN gate holds none, and is rung natively. */
+bool canari_ios_page_rings_in_app(void);
+
 /* The share manifest's name, in the app data directory and in the App Group: the native side
    only STATS it (whether a share waits, which Data Protection allows while the device is locked),
    never reads it. Pinned against Rust's PENDING_SHARE_FILE by iosShareExtension.test.ts. */

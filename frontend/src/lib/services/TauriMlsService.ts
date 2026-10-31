@@ -59,6 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
+import { nextGatewaySocketHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -98,7 +99,24 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
  */
 export class TauriMlsService extends BaseMlsService {
-  private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
+  private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** This instance's name in the native ring's holder set (`page_ring.rs`). */
+  private readonly socketHolder = nextGatewaySocketHolder();
+  private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
+    return this._ws;
+  }
+  /**
+   * THE ONE SEAM THAT HOLDS THE SOCKET, so the one place that says so. Holding it is what makes this
+   * page ring an incoming call (the caller's invite is a transport frame, delivered over an open
+   * socket only), and the native ring stands back for an app in front only while it is held
+   * ({@link reportPageGatewaySocket}). A change is reported; a repeat is not.
+   */
+  private set ws(next: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null) {
+    const before = this._ws !== null;
+    this._ws = next;
+    if (before !== (next !== null)) reportPageGatewaySocket(this.socketHolder, next !== null);
+  }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
   /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
