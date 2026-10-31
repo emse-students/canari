@@ -198,7 +198,7 @@ import {
   markConversationDeletedRemotely,
 } from '$lib/utils/chat/conversations';
 import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
-import { reconcileRestoredLifecycles } from '$lib/utils/chat/admissionState';
+import { applyRestoredLifecycles } from '$lib/utils/chat/admissionState';
 import {
   captureGroupReadyAnnouncer,
   setGroupReadyAnnouncer,
@@ -2266,50 +2266,15 @@ export async function loginImpl(
           `[INIT] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group (missing ${ids})`
         );
       }
-      const missingKeys: string[] = [];
       // The demotion of rows whose group is not held, and its mirror: the promotion of `pending`
-      // rows whose group is - on MEMBERSHIP, never on held state alone (`reconcileRestoredLifecycles`).
-      const {
-        demoted,
-        promoted: recoveredKeys,
-        awaiting,
-      } = await reconcileRestoredLifecycles({
+      // rows whose group is - on MEMBERSHIP, never on held state alone - each written as it changed.
+      await applyRestoredLifecycles({
         conversations: cb.conversations,
         localGroups: localMlsGroups,
         mlsService,
+        saveConversation: cb.saveConversation,
         log: cb.log,
       });
-      missingKeys.push(...demoted);
-      if (awaiting.length > 0) {
-        cb.log(
-          `[INIT] ${awaiting.length} conversation(s) hold a group this device is out of - evicted state dropped, pending until the server answers the recovery: ${awaiting.map((k) => k.slice(0, 8)).join(', ')}`
-        );
-        // An `active` row among them was demoted in memory; the write makes it the restore's verdict.
-        await Promise.all(
-          awaiting.map((key) =>
-            cb
-              .saveConversation(key)
-              .catch((e: unknown) =>
-                cb.log(`[INIT] ${key.slice(0, 8)}... pending row not saved: ${String(e)}`)
-              )
-          )
-        );
-      }
-      if (missingKeys.length > 0) {
-        cb.log(
-          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
-        );
-        console.warn(
-          `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
-        );
-        await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
-      if (recoveredKeys.length > 0) {
-        cb.log(
-          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
-        );
-        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
     } catch (e) {
       console.warn('[INIT] Error detecting missing MLS groups:', e);
     }

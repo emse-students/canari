@@ -81,7 +81,8 @@ describe('groupReadyAnnouncer', () => {
     ];
     let total = 0;
     for (const site of sites) {
-      const assignments = read(site).match(/onGroupReady:\s*[^,\n]+/g) ?? [];
+      // The shorthand (`onGroupReady,`) is an assignment too, and the one that hides a raw function.
+      const assignments = read(site).match(/onGroupReady(?:\s*:\s*[^,\n]+|\s*,)/g) ?? [];
       for (const a of assignments) {
         expect(a, site).toMatch(/onGroupReady:\s*captureGroupReadyAnnouncer\(\)/);
       }

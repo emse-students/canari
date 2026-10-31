@@ -1295,8 +1295,16 @@ Four defects of one seam, found by a read-only review and fixed together:
   read each): `true` promotes a `pending` row; `false`, on an `active` or a `pending` row, DROPS the
   evicted state and leaves the row `pending`, so the recovery asks the server, whose answer is right
   for both readings of the Remove (a Welcome owed is waited for, a seat is joined, no seat retires
-  the row); `null` changes nothing. The row is still marked before the drop at run time, only so no
-  in-memory reader sees `active` over no state.
+  the row); `null` changes nothing. The reads run at most eight at once (one IPC call each on
+  native); the drops share ONE awaited checkpoint, since each is a full encrypted save (~1.7 s on a
+  phone) and this runs before the connection opens; and `applyRestoredLifecycles` writes every row it
+  changed, so the verdict is durable. The row is still marked before the drop at run time, only so
+  no in-memory reader sees `active` over no state.
+
+  **A DELIBERATE TRADE:** a row whose eviction a kill left unrecorded now waits for the server's
+  answer instead of retiring locally - offline included, where it stays `pending` until a connection
+  answers. Nothing local separates a real eviction from the first half of this device's own
+  re-admission once `reAddIsInFlight` is gone, and retiring the second is the defect this fixes.
 - **The boot restore undid that row.** It promoted any `pending` row whose group
   `getLocalGroups()` listed, and an evicted group stays listed: the promotion now reads membership,
   as above.
