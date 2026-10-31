@@ -38,8 +38,9 @@
   let expandOrigin = $state<ExpandOrigin | null>(null);
 
   async function open() {
-    if (opening) return;
+    if (opening || firstPage) return;
     opening = true;
+    let handedOff = false;
     console.debug('[reels-entry] opening the viewer at the newest reel');
     try {
       const page = await listAllReels(0, REEL_PAGE);
@@ -49,14 +50,16 @@
         return;
       }
       const opened = page;
-      if (entry) {
-        expandFrom(entry, (origin) => {
-          expandOrigin = origin;
-          firstPage = opened;
-        });
-      } else {
+      // `opening` stays up until the viewer's page is SET: a view transition runs its commit a
+      // moment later, and a second tap in between would open a second viewer.
+      handedOff = true;
+      const commit = (origin: ExpandOrigin | null) => {
+        expandOrigin = origin;
         firstPage = opened;
-      }
+        opening = false;
+      };
+      if (entry) expandFrom(entry, commit);
+      else commit(null);
     } catch (err) {
       // No answer (offline, a dead network) is the member's situation, not a defect: said, not
       // accused. An ANSWER that refused is a defect and is logged as one.
@@ -67,7 +70,7 @@
       }
       showToast(m.posts_reels_open_error(), 'error');
     } finally {
-      opening = false;
+      if (!handedOff) opening = false;
     }
   }
 </script>

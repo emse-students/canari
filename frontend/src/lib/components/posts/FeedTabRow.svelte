@@ -53,6 +53,8 @@
     if (!tab) return false;
     const x = tab.offsetLeft;
     const w = tab.offsetWidth;
+    // No width: not laid out yet (hidden, or before the first layout) - nothing to draw.
+    if (w === 0) return false;
     if (pill && pill.x === x && pill.w === w) return false;
     pill = { x, w };
     return true;
@@ -75,6 +77,8 @@
             if (!measurePill(row, feed)) pillAnimated = before;
           });
     observer?.observe(row);
+    // Each tab too: a font swap resizes a button without resizing the row.
+    row.querySelectorAll('[data-feed-tab]').forEach((tab) => observer?.observe(tab));
     return () => observer?.disconnect();
   });
 
@@ -147,7 +151,7 @@
           style:width="{pill.w}px"
           style:transform="translate3d({pill.x}px, 0, 0)"
           style:transition={pillAnimated
-            ? 'transform var(--motion-slow) var(--motion-ease-out)'
+            ? 'transform var(--motion-slow) var(--motion-ease-out), width var(--motion-slow) var(--motion-ease-out)'
             : 'none'}
         ></span>
       {/if}
