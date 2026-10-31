@@ -1,17 +1,21 @@
 <script lang="ts">
   import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
   import {
-    bookingUnitLimit,
     dragRange,
     formatBookingRange,
     formatDay,
     formatDayHead,
     formatTimeRange,
+    gridUnitLimit,
+    isPastUnit,
     windowRefusal,
     type DayColumn,
     type WeekLayout,
   } from '$lib/bookings/grid';
   import { localTime } from '$lib/bookings/zonedTime';
+  import { onMount } from 'svelte';
+  import { gridDragHint } from '$lib/bookings/gridHint';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -28,6 +32,11 @@
    * page scrolling, and is left alone), and the page does not scroll while a range is being drawn.
    * Letting go calls `onPick` with the first unit and how many were taken; a plain tap still calls
    * it with one unit.
+   *
+   * IN BLOCK MODE (the organiser's dashboard, WP-R5, D50) the same drag draws an "Indisponible"
+   * instead: red, in slots mode too, and as long as a block may be (`BLOCK_LENGTH_CHOICES`) rather
+   * than a booking. It still stops at the first unit that is not free, so it never crosses a
+   * booking; the server answers `bookings-inside-block` if the grid was stale.
    */
   interface Props {
     space: BookerSpace;
@@ -36,11 +45,20 @@
     layout: WeekLayout;
     /** `day` draws one column without its axis header and never folds it (the phone). */
     mode: 'week' | 'day';
+    /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
+    blockMode?: boolean;
     nowMs: number;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
-  let { space, resource, layout, mode, nowMs, onPick }: Props = $props();
+  let { space, resource, layout, mode, blockMode = false, nowMs, onPick }: Props = $props();
+
+  /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
+  let coarse = $state(isCoarsePointerDevice());
+  onMount(() => {
+    coarse = isCoarsePointerDevice();
+    return onCoarsePointerChange((value) => (coarse = value));
+  });
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
@@ -49,8 +67,11 @@
   /** Pointer travel (px) that turns a mouse press into a drag. */
   const DRAG_SLOP_PX = 4;
 
-  /** The most units one booking may cover; a drag is offered only when that is more than one. */
-  const unitLimit = $derived(bookingUnitLimit(space));
+  /**
+   * The most units one gesture may cover - a booking's, or in block mode a block's; a drag is
+   * offered only when that is more than one.
+   */
+  const unitLimit = $derived(gridUnitLimit(space, blockMode));
 
   interface Selection {
     day: number;
@@ -175,20 +196,21 @@
   }
 
   /** What a cell says, and whether the device's clock puts it outside the booking window. */
-  function reading(unit: SlotUnit): { text: string; closed: boolean } {
+  function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
     if (unit.state === 'booked') {
       const who = unit.booking.mine
         ? m.bookings_cell_mine()
         : (unit.booking.holderName ?? m.bookings_cell_booked());
-      return { text: who, closed: false };
+      return { text: who, closed: false, past: false };
     }
     if (unit.state === 'blocked') {
-      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false };
+      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
     }
     if (windowRefusal(space, unit.startMs, nowMs) === null) {
-      return { text: m.bookings_cell_free(), closed: false };
+      return { text: m.bookings_cell_free(), closed: false, past: false };
     }
-    return { text: m.bookings_cell_closed(), closed: true };
+    // A free unit already over keeps its name for a screen reader but is not written in the cell.
+    return { text: m.bookings_cell_closed(), closed: true, past: isPastUnit(unit, nowMs) };
   }
 
   /**
@@ -200,7 +222,8 @@
   function sameRun(a: SlotUnit | null | undefined, b: SlotUnit | null | undefined): boolean {
     if (!a || !b || a.endMs !== b.startMs || a.state !== b.state) return false;
     if (a.state === 'booked' && b.state === 'booked') return a.booking.id === b.booking.id;
-    return reading(a).text === reading(b).text;
+    const [ra, rb] = [reading(a), reading(b)];
+    return ra.text === rb.text && ra.past === rb.past;
   }
 
   /** The shared axis: its whole hours, as the labels down the left. */
@@ -215,7 +238,7 @@
   const folded = (day: DayColumn) => mode === 'week' && day.state === 'closed';
   /** Open days share the width, a folded one is a strip; an open day never gets narrower than a label. */
   const columns = $derived(
-    `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(5.5rem, 1fr)')).join(' ')}`
+    `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(4.25rem, 1fr)')).join(' ')}`
   );
 
   /** A slot is booked whole, so its start is what names it; a step's start is the row's. */
@@ -225,13 +248,21 @@
       : text;
   }
 
-  function cellClass(unit: SlotUnit, closed: boolean): string {
+  function cellClass(unit: SlotUnit, closed: boolean, past: boolean): string {
     if (unit.state === 'booked') {
       return unit.booking.mine
         ? 'bg-cn-yellow/25 text-text-main border-cn-yellow/60'
         : 'bg-cn-border/40 text-text-main border-cn-border';
     }
     if (unit.state === 'blocked') return 'bg-red-err/10 text-red-err border-red-err/30';
+    // The organiser's dashboard draws what is NOT taken as quiet ground (the mockup's grey closed
+    // cells, empty free ones), so the bookings and blocks are what the eye finds.
+    if (blockMode) {
+      return closed
+        ? 'bg-control-fill/50 border-transparent'
+        : 'border-transparent hover:bg-red-err/10 hover:border-red-err/30';
+    }
+    if (past) return 'bg-cn-bg/50 text-text-muted/40 border-cn-border/30';
     if (closed) return 'bg-cn-bg text-text-muted/60 border-cn-border/60 hover:bg-cn-border/20';
     return 'bg-green-ok/10 text-green-ok border-green-ok/30 hover:bg-green-ok/20';
   }
@@ -245,7 +276,9 @@
   {#if selected && selectedReading}
     <p
       role="status"
-      class="bg-cn-yellow text-cn-ink pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
+      class="{blockMode
+        ? 'bg-red-err text-cn-surface'
+        : 'bg-cn-yellow text-cn-ink'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
     >
       {selectedReading}
     </p>
@@ -339,10 +372,14 @@
               class="absolute block overflow-hidden border px-1.5 py-0.5 text-left text-xs leading-tight font-semibold transition-colors {joinedAbove
                 ? 'rounded-t-none border-t-black/5'
                 : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
-                ? 'bg-cn-yellow/40 text-text-main border-cn-yellow'
-                : cellClass(unit, cell.closed)}"
+                ? blockMode
+                  ? 'bg-red-err/20 text-red-err border-red-err'
+                  : 'bg-cn-yellow/40 text-text-main border-cn-yellow'
+                : cellClass(unit, cell.closed, cell.past)}"
             >
-              {joinedAbove ? '' : unitText(unit, cell.text)}
+              {joinedAbove || cell.past || (blockMode && unit.state === 'free')
+                ? ''
+                : unitText(unit, cell.text)}
             </button>
           {/each}
         </div>
@@ -351,6 +388,9 @@
   </div>
 </div>
 
-{#if unitLimit > 1}
-  <p class="text-text-muted text-2xs px-1 pt-1">{m.bookings_grid_drag_hint()}</p>
+<!-- The dashboard says its drag above the grid (manage page), where it is read first. -->
+{#if unitLimit > 1 && !blockMode}
+  <p class="text-text-muted text-2xs px-1 pt-1">
+    {gridDragHint(blockMode, coarse)}
+  </p>
 {/if}

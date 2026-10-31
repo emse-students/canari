@@ -25,6 +25,8 @@ import { mayManageSpace, type Actor } from './bookings.service';
 import {
   MAX_PERSONAL_SPACES,
   MAX_RESOURCES_PER_SPACE,
+  SLOT_MINUTES_MAX,
+  SLOT_MINUTES_MIN,
   type AvailabilityDto,
   type CreateResourceDto,
   type CreateSpaceDto,
@@ -33,6 +35,10 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import {
+  BookingNotificationsService,
+  deletedBookingNotices,
+} from './booking-notifications.service';
 
 /** The settings that change which shapes are bookable, so they run the D29 check (WP-B2). */
 const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
@@ -50,6 +56,7 @@ export const SPACE_SETTING_KEYS = [
   'slotMode',
   'stepMinutes',
   'maxSteps',
+  'slotMinutes',
   'nameVisibility',
   'discoverability',
   'audience',
@@ -63,6 +70,7 @@ export const SPACE_SETTING_KEYS = [
   'participantWithdrawMinMinutes',
   'maxPeople',
   'retentionDays',
+  'reminderMinutes',
 ] as const satisfies readonly (keyof SpaceSettingsDto & keyof BookingSpace)[];
 
 /** The fields a request may write onto a resource, by name, for the reason above. */
@@ -117,7 +125,8 @@ export class BookingSpacesService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly userTags: UserTagService,
-    private readonly posterMedia: BookingPosterMedia
+    private readonly posterMedia: BookingPosterMedia,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -228,6 +237,19 @@ export class BookingSpacesService {
         ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps ?? 0) >= 1
         : next.stepMinutes === null && next.maxSteps === null;
     if (!stepShape) throw new BadRequestException({ code: 'step-shape' });
+    // The mirror (`booking_spaces_slot_minutes`): a slot length only on a slots space, in range.
+    const slotShape =
+      next.slotMinutes === null ||
+      (next.slotMode === 'slots' &&
+        Number.isInteger(next.slotMinutes) &&
+        next.slotMinutes >= SLOT_MINUTES_MIN &&
+        next.slotMinutes <= SLOT_MINUTES_MAX);
+    if (!slotShape) {
+      this.logger.debug(
+        `[BOOKINGS] slot-shape refused mode=${next.slotMode} slotMinutes=${next.slotMinutes}`
+      );
+      throw new BadRequestException({ code: 'slot-shape' });
+    }
     if ((next.maxMinutesPerPeriod === null) !== (next.quotaPeriod === null)) {
       throw new BadRequestException({ code: 'quota-pair' });
     }
@@ -277,6 +299,9 @@ export class BookingSpacesService {
       space.stepMinutes = null;
       space.maxSteps = null;
     }
+    // And a step space no slot length: a switch to 'step' that does not name one clears it. One the
+    // body DOES name on a step space is refused (`slot-shape`), never dropped in silence.
+    if (space.slotMode === 'step' && dto.slotMinutes === undefined) space.slotMinutes = null;
   }
 
   /**
@@ -292,7 +317,13 @@ export class BookingSpacesService {
     if (!(await mayManageSpace(this.associations, owner, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
-    const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
+    const space = this.spaces.create({
+      ...owner,
+      slotMode: 'step',
+      stepMinutes: 30,
+      maxSteps: 4,
+      slotMinutes: null,
+    });
     this.applySettings(space, dto);
     await this.assertSettingsValid(space);
     // Parsed before the transaction, so a malformed line refuses the creation as a 400 and nothing
@@ -460,13 +491,15 @@ export class BookingSpacesService {
 
   /**
    * Deletes the space and EVERYTHING under it, history included (D27) - other people's COMING
-   * bookings too, hard-deleted with no notice (D13: no notification in v1). How many is logged, so
-   * a deletion that erased someone's evening is never silent in the logs.
+   * bookings too. Their people are told once it is committed (Q-R4, `BookingNotificationsService`,
+   * while its switch is on): who they are is read under the space's lock, BEFORE the delete takes
+   * every row that names them. How many bookings of others went is logged, so a deletion that
+   * erased someone's evening is never silent in the logs.
    */
   async remove(spaceId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] remove space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    const { erased, poster } = await this.spaces.manager.transaction(async (m) => {
+    const { erased, poster, space, notices } = await this.spaces.manager.transaction(async (m) => {
       const space = await this.lockSpace(m, spaceId);
       const [{ n }]: { n: number }[] = await m.query(
         `SELECT count(*)::int AS n FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
@@ -474,12 +507,20 @@ export class BookingSpacesService {
             AND b."holderId" <> $3`,
         [spaceId, new Date(nowMs), actor.userId]
       );
+      const notices = await deletedBookingNotices(
+        (sql, params) => m.query(sql, params),
+        spaceId,
+        nowMs
+      );
       await m.delete(BookingSpace, { id: spaceId });
-      return { erased: n, poster: space.poster?.mediaId ?? null };
+      return { erased: n, poster: space.poster?.mediaId ?? null, space, notices };
     });
     this.logger.log(
       `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
     );
+    // After the response, not inside it: one notice per coming booking is no reason for the
+    // organiser's delete to wait. `spaceDeleted` is guarded and never rejects.
+    void this.notices.spaceDeleted(space, notices, actor.userId);
     // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
     // takes them at its next run.
     if (poster) await this.posterMedia.releaseUncited([poster], 'its space was deleted');

@@ -74,6 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
+  // A booking notice's place and slot (migration 117): holds no account id itself, and goes with
+  // the row the recipient's (or the actor's) statement above deletes - never kept past its person.
+  'post_notifications.meta': { action: 'delete', via: 'recipientId' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },

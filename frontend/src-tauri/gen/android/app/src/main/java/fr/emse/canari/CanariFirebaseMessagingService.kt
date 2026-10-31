@@ -169,15 +169,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
         const val ACTION_CALL_DECLINE = "fr.emse.canari.ACTION_CALL_DECLINE"
         const val EXTRA_CALL_ID       = "callId"
+        /** `CallEndReason.CALL_END_REASON_DECLINED` in libs/proto/canari.proto: the callee refused the ring. */
+        const val CALL_END_REASON_DECLINED = 2
 
         /**
          * Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
-         * 2026-10-21) - the native ring as the store binaries carry it, held off until it has been
-         * run on hardware (WP-C5, K6/K7/K8). Duplicated
-         * rather than read from the webview because this service handles pushes while no webview
-         * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
-         * AndroidManifest.xml with them - Play gates that permission on the app being a calling
-         * app, exactly as App Review gates the iOS `voip` background mode.
+         * 2026-10-21) - the native ring as the store binaries carry it, ON since the owner's
+         * decision of 2026-10-30 (1.5.2). Duplicated rather than read from the webview because this
+         * service handles pushes while no webview exists. It moves with USE_FULL_SCREEN_INTENT in
+         * AndroidManifest.xml - Play gates that permission on the app being a calling app, exactly
+         * as App Review gates the iOS `voip` background mode.
          * `callsCompiled.test.ts` fails if any of the four ring switches disagrees with features.ts.
          *
          * It gates the native RING and nothing else. It used to decide whether a silent push was
@@ -185,18 +186,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * turning calls on would have reopened that lane; the silent guard in `handleMlsFrame` no
          * longer reads it (2026-10-18), and says why.
          */
-        private const val CALLS_ENABLED = false
+        private const val CALLS_ENABLED = true
 
         /** A ring is abandoned after 60s (same order as the OS phone app). */
-        private const val CALL_RING_TIMEOUT_MS = 60_000L
+        /** How long a ring lasts at most; the call screen bounds itself by it too. */
+        internal const val CALL_RING_TIMEOUT_MS = 60_000L
 
         /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
         private const val CALL_NOTIF_ID_BASE = 700_000
 
         /**
-         * callIds currently ringing. Dedupe between the two ring sources: the cleartext
-         * `call_ring` push (fast path) and the decrypted MLS `call_invite` (fallback for
-         * pre-WP-XP-5 callers) can both arrive for the same call.
+         * callIds currently ringing, from the server's `call_ring` push - the only ring source. A
+         * ring delivered twice (FCM may redeliver) rings once.
          */
         private val activeCallRings = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
@@ -374,8 +375,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         manager.cancel(sbn.id)
                     }
                 }
-                // Ring dedupe entries die with their notifications, so a re-ring can post again.
+                // Ring dedupe entries die with their notifications, so a re-ring can post again -
+                // and so does each ring's call screen, which must never outlive its ring.
+                for (ringing in activeCallRings.toList()) {
+                    IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
+                }
                 activeCallRings.clear()
+                CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
             } catch (e: Exception) {
@@ -966,24 +972,68 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
 
         /**
+         * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
+         * or written for another account than [me] (the file is one per install, two accounts may
+         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
+         * with every name the WebView resolved for this account. [label] says which banner asked.
+         */
+        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? {
+            if (me == null) return null
+            val file = File(MlsContextLoader.tauriDataDir(context), "display_names.json")
+            if (!file.exists()) {
+                Log.d(TAG, "$label no display_names.json yet - nobody is named")
+                return null
+            }
+            return try {
+                val root = JSONObject(file.readText())
+                if (!root.optString("userId").equals(me, ignoreCase = true)) {
+                    Log.d(TAG, "$label display_names.json belongs to another account - not used")
+                    null
+                } else {
+                    root.optJSONObject("names")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "$label display_names.json unreadable: ${e.message}")
+                null
+            }
+        }
+
+        /**
+         * THE CALLER, NAMED FROM THE PHONE'S OWN COPY, NEVER FROM THE PUSH (decision 6, WP-C5): the
+         * `call_ring` payload carries ids only. Null for a caller this phone never named: the ring
+         * then reads "Appel Canari" / "Canari call", the iPhone's word for the same case
+         * (`CanariCallerDisplayName`), and shows no photo either.
+         */
+        private fun knownCallerName(context: Context, callerId: String): String? {
+            val me = MlsContextLoader.loadUserId(context)?.lowercase()
+            val name = callerId.lowercase().takeIf { it.isNotEmpty() }
+                ?.let { loadDisplayNames(context, me, "[CALL_NAME]")?.optString(it) }
+                ?.takeIf { it.isNotBlank() }
+            Log.d(TAG, "[CALL_NAME] caller named=${name != null}")
+            return name
+        }
+
+        /** Whether [callId] still rings on this device - the call screen asks before it shows. */
+        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
+
+        /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
          * (system call UI with Answer/Decline), classic high-priority notification with the same
-         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen
-         * intent (shown immediately on a locked/idle device when the OS grants USE_FULL_SCREEN_INTENT)
-         * and self-expires after [CALL_RING_TIMEOUT_MS]. Deduped per callId: the cleartext
-         * `call_ring` push and the decrypted MLS `call_invite` may both arrive.
+         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen intent
+         * that opens [IncomingCallActivity] (shown at once on a locked or idle device when the OS
+         * grants USE_FULL_SCREEN_INTENT), names the caller from this phone's copy, draws the photo
+         * once it is read, and self-expires after [CALL_RING_TIMEOUT_MS]. Called by the server's
+         * `call_ring` push only; deduped per callId (FCM may redeliver).
          */
         internal fun showIncomingCallNotification(
             context: Context,
             groupId: String,
             callId: String,
-            callerName: String,
-            groupName: String,
+            callerId: String,
             hasVideo: Boolean,
         ) {
-            // ONE choke point for both callers (cleartext call_ring push, decrypted MLS invite):
-            // a peer on an older build can still ring this device, and a system call UI for a call
-            // the webview will refuse to join is worse than no ring at all.
+            // The switch is checked here, at the one ring: a system call UI for a call the webview
+            // would refuse to join is worse than no ring at all.
             if (!CALLS_ENABLED) {
                 Log.d(TAG, "showIncomingCallNotification: calls disabled -> ignoring ring call=$callId")
                 return
@@ -1001,12 +1051,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
 
-            // Answer = deep link into the conversation with an accept marker: the frontend
-            // auto-accepts the call once the user has unlocked (PIN) and the invite arrived via WS.
-            val videoFlag = if (hasVideo) 1 else 0
+            // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
+            // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
+            // pending accept from the facts recorded here. The webview joins on those facts once
+            // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
+            // answer from the ring joins on the ring's facts").
+            val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
             val answerIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
-                setData(Uri.parse("fr.emse.canari://chat/$groupId?acceptCall=$callId&video=$videoFlag"))
+                setData(Uri.parse("fr.emse.canari://chat/$groupId"))
+                CallRingAnswer.putAnswer(this, callId, answerNonce)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
             val answerPending = PendingIntent.getActivity(
@@ -1023,12 +1077,90 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val title = callerName.ifEmpty { res.getString(R.string.app_name) }
-            val body = buildString {
-                append(res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call))
-                if (groupName.isNotEmpty()) append(" - ").append(groupName)
+            val name = knownCallerName(context, callerId)
+            val title = name ?: res.getString(R.string.notif_call_unknown_caller)
+            val body = res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call)
+            // A caller this phone never named is not shown by face either (decision 6): the photo
+            // is fetched, here and on the call screen, only for a caller the phone has named.
+            val photoOf = if (name != null) callerId else ""
+
+            // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
+            // locked phone Android launches the full-screen intent BY ITSELF, which would have
+            // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
+            // and answers only on the user's tap.
+            val fullScreenPending = PendingIntent.getActivity(
+                context, notifId + 2,
+                IncomingCallActivity.intentFor(context, callId, photoOf, title, body, answerPending, declinePending),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+
+            // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
+            // Without the grant the same notification rings as a heads-up - Android's own behaviour,
+            // not a path of ours - and the log says which one this phone got, so a reading of a
+            // locked phone that did not light up names its cause.
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                val fsi = manager.canUseFullScreenIntent()
+                if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
+                else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
             }
-            val person = Person.Builder().setName(title).setImportant(true).build()
+
+            val notif = buildIncomingCallNotification(
+                context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
+            )
+            manager.notify(notifId, notif)
+            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+
+            // The ring's end is armed BEFORE the photo is fetched: a fetch on a slow radio must
+            // never delay it. Belt-and-braces with setTimeoutAfter (API 26+); it also drops the
+            // dedupe entry and closes the call screen.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                cancelIncomingCallNotification(context, callId)
+            }, CALL_RING_TIMEOUT_MS)
+
+            // THE CALLER'S PHOTO, AFTER THE RING HAS STARTED: a cached one costs a file read, a
+            // fetched one a round trip on a cell radio waking up, and the ring never waits for a
+            // picture. Re-posted under the same id with `onlyAlertOnce`, so the ringtone does not
+            // restart; skipped when the ring already ended meanwhile. This runs on the push
+            // handler's own thread, never the main one.
+            if (photoOf.isEmpty()) {
+                Log.d(TAG, "showIncomingCallNotification: caller not named on this phone - no photo either")
+            } else {
+                val avatar = context.fetchAvatar(photoOf)
+                if (avatar == null) {
+                    Log.d(TAG, "showIncomingCallNotification: no caller photo - the ring keeps the name alone")
+                } else if (!activeCallRings.contains(callId)) {
+                    Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
+                } else {
+                    manager.notify(
+                        notifId,
+                        buildIncomingCallNotification(
+                            context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar, res,
+                        ),
+                    )
+                    Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                }
+            }
+        }
+
+        /**
+         * The ring notification itself: CallStyle on API 31+ (the system call screen with Answer and
+         * Decline), a classic high-priority notification with the same actions below. [avatar] is
+         * the CallStyle person's icon and the large icon, null until fetched.
+         */
+        private fun buildIncomingCallNotification(
+            context: Context,
+            title: String,
+            body: String,
+            hasVideo: Boolean,
+            answerPending: PendingIntent,
+            declinePending: PendingIntent,
+            fullScreen: PendingIntent,
+            avatar: Bitmap?,
+            res: Context,
+        ): android.app.Notification {
+            val person = Person.Builder().setName(title).setImportant(true)
+                .apply { avatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+                .build()
 
             val builder = NotificationCompat.Builder(context, CHANNEL_CALLS)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -1039,8 +1171,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setTimeoutAfter(CALL_RING_TIMEOUT_MS)
-                .setFullScreenIntent(answerPending, true)
-                .setContentIntent(answerPending)
+                .setFullScreenIntent(fullScreen, true)
+                .setContentIntent(fullScreen)
             if (android.os.Build.VERSION.SDK_INT >= 31) {
                 builder.setStyle(
                     NotificationCompat.CallStyle.forIncomingCall(person, declinePending, answerPending)
@@ -1063,24 +1195,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ).build()
                     )
             }
+            if (avatar != null) builder.setLargeIcon(avatar)
+            // The photo's re-post must not restart the ringtone or re-launch the call screen.
+            builder.setOnlyAlertOnce(true)
             val notif = builder.build()
             // Loop the ringtone until the ring is answered, declined, cancelled or times out.
             notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
-            manager.notify(notifId, notif)
-            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
-
-            // Belt-and-braces expiry: setTimeoutAfter is API 26+; also drop the dedupe entry.
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                cancelIncomingCallNotification(context, callId)
-            }, CALL_RING_TIMEOUT_MS)
+            return notif
         }
 
         /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
         internal fun cancelIncomingCallNotification(context: Context, callId: String) {
             if (callId.isEmpty()) return
+            // The answer record dies with the ring, whether or not this process still shows it.
+            CallRingAnswer.forget(context, callId)
             if (!activeCallRings.remove(callId)) return
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))
+            // The full-screen call screen goes with its ring, whoever ended it.
+            IncomingCallActivity.finishFor(callId, "the ring stopped")
             Log.d(TAG, "cancelIncomingCallNotification: ring stopped call=$callId")
         }
 
@@ -1209,6 +1342,44 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             synchronized(OUTBOX_LOCK) {
                 rewriteOutboxMirror(context, readOutboxMirror(context) + entry)
             }
+        }
+
+        /**
+         * Encrypts ONE transport frame and posts it now, WITHOUT the outbox mirror. Returns true
+         * when the server took it.
+         *
+         * For a frame that means something only at this moment - the native ring's Decline, which
+         * ends a ring that lasts a minute. The mirror is a durable queue: an entry that failed there
+         * would be retried, or adopted by the app at its next login, and a hangup delivered after its
+         * call ended is noise at best and, sent under a later call's id, wrong. So it is sent once,
+         * `silent` (it must never notify) and not `durable` (no copy in the shared log, exactly as the
+         * in-app `DELIVERY.transport` send), and a failure is logged and dropped: the caller then
+         * rings out its window, as it did before this existed.
+         *
+         * Under [OUTBOX_LOCK] so it never interleaves with a drain of this process.
+         */
+        internal fun sendTransportFrameNow(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
+            groupId: String,
+            messageId: String,
+            protoB64: String,
+        ): Boolean = synchronized(OUTBOX_LOCK) {
+            val secret = retrievePushSecret(context)
+            if (secret == null) {
+                Log.w(TAG, "sendTransportFrameNow: pushSecret absent -> frame id=${messageId.take(8)} not sent")
+                return@synchronized false
+            }
+            val entry = OutboxMirrorEntry(messageId, groupId, protoB64, System.currentTimeMillis(), silent = true, durable = false)
+            val ciphertext = encryptQueuedMessages(context, service, ctx, listOf(entry))?.get(messageId)
+            if (ciphertext == null) {
+                Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
+                return@synchronized false
+            }
+            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false)
+            Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
+            sent
         }
 
         /** The body of [drainOutboxBackground]; the caller holds [OUTBOX_LOCK]. */
@@ -1814,6 +1985,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
             }
+
+        /**
+         * The other party's photo for the call surfaces outside this class - the ongoing-call
+         * notification (`CallForegroundService`) and the incoming call screen
+         * ([IncomingCallActivity]); the ring notification calls [fetchAvatar] itself. The same
+         * [fetchAvatar] every message notification uses - CACHE FIRST (the 24 h file cache and its
+         * remembered absence), the push-secret route only on a miss - opened to more callers rather
+         * than copied. A miss is network I/O, so every caller runs it OFF the main thread.
+         */
+        fun callAvatar(context: Context, userId: String): Bitmap? {
+            Log.d(TAG, "callAvatar: for ${userId.take(8)}")
+            return context.fetchAvatar(userId)
+        }
 
         /**
          * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
@@ -2542,6 +2726,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeBuildReadWatermarkProto(at: Long): String
 
     /**
+     * Builds the plaintext call hangup (base64) the native ring's Decline sends - the same
+     * `CallMsg { hangup, end_reason }` the in-app Decline sends. [endReason] is the wire value of
+     * `CallEndReason` ([CALL_END_REASON_DECLINED]). Returns "" on failure.
+     */
+    external fun nativeBuildCallHangupProto(
+        messageId: String,
+        sentAt: Long,
+        callId: String,
+        deviceId: String,
+        endReason: Int,
+    ): String
+
+    /**
      * A refused push frame leaves the state behind: the worker retries it on the next cycle. One
      * implementation for the two branches that owe it - a frame drawn as the fallback banner, and
      * a frame withheld by the conversation's `mentions` level.
@@ -2668,16 +2865,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (msgType == "call_ring") {
             val groupId = data["groupId"] ?: ""
             val callId = data["callId"] ?: ""
-            val callerName = data["callerName"]?.takeIf { it.isNotEmpty() }
-                ?: data["senderName"] ?: ""
+            // Ids only: the caller is named from this phone's own copy (decision 6).
+            val callerId = data["callerId"] ?: ""
             if (groupId.isEmpty() || callId.isEmpty()) {
                 Log.e(TAG, "call_ring: missing groupId/callId -> abort")
                 return
             }
-            showIncomingCallNotification(
-                this, groupId, callId, callerName,
-                data["groupName"] ?: "", data["hasVideo"] == "true",
-            )
+            showIncomingCallNotification(this, groupId, callId, callerId, data["hasVideo"] == "true")
             return
         }
         // Pending welcome request: an offline peer needs to be added to a group.
@@ -2892,8 +3086,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // rare silent `call_invite` among them. A ring does not need it: every current caller
         // rings through the cleartext `call_ring` push FIRST (POST /api/calls/ring is awaited
         // before the MLS invite leaves, and a refused ring ends the call), and stops it with
-        // `call_ring_end`. The MLS `call_invite` branch below serves only a NON-silent invite
-        // from a pre-WP-XP-5 caller.
+        // `call_ring_end`. A decrypted MLS `call_invite` never rings (see below).
         //
         // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
         // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
@@ -2962,15 +3155,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
         val decrypted: DecryptedMessage? = (outcome as? PushDecrypt.Message)?.msg
 
-        // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
-        // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
-        // Control (answer/ICE/hangup/answered) -> never a message notification; hangup/answered
-        // additionally stops an active ring.
+        // Call signaling over MLS (WP-XP-5): never a message notification, and NEVER A RING.
+        // THE ONE NATIVE RING IS THE SERVER'S `call_ring`, because only the server applies what
+        // decides whether a phone may ring: `calls_mode`, the per-conversation call permission,
+        // the video rule and blocks. An invite decrypted here carries none of that, so ringing
+        // on it would ring past every one of them (the pre-WP-XP-5 "fallback" did; review of
+        // #2727). Control (answer/ICE/hangup/answered): hangup/answered stops an active ring.
         if (decrypted?.type == "call_invite") {
-            showIncomingCallNotification(
-                this, groupId, decrypted.callId ?: "mls-$groupId",
-                senderName, groupName, decrypted.hasVideo,
-            )
+            Log.d(TAG, "call_invite over MLS: not a ring - the server's call_ring is the only one")
             return
         }
         if (decrypted?.type == "call_control") {
@@ -4796,6 +4988,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_withdrawn_title),
                 res.getString(R.string.notif_social_live_withdrawn_body)
             )
+            // The bookings' notices (WP-N): who acted names the title - a person, or the
+            // association of the space - and the body is the place, the organiser's word for a
+            // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).
+            "social_booking_cancelled" -> Pair(
+                res.getString(R.string.notif_social_booking_cancelled_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_cancelled_body) }
+            )
+            "social_booking_withdrawn" -> Pair(
+                res.getString(R.string.notif_social_booking_withdrawn_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_withdrawn_body) }
+            )
+            "social_booking_added" -> Pair(
+                res.getString(R.string.notif_social_booking_added_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
+            )
+            // The reminder: nobody acted, a fixed title; the body is the place and the time.
+            "social_booking_reminder" -> Pair(
+                res.getString(R.string.notif_social_booking_reminder_title),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_reminder_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)
@@ -5663,26 +5875,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * or written for another account than [me] (the file is one per install, two accounts may sign
      * in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`).
      */
-    private fun loadMentionNames(me: String?): JSONObject? {
-        if (me == null) return null
-        val file = File(MlsContextLoader.tauriDataDir(this), "display_names.json")
-        if (!file.exists()) {
-            Log.d(TAG, "[MENTION_NAME] no display_names.json yet - every other mention is 'someone'")
-            return null
-        }
-        return try {
-            val root = JSONObject(file.readText())
-            if (!root.optString("userId").equals(me, ignoreCase = true)) {
-                Log.d(TAG, "[MENTION_NAME] display_names.json belongs to another account - not used")
-                null
-            } else {
-                root.optJSONObject("names")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "[MENTION_NAME] display_names.json unreadable: ${e.message}")
-            null
-        }
-    }
+    private fun loadMentionNames(me: String?): JSONObject? = loadDisplayNames(this, me, "[MENTION_NAME]")
 
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)

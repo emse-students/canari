@@ -86,8 +86,8 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
-| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
-| Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor is now `1.2.9` on production) |
+| Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
@@ -99,6 +99,7 @@ REST: those rows need a count, then a migration.
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
+| `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -155,6 +156,24 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 **Condition:** production has run the release carrying the check for longer than one access-token
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+### No date yet - the Lydia key paste field of a build older than enrolment lot 1
+
+**Site:** `retiredLydiaBusinessKeyPaste` (`PUT :id/lydia-business-key`) and `lydiaBusinessKeyStatus`
+(`GET` on the same path) in `apps/social-service/src/associations/associations.controller.ts`, with
+`AssociationsService.isLydiaBusinessKeySet`.
+**What it humours:** since enrolment lot 1 the Business private token is captured at `business/create`
+([payments](frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) and the
+paste field is gone from the app. An APK or IPA older than that release EMBEDS the old field: it reads the
+`GET` status (kept, so the panel still shows "set" or "not set") and may `PUT` a key. The `PUT` writes
+nothing and answers `410` with the code `LYDIA_KEY_PASTE_RETIRED`; the old field shows its own "could not
+save" line for any refusal (it never reads the body), so a bare status is enough there. Each hit is
+logged at WARN, naming the association and never a value: the count of old clients still using it. The
+shim keeps the old route's throttle and `MANAGE_PAYOUT_ACCOUNT` check, so a non-manager gets the `403`
+it always got and only a manager's hit is counted.
+**The cost while it stands:** none - nothing is written; an old screen shows a save error.
+**Removal condition:** `minClientVersion` past the first build without the field, on BOTH stores. Then
+delete both routes, `isLydiaBusinessKeySet`, their spec block, and this entry.
 
 ### No date yet - an explicit slug sent on association creation, by a client older than the derived slug
 
@@ -247,13 +266,28 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 **Removal condition:** none; this is a floor requirement, not a shim.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
-Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
-ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+**Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
+owner's explicit decision, read back from the public version endpoint as `1.2.9`; both stores serve `1.5.0`,
+far above the floor, so the raise cannot lock out a shipped client (compare the v0.14.0 incident above). A new
+notification type, bookings included, may now ship once its own flag flips. Dev's floor is a separate row
+([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
 version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
 knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
+
+**Switched on by the flip pull request (2026-10-29), on the `1.2.9` floor: the bookings' four** - `booking_cancelled`,
+`booking_withdrawn`, `booking_added`, `booking_reminder` ([bookings-chantier](bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)).
+Steps 2-4 are done in the same pull request (target `bookings`, the four rows, the three native
+tables). They ship behind `BOOKING_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/bookings/booking-notifications.service.ts`) and its client mirror
+`BOOKING_NOTIFICATIONS_LIVE`. A `1.2.9` client draws them as the neutral unknown-type row, shows the
+push's French legacy sentence, and on Android a tap opens the app where it was (no `bookings` host);
+the version CARRYING this pull request draws all of it. That degraded display between `1.2.9` and
+the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that release, once both
+stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
+The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

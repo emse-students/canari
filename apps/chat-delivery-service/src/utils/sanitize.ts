@@ -42,6 +42,26 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 }
 
 /**
+ * THE ONE CANONICAL FORM OF A DEVICE KEY `userId:deviceId` in this service: the user half
+ * ASCII-lowercased (a user id is case-insensitive here - `HeaderAuthGuard` lowercases the caller),
+ * the device half as sent. Every comparison of two device keys goes through it, so two spellings
+ * the service accepts as one device are one device everywhere - and it matches `mls-core`'s
+ * `canonical_identity`, so the server and the clients agree on what "the same device" means.
+ */
+export function canonicalDeviceKey(userId: string, deviceId: string): string {
+  return `${userId.toLowerCase()}:${deviceId}`;
+}
+
+/**
+ * A leaf identity in {@link canonicalDeviceKey} form, or null when it is not one
+ * ({@link parseLeafIdentity}).
+ */
+export function canonicalLeafIdentity(value: unknown): string | null {
+  const leaf = parseLeafIdentity(value);
+  return leaf ? canonicalDeviceKey(leaf.userId, leaf.deviceId) : null;
+}
+
+/**
  * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
  * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
  * included, and the rest of the device kept - it is what tells two devices of one person apart. A
@@ -73,6 +93,31 @@ export function sanitizeDevicePairLogValue(
   absentDevice = 'unstated'
 ): string {
   return cutLeafIdentity(sanitizeLogValue(userId), sanitizeLogValue(deviceId, absentDevice));
+}
+
+/**
+ * The rule a user id is minted under (core-service `src/users/user-id.ts`, the one rule): non-empty
+ * visible ASCII (U+0021 to U+007E) with no ':'. Not a UUID - the id is the identity provider's
+ * subject - so a route that acts on an account by its id holds it to this rule instead.
+ *
+ * NO LENGTH CAP, because the mint rule has none: a cap here stricter than the rule would refuse an
+ * id core-service holds, and the erasure core-service retries would be a 400 for ever. The length
+ * bound is `users.id`'s own `varchar(255)`, which no id that exists can exceed.
+ */
+const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]+$/;
+
+/**
+ * `value` as a user id that obeys the mint rule ({@link MINTABLE_USER_ID_REGEX}), or a 400. WHY: an
+ * account erasure matches Redis keys and members on `<userId>:`, and an id with a ':' would match
+ * another account's prefix.
+ */
+export function sanitizeAccountUserId(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !MINTABLE_USER_ID_REGEX.test(value)) {
+    throw new BadRequestException(
+      `${fieldName} must be non-empty visible ASCII with no ':' (the user id rule)`
+    );
+  }
+  return value;
 }
 
 /**
@@ -224,6 +269,15 @@ export function assertCallerOwnsUserId(
   if (caller !== targetUserId) {
     throw new ForbiddenException(message);
   }
+}
+
+/**
+ * The one form two account ids are compared in: trimmed and lower-cased, the form
+ * `HeaderAuthGuard` verifies the `x-user-id` HMAC against. Comparing a body field with the raw
+ * header instead would let the same account fail, or match, on case alone.
+ */
+export function canonicalUserId(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** Validates that `value` is a non-empty string of at most 256 characters suitable for display. */

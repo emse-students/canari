@@ -48,8 +48,10 @@ import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
+  isPublicMlsFrame,
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
+import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
   askDepartureOutcome,
   type DepartureOutcome,
@@ -75,7 +77,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -125,6 +127,8 @@ import {
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
+  canonicalDeviceKey,
+  canonicalLeafIdentity,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -540,7 +544,7 @@ export function readAddressedDevices(body: SendMessageBody): Set<string> | null 
     ) {
       throw new BadRequestException('recipientDevices contains a key that is not userId:deviceId');
     }
-    keys.add(`${key.slice(0, at).toLowerCase()}:${key.slice(at + 1)}`);
+    keys.add(canonicalDeviceKey(key.slice(0, at), key.slice(at + 1)));
   }
   return keys;
 }
@@ -594,6 +598,7 @@ export type ClientSendRefusal =
   | { error: 'send_body_invalid'; status: 400; detail: string }
   | { error: 'send_field_refused'; status: 400; detail: string }
   | { error: 'proto_required'; status: 400; detail: string }
+  | { error: 'public_frame_refused'; status: 400; detail: string }
   | { error: 'sender_mismatch'; status: 403; detail: string };
 
 /**
@@ -603,6 +608,8 @@ export type ClientSendRefusal =
  *   here (the recipient set from the membership table, a commit by `POST /mls/commit`).
  * - A `proto`: the pre-MLS content path is retired (measured unused 2026-10-22,
  *   `docs/wiki/legacy-compatibility.md`).
+ * - A PRIVATE frame: the send route relays only private (application) frames; a public handshake
+ *   frame goes through the commit route, whose gate reads it ({@link isPublicMlsFrame}).
  * - The caller as sender, with a device: a frame is attributed to its sender by every reader of the
  *   group's log, and the membership gate below is keyed on that device.
  *
@@ -621,6 +628,9 @@ export function clientSendRefusal(body: unknown, caller: string): ClientSendRefu
   const { proto, senderId, senderDeviceId } = body as SendMessageBody;
   if (typeof proto !== 'string' || proto.length === 0) {
     return { error: 'proto_required', status: 400, detail: 'no proto' };
+  }
+  if (isPublicMlsFrame(proto)) {
+    return { error: 'public_frame_refused', status: 400, detail: 'wire_format=public_message' };
   }
   if (
     typeof senderId !== 'string' ||
@@ -1763,7 +1773,7 @@ export class MessagingService {
         // outside the group. Measured on production 2026-10-12, an answer to one seed request was
         // queued for every seat of a 112-seat key group (`prod-queue-and-epoch-audit-2026-10-12`).
         const targets = addressed
-          ? members.filter((m) => addressed.has(`${m.userId.toLowerCase()}:${m.deviceId}`))
+          ? members.filter((m) => addressed.has(canonicalDeviceKey(m.userId, m.deviceId)))
           : members;
         if (addressed) {
           this.logger.log(
@@ -2268,6 +2278,9 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
+    if (frame.external && frame.removedLeaves.length > 0) {
+      await this.assertExternalRemoveIsOwnPriorLeaf(groupId, frame, traceId);
+    }
     const committerClaim = await this.assertCommitterMayCommit(
       groupId,
       committer,
@@ -2677,15 +2690,31 @@ export class MessagingService {
           // THE COMMITTER'S SEAT, whose claim held above (`committerSeat`): written here, with the
           // advance, through the one writer of an active seat - its key package read
           // first, before any device row, the order an account erasure deletes in.
+          //
+          // AN EXTERNAL JOIN WHOSE SEAT CANNOT BE WRITTEN IS REFUSED WHOLE: its leaf enters the tree
+          // with this advance, so accepting it would leave a leaf no seat holds. A pending member's
+          // commit adds no leaf - its Add did - and stands, its seat left `pending`, as above.
           if (committerSeat) {
-            committerSeat =
-              (await this.writeClaimedSeat(
-                m,
-                committer,
-                deviceId,
-                groupId,
-                'MEMBERSHIP_ACTIVE'
-              )) === null;
+            const unwritten = await this.writeClaimedSeat(
+              m,
+              committer,
+              deviceId,
+              groupId,
+              'MEMBERSHIP_ACTIVE'
+            );
+            if (unwritten !== null && frame.external) {
+              this.logger.warn(
+                `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                  `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${unwritten} ` +
+                  `- its seat cannot be written, so its leaf is not accepted; nothing advanced`
+              );
+              throw new ForbiddenException(
+                refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                  error: 'committer_not_member',
+                })
+              );
+            }
+            committerSeat = unwritten === null;
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
@@ -3390,6 +3419,66 @@ export class MessagingService {
   }
 
   /**
+   * Refuses an external commit whose Remove proposals reach beyond the joiner's own prior leaf -
+   * RFC 9420 section 12.4.3.2, enforced by every receiver in `mls-core`
+   * (`refuse_foreign_external_remove`) and checked here too, before the epoch moves.
+   *
+   * At most one Remove, and the leaf it names must carry the joiner's own identity - the identity
+   * the gate has already held to `committer:deviceId`, compared in {@link canonicalDeviceKey} form
+   * as `mls-core`'s `same_identity` does. The commit names the leaf by INDEX, so its identity is
+   * read from the tree of the stored base ({@link groupInfoLeafIdentity}): the GroupInfo this server
+   * served the joiner. Bases are strictly monotonic, one per epoch ({@link putGroupInfo}): with no
+   * base at or past the commit's epoch the leaf cannot be named and the commit is refused; a base
+   * PAST it means the commit lost a race, and the epoch gate answers it (see the body).
+   */
+  private async assertExternalRemoveIsOwnPriorLeaf(
+    groupId: string,
+    frame: { epoch: number; leafIdentity: string; removedLeaves: number[] },
+    traceId: string
+  ): Promise<void> {
+    const refuse: (why: string) => never = (why) => {
+      this.logger.error(
+        `[COMMIT][${traceId}] REJECT external_remove_foreign group=${groupId} ` +
+          `joiner=${sanitizeLeafLogValue(frame.leafIdentity)} removes=[${frame.removedLeaves.join(',')}] ${why}`
+      );
+      throw new ForbiddenException({
+        error: 'commit_identity_mismatch',
+        message: 'this commit is not accepted',
+      });
+    };
+    if (frame.removedLeaves.length > 1) refuse('more than one Remove');
+    const base = await this.groupInfoRepo.findOne({ where: { groupId } });
+    if (!base || base.baseEpoch < frame.epoch) {
+      refuse(`no base at epoch ${frame.epoch} (stored=${base?.baseEpoch ?? 'none'})`);
+    }
+    if (base.baseEpoch > frame.epoch) {
+      // A COMMIT BUILT ON A BASE THE GROUP HAS ALREADY LEFT IS THE EPOCH GATE'S TO ANSWER, not this
+      // one's: a legitimate resync that lost a race reads `epoch_mismatch` (or its own earlier
+      // acceptance) and rebuilds, where a 403 here would end its retry. That holds only while the
+      // GROUP is past the commit's epoch too - `activeEpoch` never moves back, so the strict gate is
+      // then certain to refuse it. A base ahead of a group still at the commit's epoch proves
+      // nothing about the tree the commit names, so that case is refused.
+      const group = await this.groupRepo.findOne({
+        where: { id: groupId },
+        select: { id: true, activeEpoch: true },
+      });
+      if ((group?.activeEpoch ?? -1) > frame.epoch) {
+        this.logger.log(
+          `[COMMIT][${traceId}] external Remove on a superseded base group=${groupId} ` +
+            `epoch=${frame.epoch} base=${base.baseEpoch} - left to the epoch gate`
+        );
+        return;
+      }
+      refuse(`base ${base.baseEpoch} is ahead of the group at ${group?.activeEpoch ?? 'none'}`);
+    }
+    const removed = groupInfoLeafIdentity(base.groupInfo, frame.removedLeaves[0]);
+    const removedKey = canonicalLeafIdentity(removed);
+    if (removedKey === null || removedKey !== canonicalLeafIdentity(frame.leafIdentity)) {
+      refuse(`removed=${sanitizeLeafLogValue(removed, 'unreadable')}`);
+    }
+  }
+
+  /**
    * Whether the caller may commit to `groupId` at all, decided before the epoch gate.
    *
    * - A MEMBER COMMIT comes from a device of the caller's that the group holds: `active`, or
@@ -3655,6 +3744,41 @@ export class MessagingService {
           `memberships=${cut.memberships} queued=${cut.queued} routes=${cut.toRemove}`
       );
       return cut;
+    });
+  }
+
+  /**
+   * An account erasure's removal of the routes `routes` of `userId` in `groupId` that NO ACTIVE SEAT
+   * of the account stands behind, re-read under the group's seat lock - the routes left by a row
+   * that is gone, a 1:1 DM's tombstone above all.
+   *
+   * A route WITH its active row is left whole, row and route, for the erasure's final pass to cut
+   * together ({@link eraseSeats}). Removing it alone would contradict the row: the next send's
+   * reconciliation finds an active, keyed device missing from the set, writes its route back
+   * (`restoreRoutes`) and accuses a writer that did nothing wrong (`MEMBERS_CACHE_REPAIRED`).
+   *
+   * @returns how many routes went, and how many were kept beside their seat.
+   */
+  async removeUnseatedRoutes(
+    groupId: string,
+    userId: string,
+    routes: readonly string[]
+  ): Promise<{ removed: number; kept: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const seats = await m.getRepository(DeviceGroupMembership).find({
+        where: { groupId, userId, status: 'active' as const },
+        select: { deviceId: true },
+      });
+      const seated = new Set(seats.map((s) => `${userId}:${s.deviceId}`));
+      const unseated = routes.filter((r) => !seated.has(r));
+      if (unseated.length > 0) {
+        await this.redis.srem(`group:members:${groupId}`, ...unseated);
+      }
+      this.logger.log(
+        `[INTERNAL_DELETE] routes of user=${userId.slice(0, 8)} group=${groupId} ` +
+          `removed=${unseated.length} kept=${routes.length - unseated.length} (kept beside an active seat, for the final pass)`
+      );
+      return { removed: unseated.length, kept: routes.length - unseated.length };
     });
   }
 
@@ -4470,17 +4594,19 @@ export class MessagingService {
       select: { status: true },
     });
     if (seat?.status === 'pending') {
-      const { welcomed, locked } = await readPendingMembershipFacts(
+      const facts = await readPendingMembershipFacts(
         this.queuedMessageRepo,
         this.redis,
         deviceId,
         [groupId],
         this.logger
       );
-      if (welcomed.has(groupId) || locked.has(groupId)) {
+      const addInFlight = addInFlightOf(facts, groupId);
+      // An UNREAD add lock is not "no Add": no base is served on it, as on an owed Welcome.
+      if (facts.welcomed.has(groupId) || addInFlight !== false) {
         this.logger.log(
           `[KEY_GROUP_PUSH_JOIN][${traceId}] WELCOME OWED group=${groupId} device=${cutUserId(userId)}:${deviceId} ` +
-            `welcomeQueued=${welcomed.has(groupId)} addInFlight=${locked.has(groupId)} - no base served`
+            `welcomeQueued=${facts.welcomed.has(groupId)} addInFlight=${addInFlight ?? 'unknown'} - no base served`
         );
         return { scope, welcomeOwed: true, base: null };
       }
@@ -5196,7 +5322,16 @@ export class MessagingService {
 
     // UNCONDITIONAL, and that is the whole fusion: the row now says the device cannot decrypt this
     // group - or there is no row - so the gateway must stop routing to it and stop electing it.
-    await this.redis.srem(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+    // A failure is logged, never swallowed: the route it leaves keeps the device routable and
+    // electable, and an account erasure later meets it as a route no seat stands behind.
+    await this.redis
+      .srem(`group:members:${groupId}`, `${userId}:${deviceId}`)
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[${tag}] route NOT removed group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `- the device stays routable until a later removal: ${String(e)}`
+        )
+      );
 
     if ((demoted.affected ?? 0) === 0) {
       this.logger.warn(

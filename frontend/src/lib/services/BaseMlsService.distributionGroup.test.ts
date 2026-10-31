@@ -31,6 +31,7 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { flushMacrotask } from '../../test/flush';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -312,7 +313,8 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
 
     expect(await ensure(ctx, WS, REF_PUBLISHED)).toEqual({ joined: true });
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    // Asking whether a Welcome is owed AFTER the base it builds on (channel-encryption section 20).
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
     expect(ctx.createGroup).not.toHaveBeenCalled();
   });
 
@@ -334,7 +336,7 @@ describe('joining on first use', () => {
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1', 0);
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
   });
 
   it('discards a group whose base could not be published at all', async () => {
@@ -681,6 +683,39 @@ describe('routing a frame that arrived on the group', () => {
     // The only other symptom of a handler never wired is a community whose history quietly never
     // loads, weeks later, with nothing to point at.
     expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  // Production 1.5.1: a handler that could not reach the server was logged as a refusal, at error.
+  it('keeps a frame its handler could not handle for lack of an answer, said as no answer', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new TransportFailureError(new TypeError('Failed to fetch'));
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('control: a handler that REFUSES a frame for another cause still accuses', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new Error('seed store refused');
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('handler refused a frame'),
+      expect.stringContaining('seed store refused')
+    );
     error.mockRestore();
   });
 

@@ -20,6 +20,9 @@
  * ROUNDS, NOT CLOCKS: every wait is a count of {@link ROUND_MS} rounds on a fact.
  */
 import { atLevels, stripStamp } from './watch.mjs';
+// THE ONE BUDGET the player prints and this judge applies: a longer hold by the engine's own wait is
+// a stall (live.md, "The buffer policy"). Imported, never restated, so the two cannot disagree.
+import { LIVE_PLAYER_HELD_WAIT_BUDGET_MS } from '../../frontend/src/lib/live/constants.ts';
 
 export const ROUND_MS = 500;
 
@@ -49,6 +52,10 @@ const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \
 const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+(?:, \d+ ms behind)?$`);
 const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
 const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
+// The engine's own wait (media buffered ahead): opened by `waiting at`, closed by `ended by itself`
+// with how long it held the picture, or by a `stalled at` line when it did not end.
+const HELD = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting at [\d.]+ with [\d.]+ s buffered ahead \[[\d. -]*\] - the engine's own wait$`);
+const HELD_END = new RegExp(String.raw`^\[LIVE\] viewer ${S}: the engine's own wait at [\d.]+ ended by itself after \d+ ms, now at [\d.]+: held about (\d+) ms \(budget \d+ ms\)$`);
 const JOINED = new RegExp(String.raw`^\[LIVE\] viewer joined ${S} at segment \d+$`);
 // THE ENDED LIVE'S ANSWER, as the player classifies it (`liveFailureOutcome`), and the stop it must cause.
 const END_ANSWER = /^\[LIVE\] Live manifest: (404 LIVE_NOT_FOUND -> not-found|410 LIVE_ENDED -> ended \([a-z_]+\))$/;
@@ -66,7 +73,9 @@ const sentence = (line) => stripStamp(String(line).replace(/^(?:log|info|debug|v
  * @param {string[]} lines the viewer's console texts, oldest first
  */
 export function stallsOf(lines) {
-  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [], endAnswers: 0, strayEndAnswers: 0 };
+  const out = { joined: false, gaps: [], targets: [], stallsBefore: 0, stallsAfter: 0, stallSeeksBefore: 0, stallSeeksAfter: 0, unread: [], endAnswers: 0, strayEndAnswers: 0, heldOver: [], heldOpen: 0 };
+  /** Whether an engine's own wait is open: its end, or the stall it turned into, closes it. */
+  let holding = false;
   let answered = false;
   /** Each stall not yet resolved by a seek, oldest first: true when it came after the first gap. */
   const unresolved = [];
@@ -86,7 +95,18 @@ export function stallsOf(lines) {
       continue;
     }
     const after = out.gaps.length > 0;
+    if (HELD.test(s)) {
+      holding = true;
+      continue;
+    }
+    const h = HELD_END.exec(s);
+    if (h) {
+      holding = false;
+      if (Number(h[1]) > LIVE_PLAYER_HELD_WAIT_BUDGET_MS) out.heldOver.push(Number(h[1]));
+      continue;
+    }
     if (STALL.test(s)) {
+      holding = false;
       out[after ? 'stallsAfter' : 'stallsBefore']++;
       unresolved.push(after);
     } else if (STALL_SEEK.test(s)) {
@@ -101,6 +121,7 @@ export function stallsOf(lines) {
     } else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
   if (answered) out.strayEndAnswers++; // an end answer as the very last line stopped nothing
+  if (holding) out.heldOpen++; // never read again: no proof it ended
   return out;
 }
 
@@ -116,6 +137,10 @@ export function stallFacts(viewer, st) {
     [st.unread.length === 0, `${viewer} wrote ${st.unread.length} stall line(s) this judge cannot read - a spelling moved: ${st.unread.slice(0, 2).join(' | ')}`],
     [st.stallsAfter === 0 && st.stallSeeksAfter === 0, `${viewer} stalled ${st.stallsAfter} time(s) and seeked ${st.stallSeeksAfter} time(s) after its first delivery gap (targets ${st.targets.join(',') || 'none'} ms)`],
     [st.gaps.length > 0 || (st.stallsBefore === 0 && st.stallSeeksBefore === 0), `${viewer} stalled ${st.stallsBefore} time(s) and never named a delivery gap - the target buffer never moved`],
+    // A hold by the engine's own wait is no stall UNDER the budget only (owner, 2026-10-29); over
+    // it, or never shown to have ended, it is one - before the first gap too, since no cadence explains it.
+    [st.heldOver.length === 0, `${viewer} was held by the engine's own wait over the ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms budget: ${st.heldOver.join(',')} ms - a stall`],
+    [st.heldOpen === 0, `${viewer} left an engine's own wait that no delivery showed ended - a stall`],
   ];
 }
 
@@ -163,6 +188,8 @@ const D = ['debug'];
 const L = ['log'];
 const N = String.raw`\d+`;
 const F = String.raw`[\d.]+`;
+/** A buffered-ranges list as `formatLiveRanges` prints it: `[]`, or `[a-b c-d]`. */
+const R = String.raw`\[(?:${F}-${F}(?: ${F}-${F})*)?\]`;
 const at = (levels, s) => atLevels(levels, new RegExp(`^${s}$`));
 
 /** The feed every seat of the row opens: the broadcaster to compose, a viewer to find the card. */
@@ -186,7 +213,6 @@ const BROADCASTER = [
   at(D, String.raw`\[LIVE-BROADCAST\] screen for the member, recordable true`),
   at(D, String.raw`\[LIVE-BROADCAST\] rules v${N}, accepted v${N}`),
   at(D, String.raw`\[LIVE-BATTERY\] ${N} %(, charging)?`),
-  at(D, String.raw`\[LIVE-CAM\] opening user`),
   at(D, String.raw`\[LIVE-CAM\] opened user: ${N}x${N} @ ${N}`),
   at(L, String.raw`\[LIVE-BROADCAST\] starting`),
   at(L, String.raw`\[LIVE\] started ${S}`),
@@ -240,7 +266,12 @@ const BROADCASTER = [
 const PHONE_BROADCASTER = [
   at(D, String.raw`\[AvatarPresence\] ${N} of ${N} have no photo - not requested`),
   at(D, String.raw`\[NameMirror\] mirrored ${N} name\(s\), 0 removal\(s\), ${N} held`),
+  // THE LENS IS ASKED EXACT ON A PHONE (`lensIsExact`, #2574; read on LIVE-WEB-2, `1.5.1-alpha.8`).
+  at(D, String.raw`\[LIVE-CAM\] opening user \(exact\)`),
 ];
+
+/** A web broadcaster: a desktop's first capture asks the lens IDEAL, its webcam having no facing (#2574). */
+const WEB_BROADCASTER = [at(D, String.raw`\[LIVE-CAM\] opening user \(ideal\)`)];
 
 /** A native app seat (`A1` Android, `I1` iOS) - the only one that prints the NameMirror line. */
 const isAppSeat = (seat) => /^[AI]\d+$/.test(seat);
@@ -257,9 +288,15 @@ const VIEWER = [
   at(D, String.raw`\[LiveChat\] \{"op":"key","liveId":"${S}"\}`),
   at(D, String.raw`\[LiveCrypto\] \{"op":"open","index":${N},"sealedBytes":${N}\}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: no segment yet, waiting`),
-  // `join` and `stall` only: `catch-up`, `drift` and `time gap` are a viewer behind or a broadcaster
-  // re-acquiring its camera, none of them the steady path, so each stays dirt until a reading explains it.
-  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall)\) at ${F}, ${N} ms behind`),
+  // `join`, `stall` and `short` only: `catch-up`, `drift` and `time gap` are a viewer behind or a
+  // broadcaster re-acquiring its camera, none of them the steady path, so each stays dirt until a
+  // reading explains it. `short` IS the steady path since #2689: the media ahead would not outlast the
+  // longest wait for the next delivery, so the viewer re-anchors before that wait drains it - and says
+  // so when its buffer cannot hold the target yet (read on LIVE-STALL-1 and LIVE-WEB-2, `1.5.1-alpha.8`).
+  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall|short)\) at ${F}, ${N} ms behind`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: ${F} s buffered, under the ${N} ms target - no seek \(short\)`),
+  // The seat given back on leaving, so the host's cap frees now rather than at the lease (#2689).
+  at(D, String.raw`\[LIVE\] leave ${S}`),
   at(L, String.raw`\[LIVE\] viewer joined ${S} at segment ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S} -> (playing|ended)`),
   at(D, String.raw`\[LIVE\] viewer ${S} stalled at ${F} \(target ${N} ms\)`),
@@ -268,8 +305,17 @@ const VIEWER = [
   // One per delivery: what it did to the buffer, so a reading separates uneven media from drift.
   // The gap is `-` after an outage the policy did not measure; the end is always a number here,
   // since the join buffered media before any poll delivers.
-  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s`),
-  at(L, String.raw`\[LIVE\] viewer ${S} \(ended\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
+  // Every buffered range closes it (LIVE-STALL-1, 1.5.1-alpha.8: a wait with 2.6 s "ahead" asked
+  // whether a hole lay inside, and the line could not say): `[]` with none, else `[a-b c-d]`.
+  at(D, String.raw`\[LIVE\] viewer ${S}: delivery of ${N} appended of ${N} taken \(${N}-${N}\), gap (?:${N}|-) ms: end ${F} -> ${F}, at ${F} -> ${F}, ahead ${F} -> ${F} s, ranges ${R} -> ${R}`),
+  // The engine's own wait, media buffered ahead in the playhead's range: no stall and no seek, read
+  // again at the next delivery - ended by itself, or a `stalled at` line the judge counts.
+  at(D, String.raw`\[LIVE\] viewer ${S}: waiting at ${F} with ${F} s buffered ahead ${R} - the engine's own wait`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: the engine's own wait at ${F} ended by itself after ${N} ms, now at ${F}: held about ${N} ms \(budget ${N} ms\)`),
+  // The player's summary: every SUMMARY_EVERY appended segments while it plays (LIVE-STALL-1,
+  // 1.5.1-alpha.9: 30 segments land inside the 60 s watch), then once at the end. `stopped` and
+  // `unavailable` are not narration in a row the broadcaster ends - they stay dirt.
+  at(L, String.raw`\[LIVE\] viewer ${S} \((?:playing|ended)\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
 ];
@@ -285,7 +331,7 @@ const VIEWER = [
 export function liveNarration(row, seat, rows = LIVE_ROWS) {
   const spec = rows[row];
   if (!spec) return [];
-  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : BROADCASTER;
+  if (seat === spec.by) return isAppSeat(seat) ? [...BROADCASTER, ...PHONE_BROADCASTER] : [...BROADCASTER, ...WEB_BROADCASTER];
   if (spec.viewers.includes(seat)) return VIEWER;
   return [];
 }

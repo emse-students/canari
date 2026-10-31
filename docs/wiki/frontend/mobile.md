@@ -904,6 +904,7 @@ destination column is what the app opens, the coverage column is what a test or 
 | `repost_proposed`, `coorganise_proposed` | FCM + APNs | none (`postId` is the RECEIVING association) | **was the feed `/posts`**; now `proposals/<associationId>` -> slug lookup -> `/associations/<slug>/edit/republications` | `push-target.spec`, `deepLinkRoutes.test` | **fixed on the branch**, never run on a phone |
 | `form_opening_soon`, `form_open` | FCM + APNs | `formId` | `/forms/<id>` | same | routes |
 | `form_paid_over_capacity` (organiser alert, 2026-10-22) | FCM + APNs | `target: 'form-responses'` + `formId` (wins over the plain `form/<id>`) -> `form-responses/<formId>` | `/forms?responses=<formId>`, that form's responses accordion opened | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test`, `page.responsesLink.svelte.test` | SWITCHED OFF until the floor covers #1911 ([forms](modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)); never run on a phone. A build older than this host's declaration drops the tap's link on Android (the app opens where it was) |
+| `booking_cancelled`, `booking_withdrawn`, `booking_added`, `booking_reminder` (WP-N, 2026-10-29) | FCM + APNs | `target: 'bookings'` (wins over `postId`, the booking) -> `bookings` | `/bookings` | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | SWITCHED OFF until the floor allows it ([bookings-chantier](../bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)); never run on a phone. A build older than this host's declaration drops the tap's link on Android (the app opens where it was) |
 | `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
@@ -1711,7 +1712,9 @@ A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) start
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
 system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
 camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
-exclude the left edge over the feed, with the mechanism of the right edge above.
+exclude the left edge over the feed, with the mechanism of the right edge above. Re-confirmed by the
+owner 2026-10-30 (the two backlog rows asking for that decision are closed; the mechanism was
+already built, #2184, and only the Mi 9T reading below is owed).
 
 - **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
   `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to

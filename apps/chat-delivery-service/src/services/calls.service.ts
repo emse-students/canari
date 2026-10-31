@@ -20,7 +20,6 @@ import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
-import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
@@ -147,9 +146,6 @@ export interface SiblingCallStatusResponse {
   callId?: string;
   groupId?: string;
 }
-
-/** The ring payload keys that name the caller or the conversation: never sent to an iPhone. */
-const CALL_NAME_FIELDS: ReadonlySet<string> = new Set(['callerName', 'senderName', 'groupName']);
 
 const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
 /** The longest call a room binding outlives: past it the room id names nothing. */
@@ -368,8 +364,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    *
    * Three refusals, each an answer: not a member (403); a room `initiate` never bound to THIS
    * group (403 - knowing a room id must not buy a token signed for another conversation); and a
-   * room whose ring window closed or whose binding expired (410 - the caller has stopped
-   * ringing, so there is nobody to answer).
+   * room whose ring window closed, whose ring `ring-end` recorded as over, or whose binding
+   * expired (410 - the caller has stopped ringing, so there is nobody to answer).
    */
   async requestRoomToken(
     userId: string,
@@ -414,6 +410,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (Date.now() > answerBy) {
       this.logger.log(
         `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
+      );
+      throw new GoneException('This call is over');
+    }
+    // The ring ENDED inside its window: the caller cancelled, a device answered, or the call ended
+    // (a decline included). Nobody is left to answer, so the window no longer counts. The device
+    // that answers asks for its token BEFORE it calls `ring-end answered`, so its own answer never
+    // meets this; a sibling of it asking afterwards does, and that call is taken.
+    const ringEnded = await this.redis.get(callRingEndedKey(roomId));
+    if (ringEnded !== null) {
+      this.logger.log(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring ended (${ringEnded})`
       );
       throw new GoneException('This call is over');
     }
@@ -729,8 +736,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   //
   // The server cannot read MLS ciphertexts, so it cannot tell a call invite from a
   // regular message. The CALLER's client therefore triggers the ring explicitly with a
-  // minimal cleartext payload (callId/groupId/caller display name - the same metadata
-  // level as the senderName/groupName already present on every message push). The MLS
+  // minimal cleartext payload of IDS ONLY (callId/groupId/callerId/hasVideo - never a name,
+  // decision 6: each phone names the caller from its own copy). The MLS
   // CallMsg protos themselves are sent silent; visible ringing on killed devices comes
   // exclusively from this fan-out.
 
@@ -799,8 +806,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       return { rang: 0 };
     }
 
-    const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
-    const groupName = await this.resolveGroupName(groupId);
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(ringable) } });
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
     // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
@@ -813,16 +818,14 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     const voipReady =
       tokens.some((pt) => pt.platform === 'ios' && pt.voipToken) && this.apnsVoipReady();
 
+    // IDS ONLY, ON EVERY PLATFORM (decision 6; WP-C5 with the native ring, 2026-10-30): the payload
+    // is cleartext to FCM and to APNs, and both rings name the caller from the PHONE'S own copy of
+    // names. The names this used to carry are gone, not moved.
     const dataFields: Record<string, string> = {
       type: 'call_ring',
       groupId,
       callId,
       callerId,
-      // senderName/groupName aliases keep pre-WP-XP-5 Android builds showing a generic
-      // "message from X" notification instead of nothing (they ignore unknown types).
-      callerName,
-      senderName: callerName,
-      groupName,
       hasVideo: hasVideo ? 'true' : 'false',
     };
 
@@ -1004,21 +1007,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Group display name ('' for DMs, matching the message-push convention). */
-  private async resolveGroupName(groupId: string): Promise<string> {
-    try {
-      const rows: { name: string | null; isGroup: boolean }[] =
-        await this.groupMemberRepo.manager.query(
-          `SELECT "name", "isGroup" FROM dm_groups WHERE id = $1 LIMIT 1`,
-          [groupId]
-        );
-      return rows[0]?.isGroup ? (rows[0]?.name ?? '') : '';
-    } catch (e) {
-      this.logger.warn(`[ring] group name lookup failed group=${groupId}: ${String(e)}`);
-      return '';
-    }
-  }
-
   /**
    * Whether the APNs VoIP key is configured, named when it is not. Asked once per fan-out, and only
    * when a callee device holds a voipToken: a server without the key cannot ring a phone whose
@@ -1103,19 +1091,15 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * **That alert is GENERIC** (owner, 2026-10-22, calls.md B2'): until a native ring exists it is
    * titled "Canari" and reads "Appel entrant" / "Incoming call" in the device's language, with no
    * caller and no conversation name - neither in the alert nor in the payload keys, since FCM
-   * merges `data` into the APNs payload too. The names stay in the Android data payload, which the
-   * native layer there gates on the callee's own permission.
+   * merges `data` into the APNs payload too. Since 2026-10-30 no ring payload carries a name on any
+   * platform (`fanOutRing`).
    */
   private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
-    // Names removed for iOS: `...anonymous` below and FCM's own `data` both reach the APNs payload.
     const toIos = pt.platform === 'ios';
-    const anonymous = Object.fromEntries(
-      Object.entries(dataFields).filter(([key]) => !CALL_NAME_FIELDS.has(key))
-    );
     try {
       await getMessaging().send({
         token: pt.token,
-        data: toIos ? anonymous : dataFields,
+        data: dataFields,
         android: { priority: 'high', ttl: 60_000 },
         apns: {
           payload: {
@@ -1127,7 +1111,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
               sound: 'default',
               'mutable-content': 1,
             },
-            ...anonymous,
+            ...dataFields,
           },
           headers: toIos
             ? {

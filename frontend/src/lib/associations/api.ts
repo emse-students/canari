@@ -1680,6 +1680,12 @@ export interface CotisationOptions {
    * add needs, because a form that grants a cotisation on payment does the same thing.
    */
   mayGrant: boolean;
+  /**
+   * CAPABILITY: this social-service derives a new tier's key from its label (`deriveVariantKey`).
+   * Absent on an older server, which would strip the flag and create a BASE tier instead - so the
+   * admin screen offers tier creation only when this is `true` (`mayCreateTier`).
+   */
+  tierKeyFromLabel?: boolean;
 }
 
 /**
@@ -1947,6 +1953,11 @@ export interface CreateProductPayload {
   amountCentsMember?: number;
   /** Named cotisation tier (e.g. "avec-alcool"); only meaningful for `type: 'membership'`. */
   variantKey?: string;
+  /**
+   * Membership only: let the server derive a new named tier's `variantKey` from `name`. The admin
+   * screen sends this and never a key - the key is a technical id no person types (cotisations.md).
+   */
+  deriveVariantKey?: boolean;
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
   variantLevel?: number;
   /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
@@ -2457,31 +2468,6 @@ export async function getAssociationPayoutAccount(
 }
 
 /**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
-  );
-}
-
-/**
  * Unlinks the association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
  * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
  */
@@ -2545,7 +2531,18 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
+/**
+ * How long the onboarding waits for its answer. core bounds its whole chain at 55 s and nginx gives
+ * up at 60 s (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`, core `lydia-payment-provider.ts`), so 75 s is above
+ * both: the screen always receives core's TYPED answer, or nginx's own, before giving up itself.
+ */
+export const LYDIA_ONBOARDING_DEADLINE_MS = 75_000;
+
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2554,15 +2551,15 @@ export async function startLydiaOnboarding(
   const res = await apiFetch(`${base}/api/payments/onboarding`, {
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
+    deadlineMs: LYDIA_ONBOARDING_DEADLINE_MS,
   });
+  if (!res.ok) throw await socialRefusal(res);
   // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
-  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
-  const body = res.ok
-    ? await readApiJson(res, 'POST /api/payments/onboarding')
-    : await res.json().catch(() => ({}));
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };

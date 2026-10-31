@@ -253,6 +253,17 @@ services:
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
       # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
       CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
+      # The iOS VoIP ring (APNs, direct): rendered from the DEV_APNS_VOIP_* secrets (env-manifest.tsv),
+      # never production's names. Unset, a locked or killed iPhone is NOT rung and the service logs
+      # `APNS_VOIP_* is not configured`. SANDBOX and TOPIC are deliberately NOT rendered on dev: a
+      # TestFlight build is production-signed, so its VoIP token belongs to the PRODUCTION APNs
+      # gateway (`api.push.apple.com`, the default when SANDBOX is not exactly `true`), and the topic
+      # defaults to `fr.emse.canari.voip`. Only an Xcode debug build would need the sandbox.
+      APNS_VOIP_KEY_P8: ${APNS_VOIP_KEY_P8:-}
+      APNS_VOIP_KEY_ID: ${APNS_VOIP_KEY_ID:-}
+      APNS_VOIP_TEAM_ID: ${APNS_VOIP_TEAM_ID:-}
+      APNS_VOIP_TOPIC: ${APNS_VOIP_TOPIC:-}
+      APNS_VOIP_SANDBOX: ${APNS_VOIP_SANDBOX:-}
       # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
       # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
       QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
@@ -346,7 +357,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -481,7 +492,7 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on

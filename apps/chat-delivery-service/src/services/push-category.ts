@@ -28,6 +28,11 @@ export const NOTIFICATION_CATEGORIES = [
   'forms',
   /** Someone asks to follow the reader, or accepted the reader's request (WP-F4). */
   'follows',
+  /**
+   * The reader's bookings (WP-N, Q-R15): a cancellation, a participant who left, being added to
+   * one, the reminder before a slot. Off, the bell still lists them - only the push is not sent.
+   */
+  'bookings',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -73,6 +78,11 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   event_updated: 'events',
   event_deleted: 'events',
   event_pending: 'events',
+  // The bookings' four (WP-N): a category of their own (Q-R15), drawn by the settings screen.
+  social_booking_cancelled: 'bookings',
+  social_booking_withdrawn: 'bookings',
+  social_booking_added: 'bookings',
+  social_booking_reminder: 'bookings',
 };
 
 /**

@@ -38,6 +38,7 @@ import {
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
   LIVE_RULES_VERSION,
+  LIVE_SEAT_LEASE_MS,
   LIVE_SEGMENT_BURST,
   LIVE_SEGMENT_MIN_DURATION_MS,
   LIVE_START_WINDOW_MS,
@@ -812,8 +813,9 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * Ends a live, by its broadcaster. Idempotent WHILE THE ROW EXISTS: an ended live answers its end
-   * again. The segments and the row are deleted at once (L3) - a store that refuses, or a segment
-   * still storing, leaves them to the sweep - and once the row is gone a repeated end is a
+   * again. The segments and the row are deleted at once (L3) - a viewer still seated (owed the
+   * segments its last manifest named), a store that refuses, or a segment still storing, leaves them
+   * to the sweep ({@link purgeEnded}) - and once the row is gone a repeated end is a
    * 404 `LIVE_NOT_FOUND`, which the broadcaster's client reads as "ended and deleted": nothing keeps a
    * deleted live's end (no replay, L3), so there is nothing to answer it with.
    */
@@ -1400,28 +1402,65 @@ export class LivesService implements OnModuleDestroy {
    * No reservation can be taken after the end, so once this read finds none, no store of this live
    * is in flight but one past its own timeout. An OPEN live is never touched (`'kept'`, with a warn),
    * and an id with NO ROW is purged in the store alone - the orphan reaper's case.
+   *
+   * NOT WHILE A VIEWER STILL HOLDS A SEAT ON A LIVE THAT ENDED BY ITSELF: a seat is renewed by every
+   * manifest read and nothing else, so a held seat is a viewer that was told of segments within the
+   * lease and has not said it left - the segments its last manifest named are still its to fetch
+   * (LIVE-WEB-2, `1.5.1-alpha.7`: the end's purge deleted segments 5 and 6 between the manifest that
+   * named them and their download, a `404` on both viewers). A viewer gives its seat back on the
+   * end's `410`; one that never does lets it lapse within {@link LIVE_SEAT_LEASE_MS}.
+   *
+   * The drain is decided from FACTS this read takes, never from `endReason` (a cut of a live already
+   * ended keeps its earlier reason, an erasure keeps one already written):
+   * - a `live_cuts` row, or a broadcaster that is {@link DELETED_ACCOUNT}: moderation or the account's
+   *   deletion removed it, so it is removed NOW, every seat with it;
+   * - `endedAt` older than the lease: `assertMayWatch` answers `410` from `endedAt` on, so no seat
+   *   can have been renewed since, and every one has lapsed - the database's clock says so and Redis
+   *   is not asked (an outage of it never holds media past the lease);
+   * - otherwise the seats are read; one held, or a count that cannot be read, keeps the live.
    * THROWS on a transport failure, which the callers log and leave to the next sweep.
    */
   async purgeEnded(liveId: string): Promise<LivePurgeOutcome> {
-    const rows: { ended: boolean; storeInFlight: boolean | null }[] = await this.db.query(
-      `SELECT "endedAt" IS NOT NULL AS ended,
-              "pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
-         FROM lives WHERE id = $1`,
-      [liveId, LIVE_RESERVATION_TTL_MS]
+    const rows: {
+      ended: boolean;
+      removed: boolean;
+      withinLease: boolean | null;
+      storeInFlight: boolean | null;
+    }[] = await this.db.query(
+      `SELECT l."endedAt" IS NOT NULL AS ended,
+              (l."broadcasterId" = $4
+                 OR EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id)) AS removed,
+              l."endedAt" + $3 * interval '1 millisecond' > now() AS "withinLease",
+              l."pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
+         FROM lives l WHERE l.id = $1`,
+      [liveId, LIVE_RESERVATION_TTL_MS, LIVE_SEAT_LEASE_MS, DELETED_ACCOUNT]
     );
     const row = rows[0];
     if (row && !row.ended) {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
-    // AN ENDED LIVE SEATS NOBODY: its viewers' next poll is a 410 that renews nothing, so the seats
-    // would lapse within a lease anyway - freed here, on every path that ends a live (they all
-    // purge), so the next live's viewers do not wait for them. Best-effort: a failure is the lease.
-    await this.seats.releaseLive(liveId).catch((e: unknown) => {
-      this.logger.warn(
-        `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
-      );
-    });
+    if (row && !row.removed && row.withinLease) {
+      // `null` was logged by `watching` as the error it is: whether a viewer is owed a segment is
+      // unknown, so nothing is deleted under it - for at most the lease, after which this read is
+      // not taken at all.
+      const seated = await this.seats.watching(liveId, 'purge');
+      if (seated === null) return 'kept';
+      if (seated > 0) {
+        this.logger.debug(
+          `[LIVE_GC] ${liveId} kept: ${seated} viewer(s) still seated, owed the segments their last manifest named`
+        );
+        return 'kept';
+      }
+    } else if (!row || row.removed) {
+      // A cut, an erasure or a row-less folder: nothing is owed to anybody, so every seat goes now
+      // and the next live's viewers do not wait a lease for them. Best-effort: a failure is the lease.
+      await this.seats.releaseLive(liveId).catch((e: unknown) => {
+        this.logger.warn(
+          `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
+        );
+      });
+    }
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
       return 'kept';

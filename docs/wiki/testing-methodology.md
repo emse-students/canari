@@ -3788,8 +3788,10 @@ user asked for.
 **What that says about this board is the point.** The defect is invisible to every row here, and to
 the two HEAL-REVOKE cells that ARE green, because they assert the log line - `[RESET] done - nothing
 of this device remains` - or the product's behaviour, and neither is a reading of the disk. It was
-also invisible to every gate in the repo: nothing in CI compiles the Android app, so a missing class
-in a LAYOUT inside a dependency reached a user. **A cell asserting an empty store after a revocation,
+also invisible to every gate in the repo: nothing in CI compiled the Android app, so a missing class
+in a LAYOUT inside a dependency reached a user. (Since 2026-10-30 `compile-android-app` compiles
+the app's Kotlin on a pull request; it would still not have inflated that layout, which only a
+run does.) **A cell asserting an empty store after a revocation,
 on BOTH halves, is therefore owed on A1 and on a web device**, and it is the only row that would have
 caught this. Until it exists, a HEAL-REVOKE pass means the product recovered, never that the device
 is clean.

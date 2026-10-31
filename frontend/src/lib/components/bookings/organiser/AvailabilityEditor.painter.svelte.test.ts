@@ -3,8 +3,10 @@
  * THE PAINTED WEEK WRITES THE SAME LINES THE LIST DOES (WP-R4, D49). Pinned: a template and a drag
  * both change the one set of lines the save sends; a gesture starting on an open cell closes; a
  * night painted on two days is saved as the two stored halves; a press paints one cell; and the dated lines have their own list.
+ * On a FIXED-SLOT space (owner, 2026-10-29) a paint opens or closes whole slots and never merges
+ * them, while a step space still merges touching hours.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 
 const setAvailability = vi.hoisted(() => vi.fn());
@@ -14,11 +16,15 @@ vi.mock('$lib/bookings/api', async (importOriginal) => ({
 }));
 
 import AvailabilityEditor from './AvailabilityEditor.svelte';
+import { adoptTransitionAnimations } from '../../../../test/adoptTransitionAnimations';
+
+// The pickers play an outro, and teardown cuts the last one short.
+afterAll(adoptTransitionAnimations());
 
 const mounted: (() => void)[] = [];
 const onDirty = vi.fn();
 
-async function open(lines: unknown[] = []) {
+async function open(lines: unknown[] = [], fixedSlots = false, slotMinutes: number | null = null) {
   const app = mount(AvailabilityEditor, {
     target: document.body,
     props: {
@@ -28,7 +34,9 @@ async function open(lines: unknown[] = []) {
       resourceName: 'Salle',
       lines: lines as never,
       exceptions: [],
-      stepMinutes: 30,
+      stepMinutes: fixedSlots ? null : 30,
+      fixedSlots,
+      slotMinutes,
       onSaved: vi.fn(),
       onDirty,
     },
@@ -125,8 +133,6 @@ describe('AvailabilityEditor - the painted week', () => {
     drag(5, 0, 5, 3); // Saturday 00:00 to 02:00
     const lines = await saved();
     expect(times(lines)).toEqual(['5 22:00-24:00', '6 00:00-02:00']);
-    // ONE editor line in the typed list: the evening ending the next morning.
-    expect(document.body.textContent).toContain('Finit le lendemain');
   });
 
   it('a press without a move paints its one cell, and marks the editor dirty', async () => {
@@ -148,5 +154,205 @@ describe('AvailabilityEditor - the painted week', () => {
       expect.objectContaining({ onDate: '2026-11-12', startTime: '14:00', endTime: '18:45' }),
     ]);
     expect(lines.filter((l) => l.weekday)).toHaveLength(7);
+  });
+});
+
+describe('AvailabilityEditor - the exact hours of a run, and a refused line made visible', () => {
+  it('lists a refused weekly line, removable, instead of an invisible blocker', async () => {
+    await open([
+      { weekday: 2, onDate: null, startTime: '10:00:00', endTime: '10:00:00' },
+      { weekday: 1, onDate: null, startTime: '08:00:00', endTime: '12:00:00' },
+    ]);
+    const list = document.querySelector('[data-invalid-weekly]')!;
+    expect(list.textContent).toContain('10:00-10:00');
+    const save = () =>
+      [...document.querySelectorAll('button')].find((b) =>
+        b.textContent?.includes('Enregistrer les disponibilit')
+      )!;
+    expect(save().disabled).toBe(true);
+    list.querySelector<HTMLElement>('button[aria-label]')!.click();
+    flushSync();
+    expect(document.querySelector('[data-invalid-weekly]')).toBeNull();
+    expect(save().disabled).toBe(false);
+    expect(times(await saved())).toEqual(['1 08:00-12:00']);
+  });
+
+  it('a run has a focusable button named by its day and hours, which opens its editor', async () => {
+    await open([{ weekday: 1, onDate: null, startTime: '10:00:00', endTime: '12:00:00' }]);
+    const button = document.querySelector<HTMLButtonElement>('[data-run-edit]')!;
+    expect(button.getAttribute('aria-label')).toMatch(/Lundi 10:00-12:00/);
+    expect(document.querySelector('[data-run-editor]')).toBeNull();
+    button.click();
+    flushSync();
+    expect(document.querySelector('[data-run-editor]')).not.toBeNull();
+    // The press never reached the grid's gesture: the run is still open.
+    expect(times(await saved())).toEqual(['1 10:00-12:00']);
+  });
+
+  it('a real pointerdown and pointerup on the pencil paint nothing', async () => {
+    await open([{ weekday: 1, onDate: null, startTime: '10:00:00', endTime: '12:00:00' }]);
+    onDirty.mockClear();
+    const button = document.querySelector<HTMLButtonElement>('[data-run-edit]')!;
+    for (const type of ['pointerdown', 'pointerup']) {
+      const event = new MouseEvent(type, { bubbles: true, clientX: 50, clientY: 205, button: 0 });
+      Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: 'mouse' } });
+      button.dispatchEvent(event);
+    }
+    button.click();
+    flushSync();
+    expect(onDirty).not.toHaveBeenCalledWith(true);
+    expect(times(await saved())).toEqual(['1 10:00-12:00']);
+  });
+
+  /** Opens a picker by its trigger's label prefix and picks the option showing `value`. */
+  async function pick(labelPrefix: string, value: string) {
+    const trigger = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-run-editor] button'),
+    ].find((b) => b.getAttribute('aria-label')?.startsWith(labelPrefix))!;
+    trigger.click();
+    flushSync();
+    await tick();
+    const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+      (b) => b.textContent?.trim() === value
+    )!;
+    option.click();
+    flushSync();
+    await tick();
+  }
+
+  it('edits the end of a run through the pencil, and an off-grain start stays', async () => {
+    await open([{ weekday: 1, onDate: null, startTime: '14:25:00', endTime: '14:50:00' }]);
+    document.querySelector<HTMLButtonElement>('[data-run-edit]')!.click();
+    flushSync();
+    await pick('Fin', '15:00');
+    expect(times(await saved())).toEqual(['1 14:25-15:00']);
+  });
+
+  it('keeps the panel on the merged run when an edit joins a neighbour', async () => {
+    await open([
+      { weekday: 1, onDate: null, startTime: '08:00:00', endTime: '10:00:00' },
+      { weekday: 1, onDate: null, startTime: '11:00:00', endTime: '12:00:00' },
+    ]);
+    document.querySelector<HTMLButtonElement>('[data-run-edit]')!.click();
+    flushSync();
+    await pick('Fin', '11:00');
+    const panel = document.querySelector('[data-run-editor]');
+    expect(panel).not.toBeNull();
+    expect(panel!.textContent).toContain('12:00');
+    expect(times(await saved())).toEqual(['1 08:00-12:00']);
+  });
+
+  it('refuses an end that is not after the start, aloud, and changes nothing', async () => {
+    await open([{ weekday: 1, onDate: null, startTime: '10:00:00', endTime: '12:00:00' }]);
+    document.querySelector<HTMLButtonElement>('[data-run-edit]')!.click();
+    flushSync();
+    await pick('Début', '13:00');
+    expect(document.querySelector('[data-run-editor]')!.textContent).toContain(
+      'La fin est avant le début'
+    );
+    expect(times(await saved())).toEqual(['1 10:00-12:00']);
+  });
+});
+
+describe('AvailabilityEditor - an unchanged save sends the stored lines as they were', () => {
+  const stored = (weekday: number, start: string, end: string) => ({
+    weekday,
+    onDate: null,
+    startTime: start,
+    endTime: end,
+  });
+  const order = (
+    l: { weekday: number | null; startTime: string }[]
+  ): { weekday: number | null; startTime: string }[] =>
+    [...l].sort(
+      (a, b) => (a.weekday ?? 0) - (b.weekday ?? 0) || a.startTime.localeCompare(b.startTime)
+    );
+
+  it.each([
+    ['an off-grain line', [stored(1, '14:25', '14:50')]],
+    ['a night crossing midnight', [stored(5, '22:00', '24:00'), stored(6, '00:00', '02:00')]],
+    ['a 24:00 end', [stored(3, '08:00', '24:00')]],
+  ])('%s', async (_name, lines) => {
+    await open(
+      lines.map((l) => ({ ...l, startTime: `${l.startTime}:00`, endTime: `${l.endTime}:00` }))
+    );
+    expect(order(await saved())).toEqual(order(lines));
+  });
+
+  it('and still does after a pencil is opened and closed', async () => {
+    const lines = [stored(1, '14:25', '14:50')];
+    await open(
+      lines.map((l) => ({ ...l, startTime: `${l.startTime}:00`, endTime: `${l.endTime}:00` }))
+    );
+    document.querySelector<HTMLButtonElement>('[data-run-edit]')!.click();
+    flushSync();
+    expect(order(await saved())).toEqual(order(lines));
+  });
+});
+
+describe('AvailabilityEditor - a fixed-slot space (owner, 2026-10-29)', () => {
+  const slot = (weekday: number, start: string, end: string) => ({
+    weekday,
+    onDate: null,
+    startTime: `${start}:00`,
+    endTime: `${end}:00`,
+  });
+  // Three touching 30-min slots: one painter row each.
+  const SLOTS = [slot(1, '14:00', '14:30'), slot(1, '14:30', '15:00'), slot(1, '15:00', '15:30')];
+
+  it('a press on one slot closes that slot alone, whole', async () => {
+    await open(SLOTS, true);
+    drag(0, 29, 0, 29); // row 29 = 14:30, the second slot
+    expect(times(await saved())).toEqual(['1 14:00-14:30', '1 15:00-15:30']);
+  });
+
+  it('a paint elsewhere leaves touching slots separate', async () => {
+    await open(SLOTS, true);
+    drag(1, 28, 1, 28); // Tuesday 14:00: opens ONE slot of the week's length
+    expect(times(await saved())).toEqual([
+      '1 14:00-14:30',
+      '1 14:30-15:00',
+      '1 15:00-15:30',
+      '2 14:00-14:30',
+    ]);
+    // The painter still draws Monday as three slots, not one run.
+    const monday = document
+      .querySelector('[data-painter] [data-day="0"]')!
+      .getAttribute('aria-label');
+    expect(monday).toContain('14:00 - 14:30, 14:30 - 15:00, 15:00 - 15:30');
+  });
+
+  it('a step space still merges touching hours, as before', async () => {
+    await open([slot(1, '14:00', '14:25'), slot(1, '14:25', '14:50')]);
+    drag(1, 28, 1, 28);
+    expect(times(await saved())).toEqual(['1 14:00-14:50', '2 14:00-14:30']);
+  });
+
+  it('says so under the painter when the cap stops a paint, instead of a refused save', async () => {
+    const at = (min: number) =>
+      `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    // 199 one-slot lines: Monday..Thursday, 50 slots of 25 min each, minus one.
+    const lines = [];
+    for (let i = 0; lines.length < 199; i++) {
+      const start = (i % 50) * 25;
+      lines.push(slot(Math.floor(i / 50) + 1, at(start), at(start + 25)));
+    }
+    await open(lines, true);
+    drag(6, 0, 6, 47); // the whole Sunday
+    expect(document.body.textContent).toContain('au-delà des 200');
+    expect((await saved()).length).toBe(200);
+  });
+
+  it('on an EMPTIED week, a press opens a slot of the STORED length (migration 116)', async () => {
+    await open([], true, 45);
+    expect(document.body.textContent).toContain('créneau de 45 min');
+    drag(0, 28, 0, 28); // Monday 14:00
+    expect(times(await saved())).toEqual(['1 14:00-14:45']);
+  });
+
+  it('a space with no stored length still reads it from its lines', async () => {
+    await open(SLOTS, true, null);
+    drag(1, 28, 1, 28);
+    expect(times(await saved())).toContain('2 14:00-14:30');
   });
 });

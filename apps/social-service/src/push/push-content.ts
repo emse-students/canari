@@ -38,6 +38,10 @@ export type PushContentKey =
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
+  | 'social_booking_cancelled'
+  | 'social_booking_withdrawn'
+  | 'social_booking_added'
+  | 'social_booking_reminder'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
@@ -122,6 +126,11 @@ export type PushContent = {
    * - the two form reminder keys: nothing, always empty
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
    * - the five event keys: the event's own title, which is not translatable either
+   * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
+   *   several), or for `social_booking_cancelled` the organiser's own word when one was sent (Q-R3);
+   *   for `social_booking_reminder` the place followed by the start time on the space's clock.
+   *   EMPTY on a space reached by its link only (Q-R5): a lock screen never names such a space, and
+   *   the device then shows the key's fixed sentence
    */
   arg: string;
   legacyTitle: string;
@@ -679,5 +688,63 @@ export function liveWithdrawnContent(): PushContent {
     arg: '',
     legacyTitle: 'Droit de lancer un live retiré',
     legacyBody: 'La modération vous a retiré le droit de lancer un live.',
+  };
+}
+
+/**
+ * THE BOOKINGS' FOUR NOTICES (WP-N, D53, Q-R2..Q-R5). Each is the actor-titled shape of a follow
+ * notice: who acted names the title, and the body is `arg` (the place, see {@link PushContent}) or,
+ * when it is empty - a space reached by its link only (Q-R5) - the key's fixed sentence.
+ *
+ * A booking was CANCELLED by someone else than the recipient: its organiser (D53), its holder
+ * (Q-R2, told to the participants), or the space was deleted with it (Q-R4). `actorName` is who
+ * did it - the association for an organiser of an association space.
+ */
+export function bookingCancelledContent(actorName: string, line: string): PushContent {
+  return {
+    key: 'social_booking_cancelled',
+    actorName,
+    arg: line,
+    legacyTitle: `${actorName} a annulé une réservation`,
+    legacyBody: line || "Elle n'aura pas lieu",
+  };
+}
+
+/** A participant LEFT the recipient's booking (Q-R2). `actorName` is that participant. */
+export function bookingWithdrawnContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_withdrawn',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} a quitté votre réservation`,
+    legacyBody: place || 'Votre réservation est maintenue',
+  };
+}
+
+/**
+ * The recipient is IN a booking someone else made (D53): added as a participant, or the holder of a
+ * booking made on their behalf (D20). `actorName` is who booked - the association for an organiser.
+ */
+export function bookingAddedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_added',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} vous a inscrit à une réservation`,
+    legacyBody: place || 'Retrouvez-la dans Réservations',
+  };
+}
+
+/**
+ * The REMINDER before a slot (D53, Q-R1). Nobody acted: no actor, a fixed title. `arg` is the place
+ * and the start time, or the time alone on a link-only space (Q-R5).
+ */
+export function bookingReminderContent(line: string): PushContent {
+  return {
+    key: 'social_booking_reminder',
+    actorName: '',
+    arg: line,
+    legacyTitle: 'Rappel de réservation',
+    legacyBody: line || 'Votre réservation commence bientôt',
   };
 }

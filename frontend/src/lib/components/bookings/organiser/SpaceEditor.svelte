@@ -1,16 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import {
-    CalendarRange,
-    Columns3,
-    Database,
-    Download,
-    Info,
-    ListChecks,
-    Plus,
-    Trash2,
-    Users,
-  } from '@lucide/svelte';
+  import { Columns3, Download, Plus, Trash2 } from '@lucide/svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
@@ -26,13 +16,13 @@
   import SpacePosterField from './SpacePosterField.svelte';
   import {
     addResource,
-    bookingExportLabels,
     deleteSpace,
-    exportBookings,
     updateSpace,
     type ManagedResource,
     type ManagedSpace,
+    type SlotMode,
   } from '$lib/bookings/api';
+  import { DEFAULT_SLOT_MINUTES, durationChoices, SLOT_LENGTH_CHOICES } from '$lib/bookings/wizard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import { columnsHidden } from '$lib/bookings/columns';
@@ -52,8 +42,10 @@
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
+  import { reminderFromValue, reminderOptions } from '$lib/bookings/reminder';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -120,6 +112,38 @@
   const zones = $derived(timeZoneChoices(draft.timeZone));
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
+  /** The slot length a painted slot opens: the SAVED one too, null when none is stored. */
+  const savedSlotMinutes = $derived(space.slotMode === 'slots' ? space.slotMinutes : null);
+  /**
+   * The slot lengths offered: the wizard's. A slots space created before the length was stored
+   * (migration 116) is offered "read from the slots" too, which keeps it unstored.
+   */
+  const slotLengthOptions = $derived([
+    ...(space.slotMode === 'slots' && space.slotMinutes === null
+      ? [{ value: '', label: m.bookings_slot_length_inferred() }]
+      : []),
+    ...durationChoices(SLOT_LENGTH_CHOICES),
+  ]);
+
+  /**
+   * The mode switch. Turning a SAVED step space into fixed slots chooses a slot length at once
+   * (the wizard's default, changed in the field below), so the switch stores one; going back to the
+   * saved mode restores the saved length, so a switch undone leaves nothing unsaved.
+   */
+  function selectMode(mode: SlotMode) {
+    Log.d('BOOKINGS', `space mode=${mode} saved=${space.slotMode}`);
+    draft.slotMode = mode;
+    if (mode === 'slots') {
+      draft.slotMinutes =
+        space.slotMode === 'step'
+          ? String(DEFAULT_SLOT_MINUTES)
+          : space.slotMinutes === null
+            ? ''
+            : String(space.slotMinutes);
+    } else if (space.slotMode === 'step') {
+      draft.slotMinutes = '';
+    }
+  }
 
   function problemOf(field: NumberField | 'name'): string | undefined {
     const p = problems[field];
@@ -214,9 +238,7 @@
     exporting = true;
     exportError = '';
     try {
-      const blob = await exportBookings(space.id, bookingExportLabels());
-      await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
-      Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
+      await downloadSpaceExport(space);
     } catch (e) {
       Log.i('BOOKINGS', `export refused: ${String(e)}`);
       exportError = describeBookingRefusal(e, m.bookings_export_button());
@@ -226,7 +248,10 @@
   }
 
   async function removeSpace() {
-    const confirmed = await showConfirm(m.bookings_delete_space_confirm({ name: space.name }), {
+    const question = BOOKING_NOTIFICATIONS_LIVE
+      ? m.bookings_delete_space_confirm_notified({ name: space.name })
+      : m.bookings_delete_space_confirm({ name: space.name });
+    const confirmed = await showConfirm(question, {
       danger: true,
       confirmLabel: m.common_delete_button(),
     });
@@ -243,7 +268,7 @@
   }
 </script>
 
-<FormSection title={m.bookings_section_general()} summary={summaries.essentials} icon={Info}>
+<FormSection title={m.bookings_section_general()} summary={summaries.essentials} step={1}>
   <Input
     id="space-name"
     label={m.bookings_field_name()}
@@ -282,7 +307,7 @@
 <FormSection
   title={m.bookings_section_resources()}
   summary={summaries.when}
-  icon={CalendarRange}
+  step={2}
   badge={hidden ? undefined : String(space.resources.length)}
 >
   <div>
@@ -294,12 +319,22 @@
         { key: 'slots', label: m.bookings_mode_slots() },
       ]}
       value={draft.slotMode}
-      onSelect={(k) => (draft.slotMode = k)}
+      onSelect={selectMode}
     />
     <p class={CONTROL_HINT_CLASS}>
       {draft.slotMode === 'step' ? m.bookings_mode_step_hint() : m.bookings_mode_slots_hint()}
     </p>
   </div>
+  {#if draft.slotMode === 'slots'}
+    <Select
+      id="space-slot-length"
+      label={m.bookings_wizard_slot_length()}
+      hint={m.bookings_slot_length_hint()}
+      value={draft.slotMinutes}
+      options={slotLengthOptions}
+      onValueChange={(v) => (draft.slotMinutes = v)}
+    />
+  {/if}
   {#if draft.slotMode === 'step'}
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Input
@@ -323,7 +358,7 @@
     <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
   {/if}
   {#if hidden}
-    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-3 sm:p-4">
+    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-4">
       <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
       <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
       <div class="min-w-0 flex-1 basis-56">
@@ -377,6 +412,8 @@
         spaceId={space.id}
         timeZone={space.timeZone}
         stepMinutes={savedStep}
+        fixedSlots={space.slotMode === 'slots'}
+        slotMinutes={savedSlotMinutes}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}
@@ -405,7 +442,7 @@
   {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_who()} summary={summaries.who} icon={Users}>
+<FormSection title={m.bookings_section_who()} summary={summaries.who} step={3}>
   <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
          empty set of criteria for the editor to fill. -->
   <div class="space-y-3">
@@ -480,7 +517,7 @@
 <FormSection
   title={m.bookings_section_rules()}
   summary={summaries.rules}
-  icon={ListChecks}
+  step={4}
   collapsible
   startOpen={false}
   badge={rulesActive ? m.bookings_rules_badge({ count: rulesActive }) : undefined}
@@ -555,13 +592,24 @@
     />
     <p class={CONTROL_HINT_CLASS}>{m.bookings_field_withdraw_hint()}</p>
   </div>
+  {#if BOOKING_NOTIFICATIONS_LIVE}
+    <!-- The space's default reminder (Q-R1, the mockup's "Rappel envoye avant le creneau"). -->
+    <Select
+      id="space-reminder"
+      label={m.bookings_reminder_space_label()}
+      hint={m.bookings_reminder_space_hint()}
+      value={draft.reminderMinutes}
+      options={reminderOptions(reminderFromValue(draft.reminderMinutes))}
+      onValueChange={(v) => (draft.reminderMinutes = v)}
+    />
+  {/if}
 </FormSection>
 
 <FormSection
   title={m.bookings_section_data()}
   summary={summaries.data}
   badge={retentionBadge}
-  icon={Database}
+  step={5}
   collapsible
   startOpen={false}
 >

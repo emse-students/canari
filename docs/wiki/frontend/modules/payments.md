@@ -99,7 +99,7 @@ The whole mechanism is [below](#a-product-checkout-is-a-row-one-per-attempt-2026
 
 | Component | Role |
 |---|---|
-| `shop/ProductCard.svelte` | Product listing card |
+| `shop/ProductCard.svelte`, `shop/MembershipCard.svelte`, `shop/ProductPrice.svelte` | A non-tier product card; ONE membership card with a row per tier still offered (`$lib/shop/productCards.ts`'s `offeredTiers`, a thin wrapper over the ONE pricing decision in `$lib/pricing/viewerPrice.ts`: the held tier and lower ones are not offered, the association's cotisations being disabled hides the whole card behind its reason, and the highest-tier holder gets no card at all). `ProductPrice.svelte` reads `viewerPrice.ts`'s `preferentialPriceLabel`/`fullPriceLabel` (the server's `viewerDueCents`, through `formatAmount` - Intl, never `toFixed`); a technical name such as `balance_topup` is replaced by a localized type label (`productDisplayName`). The paid return banner names a top-up or a membership by the product type; the confirm answer carries no amount and no delivery state, so a top-up says the credit follows |
 | `shop/ProductPurchaseButton.svelte` | Buy button with loading state and success toast |
 
 ## Routes
@@ -588,7 +588,8 @@ back to `disabled`.
 - **While live**, anything unexpected is reported at once: a payment request nobody launched, an
   association other than the test one holding a Business, any callback arriving.
 
-**Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
+**Where the key came from until enrolment lot 1: the payout manager typed it** (now captured at
+`business/create`, [below](#the-key-is-captured-at-businesscreate-enrolment-lot-1)). `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
 `associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
 under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
@@ -599,17 +600,112 @@ and the column is mapped `select`/`insert`/`update: false` so no entity read can
 the Business clears it. The copies of production strip it (`copy-strips.sh`) and a local estate
 regenerates the secret (`env-from-prod.sh`), so a laptop with a dump cannot open one.
 
-**Why not capture it at `business/create`.** `business/create` answers `api_token`, `api_token_id` and
-`dashboard_url`; Lydia says each validated Business has a `private_token` in its console, "Mes
-informations". That `api_token_id` IS that private token is a hypothesis nobody has measured (it needs a
-validated Business's key to compare), and storing an unidentified secret is worse than storing none -
-so `api_token_id` stays unpersisted and redacted from logs.
+### The key is captured at `business/create` (enrolment lot 1)
 
-**No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
-verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
-when the payer comes back (`confirm-payment`). Nothing checks a key when it is saved - a wrong one shows
-only at the first refused callback - so the panel says so, and the PUT is throttled per user and
-association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard`).
+`api_token_id` IS the Business private token (`auth/vendortoken`, homologation 2026-10-30,
+[lydia-api](../../lydia-api.md#1-the-four-credentials-and-what-each-is-for)), and Lydia answers it once.
+So the onboarding (`POST /api/payments/onboarding`, core-service) now:
+
+1. **Refuses a re-run** while the association has a `lydiaAccountId`: a typed 409
+   `LYDIA_ACCOUNT_ALREADY_LINKED`, read BEFORE `business/create`; social-service's link is one
+   `UPDATE ... WHERE "lydiaAccountId" IS NULL`, so two concurrent onboardings cannot both link. The
+   screen maps the code (`lydiaOnboardingRefusal.ts`) and re-reads the payout account.
+2. **Proves the key** with `auth/vendortoken` (`vendor_token` + `vendor_id`). Only `status: "ok"` goes on.
+3. **Links the Business WITH its key** (`POST associations/:id/lydia-account`, internal secret): the
+   same column, encryption and binding as a pasted key, in the same statement as the vendor token. The
+   browser receives the public pair only.
+
+The payout account is read first, before anything is created: a 404 is an unknown association (refused,
+nothing created) and a 5xx or a transport failure is the typed 503 `PAYOUT_ACCOUNT_UNREADABLE` - never
+read as "not linked", which would invite a second `business/create`. A link refused with the body code
+`LYDIA_ACCOUNT_ALREADY_LINKED` (a concurrent run won) is the same 409, classified on the code and not
+on the status.
+
+**What may be logged:** the `vendor_token` (`api_token`) is PUBLIC - it names a payment destination,
+it is in every callback and on the manager's screen - so an ERROR line may carry it, and the orphan's
+must. The Business private key (`api_token_id`, `vendor_id`) and every signature are secret and never
+logged (`LYDIA_LOG_REDACT_KEYS` in `lydia-payment-provider.ts`).
+
+#### An orphan Business: ONE typed outcome, and what an admin does
+
+Every failure AFTER a successful `business/create` - `auth/vendortoken` unreachable or 5xx, error 103 or
+any other Lydia code, a missing `api_token_id` or `dashboard_url`, a link that fails for any reason but a
+concurrent run -
+is ONE answer: the typed 502 `LYDIA_BUSINESS_CREATED_UNLINKED`. The Business exists at Lydia, Canari
+links nothing, and the line logged at ERROR is
+
+```
+[LYDIA-ORPHAN] association <id>: Business vendor_token=<token> was created at Lydia and is NOT linked (<why>) ...
+```
+
+(a concurrent run that lost the link logs the same line before its 409: its Business is an orphan too).
+The screen branches on the code and says not to retry and to contact a platform administrator.
+**A retry can still create a second Business** - the association is not linked, so the 409 guard does
+not stop it; the no-retry message and the admin path below are the mitigation, not a lock.
+
+What the admin does, in this order:
+
+1. **Find the line**: `[LYDIA-ORPHAN]` and the association in core-service's log; take its `vendor_token`.
+2. **Confirm that NO association holds that token** - the link may have committed after its answer was
+   lost, and deleting a linked Business would cut a working association off. Ask social-service's own
+   lookup (the one the webhook uses), from inside the core-service container, which carries both
+   variables (core reaches social-service through `FORM_URL`, and social-service serves every route
+   under `/api` - the sibling internal routes `lydia-callback-key` and `lydia-disconnect` answered at
+   that shape in production on 2026-10-30). Run it on an estate where enrolment lot 1 is deployed:
+   before that the route does not exist and answers 404 (dev, measured 2026-10-31):
+
+   ```sh
+   bun -e 'const r = await fetch(`${process.env.FORM_URL || "http://social-service:3014"}/api/internal/associations/lydia-business-of-vendor-token`, {method: "POST", headers: {"Content-Type": "application/json", "X-Internal-Secret": process.env.INTERNAL_SECRET}, body: JSON.stringify({vendorToken: process.argv[1]})}); console.log(r.status, await r.text())' '<vendor_token>'
+   ```
+
+   Only `200 {"associationId":null,"onboardingComplete":null}` lets step 3 go on. An `associationId` means
+   the Business IS linked: nothing to delete, the association is enrolled. Any other status means the
+   check did not run: repeat it, never skip it.
+3. **Give the `vendor_token` to Lydia's support** and ask them to delete that Business (the API has no
+   delete call); then let the association enrol again from its settings. Nothing is stored in Canari for
+   an orphan, so there is nothing to clean here.
+
+**No report scans these lines today** (the hourly reports read databases, not core-service's log); a
+report that should would grep the tags `[LYDIA-ORPHAN]` and `[LYDIA-ORPHAN-SUSPECT]`.
+
+#### A `business/create` with no answer: the outcome is UNKNOWN, and the screen says so
+
+The onboarding is five calls in a row - the permission and payout-account reads, `business/create`,
+`auth/vendortoken`, the link - behind nginx's `/api/payments` location, whose `proxy_read_timeout` is
+nginx's 60 s default. Each step has its own bound (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`: 5 + 5 + 25 + 10 +
+10 = **55 s**, a spec asserts the sum stays under 60 s), so core always answers TYPED before nginx answers
+a bare 504; the client waits **75 s** (`LYDIA_ONBOARDING_DEADLINE_MS`), above both.
+
+A `business/create` that times out, answers a 5xx, a 4xx that does not say refused, or a 200 with no
+`api_token` is AMBIGUOUS - Lydia may have created the Business. core answers the typed 504
+`LYDIA_BUSINESS_CREATE_UNCONFIRMED` and logs at ERROR `[LYDIA-ORPHAN-SUSPECT] association <id>: ...`
+(no `vendor_token` to name: the admin asks Lydia's support which Businesses the Provider created for that
+association, then runs the check of step 2 on each). The screen treats that code, its own deadline, a
+transport failure and a code-less 5xx the same way (`lydiaOnboardingOutcomeUnknown`): it re-reads the
+payout account - linked after all, it shows the linked state - and otherwise says "check before
+retrying", never the generic save error.
+
+**Not a lock.** A durable "enrolment in flight" marker written before `business/create` would refuse a
+second attempt outright; it needs a column, so it goes with the lot 2 migration ([backlog](../../backlog.md)).
+
+**The webhook is a log line, by necessity.** `business/create` carries `webhook` =
+`/api/payments/lydia-business-webhook` (public, multer-bounded, nginx zone `lydia_callback`). Its body
+is unsigned and names a public vendor token, and Lydia has no read of a Business's validation state
+that is not a real `request/do` - so the route WRITES NOTHING: it reads which association holds the
+token (`internal/associations/lydia-business-of-vendor-token`, a SELECT) and logs
+`[LYDIA-BUSINESS-WEBHOOK]` at INFO for `BUSINESS_VALIDATED`, WARN for `BUSINESS_UNVALIDATED` or
+anything else, always answering 200. A global admin keeps "Valider l'onboarding". A spec drives every
+event, a forged "complete" field and an oversized body through it and asserts no write.
+
+**The paste field is gone** (production has no linked Business without a stored key, counted
+2026-10-30). Old store builds still embed it, so `PUT lydia-business-key` stays as a shim: a typed
+`410 LYDIA_KEY_PASTE_RETIRED`, nothing written, a WARN per hit - behind the old route's throttle and
+`MANAGE_PAYOUT_ACCOUNT` check, so the WARN counts managers on an old build and not anonymous noise; the `GET` status those builds read stays
+too ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)).
+
+**No key: no longer a reachable state** for a Business linked by the onboarding (lot 1 links it with
+its key or not at all). Were one keyless anyway, every callback of that association is refused (400)
+and a FORM payment is still confirmed when the payer comes back (`confirm-payment`).
 
 **The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
@@ -630,16 +726,18 @@ afterwards. The `confirm` callback reached Canari's route and verified with the 
 same day, two Businesses were created through the onboarding in production; neither is validated yet.
 
 **What the enrolment screen does not say yet, and owes** (found by that run; the work package is in
-[backlog](../../backlog.md#enrolment-through-canari---the-screen-owes-the-path-to-validation-2026-10-23)):
+[backlog](../../backlog.md#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)):
 
 - After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
   link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
 - The path to validation is Lydia's activation e-mail (sign in to the console with the Lydia Pro app,
-  upload documents, wait for Lydia); how a NEW Business's holder signs in is not known yet
-  ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+  upload documents, wait for Lydia); a NEW Business's holder reaches it once added by the
+  Provider-signed `business/addcashier` (measured in production 2026-10-30), which Canari does not call
+  yet - lot 3 ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
 - "Pending" cannot tell "waiting for Lydia" from "validated by Lydia, not yet marked here": the global
   admin's "Valider l'onboarding" is a declaration. Lydia's error 5 on `request/do` is the one measured
-  signal of a Business not yet validated.
+  signal of a Business not yet validated; the `BUSINESS_VALIDATED` webhook is now received and logged
+  (lot 1), but, unsigned, it marks nothing.
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 

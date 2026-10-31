@@ -343,7 +343,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
-	@bash .github/scripts/tests/land-release-changelog.test.sh
+	@bash .github/scripts/tests/land-release.test.sh
 	@bash .github/scripts/tests/backend-url.test.sh
 	@bash .github/scripts/tests/release-chain.test.sh
 	@bash .github/scripts/tests/release-notes-body.test.sh
@@ -381,6 +381,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/control-characters.test.mjs
 	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
+	@bash .github/scripts/tests/android-app-compile.test.sh
 	@bash .github/scripts/tests/wait-default-blueprints.test.sh
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
@@ -499,6 +500,8 @@ test-harness:
 	@bun tools/cross-client-harness/archive/liveweb-selftest.mjs
 	@bun tools/cross-client-harness/archive/ssh-selftest.mjs
 	@bun tools/cross-client-harness/archive/removals-selftest.mjs
+	@bun tools/cross-client-harness/archive/grantpanel-selftest.mjs
+	@bun tools/cross-client-harness/archive/testerbuild-selftest.mjs
 	@bun tools/cross-client-harness/archive/devicenotice-selftest.mjs
 	@bun tools/cross-client-harness/archive/handrow-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"

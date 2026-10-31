@@ -1,5 +1,6 @@
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import type { DistributionScope } from '$lib/mls-client/distributionScope';
+import type { DistributionSeat } from '$lib/mls-client/IMlsService';
 
 export interface CreateWorkspaceDto {
   slug: string;
@@ -91,6 +92,12 @@ export interface DistributionGroupDto {
    * caller's behaviour exactly as it was; only a present-and-missing device id may make it re-join.
    */
   memberDevices?: string[];
+  /**
+   * The asking device's own seat, read by the server AFTER the base above - present only when the
+   * read named a device ({@link ChannelService.getDistributionGroup}'s `deviceId`). See
+   * {@link DistributionSeat}.
+   */
+  seat?: DistributionSeat;
 }
 
 export interface CreateChannelDto {
@@ -468,9 +475,16 @@ export class ChannelService {
    * first member in and is the one that creates it - a state to act on, never an error. A scope
    * with no group at all is a `ChannelApiError` carrying `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP` or
    * `CHANNEL_HAS_NO_DISTRIBUTION_GROUP`, because those need a different response again.
+   *
+   * `deviceId` asks for that device's own seat in the same answer (`seat`), read after the base -
+   * what an external join on a key group judges its door by (channel-encryption section 20).
    */
-  async getDistributionGroup(scope: DistributionScope): Promise<DistributionGroupDto> {
-    const res = await this.fetchWithAuth(this.distributionGroupUrl(scope));
+  async getDistributionGroup(
+    scope: DistributionScope,
+    deviceId?: string
+  ): Promise<DistributionGroupDto> {
+    const query = deviceId ? `?${new URLSearchParams({ deviceId })}` : '';
+    const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}${query}`);
     await this.handleError(res);
     // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
     const dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;

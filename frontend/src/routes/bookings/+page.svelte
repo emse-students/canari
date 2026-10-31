@@ -4,11 +4,12 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import SpaceList from '$lib/components/bookings/booker/SpaceList.svelte';
   import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
-  import MyBookingCard from '$lib/components/bookings/booker/MyBookingCard.svelte';
+  import MyBookingRow from '$lib/components/bookings/booker/MyBookingRow.svelte';
   import { listSpaces, myBookings, type ListedSpace, type MyBooking } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -94,13 +95,14 @@
         {:else if coming.length === 0}
           <p class="text-text-muted text-sm">{m.bookings_mine_empty()}</p>
         {:else}
-          <ul class="space-y-3">
+          <ul
+            class="border-cn-border bg-cn-surface divide-cn-border divide-y overflow-hidden rounded-2xl border shadow-sm"
+          >
             {#each coming as booking (booking.id)}
-              <li><MyBookingCard {booking} {nowMs} onChanged={readBookings} /></li>
+              <li><MyBookingRow {booking} {nowMs} onChanged={readBookings} /></li>
             {/each}
           </ul>
         {/if}
-        <p class="text-text-muted text-xs">{m.bookings_mine_no_notification_note()}</p>
         {#if history.length}
           <details class="group">
             <summary
@@ -108,9 +110,11 @@
             >
               {m.bookings_history_heading({ count: history.length })}
             </summary>
-            <ul class="mt-2 space-y-3">
+            <ul
+              class="border-cn-border bg-cn-surface divide-cn-border mt-2 divide-y overflow-hidden rounded-2xl border shadow-sm"
+            >
               {#each history as booking (booking.id)}
-                <li><MyBookingCard {booking} {nowMs} onChanged={readBookings} /></li>
+                <li><MyBookingRow {booking} {nowMs} onChanged={readBookings} /></li>
               {/each}
             </ul>
           </details>
@@ -136,6 +140,12 @@
       </section>
 
       <EditBookingsTab associationId={null} />
+
+      <p class="text-text-muted text-center text-xs">
+        {BOOKING_NOTIFICATIONS_LIVE
+          ? m.bookings_mine_notification_note()
+          : m.bookings_mine_no_notification_note()}
+      </p>
     </div>
   {/if}
 </PageContainer>

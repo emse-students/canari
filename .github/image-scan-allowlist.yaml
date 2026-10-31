@@ -214,6 +214,33 @@ vulnerabilities:
       - "pkg:pypi/oauthlib@3.3.1"
     statement: "oauthlib 3.3.1 in authentik 2026.8.5: required by requests-oauthlib, the client side of authentik's external OAuth sources, which the blueprints may use for a sign-in source (not checked whether it is an OAuth one); whether the advisory's conditions can arise there, and the full advisory text, were not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
 
+  # Two more in the same image (2026-10-31, accepted by the owner the same day), same footing:
+  # HIGH, fixed upstream, in no authentik release (2026.8.5 is still the newest). A second oauthlib
+  # advisory on the same 3.3.1 (fixed in 4.0.0), and four pyasn1 0.6.4 advisories (fixed in
+  # 0.6.5) - pyasn1 arrives, per authentik's lockfile at that tag, through ldap3, pyasn1-modules
+  # and webauthn. NOT verified: which process imports them, and whether outside input reaches the
+  # vulnerable call.
+  - id: CVE-2026-118669
+    purls:
+      - "pkg:pypi/oauthlib@3.3.1"
+    statement: "oauthlib 3.3.1 (privilege escalation via client identity) in authentik 2026.8.5, through requests-oauthlib (the client side of external OAuth sources); whether the advisory's conditions arise there was not verified. No authentik release ships 4.0.0 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119194
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119195
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119196
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119197
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+
   # --- curl 8.22.0-r0, in the same four Alpine 3.24 images (2026-10-26) -------------------------
   # CVE-2026-92392 (HTTP/2 upload use-after-free), fixed by Alpine in 8.23.0-r0. Reported as `curl`
   # in adminer, nginx:1.31.8-alpine and nginx:stable-alpine, and as `libcurl` in postgres:18-alpine.

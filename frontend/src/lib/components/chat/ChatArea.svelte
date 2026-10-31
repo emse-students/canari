@@ -38,6 +38,7 @@
     chatViewCountLine,
     isPinnedToBottom,
     respondToNewMessage,
+    keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
@@ -1112,7 +1113,7 @@
    * l'interface"*).
    *
    * AN OBSERVER, NOT A TIMER. Every trigger is the change itself, so there is nothing to tune and
-   * nothing that fires when nothing happened; `shouldFollowThreadBottom` holds the judgement and is
+   * nothing that fires when nothing happened; `threadGrowthResponse` holds the judgement and is
    * tested on its own. `isNearBottom` is read as it stood BEFORE the growth, which is what it is:
    * nothing recomputes it without a scroll event, and content growing under a stationary reader
    * fires none.
@@ -1146,10 +1147,16 @@
       keyboardWasOpen = kbOpen;
       return;
     }
-    if (!keyboardWasOpen && kbOpen && _composerFocused && isNearBottom) {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+    const response = keyboardChangeResponse({
+      wasOpen: keyboardWasOpen,
+      isOpen: kbOpen,
+      composerFocused: _composerFocused,
+      isNearBottom,
+    });
+    if (keyboardWasOpen !== kbOpen) {
+      Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
-    if (keyboardWasOpen && !kbOpen && isNearBottom) {
+    if (response === 'follow-bottom') {
       tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
     }
     keyboardWasOpen = kbOpen;

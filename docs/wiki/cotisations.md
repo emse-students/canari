@@ -124,10 +124,38 @@ which `deriveCotisationTag(slug, mode, now, variantKey)` suffixes onto the tag
 (`cotisant:cercle-avec-alcool`) so each tier gets its own tag namespace. `variantLevel` is a reserved
 ordinal for a future "tier >= N" inclusion check (not used yet, see WP-COT-8).
 
-Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6): the
-auto-provisioned base tier (`variantKey: null`) is listed first; additional tiers are created with a
-name, price, and a required `variantKey`. Each tier's edit form can also set the upgrade-pricing link
-(`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of sibling tiers.
+Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6); see "The tier
+editor" below for what the screen shows and why.
+
+### The tier editor
+
+Reworked on 2026-10-26 after the user found the screen "pas clair du tout". Three decisions:
+
+- **The key is a TECHNICAL id: never shown, never typed, never edited by a person.** A new tier is
+  created with a label and a price only, and the server derives the key (next section). The edit
+  form never sends `variantKey`. The add button is offered only when `cotisation-options` publishes
+  `tierKeyFromLabel` (`mayCreateTier`); against an older server the tab says creation needs a
+  server update, rather than letting it create a base tier.
+- **The order is visible**: tiers are listed cheapest first, numbered (`tiersInPriceOrder` in
+  `frontend/src/lib/associations/cotisationTiers.ts`) - the product price is what a rise is ranked
+  by. A gridded tier, or a NAMED tier with no price, cannot be ranked and is listed last; the BASE
+  tier with no price at all (how every association gets it) ranks LOWEST (`tierRankCents`, the
+  twin of the server's `rankPriceCents`).
+- **A rise is a sentence**: "Un detenteur de [tier] qui passe a X paie [15] EUR au lieu de 30 EUR",
+  edited by `TierRiseEditor.svelte` over the unchanged stored pair `memberPriceTag` +
+  `amountCentsMember`, with a preview of the sentence and of the line the member reads in the shop.
+  Switched off, the editor says that a holder of another tier pays the FULL price - nothing
+  computes a complement. The pair is saved whole or not at all: a source tier with no amount is
+  cleared, since the checkout would charge the full price for it anyway.
+
+A create or save the server refuses is explained through ONE seam, `tierSaveRefusal(err)` in
+`frontend/src/lib/associations/tierKeyRefusal.ts`, classified by the body `code`, never by its
+text. From this editor only `MEMBER_PRICE_TAG_NOT_A_TIER` can still arrive (the rise names no other
+tier): a derived key is never year-shaped and the edit form sends no key, so `TIER_KEY_YEAR_SHAPED`
+answers only a client that still types one.
+
+What this removed: the "changing the identifier transfers the cotisants" field - recorded in
+[backlog](backlog.md#p3---no-screen-turns-the-base-tier-into-a-named-one-2026-10-26).
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 
@@ -192,7 +220,8 @@ sibling XOR and the base tier (`variantKey: null`) are untouched.
 its un-suffixed tag answers `tier: null` on `cotisant-status` - which a consumer such as Le Cercle
 reads as "no forfait". A multi-tier association therefore has to get rid of it, two ways:
 
-- **Convert it.** `variantKey` is editable on an existing tier. `ProductsService.update` detects the
+- **Convert it** (server only since 2026-10-26 - see "The tier editor"). `variantKey` is
+  editable on an existing tier through the API. `ProductsService.update` detects the
   change, re-derives `grantedTagName`/`tagExpiresAt`, and - in the SAME transaction - renames the tag
   on every `user_tags` row the association issued under the old name. Because the tag is fully
   derived, nobody loses their cotisation over a re-labelling. A key already used by a sibling tier is
@@ -339,7 +368,10 @@ public page view.
 **What the server refuses (`assertTierIsARise`, on every `membership` checkout).** Rank comes from
 DATA with no stored ordinal and no migration: `variantLevel` is null in production and only ever
 sorted the shop. `tierRelation` compares the target's PRODUCT price (`amountCents`, never what the
-holder paid) with the held tier's. A buyer holding several tier tags is ranked against ONE of them,
+holder paid) with the held tier's, through ONE function, `rankPriceCents` (`tier-pricing.ts`): an
+unpriced BASE tier (no amount, no grid) ranks LOWEST, as 0 - a rise to any priced tier, never a rise
+over one (a holder of a priced tier asking for it gets `TIER_NOT_A_RISE`); a named unpriced tier or a
+grid stays unrankable. No amount charged changes. A buyer holding several tier tags is ranked against ONE of them,
 picked deterministically by `pickHeldTier`: an unrankable one first, else the dearest, ties broken
 by key (named tiers in code-point order, the base tier last). The verdict is taken BEFORE the
 purchase records are read, so the code does not depend on how the held tier was obtained:
@@ -725,6 +757,12 @@ admin:
 | Create/edit `balance_topup` (Cercle) products + retry failed webhooks | **`/admin/cercle`** | `routes/admin/cercle/+page.svelte` | **global admin only** |
 | Set member pricing on a form | form create/edit | `routes/forms/create/+page.svelte` | `MANAGE_FORMS` |
 
+The **Achats** tab (`edit/EditAchatsTab.svelte`, purchases and cash sales) names every product
+through `frontend/src/lib/associations/productLabel.ts`: a Cercle top-up reads as its localized type,
+never as its stored name (one was seen as `balance_topup`), and a cash sale of a cotisation names the
+tier rather than the tag it grants. No association admin screen shows a tag name or a tier key;
+the platform admin's legacy-cotisations diagnostic page still does, on purpose (it debugs keys).
+
 The **product `type` dropdown was removed** from the boutique: membership is managed in the
 Cotisations tab, `balance_topup` moved to `/admin/cercle` (with a beneficiary-association selector,
 since a global admin recharges on behalf of an association), and the boutique itself only handles
@@ -762,7 +800,13 @@ End-user (paying) surfaces:
   (`cotisationDisabled`), gets no purchase button, only the sentence saying why (`tierNotOffered`,
   `tierNotOfferedText`) - the checkout would refuse it with a 409. Nothing on the page decides who
   qualifies for a member price; the "for holders of" suffix names the tier the server read the tag
-  as naming (`memberPriceTierKey`, `linkedTierName`), and the tier the viewer holds
+  as naming (`memberPriceTierKey`, `linkedTierName`). A viewer who pays the full price still reads
+  what the holders of the linked tier pay ("5,00 EUR pour les détenteurs de Cotisation",
+  `memberOfferLabel`: the stored `amountCentsMember`, shown only when the server named the tier and
+  that tier has a single price - an unrankable one is refused every rise - as information - never what this viewer is charged). A product with NO price at all (no grid, no
+  fixed amount, no free amount - the unpriced base tier every association gets when it enables
+  cotisations) has no row or card (`hasAPrice` in `lib/shop/productCards.ts`): the checkout refuses
+  it ("No amount provided"), and such a cotisation is granted by hand in the Achats tab. And the tier the viewer holds
   (`viewerActiveTier`) only lights the "your current tier" badge. The association page's product
   list renders the same price, suffix and refusal through the same helpers. `viewerActiveTier` is the specific tier
   `variantKey` the viewer currently holds for that association, if any (`null` for a single-tier

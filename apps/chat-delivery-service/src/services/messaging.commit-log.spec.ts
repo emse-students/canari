@@ -22,6 +22,11 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import {
+  OPENMLS_BASE,
+  OPENMLS_FOREIGN_REMOVE,
+  OPENMLS_RESYNC,
+} from '../testing/openmlsExternalRemoveFixture';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -1154,6 +1159,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
     });
 
+    /**
+     * AN EXTERNAL JOIN'S LEAF ENTERS THE TREE WITH THE ADVANCE, so its seat is written there or the
+     * join is refused whole: a device whose key package an erasure took while the commit waited on
+     * the seat lock adds no leaf no seat holds (`writeClaimedSeat`, whose every refusal is one).
+     */
+    it('refuses an EXTERNAL commit whose seat cannot be written under the lock, nothing fanned out', async () => {
+      tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-1' }] });
+      txErasedDevices.add('user-1:device-1');
+      const sent = fanOut();
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+      });
+      expect(sent).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts a pending member commit whose seat cannot be written, its leaf already in the tree', async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: null }],
+      });
+      txErasedDevices.add('user-1:device-1');
+      fanOut();
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
     it('refuses an external commit from a person who is not on the roster', async () => {
       tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-2' }] });
 
@@ -2048,6 +2082,93 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect(sent).not.toHaveBeenCalled();
       }
     );
+
+    /**
+     * RFC 9420 12.4.3.2: an external commit removes only the joiner's own prior leaf. The commit
+     * names the leaf by index; the gate reads whose it is from the tree of the stored base.
+     */
+    describe('an external commit carrying a Remove', () => {
+      const storedBase = (row: Record<string, unknown> | null) =>
+        (
+          service as unknown as { groupInfoRepo: { findOne: jest.Mock } }
+        ).groupInfoRepo.findOne.mockResolvedValue(row);
+      const roster = { groupId: 'group-1', userId: 'user-1' };
+      const atEpoch1 = (proto: string) => commit({ proto, baseEpoch: 1 }, 'user-1');
+
+      it("accepts the resync that removes the joiner's own prior leaf", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).resolves.toMatchObject({ accepted: true });
+      });
+
+      it("refuses one that removes another member's leaf, before the membership gate", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        const sent = fanOut();
+
+        await expect(atEpoch1(OPENMLS_FOREIGN_REMOVE)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['no stored base', null, 1],
+        ['a base behind the commit', { groupId: 'group-1', baseEpoch: 0 }, 1],
+        ['a base ahead of a group still at the commit', { groupId: 'group-1', baseEpoch: 2 }, 1],
+      ])('refuses one whose removed leaf cannot be named: %s', async (_name, row, activeEpoch) => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch } });
+        storedBase(row && { ...row, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+
+      /**
+       * THE RACE A LEGITIMATE RESYNC LOSES: built on base 1, submitted after another commit moved
+       * the group and its base to 2. It is the epoch gate's to answer - `epoch_mismatch`, which the
+       * joiner retries on a fresh base - never a 403 that would end its retry.
+       */
+      it.each([
+        ['the resync', OPENMLS_RESYNC],
+        ['a Remove of another leaf', OPENMLS_FOREIGN_REMOVE],
+      ])(
+        'leaves %s built on a superseded base to the epoch gate, and nothing moves',
+        async (_name, proto) => {
+          tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 2 } });
+          storedBase({ groupId: 'group-1', baseEpoch: 2, groupInfo: OPENMLS_BASE });
+          const sent = fanOut();
+
+          await expect(atEpoch1(proto)).resolves.toMatchObject({
+            accepted: false,
+            reason: 'epoch_mismatch',
+            currentEpoch: 2,
+          });
+          expect(sent).not.toHaveBeenCalled();
+        }
+      );
+
+      it('refuses one carrying more than one Remove', async () => {
+        tables({ keyPackages: [ownKey], roster: [roster] });
+        storedBase({ groupId: 'group-1', baseEpoch: 5, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(
+          commit(
+            { proto: externalCommitFrame('group-1', 5n, 'user-1:device-1', 1, [1, 1]) },
+            'user-1'
+          )
+        ).rejects.toMatchObject({ response: { error: 'commit_identity_mismatch' } });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+    });
 
     it("holds a key group's external commit to the same header: its own group and epoch", async () => {
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });

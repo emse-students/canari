@@ -36,7 +36,8 @@ export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
 
-const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
+/** The Intl locale this client formats dates and numbers in. */
+export const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {
@@ -56,7 +57,7 @@ export function formatDay(date: string, withYear = false): string {
 }
 
 /** A calendar date, short: "sam. 7 nov.". */
-function formatShortDay(date: string): string {
+export function formatShortDay(date: string): string {
   const [y, mo, d] = date.split('-').map(Number);
   return new Intl.DateTimeFormat(intlLocale(), {
     timeZone: 'UTC',
@@ -147,6 +148,15 @@ export function windowRefusal(
     startMs,
     nowMs
   );
+}
+
+/**
+ * A unit that is over on the device's clock. The grid DIMS it and says nothing in it: "not
+ * bookable" is news only for a unit that is still to come, and repeating it down every past cell
+ * of the week buried the cells that were still worth reading.
+ */
+export function isPastUnit(unit: { endMs: number }, nowMs: number): boolean {
+  return unit.endMs <= nowMs;
 }
 
 /** Days of one week on the booker's page. */
@@ -388,6 +398,18 @@ export function dragRange(
     last = i;
   }
   return { first: Math.min(anchor, last), count: Math.abs(last - anchor) + 1 };
+}
+
+/**
+ * How many units one drag over the grid may select: a block's length on the organiser's dashboard
+ * (`blockMode`), else what one booking may cover. Above 1, a drag means something, so the screen
+ * says it; the grid and the dashboard read it from here and cannot disagree.
+ */
+export function gridUnitLimit(
+  space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>,
+  blockMode: boolean
+): number {
+  return blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space);
 }
 
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */

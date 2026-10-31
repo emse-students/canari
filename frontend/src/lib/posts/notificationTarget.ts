@@ -1,4 +1,5 @@
 import type { PostNotification } from './api';
+import { BOOKINGS_HREF } from '$lib/bookings/routes';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
@@ -89,6 +90,13 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'live_suspended':
     case 'live_withdrawn':
       return null;
+    // The bookings' notices (WP-N): `postId` is the BOOKING, which has no page of its own - the
+    // reader's bookings are listed on Reservations (a cancelled one there too, marked).
+    case 'booking_cancelled':
+    case 'booking_withdrawn':
+    case 'booking_added':
+    case 'booking_reminder':
+      return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -128,6 +136,10 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_withdrawn',
   'follow_request',
   'follow_accepted',
+  'booking_cancelled',
+  'booking_withdrawn',
+  'booking_added',
+  'booking_reminder',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

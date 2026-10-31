@@ -1,4 +1,7 @@
 import type { AssociationProduct } from '$lib/associations/api';
+import { tierRankCents } from '$lib/associations/cotisationTiers';
+import { customAmountLabel } from '$lib/associations/customAmountLabel';
+import { formatAmount } from '$lib/forms/fillAnswers';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -37,7 +40,7 @@ export function gridPriceLabel(product: AssociationProduct): string | null {
   const price = product.viewerPrice;
   if (price?.kind !== 'grid') return null;
   if (price.amountCents === null) return m.shop_price_unavailable();
-  return `${(price.amountCents / 100).toFixed(2)} ${product.currency.toUpperCase()}`;
+  return formatAmount(price.amountCents, product.currency);
 }
 
 /**
@@ -92,10 +95,18 @@ export function linkedTierName(
   product: AssociationProduct,
   siblings: readonly AssociationProduct[]
 ): string | null {
+  return linkedTier(product, siblings)?.name ?? null;
+}
+
+/** The sibling tier product `linkedTierName` names, or null (same rules). */
+function linkedTier(
+  product: AssociationProduct,
+  siblings: readonly AssociationProduct[]
+): AssociationProduct | null {
   if (!product.memberPriceTag || product.memberPriceTierKey === undefined) return null;
   return (
-    siblings.find((s) => s.type === 'membership' && s.variantKey === product.memberPriceTierKey)
-      ?.name ?? null
+    siblings.find((s) => s.type === 'membership' && s.variantKey === product.memberPriceTierKey) ??
+    null
   );
 }
 
@@ -105,7 +116,7 @@ export function linkedTierName(
  */
 export function preferentialPriceLabel(product: AssociationProduct): string | null {
   const due = preferentialDueCents(product);
-  return due === null ? null : `${(due / 100).toFixed(2)} ${product.currency.toUpperCase()}`;
+  return due === null ? null : formatAmount(due, product.currency);
 }
 
 /**
@@ -118,4 +129,50 @@ export function preferentialDueCents(product: AssociationProduct): number | null
   const due = product.viewerDueCents;
   if (product.priceMatrix != null || product.amountCents === null || due == null) return null;
   return due < product.amountCents ? due : null;
+}
+
+/**
+ * The preferential price OTHER buyers get, for a viewer who pays the full price - "5,00 EUR for
+ * holders of Cotisation" - or null. Information only, never what this viewer is charged: that is
+ * `viewerDueCents`, and when it already is the preferential price (`preferentialDueCents`) the
+ * struck-through rendering says it instead. The amount is the stored `amountCentsMember` the
+ * checkout charges a qualifying buyer (`fixedPriceFor`); who qualifies stays the server's decision.
+ *
+ * A tag-linked price shows only when the server named its tier (`linkedTierName`): a link it could
+ * not read applies no preferential price server-side, so announcing one would be false; and only when
+ * that tier has a single price, since an unrankable one is refused every rise. Null for a grid (it
+ * replaces the fixed pricing) or a free amount.
+ */
+export function memberOfferLabel(
+  product: AssociationProduct,
+  siblings: readonly AssociationProduct[]
+): string | null {
+  const member = product.amountCentsMember;
+  if (product.priceMatrix != null || product.amountCents === null || member == null) return null;
+  if (member <= 0 || member >= product.amountCents) return null;
+  if (preferentialDueCents(product) !== null) return null;
+  const amount = formatAmount(member, product.currency);
+  if (!product.memberPriceTag) return m.shop_member_offer_cotisants({ amount });
+  const tier = linkedTier(product, siblings);
+  // A linked tier that cannot be ranked (a grid, or a named tier with no price - `rankPriceCents` in
+  // social-service `tier-pricing.ts`): its holders are refused every rise as `unranked`, so nobody
+  // can ever pay this member price and announcing it would be false. An unpriced BASE tier ranks
+  // lowest and IS rankable.
+  if (tier === null || tierRankCents(tier) === null) return null;
+  return m.shop_member_offer_tier({ amount, tier: tier.name });
+}
+
+/**
+ * The full (non-preferential) price label for a product: a grid's cell first and alone, else the
+ * fixed `amountCents` formatted in the reader's locale, else the free-amount wording, else "free".
+ * ONE implementation for the shop page and the association page, which each wrote this chain
+ * inline and separately before - `priceLabel` here and a `{#if}` chain there, both re-deriving the
+ * same four-way fallback and one of them still spelling the amount with `toFixed(2)`.
+ */
+export function fullPriceLabel(product: AssociationProduct): string {
+  const gridded = gridPriceLabel(product);
+  if (gridded !== null) return gridded;
+  if (product.amountCents !== null) return formatAmount(product.amountCents, product.currency);
+  if (product.allowCustomAmount) return customAmountLabel(product);
+  return m.shop_price_free();
 }

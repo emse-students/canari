@@ -1,3 +1,3 @@
-version: 1.5.0
+version: 1.5.2
 
-Nouveau : partager un post ou un CanaReel dans une conversation, aussi depuis le menu de partage du téléphone ; une personne qui rejoint un groupe est admise par un membre, via une carte Ajouter / Refuser ; un nouvel appareil sur votre compte est signalé. Amélioré : lecteur CanaReels plus sobre, vidéos du fil sans recadrage, sélecteur de GIF plus fluide. Corrigé : un salon créé en ligne ne disparaît plus de la liste, l'en-tête du fil ne défile plus hors écran.
+Nouveau : un appel fait sonner le téléphone même fermé ou verrouillé, en plein écran ; les réservations sont redessinées, et leurs notifications nomment le lieu et le créneau. Amélioré : un appel démarre sur l'écouteur et l'écran s'éteint contre la joue ; le bouton haut-parleur montre où passe vraiment le son. Corrigé : copier un lien ou un message le confirme ; dans CanaReels, toucher à côté referme les réactions ; la conversation reste en bas quand le clavier s'ouvre.

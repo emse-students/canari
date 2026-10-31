@@ -27,6 +27,102 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - `trackedFetch` counts an edge page (a portal's 511, the WAF's HTML 403) as proof the server is reachable, for every REST call and the probe
+
+**The rule it breaks:** a captive portal must never prove reachability. `trackedFetch` calls
+`answered()` on ANY response, so a portal's `511` or the WAF's HTML `403` clears `isOffline`,
+fires the reconnect listeners (outbox flush, owed archive replays) and ends the reachability
+probe, all on the say-so of something that is not the server.
+
+**Why the pull alone was not changed further:** the pending pull and the history batch now clear
+`isOffline` only on the gateway's answer, and leave it as it was on an edge page
+([section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+Making the pull also MARK the server down on an edge page would flip-flop: the probe, which goes
+through `trackedFetch`, would get the same edge page, call it reachable, and undo the mark, with a
+reconnect edge each round.
+
+**Fix shape:** require a gateway answer (`responseOrigin(res) === 'gateway'`) in `trackedFetch` and
+in the probe, in ONE change, so that every route reads an edge page the same way. Measure it on
+dev, because it changes reachability for the whole app.
+
+## The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)
+
+One production log of the owner's Pixel on `1.5.1` (cold start, network loss, backgrounding). The
+catch-up fan-out and the transport failures logged as errors are fixed on
+`fix/catchup-transport-failure` ([offline-and-weak-network section 20](frontend/offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30)).
+These are the lines of the same log that fix does NOT cover, each with its count:
+
+- **P2 - `[QUEUE] delivery ... arrived twice` is back: 31 lines** (`BaseMlsService.ts`, `REPEAT_MEANS`,
+  ~line 2219). The ack-before-pull ordering (`ackInFlight`, CHANGELOG) was recorded as closing it; on
+  this log the ack landed before the pull and the pull still listed the row. Read which cell of
+  `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
+  cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
+- **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
+  ([architecture](frontend/architecture.md)) reached from the salon send path: a `$derived` read
+  after its owner was destroyed. Name the component whose effect outlives the send first.
+- **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
+  600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
+  rejection says why, read it from the log line before touching the code.
+- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
+  An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
+  decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
+  and say it at the level of what it is; any other rejection keeps the warn.
+- **Raised to P2: the boot restore's absent-conversation refusals** - see
+  [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
+  **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
+
+## P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)
+
+#2782 stops the heartbeat holding the foreground guard at the PIN gate. A launch that signs in
+WITHOUT the PIN still loads a manager in the background, and that page holds the guard, correctly:
+biometrics with no prompt due (`ChatBackgroundService.svelte`, `biometricLogin(..., { unattended:
+!promptDue })`), or "stay signed in" on a hardware-held key (`sessionAuth.ts`, `[PIN] Stay signed in on
+a hardware-held key`). Its Decline is then refused (`encryptQueuedMessages: ok=false (... foreground
+active ...)`) and the caller rings out. The fix is to send the decline THROUGH the page's loaded
+manager when one exists, not a second background writer. Named in
+[calls](frontend/modules/calls.md#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31).
+
+## P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)
+
+The recovery reads `mls.bin` early (`sessionAuth.ts`, `loadMlsState(userId)`), checks the PIN, then
+hands those bytes to the native login, which installs them via `mark_foreground_manager_loading`
+(`commands/mls.rs`, the `(supplied, _)` arm) - never re-reading the file under `mls_bin_write_lock`.
+With #2782 the guard is no longer held at the PIN gate, so an in-process background write (a CallKit
+Decline, a quick reply) landing during the PIN check can be erased by the recovery's next blind
+write. Mitigated by `reconcileSendRatchets`. Fix: pass `stateOnDisk` so the native side reads under
+the lock, or compare a digest of the supplied bytes under the lock and refuse on a difference.
+
+## Owed after the stable - raise the floor to the release carrying the bookings notices
+
+**Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
+bookings' four notification types went live on the `1.2.9` floor, and a client between `1.2.9` and
+that release draws them degraded - the neutral unknown-type row, the push's French legacy sentence,
+no `bookings` host on Android - a cost accepted on 2026-10-29
+([legacy-compatibility](legacy-compatibility.md)). **The step**: raise `minClientVersion` to that
+release on both estates (the owner's gesture), read it back from the public version endpoint, and
+delete this entry.
+
+## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
+
+Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+
+**The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
+else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
+AUTHENTICATED caller in canonical form (never a body field; a body `createdBy` naming another account
+is refused 403); the bootstrap routes on it and re-reads it under the seat lock (`writePendingSeats`
+answers `not_creator`). The column is internal: no route returns it. An erasure anonymises it to
+`[deleted]`. No client change. Mechanism: [chat-delivery](services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29).
+
+**The migration.** `042_group_created_by.sql`: `ADD COLUMN IF NOT EXISTS "createdBy" VARCHAR(255)
+NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
+images that read the column, which is the deploy's own order.
+
+**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
+release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
+the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
+recorded creator end a group nobody joined) - not done here.
+
 ## Cotisation-disabled follow-ups (after the tier stack lands)
 
 Left by the review of #2584. Start after the tier stack has merged.
@@ -418,6 +514,249 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
 - Owed: decide whether the row counts stalls per new longest gap (the contract) or keeps zero after
   the first gap (stricter than the contract), and align the row's definition and its judge in
   `liverows.mjs` with that decision. Neither is changed until it is taken.
+- **The first reading with #2679** (`1.5.1-alpha.7`, dev.a062d13, 2026-10-29: `FAIL`, nothing
+  forgiven). The figures come from the new `delivery of N appended of M taken` line, in
+  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T11-27-53-820Z-W4.log`:
+  - W4 took 20 deliveries, 11 of two segments. Gaps were 1.2-4.4 s, and the target buffer rose 3663,
+    3790, 4118, 4223, then 4383 ms, once at each new longest gap.
+  - "Ahead" fell to 0.53-1.10 s before each two-segment delivery and rose to about 4-5 s after it.
+  - ONE stall, at 31.55 s with the target at 4118 ms: the next gap was 4223 ms, longer than the
+    3.99 s ahead after the delivery before it. The following delivery then seeked to the live edge.
+  - So the one stall fell on a new longest gap: it fits the documented contract and fails the row's
+    zero-after-first-gap rule. That is this decision.
+  - W2 took 25 deliveries, 7 of two segments, with 0 stalls.
+- **The owner decided (2026-10-29): the viewer must NOT stall; fix the cause.** So the contract
+  moved, not the row: branch `fix/live-buffer-from-cadence` bounds the longest wait from the shape
+  of the deliveries (a pair shows its ~5 s wait AT the pair) and re-anchors a buffer shorter than
+  it at once ([buffer policy](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27)); W4's
+  trace replayed in `liveBufferPolicy.test.ts` stalls once under the old rule and never under the
+  new. The row's zero-after-first-gap rule stands. Owed: LIVE-STALL-1 rerun on the pre-release that
+  carries it, then delete this entry.
+- **The rerun on `1.5.1-alpha.8` (#2689) still FAILS, and the stall now has a different shape**
+  (dev.7a83364, 2026-10-29; console
+  `STATE_DIR/logs/consoles/LIVE-STALL-1-2026-10-29T22-23-33-788Z-W4.log`).
+  - W4 had 23 deliveries. Its targets were 4011, then 6023, then 6025 ms. It re-anchored by itself
+    and never ran short.
+  - It stalled ONCE, at 55.56 s, at 23:23:04.085. The delivery before (23:23:00.541) had left it at
+    52.03 s with the buffer ending at 58.19 s, so 6.17 s were ahead. At the stall, 2.6 s of
+    buffered media were still ahead of the play position.
+  - So this is not a buffer running dry over a gap: the player stopped with media in hand. The next
+    delivery's stall seek is what resumed it.
+  - W2 took 0 stalls and 2 seeks. Its targets reached 6015 ms, and it held one short re-anchor
+    (`5.98 s buffered, under the 6015 ms target - no seek`).
+  - The row's failure: "W4 stalled 1 time(s) and seeked 1 time(s) after its first delivery gap".
+- Owed: read why a viewer with 2.6 s buffered reports `waiting` - a hole in the buffered ranges or
+  a decoder wait at a fragment boundary, for example. The delivery line records only the buffer's
+  end, not its ranges. Then rerun LIVE-STALL-1.
+
+## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
+
+- On LIVE-WEB-2 (dev.dce778b), both web viewers asked for the live's last segment after the end had
+  purged it. Each got `GET /api/media/public/live/<live>/<segment> -> 404` and logged `segment 7 is
+  gone - skipped`. media-service logged the same segment as `asked for and absent`, and the manifest
+  answered `404 LIVE_NOT_FOUND` about a second later.
+- So a viewer loses the end of the live it was watching: the end's purge races the downloads that the
+  last manifest announced.
+- The rig refuses to forgive a segment 404 on purpose (`liveRefusals` in `liverows.mjs`), so
+  LIVE-WEB-2 cannot reach `PASS` until this is fixed.
+- Owed: the purge must not remove segments that a manifest has already announced before its viewers
+  could fetch them. The order should be decided by a fact, such as the viewers' last read, not by a
+  delay. Then rerun LIVE-WEB-2.
+- **Still there on `1.5.1-alpha.7`** (dev.a062d13, LIVE-WEB-2 `FAIL`, 2026-10-29; consoles
+  `STATE_DIR/logs/consoles/LIVE-WEB-2-2026-10-29T11-32-29-348Z-W2.log` and `-W4.log`):
+  - W2 got the segment 404 and logged `delivery of 1 appended of 2 taken (5-6)`. It stalled at 9.75 s
+    and then met the manifest's `404 LIVE_NOT_FOUND`.
+  - W4 never received segments 5 and 6: `3 segments behind - jumping from 4 to 7`. It then took a
+    delivery whose buffer did not cover the play position (`ahead 0.16 -> 0.16 s`). It stalled at
+    9.84 s and again at 14.94 s, without ever naming a delivery gap. That is the row's failed
+    assertion: "stalled 2 time(s) and never named a delivery gap".
+  - All of it falls in the last 2 s before the end, so both viewers lost the end of the live to the
+    purge.
+- **Built on branch `fix/live-buffer-from-cadence` (2026-10-29), owed a LIVE-WEB-2 rerun on the
+  pre-release that carries it.** The purge of an ordinary end waits for the live's seats - the fact
+  that a viewer read a manifest within the lease - and the player gives its seat back on the end's
+  `410`; a cut or an erasure still purges at once
+  ([lives](services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)). W4's 9.84 s stall (2.67 s
+  ahead before a 3.5 s gap) is the short buffer the new policy re-anchors; its end-of-live jump
+  over 5 and 6 came from the fixed "more than 2 segments" catch-up, now sized by the slack behind
+  the target. Its 14.94 s wait was the last segment playing out before the `404` arrived; with
+  5-7 kept and the 4 s anchor it should not recur, which the rerun must show. No migration, no
+  production data action.
+- **The rerun is a clean `PASS` on `1.5.1-alpha.8`** (#2689; dev.7a83364, 2026-10-29). The rig read
+  the new lines through #2703.
+  - There was no segment 404, and both viewers saw the end.
+  - social-service logged `[LIVE_GC] <live> kept: 2 viewer(s) still seated` before it purged.
+  - Delete this entry when a stable ships #2689.
+
+## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
+
+- Read on dev.a062d13 (2026-10-29): neither line appeared in two runs each of KICK-COMMIT,
+  SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+- On every RMC run (dev.dce778b), each member device logs these lines whenever it reads a fresh
+  community:
+  - `[GRAINE] <device> holds nothing of community <ws> - recorded; N device(s) of <user> still to
+    answer`, once per answering device;
+  - `[GRAINE] absorbed 0/0 seed(s) (0 already held) from <user> in community <ws> - salon(s) none`.
+- Both say the same empty answer again on every read. The rig deliberately leaves them as dirt
+  (`salonNarration` in `salonrows.mjs`: "said once per READ rather than per decision ... fixed at the
+  source"), so no row that creates a community can reach `PASS` while they print.
+- Owed: log the empty answer once per decision (the first time a community's history is found to be
+  empty, or the final verdict over every device), and keep the per-device detail out of the info level.
+  Then rerun KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP.
+
+## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
+
+- Seen on the three RMC rows (dev.dce778b). When a member creates a community, the owner's other
+  devices enter its key groups by external commit, and every member's client logs this line once per
+  device at `log::error!`.
+- Reading `observe_merged_commit` (`frontend/mls-core/src/device_trust.rs`):
+  - The line fires when a device makes its first entry into a group, by its own commit, under a key
+    that another group pinned, while another device of the same user is already in the tree.
+  - In a CONVERSATION that is the uninvited entry the trust layer exists to report.
+  - In a KEY-DISTRIBUTION group, an external commit is the ordinary door for every member's device.
+    The notice layer already knows this and says nothing (`[DEVICE_NOTICE] self-admitted entry in
+    <group> - not a conversation, nothing to say`).
+  - The Rust observer does not know the group's kind, so it accuses the normal path.
+- Decision from the reading: on a key group the line is NOISE; on a conversation it is correct.
+- Owed: give the observer the group's kind where it is already known, so that it does not log the
+  key-group case at ERROR. Do not demote the line everywhere, because the conversation case must keep
+  accusing. Pair the change with a test that a conversation's self-entry still logs at error.
+
+## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29) - CAUSE NAMED, the key-group spelling FIXED in `fix/welcome-redelivery-cause`; delete at the stable
+
+- **Named 2026-10-30, from the kept rig consoles: neither a lost ack nor a second mint.** On 11 of
+  11 key-group occurrences (RM-4, RM-4b, RM-5, SALON-REVOKE-COMMIT, 2026-10-25..29), the Welcome's
+  `qId` is delivered once. In each case, `externalJoin succeeded` for the same group follows within
+  200 ms, and every member applies an external commit with `removes=1`.
+- The device had judged its seat on a roster read made before an admitter's Add. It then built on
+  the base that Add stored, and the admitter's Welcome found the group already built. The dev
+  containers had been redeployed, so the server logs were gone.
+- The fix judges the seat inside the join, from the seat the server serves with each attempt's base
+  (`welcomeOwed: 'ask'`, [channel-encryption](protocols/channel-encryption.md)).
+- The CONVERSATION spelling (`[WELCOME] <group>... already held`, the cold-start item below) is not
+  covered by this reading, and stays open.
+- Rerun SALON-REVOKE-COMMIT and the RM rows after the deploy: the line must be absent.
+
+- The handler logs the redelivery and drops it as idempotent. There are two spellings in
+  `setupMessageHandler.ts`: the conversation one (`[WELCOME] <group>… already held - redelivered
+  Welcome ignored (idempotent)`, already met in the cold-start item further down) and the key-group
+  one (`[WELCOME] key group <group>... already held - redelivered Welcome ignored (idempotent)`).
+- Read on the peer seat (W2) on dev.a062d13:
+  - KICK-COMMIT, runs 3 and 4 (11:53:56, 11:58:00);
+  - SALON-REVOKE-COMMIT, run 2 (12:05:12).
+- The drop is safe, but the delivery is not: a Welcome the device already applied came back, so
+  something upstream either sends it twice or does not see the first one consumed. The lead decided
+  (2026-10-29) that it stays dirt in the rig, under the same rule as the salon rows, and is not
+  forgiven.
+- Owed: name what re-sends a consumed Welcome (a server redelivery whose acknowledgement was lost,
+  or a second mint for the same device), and remove the second send there. The idempotent drop stays
+  as the witness.
+
+## P2 - A minted device's history asks are answered with a second WELCOME_REQ pass 15 s after the first (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), console `STATE_DIR/logs/consoles/DEVREVOKE-KEYGROUP-2026-10-29T11-18-04-803Z-W1.log`:
+  - 12:15:15-17: a `WELCOME_REQ` and a `JOIN_REQUEST` for each of the 6 conversations of the new
+    device;
+  - 12:15:30-34: a second `WELCOME_REQ` for the same 6 conversations: same device, same key, no
+    `JOIN_REQUEST`. That makes 12 lines for 6 conversations.
+- Nothing between the two passes changed the device or its key. This is one decision said twice,
+  the per-read class. The lead decided (2026-10-29) that it is a product defect: no budget in the
+  rig.
+- Owed: name what triggers the second pass (a re-read of the device list, or a second notice of the
+  same device), and make the request depend on a durable "already asked for this device and key",
+  not on the read.
+- MEMBER SIDE FIXED in `fix/join-request-once` (2026-10-30), not shipped; the requester's re-ask
+  closes with the server row below. Delete this entry when both have shipped.
+  - The second pass (re-read on alpha.8, 23:14:42 then 23:15:02) re-asked all six conversations at
+    once. Only a reset of every group's throttle does that, and its one caller is the session setup
+    (`resetReAddCooldowns` in `setupMessageHandler`). The requester's console was not kept, so this
+    is read from the code, not proven.
+  - The member says its decision once per (group, device, key, epoch) while the ask is shown
+    (`actions.ts`), and counts repeats at 1, 10 and 100. The requester still asks on its cadence,
+    about once a minute per group, and logs what the server did with each ask.
+  - Review of #2718: a requester record of "already asked against this epoch pair" was tried and
+    REMOVED. No server answer makes the ask durable, so in a quiet group the record stranded the
+    device until a reload. Stopping the re-ask waits for the server row below.
+    Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built) - SUPERSEDED
+
+**Superseded the same day: a device of a member enters by itself, so it asks nobody and this row is moot - see [the 2026-10-30 decision](#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).** The reasoning below is kept for the ask that still exists in 1.5.2.
+
+- Today a further device of a member with no seat has no durable ask. The requester re-asks on its
+  cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
+- The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
+  and let every member's pending sweep re-raise it. The requester then stops asking once the row
+  exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## A new device of a member ENTERS BY ITSELF, with a history and a visible trace (owner, 2026-10-30, the WhatsApp model, not built)
+
+Final decision of 2026-10-30, guided by "je ne veux pas importuner les utilisateurs du tout". It
+SUPERSEDES both the 2026-10-27 interim gate (the mandatory tap) and the "one approval per device"
+decision recorded earlier the same day. Planned for the release after 1.5.2.
+
+1. **Entry.** A new device of a person who is already a member enters by itself. No tap and no ask,
+   from anyone: not the owner's other devices, not contacts.
+2. **History.** That device receives the whole history its person was entitled to, filtered on that
+   person's own presence windows: the existing addressed-answer rule, rule 2, "a new device of a
+   continuous member", in [history-answer-addressing](protocols/history-answer-addressing.md).
+3. **Visibility.**
+   - A silent system line, "X a ajouté un appareil", in each of X's conversations: no notification
+     and no unread count.
+   - A discreet alert, "Nouvel appareil connecté", on X's other devices, with "Ce n'est pas moi",
+     which revokes that device.
+   - This is what makes a device added through a compromised login visible. **Accepted residual
+     risk, stated plainly:** such a device reads new messages and history until X reacts.
+4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
+   before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
+   Add (decided 2026-10-23).
+5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
+   the release after 1.5.2.
+6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
+   row (a separate PR).
+
+**Rejected earlier the same day:** one approval per device (a tap, account-wide and durable, plus a
+durable server row when the owner has no other device) - replaced by self-entry; self-entry on
+revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK,
+[mls-protocol](protocols/mls-protocol.md) shape B), which costs users an action.
+
+Mechanism and the superseded interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
+
+## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
+
+- On the owner seat (W1), same console as the item above. Two lines repeat together at 12:14:44,
+  12:15:15 and 12:15:28, each time the minted device asks again:
+  - `withholding 1 seed(s) ... 1 of a salon riding another key group, 0 not listed`;
+  - `not answering <requester>'s history ask ... withheld for their salon's roster`.
+- The withholding is correct. Saying it again on every ask, when the roster has not changed, is a
+  decision said three times. The lead decided (2026-10-29) that it is a product defect of the
+  per-read class: no budget in the rig.
+- Owed: say the withholding once per roster state (keyed on what it was decided on), and answer a
+  repeat of the same ask with that one decision.
+- FIXED in `fix/join-request-once` (2026-10-30), not shipped; delete this entry at the stable. Each
+  line is said once per asking device and key group, keyed on what it was decided on: which sessions
+  were withheld and why (`sayAnswerDecisionOnce` in `utils/graine/frameHandler.ts`).
+
+## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
+
+- Run 1 on dev.a062d13, the peer seat (W2). The console was not kept, because that run predates the
+  rig's kept consoles; these are the run's notable lines from the ledger, with ids replaced:
+
+  ```
+  [12:02:20.450] [RUST::INFO] forget_group: <kg>…, min_epoch=0
+  [12:02:20.451] [MLS] dropped local state for <kg>... (the server refused the external commit, minEpoch=0)
+  [12:02:20.451] [MLS] externalJoin REFUSED for <kg>... (base 0, reason epoch_mismatch, group at 1) - attempt 1/3
+  [12:02:21.045] [GRAINE] could not join the distribution group of community <ws> (refused)
+  ```
+
+- The attempt says "1/3", but no attempt 2 is logged before the give-up 0.6 s later. Either the
+  bounded retry did not run, or it ran without a line, which leaves the give-up unexplained.
+- A refused join on the community's key group leaves the device out of its seed distribution.
+- Related: the two-devices race in the P3 "Two devices of one account joining a community at once"
+  ends in the same give-up line, after three logged attempts.
+- Owed: read which path gave up after one attempt, and log every attempt or the reason the retry
+  stopped. Then rerun SALON-REVOKE-COMMIT with consoles kept.
 
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
@@ -500,6 +839,12 @@ Questions:
 
 The reclaim wait counts against the commit's lock-hold budget (`mayStartCommitRequest`). On a slow
 device or a large bundle, this wait could turn a commit's outcome into "unknown".
+
+**Seen again on `1.5.1-alpha.7`** (dev.a062d13, KICK-COMMIT, 2026-10-29): the owner seat (W1) logged
+`[MLS_LOCK] the commit of cc3dc2a7… has its answer - waiting for the frame applied under its loan`
+at 11:58:00. It is the kick's own commit, so it is not tied to a minted device. The cause is still
+unread. Until it is read, the line stays dirt in the removal rows: it is not added to the rig's
+classifier.
 
 ## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -608,6 +953,15 @@ read-then-insert check without that lock. Proposed for after the 1.5.0 stable, n
 yes because it is a migration: a partial unique index on `(associationId, variantKey)` for
 `membership` products (plus one for the base tier's null key), after counting the duplicates it
 would refuse.
+
+## P3 - No screen turns the base tier into a named one (2026-10-26)
+
+The tier editor rework (the key is never shown, typed or edited) removed the only screen that changed
+a tier's `variantKey` - which also moved every cotisant of that tier to the new tag. The server path
+remains: `PATCH /api/associations/:id/products/:productId` with `variantKey`, handled by
+`ProductsService.update` through `planTierRetag` ([cotisations](cotisations.md#multi-tier-cotisations-named-variants)).
+Owed: a decision on whether an association ever needs it from a screen, and if so a control that
+never shows the key.
 
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
@@ -1141,7 +1495,12 @@ then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because
 destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
 trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
 
-## P3 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+## P2 - The boot restore opens the frame pipeline before any conversation row exists: a queued frame for a stored conversation is refused (`absent-conversation`), not ACKed, and re-pulled (found by the 1.4.1 dev campaign, DECIDED TO DEFER)
+
+**RAISED FROM P3 ON PRODUCTION NUMBERS (2026-10-30).** One `1.5.1` log of the owner's Pixel: **425
+absent-conversation refusals, and up to 124 unacked frames in ONE boot** - every one a second
+handling, and the gap healer holding later frames of its group until the re-pull lands. Not a dev
+campaign's corner any more: the size of the cost is the size of the backlog a phone comes back to.
 
 **Deferred past 1.4.1 on purpose.** The fix reorders Welcome and commit handling relative to the
 restore; a hang there would stop a device receiving anything, so it needs its own plan, review and
@@ -1523,28 +1882,6 @@ on a phone or desktop. No decision that 90 days is intended was found. Whether n
 (gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
 changed. Until it is taken, a native device claims coverage it deleted.
 
-## P2 - addGroupMember can enrol an erased account after the final erasure pass (review of #2258, 2026-10-24)
-
-`MembersController.addGroupMember` (`POST mls/groups/:groupId/members`: a group invite, and the
-opening of a 1:1 DM) is the one admitting writer the seat lock never converted. It reads the
-target's key packages outside any transaction or lock, then writes the roster row, its membership
-interval and `pending` device rows with no seat lock and no `heldKeyPackages`. Nothing refuses an id
-whose account was erased, so any member holding a valid token can POST an erased uuid and recreate a
-roster row naming that person, even after chat-delivery's final erasure pass (no key package is
-left, so no device row; the roster row and interval are enough to name them). Pre-existing, not a
-regression of #2258, which only names it as the second known exception to "every writer that admits
-a device reads its key package under the lock" ([channel-encryption](protocols/channel-encryption.md),
-[account-erasure](account-erasure.md)). Fix direction (from the review): route it through
-`writePendingSeats(enrol=true)`, which already takes the seat lock, re-reads the group and reads
-`heldKeyPackages`; and refuse the target itself, either by a roster-level tombstone that the erasure
-writes and that names no one once its own window ends, or by asking core whether the account exists.
-**Narrowed by ADM-3 (2026-10-25) to the creation bootstrap:** the route now enrols nobody but a
-caller registering ITSELF into an empty roster; for anyone else it re-reads the seat under the seat
-lock through `writePendingSeats` (which reads `heldKeyPackages`) and refuses a person no commit
-admitted (`409 MEMBER_NOT_ADMITTED`). What is left: the bootstrap transaction still takes no seat
-lock and reads no key package under it - an erased account would need its own still-valid token and
-an empty group to use it ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
-
 ## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
 
 `setNotificationLevel` reads a membership row, changes `notifLevels` and `save`s the whole copy;
@@ -1584,12 +1921,42 @@ column they mean to write is `roleIds` itself, so they only race each other.
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
-read (by the account while a token is valid, or by a peer through `addGroupMember`) loses the
+read (by the account while a token is valid) loses the
 account's roster row to the roster delete and its device rows to the sweep's cut, but its
 `dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
-opened inside the erasure window); fix with the P2 above, or by having the sweep tombstone any DM
-whose roster the account was on.
+opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
+account was on.
+
+## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
+
+`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
+(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
+the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
+members would be ended for all of them by one member's erasure, instead of losing that member only.
+Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
+conversation, then either a bound where the roster is written or the erasure deciding by the roster
+size rather than the flag ([account-erasure](account-erasure.md)).
+
+## P3 - Two Redis facts naming an erased account are outside its erasure's trace sweep (review of #2585, 2026-10-27)
+
+`eraseUserRedisTraces` removes the erased account's FIELDS of `group:parting:<g>`, but a field's
+VALUE is the user id of whoever removed that device, so a parting entry for another person's device
+still names the erased account if it was that device's remover. It ends as every parting entry
+ends, on state: consumed by the removal commit naming the device, cleared when the device is in the
+tree again, or deleted with the group. Separately, the gateway's `addressing:left:<userId>:<deviceId>`
+(the sessions that left, kept so a late refresh cannot resurrect one) is not swept; it carries a TTL,
+so it is gone one presence TTL after the last session left. Owed: either sweep both in
+`eraseUserRedisTraces` (rewriting a parting value to a neutral remover, deleting the left key) or
+record here why their bound is enough ([account-erasure](account-erasure.md)).
+
+## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
+
+A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
+byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
+is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
+id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
+[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
 
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
@@ -1759,7 +2126,7 @@ buttons and the `live_chat` row with its integrity ([lives](services/lives.md#wh
 (e) BUILT 2026-10-21: the hourly `[LIVE_REPORT_AGE]` alarm, `error` past 24 working hours
 ([lives](services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)), owed one reading of
 the line on dev; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
-user:** the filtering statement and the terms' lives paragraph ([store-ugc-answers](store-ugc-answers.md)).
+user:** the filtering statement ([store-ugc-answers](store-ugc-answers.md)), and a reread of the terms' lives paragraph and the privacy text, written 2026-10-29 in a draft pull request ([live-production](frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)).
 
 **P3, found by the review of the server half: a seat taken AFTER an end's release outlives the end
 by up to its 30 s lease.** A viewer whose key read began before an end (a cut, the broadcaster's end,
@@ -2151,7 +2518,10 @@ next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreS
 waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
-`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED`, `REJECT seat_claim_overtaken`
+(by `seat=committer|admit`, and how many in an ordinary conversation), `reason=no_key_package`
+(`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... route(s) no
+seat stands behind outlived the cuts above and were removed` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
 (the questions are asked in parallel, one round trip) measured on dev.
 
@@ -2638,7 +3008,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | --- | --- | --- |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
-| **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
+| **reread the terms' lives paragraph and the privacy text (written 2026-10-29, draft pull request, the points to decide on [live-production](frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)), and write the filtering statement for the store review** | 1 reread, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | **when to raise `minClientVersion` to the build that ships "a Remove holds against a later re-add"** - until then an answering member on an older build still sends a re-admitted member's window | decision | [the re-admitted window entry](#p2---a-re-admitted-device-calls-its-own-exclusion-window-a-loss-and-reconciles-for-it-2026-08-26-widened-2026-08-30) |
@@ -2660,10 +3030,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **fill the Play Console "Foreground service permissions" declaration for `FOREGROUND_SERVICE_MICROPHONE`** (App content; in-app 1:1 calls, a description and a video of the call kept while the app is backgrounded). EXPECT the first pre-release carrying WP-C-BG-A to be refused at the `internal` upload until this form is filled - Play may refuse a bundle declaring an undeclared foreground-service permission on any track; not verified on this console. The GitHub release APK is built either way. Filled BEFORE that pre-release, the refusal never happens. Pre-release builds declare it, stables do not (`android.yml` checks) | 1 console form + a video | [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) |
-| **decide whether the feed's LEFT edge gets a gesture exclusion rect** (a swipe to the camera started in the left 30 CSS px is Android's Back: the previous page, or the app closes), like the right edge over a conversation - or nothing | 1 decision | [the tab swipe P2](#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21) |
 | **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
-| **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
 | **decide whether ruleset `22152902` gets a `code_scanning` rule (CodeQL, errors, high or higher)** - analysed, recommended, the exact `gh api` PUT written, not applied | 1 decision, 1 command | [cicd](cicd.md#a-code_scanning-rule-on-the-ruleset-analysed-2026-10-23-not-applied) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -2714,6 +3082,12 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## "Envoyer à..." from the camera tab, several targets, one shared file - decided by the owner on 2026-10-30
+
+**The decision, relayed in French:** depuis la caméra ouverte par le swipe à gauche, après une prise, le bouton principal est « Envoyer à... » ; il ouvre une liste dont la PREMIÈRE ligne est « Publier sur CanaReels » (comme « My Story » de Snapchat), puis les conversations, les groupes et les salons de communauté, avec une recherche ; on peut cocher PLUSIEURS cibles et envoyer en une fois. Stockage : UN SEUL fichier partagé pour toutes les cibles (un upload, une clé de contenu portée dans le message chiffré de chaque conversation), choisi en sachant qu'une suppression par un modérateur l'efface alors partout. **And the same day, for a take published on CanaReels AND sent to conversations, verbatim:** *"Un seul fichier. Il faut réduire au max la charge serveur quand on le peut je pense ;)"* - one stored file for the feed and the chats.
+
+**Designed, not built** - the flow, the one-take-N-sends outbox, per-object holds so the file lives as long as its longest reference (the post, the 30-day chat hold), a moderator's purge erasing it everywhere (feed or salon), the purge allowlist that still names one salon, the tombstone a shared file needs, and the key: a published take's chat copies carry the post's key, so they are not end-to-end secret (acceptable only because the post's audience sees the same video). **Every question answered by the owner on 2026-10-30, the recommended option each time:** "Supprimer pour tout le monde" in one conversation deletes only that conversation's message, and the file only if that was the last send, with "Supprimer partout" offered separately on the sending device; the author's delete of the feed post leaves the chat copies in place until their 30 days, "Supprimer partout" remaining the gesture that ends everything; a photo taken in the camera tab also goes through "Envoyer à..." (an ordinary post and/or ordinary images in chats). **The additive migration is APPROVED (owner, 2026-10-30, "Oui")**: the salon message row records the reel's `mediaId` so a moderator only deletes what is in their salon. [reels-in-chat section 15](frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built). New packages RC-12 (the sheet), RC-13 (the multi-target outbox, **before** the writer switch) and RC-14 (server holds and purge, the approved migration), about 15 engineer-days with the RC-6/RC-9 amendments ([order](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
+
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
 **BUILT 2026-10-18, NOT SHIPPED.** The search goes through Canari since 2026-10-16; the GIF relay
@@ -2759,6 +3133,14 @@ Each leaked session holds, for 24 h, one of the owner's 4 open sessions, up to 2
 - **Proof:** an outbox test that cancels offline, relaunches online and sees the `DELETE`, plus one per wipe path.
 
 The mechanism and the gap are written up in [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Not built in #2117 because it is not small: it touches the sign-out and erasure wipe paths, needs a store that survives them, and adds a sweep to sign-in.
+
+## P2 - The in-app incoming ring is a media-volume beep, and the caller hears no ringback (owner's first production call, 2026-10-30, not built)
+
+The ring of a call arriving while the app is open is WebAudio tones at MEDIA volume and one 1.8 s vibration (`useNotifications.svelte.ts`, the in-app ring): silent with the media volume down, loud in silent mode, nothing like the phone's ringtone. Owed: a native ring through `CallBridge` - `RingtoneManager`'s default ringtone with `USAGE_NOTIFICATION_RINGTONE`, the ringer mode respected (silent / vibrate), a REPEATING vibration until answered, declined or ended - and a ringback tone on the caller's side while it shows "Appel...". Kept out of the audio-UX pull request of 2026-10-30, which fixed the call itself ([calls](frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)); the native ring's switches (`CALLS_NATIVE_RING_COMPILED`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`, `voip`) are a different surface and are not touched by it. Delete with its fix.
+
+## P3 - A call that loses the audio focus goes on as if nothing happened (decision owed, 2026-10-30)
+
+Since #2723 the Android call takes the audio focus (`AUDIOFOCUS_GAIN_TRANSIENT`, voice communication) and LOGS every change (`audio focus LOSS_TRANSIENT for call=...`). Nothing acts on a loss: a cellular call ringing in, or another app taking the focus, leaves the Canari call's microphone and voice running under it. Whether to HOLD the call (mute both ways and say so) or auto-mute the microphone on `LOSS_TRANSIENT`, and what `LOSS` means, is the owner's product decision; the logs from the phone readings say how often it happens ([calls](frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)). Delete with its decision.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 
@@ -2922,13 +3304,13 @@ From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#
 
 *"Pour la prochaine mise a jour"*: the user held 1.2.8 until both shipped, and they did. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, the floor is owed)
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, production floor `1.2.9` since 2026-10-29)
 
-The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
+The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): **MET on production 2026-10-29** (floor raised to `1.2.9`, both stores serve `1.5.0`). **Owed follow-up: dev's `MIN_CLIENT_VERSION` seed and live row still read `1.2.7` and must follow production** ([dev-environment](infrastructure/dev-environment.md)). Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
 
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; the floor is owed)
+## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; production floor raised to `1.2.9` on 2026-10-29)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **DONE ON PRODUCTION 2026-10-29 (owner's decision; dev still owed): the step was to raise `minClientVersion`** (`1.2.7` when this was written; check the live value first) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
 Built (#1878): server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
@@ -3499,13 +3881,13 @@ The two questions of the audit are answered (2026-10-08): a follow keeps its mea
 
 ### P3 - audit advisories are suppressed because they cannot be reached, and retire themselves
 
-Four advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
+Five advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-qr28-fpjm-wq7f`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
 `GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service; minio 8.0.7 is still the
 latest (2026-10-10). **Nothing is polled by hand any more (2026-10-10):** the premises step of
 `code-analysis.yml` audits the tree WITHOUT the ignores (`ignored-advisories-still-reported.sh`, self-tested)
 and FAILS the day an ignored id is no longer reported, naming the ignore, its premise assertion
 (`.github/scripts/stream-json-premise.sh`) and this entry as what to delete. The reasoning is in
-[cicd](cicd.md#four-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
+[cicd](cicd.md#five-audit-advisories-are-suppressed-on-one-edge-of-media-service-and-why-each-is-unreachable).
 
 `RUSTSEC-2026-0387` (crypto-bigint 0.5.5) is ignored in all four Rust trees since 2026-10-24, each
 with its statement in `.cargo/audit.toml`; REACHABLE IN CODE in call-service's DTLS only. Lifted by the
@@ -3747,7 +4129,7 @@ undated, and those are placed by their client clock with a one-hour margin
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
 **OWED TO THE USER - `minClientVersion`:** the withholding runs on the ANSWERING device, so an answerer
 on an older build still sends the window unfiltered; the guarantee is complete only once
-`minClientVersion` (1.2.7 today) reaches the build that ships it. Raising it is the user's call, not
+`minClientVersion` (`1.2.9` on production since 2026-10-29) reaches the build that ships it. Raising it is the user's call, not
 an agent's. **And a known abuse, accepted with the decision:** a member can remove and re-add someone
 to open an artificial window, making that span unrestorable to every new device while the person
 stays; nothing tells it from a real removal.
@@ -3930,13 +4312,29 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **A test PAYMENT after the stable needs a validated Business, which does not exist yet** (the three Businesses made through the onboarding on 2026-10-23 wait for Lydia's validation and for the answer on how their holder signs in, [lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). Until then the payment path is proved only by the 2026-10-23 manual run (one real payment of the minimum amount through an older merchant account, its `confirm` verified), NOT by the stable. When a Business is validated: the manager pastes its private key, the global admin marks the onboarding complete, then ONE payment of the minimum amount (0.50 EUR) through a form, read to the end - the `confirm` callback arrives and verifies, `request/state` answers `1`, the answer is recorded as paid once, and the payer's return page agrees. A cancel on that paid request answers error 2 and changes nothing (measured). Refund and `end_mobile_url` stay unmeasured.
 
-**Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state - ask Lydia whether it signs before building it.
+**Done 2026-10-23:** one real production payment, its `confirm` verified with the Business key ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the production Provider tokens are set. **Owed:** `LYDIA_ENV` carried by a GitHub secret (#2323) before the next stable; each association re-onboarding on Lydia (**an association with a Stripe-only payment account is no longer payment-ready until it does**); Lydia's still-open Livrable A answers ([plan](../../plans/stripe-to-lydia-migration.md)). The `business/create` `BUSINESS_VALIDATED` webhook is deliberately NOT built: no documented signature and `vendor_token` is public, so anyone could forge an association's onboarding state. Decided 2026-10-30: built as a TRIGGER of a check only, never as the state ([the enrolment chantier](#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)).
 
-### Enrolment through Canari - the screen owes the path to validation (2026-10-23)
+### The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30
 
-The user decided that every Business is created by Canari's onboarding, never linked from outside ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)). The first production enrolments showed the screen leaves the manager with no next step: the dashboard link answers 404 when signed out, and the Lydia Pro app did not show a Business made by the Provider, even one created with the signed-in person's own phone ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)). **Owed, in order:** Lydia's answer on how that Business's holder signs in to its console, and which documents an association gives; then the card rebuilt around the three steps of Lydia's activation e-mail, saying who does what; a "waiting for Lydia" state told apart from "validated", with error 5 of `request/do` as the measured signal; and the existing refuse-or-confirm item on a re-run onboarding below.
+**Context:** every Business is created by Canari's onboarding ([payments](frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23)); the first production enrolments (2026-10-23) left the manager with no next step, and the user asked for a step-by-step path nobody has to explain (2026-10-26). The 2026-10-30 homologation measurements (encoded signatures, `permissions` as an array, `api_token_id` = the Business private token, [lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)) lift the "stays OFF until a sandbox probe passes" condition.
 
-**The user's requirement, 2026-10-26:** enrolment must become much more user-friendly, step by step, once Lydia's information is complete - *"Je n'ai pas envie d'avoir à expliquer le fonctionnement à tout le monde, il faut que ce soit clair."* `business/addcashier` (provider-signed, in [the migration plan](../../plans/stripe-to-lydia-migration.md)) may be the step that attaches a person's phone to a Business made by `business/create`; Lydia's help center says a cashier is added in the console "Caissiers" tab or in the Lydia Pro app by mobile number, with rights chosen at the add (an administrator right manages cashiers). **Tried on the sandbox and on one production Business (2026-10-27/28): refused with a signature error (444) across every signing variant attempted, both Provider-key and Business-key.** Outcomes-only findings are in [lydia-api](lydia-api.md#6-still-unknown). **The user sent an outcome-only message to the Lydia contact on 2026-10-29**, asking their engineer to check the server-side signature-verification log for one specific sandbox request. **The production sweep (wiring `addcashier` into enrolment) stays OFF until Lydia answers AND one sandbox probe passes with a working signature.**
+**Enrolment, in steps:** (1) association details -> `business/create`; Canari keeps `api_token_id` as the Business private key (encrypted as today) and passes a webhook URL. (2) The Responsable - the person enrolling by default, changeable to another member - is added by `addcashier` with all rights, Lydia's SMS on. (3) "Activate at Lydia": install Lydia Pro with that number and upload the documents, explained on screen. (4) Waiting for validation: the UNSIGNED `BUSINESS_VALIDATED` webhook only TRIGGERS a check, and Canari turns ready by itself; the admin "Valider l'onboarding" stays as the backup.
+
+**The paste-the-key field is DELETED.** Businesses already linked are migrated with the user in lot 1, a read-only count first. An outside Business still cannot be added without a database edit. **Re-running enrolment while a Business is linked is REFUSED** (unlink first, with confirmation).
+
+**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). Removal goes through Lydia's cashier-removal call (its shape is in the private operations notes), measured on homologation 2026-10-30 ([lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)); every revoke re-reads `business/getpermission` and counts only "0 rights" as success - anything else is an ERROR surfaced to the manager, never shown as success. Lot 3 ships no "add" before this revoke is proven once in production. This replaces the "reduce the rights + finish in the console" fallback, which the measurement made unnecessary.
+
+**Refunds from Canari, in this chantier:** total and partial, by `MANAGE_PAYOUT_ACCOUNT` holders, confirmed, with an audit of who refunded. A total refund withdraws the membership or frees the seat, EXCEPT a Cercle top-up, never reversed automatically (the manager is told). **Statement:** Canari's own records only, no `transaction/list`.
+
+**Not in scope:** payouts to people (`payment/send`); ease of payment (instalments) - questions to Lydia first (still offered, instalments, fees, who bears non-payment).
+
+**Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen; lot 3 - cashiers; lot 4 - refunds.
+
+**Lot 2 carries the enrolment-in-flight marker (parked 2026-10-30, review of lot 1):** a durable marker written on the association BEFORE `business/create` and cleared by the link, so a second attempt is REFUSED rather than only discouraged by the "check before retrying" line - lot 1 cannot hold it because it is a column, and its migration rides lot 2's ([payments](frontend/modules/payments.md#a-businesscreate-with-no-answer-the-outcome-is-unknown-and-the-screen-says-so)).
+
+**The production check is DONE (2026-10-30):** a cashier added by the Provider-signed `business/addcashier` gets Lydia's SMS and sees the Business in the Lydia Pro app - the 2026-10-23 blocker is lifted ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+
+**Lot 2 storage, confirmed by the owner directly on 2026-10-30:** the Responsable's phone is stored sealed, only `phoneEnd` readable, with a migration, an Art. 30 register entry and a privacy policy update together in the same lot.
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 
@@ -3999,6 +4397,10 @@ Found by COMM-12 on `1.5.0-alpha.1` (2026-10-27), and never worked: the admin's 
 Seen on most rows of the `1.5.0-alpha.1` replay (2026-10-27): every load on W1 and W2 posts `POST /api/channels/<id>/read-mark` for a deleted salon, gets `404`, and `salonReadMarkQueue.ts` logs `[READ] salon mark ... not delivered - kept, and asked again at the next load`. A `404` there is an ANSWER - the salon is gone - and never a reason to retry: the mark must be dropped on that status (typed by status, never by message) and the drop logged once. Today it is dirt on nearly every row; a fix-after-stable item, not something to narrate.
 
 **FIXED AT THE SOURCE 2026-10-29, owed its reading.** The read-mark route now answers `404 CHANNEL_NOT_FOUND`, `ChannelService.advanceReadMark` turns exactly that into `ReadMarkTargetGoneError`, and the flush drops the mark with one `[READ] salon mark ... dropped - the server answered that it no longer exists` (an unnamed 404, a 403 or a transport failure stay owed); a `channel.deleted` frame forgets the owed mark before any POST ([offline-and-weak-network](frontend/offline-and-weak-network.md)). **Owed:** a pre-release carrying it on dev, then KICK-COMMIT, SALON-REVOKE-COMMIT and DEVREVOKE-KEYGROUP re-run - the FIRST run still posts the old mark once (one 404 and the drop line), every later run none. Delete this row then. Not done: a `403` (a member no longer allowed into the salon) still keeps its mark owed; not seen in any log.
+
+### P2 - a group joined by Welcome, opened while another conversation was showing, renders an empty transcript
+
+Found by TOK-3 and reproduced by OFF-2 on `1.5.0-alpha.2` (2026-10-27): W2 is added to a group by W1's commit while W2 shows another conversation (its DM with W4). The Welcome is processed, both following messages are decrypted and added (`[ADD_MSG] Batch into "<group>": 1 added, 0 upgraded, selected=true`), and the rig then opens the group. Its pane carries the right heading and the composer, and **no message at all** for 20 s: `renderedParagraphs: 0`, the last marker visible only in the sidebar preview. A reload renders both. With W2 parked on that DM before the row, OFF-2 missed both times (16:31Z and the run after it); in the three runs where W2 was last on a deleted group instead, it rendered. Evidence: the rig ledger, OFF-2 at `2026-10-27T16:31:47Z` (pane outline in the miss line), its screenshot under `STATE_DIR/logs/shots/`, and W2's console beside it. **Owed:** the cause in the client's selected-conversation state across a Welcome; then OFF-2 and TOK-3 replayed with W2 parked on another conversation.
 
 ### P3 - an admin who never joined a private salon is not told when it is created or deleted
 
@@ -4272,7 +4674,7 @@ measurements: [lydia-api](lydia-api.md) and [payments](frontend/modules/payments
 | P2 | An out-of-range amount shows only a generic error and writes no log | fix in review (#2208) |
 | P3 | `request/state`'s `signature` was logged in clear; a free-amount product read "Libre (0-inf EUR)" | fix ready (#2209) |
 | P3 | The expired-form page has no retry control | covered by #2210 |
-| P2 | Re-running the Lydia onboarding silently replaces a linked, validated Business | open: refuse or ask for confirmation |
+| P2 | Re-running the Lydia onboarding silently replaces a linked, validated Business | decided 2026-10-30: refused while linked, lot 1 of [the enrolment chantier](#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30) |
 | P3 | A product with no price is creatable and its checkout answers 400 with no log | open |
 | Owed | The confirm callback verified with a Business key | done in production 2026-10-23 ([lydia-api](lydia-api.md#3-callbacks-confirm_url-cancel_url-expire_url)) |
 | Owed | A refund end to end, the default `expire_time` (at least 47 min), the deep link as `end_mobile_url` | open, [lydia-api](lydia-api.md#6-still-unknown); `request/cancel` on a PAID request measured 2026-10-23 (error 2, stays paid) |
@@ -4284,3 +4686,13 @@ The group panel reads the user-level roster (`user-members`) and drops only seat
 `false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
 read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
 on production. If it is 0, delete this section; otherwise a backfill migration the user approves.
+
+- **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
+
+- **P2 - two shop/form facts from the owner's review of `1.5.1-alpha.7` (found 2026-10-29), not fixed**: (a) the base tier every association gets when it enables cotisations is created UNPRICED (`amountCents` null), so `tier-pricing.ts` cannot rank it (`hasFixedPrice`) and a holder of it is refused EVERY rise as `unranked` - a tier whose preferential price is linked to the base tier (dev's "Etudiant", 5 EUR for holders of "Cotisation") is therefore never sold at that price to the people it names. The shop now hides the unpriced tier itself (#2546, [cotisations](cotisations.md)); whether an unpriced base tier ranks lowest, or must be priced before a sibling may link to it, is the owner's call. (b) `FormItemDto.type` is any non-empty string and `basePrice` any number >= 0: a form written straight to the API with an item type `text` (the editor writes `short_text`) and a `basePrice` of `10` meaning euros (the wire unit is CENTS, the editor multiplies by 100) is stored as is, and the fill page then reads "Type de question non pris en charge : text" and "Payer 0,10 EUR" - the rendering is right, the row is wrong. Owed: an allowlist of item types and `@IsInt()` on `basePrice` at the DTO, with a spec each.
+
+- **P3 - the shop's amount keypad takes no physical keyboard (found 2026-10-29, #2546 review)**: `AmountPicker.svelte`'s "Autre montant" keypad is driven by its on-screen keys only, so a desktop user cannot type digits, a decimal separator or Backspace. Not cheap to do right: a window-level `keydown` would feed EVERY open picker on a page (the association page and a membership card can each hold one), so it needs the keypad to take focus (a focusable group with its own `onkeydown` mapping to the existing `applyAmountKey`) and a test that two open pickers do not both receive a key.
+
+## P3 - one-shot actions near the copy helper that were not audited for feedback (2026-10-30)
+
+The copy and share-sheet paths now confirm through one helper ([sharing](frontend/sharing.md#one-copy-helper-one-share-failure-path-2026-10-30)). The same class of "a tap that visibly does nothing" was NOT checked on: save to gallery (`ReelSaveButton`, `reels/gallery.ts`), file downloads (`fileDownload`, `FormSubmissionsTable`, `AssociationDocumentManager`, `agendaExport`, `QrCodeModal`) and booking actions (`bookings/bookingActions.ts`). Audit each for a success and a failure confirmation; fix with a shared helper only where it clearly fits.
