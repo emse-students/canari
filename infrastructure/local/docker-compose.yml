@@ -195,7 +195,7 @@ services:
   # Garage - S3-compatible object storage for encrypted media blobs (replaces MinIO)
   # ─────────────────────────────────────────────────────
   garage:
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
       - "9000:3900"   # S3 API
