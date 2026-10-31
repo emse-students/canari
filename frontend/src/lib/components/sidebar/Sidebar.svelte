@@ -21,6 +21,7 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { isHiddenFromList, loadHiddenUnopenable } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
@@ -394,9 +395,16 @@
    * conversation they were looking at disappeared as they spelled it. Resolving once here makes the
    * filter and the row read the same value by construction instead of agreeing by coincidence.
    */
+  $effect(() => {
+    if (currentUserId) loadHiddenUnopenable(currentUserId);
+  });
+
   let conversationRows = $derived.by(() =>
     [...conversations.entries()]
       .filter(([id]) => !isChannelConversationId(id))
+      // A conversation its user took off the list because this device can no longer open it (D5)
+      // - listed again the moment it opens.
+      .filter(([name, convo]) => !isHiddenFromList(convo.id || name, convo.lifecycle))
       .map(([name, convo]) => ({
         name,
         convo,

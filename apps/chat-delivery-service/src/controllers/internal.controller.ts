@@ -53,16 +53,7 @@ import { MessagingService, type ActivationOutcome } from '../services/messaging.
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
-import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
-
-/**
- * The asking device's seat in a key group, served WITH the base (`getDistributionGroup`): `none`
- * (no row), `active`, or `pending` with `welcomeQueued` and - when the add lock was read -
- * `addInFlight`.
- */
-export type DistributionSeat =
-  | { status: 'none' | 'active' }
-  | { status: 'pending'; welcomeQueued: boolean; addInFlight?: boolean };
+import { describeSeat, readDeviceSeat, type DeviceSeat } from '../utils/device-seat';
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -461,7 +452,7 @@ export class InternalController {
     baseEpoch: number | null;
     activeEpoch: number;
     memberDevices?: string[];
-    seat?: DistributionSeat;
+    seat?: DeviceSeat;
   } | null> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
@@ -498,7 +489,18 @@ export class InternalController {
     const askingDevice = sanitizeOptionalQueryValue(deviceId, 'deviceId');
     const seat =
       asked && askingDevice && rows
-        ? await this.distributionSeatOf(group.id, askingDevice, rows)
+        ? await readDeviceSeat(
+            {
+              deviceGroupRepo: this.deviceGroupRepo,
+              queuedMessageRepo: this.queuedMessageRepo,
+              redis: this.redis,
+              logger: this.logger,
+            },
+            group.id,
+            asked,
+            askingDevice,
+            rows
+          )
         : undefined;
 
     // `published` ALONE WAS A LIE THE CLIENT ACTED ON. It answered "is there a base", never "is
@@ -509,9 +511,7 @@ export class InternalController {
       `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}` +
         ` base=${info?.baseEpoch ?? 'none'} active=${group.activeEpoch}` +
         (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '') +
-        (seat
-          ? ` seat=${seat.status}${seat.status === 'pending' ? `(welcome=${seat.welcomeQueued},adding=${seat.addInFlight ?? 'unknown'})` : ''}`
-          : '')
+        (seat ? ` seat=${describeSeat(seat)}` : '')
     );
     return {
       groupId: group.id,
@@ -520,34 +520,6 @@ export class InternalController {
       activeEpoch: group.activeEpoch,
       ...(memberDevices ? { memberDevices } : {}),
       ...(seat ? { seat } : {}),
-    };
-  }
-
-  /**
-   * One device's seat in a key group, in the terms the client's one-door reading takes
-   * (`readWelcomeOwedFromRow`): `none`, `active`, or `pending` with the two facts. `addInFlight` is
-   * left out when the add lock could not be read - unknown, never `false`.
-   */
-  private async distributionSeatOf(
-    groupId: string,
-    deviceId: string,
-    rows: Array<{ deviceId: string; status: 'pending' | 'active' }>
-  ): Promise<DistributionSeat> {
-    const row = rows.find((r) => r.deviceId === deviceId);
-    if (!row) return { status: 'none' };
-    if (row.status !== 'pending') return { status: row.status };
-    const facts = await readPendingMembershipFacts(
-      this.queuedMessageRepo,
-      this.redis,
-      deviceId,
-      [groupId],
-      this.logger
-    );
-    const addInFlight = addInFlightOf(facts, groupId);
-    return {
-      status: 'pending',
-      welcomeQueued: facts.welcomed.has(groupId),
-      ...(addInFlight === undefined ? {} : { addInFlight }),
     };
   }
 

@@ -834,10 +834,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * **THE FOURTH REPORT, AND IT EXISTS BECAUSE THE THIRD COUNTS THE WRONG THING.**
    * `reportStaleExternalJoinBases` finds bases that have fallen behind, which is a symptom. What
    * decides whether a conversation can survive is the number of INDEPENDENT parties still holding
-   * its MLS tree, and nothing counted that. Every way into an MLS group - Welcome, external commit,
-   * ReInit, subgroup branching, external proposals - requires a party holding the group secrets,
-   * and this server holds only ciphertext. So a group whose last holder uninstalls is not degraded,
-   * it is OVER, and no repair exists here or in RFC 9420. The only useful moment is BEFORE that.
+   * its MLS tree, and nothing counted that. A CURRENT stored base lets a seated device back in with
+   * no holder (an external commit; every commit since 2026-10-04 stores the base it creates). But
+   * once the base is stale or absent, every way in - Welcome, external commit, ReInit, subgroup
+   * branching, external proposals - requires a party holding the group secrets, and this server
+   * holds only ciphertext. So a group whose last holder uninstalls is CLOSED WHILE ITS BASE IS STALE
+   * OR ABSENT, and no repair exists here or in RFC 9420
+   * (docs/wiki/protocols/mls-availability-no-holder.md). The only useful moment is BEFORE that.
    *
    * Holders are counted as DISTINCT USERS, not rows. Three devices belonging to one person are one
    * person: they share an owner, an account and usually a single act of uninstalling.
@@ -918,8 +921,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // their Welcome ever landed, which makes them the cheapest repair available.
       this.logger.warn(
         `[CRON] reportSingleHolderGroups: ${one.length} conversation(s) have exactly ONE user ` +
-          `holding the MLS tree - if that user uninstalls, nothing in this system or in RFC 9420 ` +
-          `can reopen them. Highest epoch first, ` +
+          `holding the MLS tree - if that user uninstalls, each is closed while its base is stale ` +
+          `or absent. Highest epoch first, ` +
           `${Math.min(one.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${one.length}: ${name(one)}`
       );
     }

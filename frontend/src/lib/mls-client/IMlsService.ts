@@ -60,8 +60,20 @@ export type { IncomingDeliveryMeta };
  */
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
-  | { status: 'stored' }
+  | { status: 'stored'; facts?: NoHolderFacts }
   | null;
+
+/**
+ * What a `no_peer_online` answer says about the requester's group, read by the server IN THAT SAME
+ * ANSWER (`noHolderFacts`): the stored base's two epochs - `null` when no base was ever published -
+ * and the requester's own seat, read after the base. Absent when the server could not read them, or
+ * told a caller with no admitted seat nothing. The one input of the no-holder banner
+ * (`readNoHolder`, D5 of `docs/wiki/protocols/mls-availability-no-holder.md`).
+ */
+export type NoHolderFacts = {
+  base: { baseEpoch: number; activeEpoch: number } | null;
+  seat: DistributionSeat;
+};
 
 /**
  * One device's seat in a key group, served by chat-delivery WITH the group's base and read AFTER it
@@ -701,6 +713,8 @@ export type BaseRefreshOutcome = {
   noPeerOnline: boolean;
   /** The member key (`userId:deviceId`) the server elected, when it elected one. */
   target?: string;
+  /** With `noPeerOnline` only: the facts read in the same answer ({@link NoHolderFacts}). */
+  facts?: NoHolderFacts;
 };
 
 /**
@@ -902,16 +916,6 @@ export interface IMlsService {
    * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
    */
   setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void;
-  /**
-   * Hands every device event already merged to the consumer and resolves once it has decided them,
-   * after any hand-over still running. A history answer awaits it before reading who is withheld
-   * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
-   * scheduled in the same drain as an entry would otherwise read the record before it exists.
-   *
-   * @returns whether the events were decided: `false` when no consumer is registered, the take
-   * failed, or the consumer failed or could not decide them - and an answer then refuses.
-   */
-  settleDeviceEvents(why: string): Promise<boolean>;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF

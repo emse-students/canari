@@ -16,15 +16,7 @@ import {
   type DeviceNoticeContext,
   type KeyAge,
 } from './deviceNotices.svelte';
-import {
-  MAX_HISTORY_WITHHELD,
-  bindHistoryWithheld,
-  historySealedGroups,
-  historyWithheldEntries,
-  historyWithheldFrom,
-  noteDeviceAddedByAMember,
-  sealHistoryIn,
-} from './historyWithheld';
+import { deviceAddedLineId } from './listPreview';
 
 /**
  * User decision 2026-10-22: the owner is alerted (in the app, durably until seen) when a device
@@ -102,7 +94,6 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     isDistributionGroup: (g) => g === 'community-key',
     conversations,
     localGroups: () => Object.keys(TREES),
-    heldGroupsKnown: () => true,
     storedConversation: async (g) => STORED_ROWS[g] ?? null,
     memberIdentities: vi.fn(async (g: string) => {
       const tree = TREES[g];
@@ -620,10 +611,9 @@ describe('deliverDeviceEvents - an entry no member made', () => {
   });
 });
 
-// A DEVICE OF A MEMBER THAT LET ITSELF INTO A GROUP IT WAS NEVER IN (2026-10-27): its own commit, its
-// user already in the tree, no leaf of it here before - whatever its pin says. No member added it, so
-// it is written in the conversation and reported under its own kind. A device coming back to this
-// group, a member's Add, and this very device's own join say nothing.
+// A FURTHER DEVICE OF A MEMBER THAT ENTERED BY ITS OWN COMMIT (owner, 2026-10-31, D2): announced
+// exactly like a device a member added - the contact line to members, the owner's alert on the
+// account's other devices - and never an uninvited entry: no line of its own, no report.
 describe('deliverDeviceEvents - a member device that entered by itself', () => {
   const selfEntry = (over: Partial<DeviceEvent> = {}) =>
     event({
@@ -631,12 +621,15 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       identity: 'bob:new-tablet',
       addedBy: 'bob:new-tablet',
       memberAlreadyPresent: true,
-      firstInGroup: true,
       trust: 'first-sight',
       keyFingerprint: 'beef',
       ...over,
     });
   const reporter = vi.fn(async () => {});
+  const uninvitedLines = (calls: unknown[][]) =>
+    calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
   beforeEach(() => {
     reporter.mockClear();
     resetReportedUninvitedEntries();
@@ -644,119 +637,72 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
   });
   afterEach(() => setUninvitedEntryReporter(null));
 
-  it('writes the accusing line, reports kind unvouched-device and logs at ERROR', async () => {
+  it("writes the ordinary contact line, as for a member's Add, and reports nothing", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { ctx, addMessageToChat } = makeCtx();
     await deliverDeviceEvents([selfEntry()], ctx);
 
-    const lines = addMessageToChat.mock.calls.filter(([, , , o]) =>
-      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
-    );
-    expect(lines.map((c) => c[2])).toEqual(['group-1']);
-    expect(lines[0][1]).toContain('Bob');
-    expect(reporter).toHaveBeenCalledWith({
-      kind: 'unvouched-device',
-      groupId: 'group-1',
-      entrant: 'bob:new-tablet',
-      epoch: 5,
-      keyFingerprint: 'beef',
-    });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
-    error.mockRestore();
-  });
-
-  it("withholds history from it until a member's Add of it vouches for it", async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry()], ctx);
-    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
-
-    await deliverDeviceEvents([selfEntry({ addedBy: 'alice:phone-a', firstInGroup: false })], ctx);
-    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(false);
-    error.mockRestore();
-    warn.mockRestore();
-  });
-
-  it('what it adds is unvouched too: written, reported, withheld - and re-adding itself through it lifts nothing', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry()], ctx);
-    reporter.mockClear();
-
-    // The sibling Add: an ordinary commit, signed by the withheld device, adding a second one.
-    await deliverDeviceEvents(
-      [selfEntry({ identity: 'bob:second', addedBy: 'bob:new-tablet', keyFingerprint: 'cafe' })],
-      ctx
-    );
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
-    );
-    expect(historyWithheldFrom('group-1', 'bob:second')).toBe(true);
-
-    // ...which then re-adds the first: still withheld.
-    await deliverDeviceEvents(
-      [selfEntry({ addedBy: 'bob:second', firstInGroup: false, trust: 'pinned' })],
-      ctx
-    );
-    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
-    error.mockRestore();
-    warn.mockRestore();
-  });
-
-  it('an entry and the Add it makes, handed over in ONE delivery, are both withheld - in commit order', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    // Delivered out of order on purpose: the drain's order is not trusted, the epochs are.
-    await deliverDeviceEvents(
-      [
-        selfEntry({ identity: 'bob:second', addedBy: 'bob:new-tablet', epoch: 6 }),
-        selfEntry({ epoch: 5 }),
-      ],
-      ctx
-    );
-    expect(historyWithheldFrom('group-1', 'bob:new-tablet')).toBe(true);
-    expect(historyWithheldFrom('group-1', 'bob:second')).toBe(true);
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
-    );
-    error.mockRestore();
-    warn.mockRestore();
-  });
-
-  it('withholds at first sight even while the conversation row is not loaded, and the line follows the row', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { ctx, conversations } = makeCtx({
-      storedConversation: async () => ({ lifecycle: 'active' }),
-    });
-    await deliverDeviceEvents([selfEntry({ groupId: 'group-late' })], ctx);
-    await deliverDeviceEvents(
-      [selfEntry({ groupId: 'group-late', identity: 'bob:second', addedBy: 'bob:new-tablet' })],
-      ctx
+    expect(uninvitedLines(addMessageToChat.mock.calls)).toEqual([]);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+    expect(addMessageToChat.mock.calls[0][3]?.messageId).toBe(
+      deviceAddedLineId('dm-1', 'bob:new-tablet|beef')
     );
     expect(reporter).not.toHaveBeenCalled();
-    expect(historyWithheldFrom('group-late', 'bob:new-tablet')).toBe(true);
-    expect(historyWithheldFrom('group-late', 'bob:second')).toBe(true);
-
-    conversations.set('group-late', { conversationType: 'group', messages: [] });
-    await deliverDeviceEvents([], ctx);
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:new-tablet' })
-    );
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'unvouched-device', entrant: 'bob:second' })
-    );
+    expect(error).not.toHaveBeenCalled();
     error.mockRestore();
-    warn.mockRestore();
   });
 
-  it('a group whose events the queue dropped is sealed, and the marker announces nothing', async () => {
+  it("alerts the owner on the account's other device, as for a member's Add", async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents(
+      [selfEntry({ identity: 'alice:new-tablet', addedBy: 'alice:new-tablet' })],
+      ctx
+    );
+
+    expect(pendingDeviceNotices().map((n) => n.deviceId)).toEqual(['new-tablet']);
+    expect(uninvitedLines(addMessageToChat.mock.calls)).toEqual([]);
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('says it in a 1:1 too, as the same contact line', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ groupId: 'dm-1' })], ctx);
+
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('says nothing under a key already pinned - the same device', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('drops an entry an older build kept owed for such a device, rather than calling it a new person', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const key = ACCOUNT_KEY.deviceNotices('alice');
+    localStorage.setItem(key, JSON.stringify({ owedUninvited: [selfEntry()] }));
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+    expect(
+      (JSON.parse(localStorage.getItem(key) ?? '{}') as { owedUninvited?: unknown[] }).owedUninvited
+    ).toEqual([]);
+    debug.mockRestore();
+  });
+});
+
+describe('deliverDeviceEvents - what is not delivered', () => {
+  it('a dropped-events marker announces nothing, and is said', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { ctx, addMessageToChat } = makeCtx();
-    const decided = await deliverDeviceEvents(
+    const delivered = await deliverDeviceEvents(
       [
         event({
           groupId: 'group-1',
@@ -768,236 +714,61 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       ],
       ctx
     );
-    expect(decided).toBe(true);
-    expect(historyWithheldFrom('group-1', 'alice:phone-b')).toBe(true);
+    expect(delivered).toBe(true);
     expect(addMessageToChat).not.toHaveBeenCalled();
-    expect(reporter).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('dropped past the queue'));
     error.mockRestore();
   });
 
-  it('says it decided nothing with no account bound, and seals in that account what it took', async () => {
+  it('says the events reached no bound account, and writes nothing', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     forgetDeviceNotices();
-    const { ctx } = makeCtx();
-    expect(await deliverDeviceEvents([selfEntry()], ctx)).toBe(false);
-    // The account's next session answers no history there.
-    loadDeviceNotices('alice');
-    expect(historyWithheldFrom('group-1', 'carol:phone-c')).toBe(true);
+    const { ctx, addMessageToChat } = makeCtx();
+    expect(await deliverDeviceEvents([event()], ctx)).toBe(false);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('not delivered'));
     error.mockRestore();
   });
 
-  it('seals what is left of a delivery an account switch overtook, in the account it belongs to', async () => {
+  it('stops a delivery an account switch overtook, writing nothing into the account now bound', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let switched = false;
-    const { ctx } = makeCtx({
-      // The switch lands while the first event is being decided (its tree read).
-      memberIdentities: vi.fn(async (g: string) => {
-        if (!switched) {
-          switched = true;
-          forgetDeviceNotices();
-          loadDeviceNotices('mallory');
-        }
-        return TREES[g] ?? [];
+    const { ctx, addMessageToChat } = makeCtx({
+      // The switch lands while the server is asked about the first key.
+      keyAge: vi.fn(async (): Promise<KeyAge> => {
+        forgetDeviceNotices();
+        loadDeviceNotices('mallory');
+        return { kind: 'dated', at: NOW - 5 * 60_000 };
       }),
     });
-    const decided = await deliverDeviceEvents(
-      [selfEntry(), selfEntry({ groupId: 'group-no-bob', epoch: 9 })],
+    const delivered = await deliverDeviceEvents(
+      [event(), event({ identity: 'alice:tab', keyFingerprint: 'aa' })],
       ctx
     );
-    expect(decided).toBe(false);
-    // Nothing leaked into the account now bound.
-    expect(historyWithheldFrom('group-no-bob', 'carol:phone-c')).toBe(false);
+    expect(delivered).toBe(false);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(pendingDeviceNotices()).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.deviceNotices('mallory'))).toBeNull();
+    error.mockRestore();
+  });
+
+  it('reads a stored copy an older build wrote with its history records, and drops them', async () => {
+    const key = ACCOUNT_KEY.deviceNotices('alice');
+    const notice = { key: 'alice:tab|aa', deviceId: 'tab', at: NOW };
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        pending: [notice],
+        historyWithheld: [{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' }],
+        historySealed: ['group-1'],
+      })
+    );
     forgetDeviceNotices();
     loadDeviceNotices('alice');
-    expect(historyWithheldFrom('group-1', 'carol:phone-c')).toBe(true);
-    expect(historyWithheldFrom('group-no-bob', 'carol:phone-c')).toBe(true);
-    error.mockRestore();
-  });
+    expect(pendingDeviceNotices()).toEqual([notice]);
 
-  it('seals no key group in an account its events reached unbound', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    forgetDeviceNotices();
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ groupId: 'community-key' })], ctx);
-    loadDeviceNotices('alice');
-    expect(historySealedGroups()).toEqual([]);
-    error.mockRestore();
-  });
-
-  it('merges the seals another tab wrote into the stored copy instead of erasing them', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // Another tab sealed a conversation of alice's after this tab read her stored copy.
-    const key = ACCOUNT_KEY.deviceNotices('alice');
-    const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
-    localStorage.setItem(key, JSON.stringify({ ...stored, historySealed: ['group-elsewhere'] }));
-    // This tab writes its own seal.
-    sealHistoryIn('group-1', 'device events were dropped');
-
-    const written = JSON.parse(localStorage.getItem(key) ?? '{}') as { historySealed?: string[] };
-    expect(new Set(written.historySealed)).toEqual(new Set(['group-1', 'group-elsewhere']));
-    // And this tab answers by it from now on.
-    expect(historyWithheldFrom('group-elsewhere', 'carol:p')).toBe(true);
-    error.mockRestore();
-    warn.mockRestore();
-  });
-
-  describe('two tabs of one account', () => {
-    const key = ACCOUNT_KEY.deviceNotices('alice');
-    const write = (historyWithheld: unknown[]) => {
-      const stored = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
-      localStorage.setItem(key, JSON.stringify({ ...stored, historyWithheld }));
-    };
-    const stored = () =>
-      (
-        JSON.parse(localStorage.getItem(key) ?? '{}') as {
-          historyWithheld?: { identity: string; fingerprint: string }[];
-        }
-      ).historyWithheld ?? [];
-    const reload = (records: unknown[]) => {
-      write(records);
-      forgetDeviceNotices();
-      loadDeviceNotices('alice');
-    };
-
-    it('a lift is written at once - the copy that predates it does not bring the record back', () => {
-      reload([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' }]);
-      noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
-      expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(false);
-      expect(stored()).toEqual([]);
-    });
-
-    it('a record another tab writes after the lift is adopted - the newer fact, withheld', () => {
-      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const record = { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' };
-      reload([record]);
-      noteDeviceAddedByAMember('group-1', 'bob:tab', 'carol:p');
-      // Another tab withholds it again (or writes back its older copy), plus one of its own.
-      const added = { groupId: 'group-1', identity: 'bob:web-2', fingerprint: 'bb' };
-      write([record, added]);
-      // This tab writes for an unrelated reason.
-      sealHistoryIn('group-no-bob', 'device events were dropped');
-
-      expect(stored().map((e) => e.identity)).toEqual(['bob:tab', 'bob:web-2']);
-      expect(historyWithheldFrom('group-1', 'bob:tab')).toBe(true);
-      expect(historyWithheldFrom('group-1', 'bob:web-2')).toBe(true);
-      log.mockRestore();
-    });
-
-    it('keeps ONE record per device - a replacement another tab wrote wins', () => {
-      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-      reload([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'aa' }]);
-      // Another tab saw the device change its key: it replaced the record.
-      write([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' }]);
-      sealHistoryIn('group-no-bob', 'device events were dropped');
-
-      expect(stored()).toEqual([{ groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' }]);
-      expect(historyWithheldEntries()).toEqual([
-        { groupId: 'group-1', identity: 'bob:tab', fingerprint: 'bb' },
-      ]);
-      log.mockRestore();
-    });
-  });
-
-  it('seals no key group on a dropped-events marker - it answers no history anyway', async () => {
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents(
-      [
-        event({
-          groupId: 'community-key',
-          identity: '',
-          keyFingerprint: '',
-          addedBy: null,
-          eventsDropped: true,
-        }),
-      ],
-      ctx
-    );
-    expect(historySealedGroups()).toEqual([]);
-    debug.mockRestore();
-  });
-
-  it.each([
-    [false, MAX_HISTORY_WITHHELD + 1],
-    [true, MAX_HISTORY_WITHHELD],
-  ])(
-    'past the bound, a group absent from the held list is dropped only when the list is known (%s)',
-    async (known, kept) => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-      bindHistoryWithheld(
-        Array.from({ length: MAX_HISTORY_WITHHELD }, (_, i) => ({
-          groupId: 'group-gone',
-          identity: `x:d${i}`,
-          fingerprint: 'f',
-        })),
-        null
-      );
-      const { ctx } = makeCtx({ localGroups: () => ['group-1'], heldGroupsKnown: () => known });
-      await deliverDeviceEvents([selfEntry()], ctx);
-      expect(historyWithheldEntries()).toHaveLength(kept);
-      warn.mockRestore();
-      error.mockRestore();
-    }
-  );
-
-  it('withholds history from a device that changed its own key by its own commit', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents(
-      [
-        selfEntry({
-          trust: 'key-changed',
-          firstInGroup: false,
-          identity: 'bob:phone-1',
-          addedBy: 'bob:phone-1',
-        }),
-      ],
-      ctx
-    );
-    expect(historyWithheldFrom('group-1', 'bob:phone-1')).toBe(true);
-    warn.mockRestore();
-    vi.restoreAllMocks();
-  });
-
-  it('says it in a 1:1 too - the peer of a DM is a member like any other', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ groupId: 'dm-1' })], ctx);
-
-    expect(reporter).toHaveBeenCalledWith(expect.objectContaining({ kind: 'unvouched-device' }));
-    error.mockRestore();
-  });
-
-  it('reports a device pinned by ANOTHER group entering this one by itself - the pin vouches for nothing here', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
-
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId: 'group-1', kind: 'unvouched-device' })
-    );
-  });
-
-  it('says nothing for a device back in this group, a member-signed Add, or this device itself', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents(
-      [
-        selfEntry({ trust: 'pinned', firstInGroup: false }),
-        selfEntry({ addedBy: 'bob:phone-1' }),
-        selfEntry({ identity: 'alice:phone-a', addedBy: 'alice:phone-a' }),
-      ],
-      ctx
-    );
-
-    expect(reporter).not.toHaveBeenCalled();
-  });
-
-  it('says nothing in a community key group, where every device enters this way', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ groupId: 'community-key' })], ctx);
-
-    expect(reporter).not.toHaveBeenCalled();
+    dismissDeviceNotice(notice.key);
+    const written = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
+    expect(written).not.toHaveProperty('historyWithheld');
+    expect(written).not.toHaveProperty('historySealed');
   });
 });

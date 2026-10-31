@@ -82,6 +82,7 @@ import {
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { hideUnopenable } from '$lib/utils/chat/noHolder.svelte';
 import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
@@ -2449,6 +2450,59 @@ export function useConversations() {
     ctx.log(`[DELETE_LOCAL] Local conversation deleted: ${contactKey.slice(0, 8)}…`);
   }
 
+  /**
+   * "Recommencer avec les mêmes personnes" (D5 of docs/wiki/protocols/mls-availability-no-holder.md):
+   * a conversation this device can no longer open is not repaired - RFC 9420 offers no entry and the
+   * server never resurrects a group - so a NEW group is created under the same name and the same
+   * people are invited to it. The old conversation is left as it is: if a device that held it ever
+   * comes back, it opens again.
+   *
+   * GROUPS ONLY. A direct conversation is keyed by its peer (`startNewConversation` finds the existing
+   * one first), so a second one would be a duplicate on the peer's side; the banner does not offer it.
+   */
+  async function handleStartAgainWithSamePeople(ctx: ConversationContext) {
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
+    if (!convo || (convo.conversationType ?? 'group') !== 'group') return;
+    let people: string[];
+    try {
+      people = (await fetchGroupRoster(ctx.ensureMls(), convo.id, { fresh: true })).filter(
+        (id) => id !== ctx.userId
+      );
+    } catch (e) {
+      ctx.log(
+        `[NO_HOLDER] start again: the roster of ${convo.id.slice(0, 8)}... could not be read: ${String(e)}`
+      );
+      return;
+    }
+    ctx.log(
+      `[NO_HOLDER] start again: a new group for the ${people.length} other member(s) of ${convo.id.slice(0, 8)}...`
+    );
+    const outcome = await createNewGroup(convo.name, ctx);
+    if (!outcome.ok || !outcome.key) {
+      ctx.log(
+        `[NO_HOLDER] start again: the new group was not created (${outcome.ok ? 'no key' : outcome.reason})`
+      );
+      return;
+    }
+    // `createNewGroup` selected the new group, so the invitation goes to it.
+    if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
+  }
+
+  /**
+   * Takes the selected conversation off this account's list (D5) - nothing deleted, here or on the
+   * server, and it is listed again the moment it opens (`isHiddenFromList`).
+   */
+  function handleHideUnopenable(ctx: ConversationContext) {
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
+    if (!convo) return;
+    hideUnopenable(ctx.userId, convo.id);
+    selectedContact = null;
+  }
+
   /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */
   async function handleLeaveGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
@@ -2699,6 +2753,8 @@ export function useConversations() {
     handleDeleteGroup,
     /** Removes only the local conversation entry (no server call). Used when the group was deleted remotely. */
     handleDeleteGroupLocally,
+    handleStartAgainWithSamePeople,
+    handleHideUnopenable,
     /** Leaves the currently selected group and clears the UI. */
     handleLeaveGroup,
     /** Removes a member from the currently selected group. */

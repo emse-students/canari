@@ -248,7 +248,7 @@ describe('where a group-info base is read and written', () => {
     await channel.fetch();
     await channel.publish('QUFB', 4);
 
-    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('g-plain');
+    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('g-plain', 'd');
     expect(ctx.delivery.storeGroupInfo).toHaveBeenCalledWith('g-plain', 'QUFB', 4);
     expect(ctx.distributionGroupInfo.fetch).not.toHaveBeenCalled();
   });

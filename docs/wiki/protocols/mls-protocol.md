@@ -1431,18 +1431,27 @@ leaf of theirs is in any member's tree); what it can do - enrol a device under a
 is the stated residual risk of the 2026-10-30 decision, made visible by the line and the owner's
 alert rather than gated by a tap.
 
-**The further device's own door is unchanged.** A device whose user holds a leaf in the tree of the
-GroupInfo its external commit would be built on, but none of its own, does not let itself in
-(`externalJoin(groupId, { asAFurtherDevice: 'ask' })`, `external_join_is_a_further_device` in
-`welcome.rs`): it sends a `welcome_request` and a member's device adds it. A user's first device in a
-group, and a device whose own leaf is still there, keep their own door. A device that does let
-itself in (an older client) is still said and reported (`entersAsUnvouchedDevice`,
-`[UNINVITED_ENTRY] kind=unvouched-device`, `chat_system_unvouched_device_entry`) and answered no
-history until a member's Add of it (`historyWithheld.ts`); there is no tap that lifts it any more.
+**The further device asks first, and lets itself in when no member device can answer** (owner,
+2026-10-31, D1 of [mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)).
+A device whose user holds a leaf in the tree of the GroupInfo its external commit would be built on,
+but none of its own, first sends a `welcome_request` (`externalJoin(groupId, { asAFurtherDevice:
+'ask' })` answers `further_device`, `external_join_is_a_further_device` in `welcome.rs`). A member
+device online adds it. A `stored` answer - the server's own verdict that no member device is online
+- makes it join by itself IN THE SAME PASS (`requestReAdd`, `recovery.ts`), with `welcomeOwed: 'ask'`
+so an Add already under way (the seat served with the base: `welcomeQueued`, `addInFlight`) is waited
+for. A member's Add and the self-join built on the same epoch meet at the strict epoch gate, which
+accepts one; the loser rebuilds (`mls-core/tests/further_device_door.rs`). A user's first device in
+a group, and a device whose own leaf is still there, keep their own door.
 
-**History is the existing design's, unchanged here.** A device added by a member's Add is not
-withheld; what history it receives is decided by the history-answer rules
-([history-answer-addressing](history-answer-addressing.md)), which this change does not touch.
+**Such an entry is announced as an ordinary added device (D2)**: "X a ajoute un appareil" to members,
+"Nouvel appareil connecte" with "Ce n'est pas moi" on the owner's other devices - the same
+`announces_new_device` event a member's Add raises. The `unvouched-device` line, its report and the
+history withholding (`historyWithheld.ts`) are DELETED: with D1 they would accuse every honest
+recovery. The server still accepts an older client's `kind=unvouched-device` report.
+
+**History follows rule 2 for both doors (D3).** What a device receives is decided by the
+history-answer rules ([history-answer-addressing](history-answer-addressing.md)); nothing is withheld
+from a device because of the door it took.
 
 **The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
 arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
@@ -1462,10 +1471,12 @@ after the route's read can overtake - it would otherwise read the commit as a me
 lift the ask. The phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the
 foreground's `admissionOfSeat` refuses the same seat. The per-device rule it had
 (`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
-path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
-still waits for a member's app. While it waits, the device says so in plain words, with no key and
-no button (`chat_waiting_own_device`): it is added as soon as another device of its user already
-in the conversation, or another member, opens the app.
+path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on; deferred, D6), so an
+iOS-only member does not answer a further device from the background - which is why the further
+device joins by itself when the server finds no member device online. While it waits, the device
+says so in plain words, with no key and no button (`chat_waiting_own_device`). Where it can never
+get in - no usable base, nothing on its way, no member online, all read from one server answer - it
+says THAT instead (D5, [mls-availability-no-holder](mls-availability-no-holder.md#d5-the-banner-and-what-decides-it)).
 
 **What was deleted with the interim (2026-10-27 to 2026-10-31).** The per-device ask ("Nouvel
 appareil de X - Ajouter / Refuser", its "Details" fingerprint disclosure and its Undo), the approvals

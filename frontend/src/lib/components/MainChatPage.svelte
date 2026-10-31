@@ -1604,6 +1604,8 @@
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
           onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
           onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
+          onStartAgainWithSamePeople={() => void convs.handleStartAgainWithSamePeople(convCtx())}
+          onHideUnopenable={() => convs.handleHideUnopenable(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
