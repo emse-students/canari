@@ -167,13 +167,13 @@ on `PATCH :id`, the Lydia account link (`setLydiaAccountId`, the one writer of t
 It judges NEW WRITES only: no existing product, account or priced form is deleted or rewritten. An
 existing product may be taken OFF sale (`isActive: false` alone), never put on sale or repriced. A form
 is judged MERGED (`assertKindMayPrice`): any price source counts - base price, payment switch, grid cell,
-a choice option's supplement - and a form that already charges stays editable while its
+a choice option's supplement (only a CHOICE question's: `isChoiceQuestion`, the one rule at save and at submit) - and a form that already charges stays editable while its
 `priceFingerprint` (key-order-insensitive: jsonb reorders a grid's keys) is unchanged, and may always be
 made free. The shop and payout rights are STRIPPED from any member bitmask written for such a kind
 (`writablePermissions`, on `addMember` and `updateMemberRole`); a bit stored before stays until that
 member is next saved and opens nothing meanwhile, since every route behind it refuses the kind. The
 role editor never shows them. The form editor draws no price section for these kinds; a priced one is
-shown frozen with a "make this form free" button (`FormPaymentSection`, `associationSells`), and the
+shown frozen with a "make this form free" button (it also clears option supplements) (`FormPaymentSection`, `associationSells`), and the
 refusal reads from the typed code (`asso_kind_does_not_sell`), never the server's English.
 
 ### The half that could only ever be turned off

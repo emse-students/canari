@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { FormsService } from './forms.service';
+import { decidesPrice, isChoiceQuestion } from './answer-options';
 
 /**
  * A FORM OF A LIST OR AN INSTITUTION IS NEVER GIVEN A PRICE (owner, 2026-10-31) - and a form that
@@ -143,6 +144,26 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
       response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
     });
     expect(formRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('counts a supplement only on a CHOICE question: one rule at save and at submit', async () => {
+    const text = {
+      id: 'q1',
+      label: 'Nom',
+      type: 'short_text',
+      options: [{ id: 'o1', label: 'x', priceModifier: 500 }],
+    };
+    // The submit path applies `calculateModifiers` only where `isChoiceQuestion` holds, so a text
+    // question's priced option can never create a charge - and the save guard sees the same fact.
+    expect(isChoiceQuestion(text)).toBe(false);
+    expect(decidesPrice(text, new Set())).toBe(false);
+    expect(isChoiceQuestion({ type: 'single_choice' })).toBe(true);
+    expect(isChoiceQuestion({ type: 'dropdown' })).toBe(true);
+    expect(isChoiceQuestion({ type: 'multiple_choice' })).toBe(true);
+
+    const { service, formRepo } = makeService('list');
+    await service.update('f1', dto({ items: [text] }), 'u1', false);
+    expect(formRepo.save).toHaveBeenCalledTimes(1);
   });
 
   it('refuses to CHANGE the price of a form of a list, even one that already had one', async () => {

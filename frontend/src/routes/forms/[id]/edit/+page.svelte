@@ -429,7 +429,7 @@
       bind:priceMatrix
       {tiers}
       {formations}
-      {items}
+      bind:items
       associationName={association?.name ?? ''}
       {associationCanBePaid}
       associationSells={!association || kindHasSection(association.type, 'payments')}

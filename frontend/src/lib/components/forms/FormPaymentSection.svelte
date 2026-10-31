@@ -80,7 +80,7 @@
     priceMatrix = $bindable(),
     tiers,
     formations,
-    items,
+    items = $bindable(),
     associationName,
     associationCanBePaid,
     associationSells = true,
@@ -104,6 +104,13 @@
     basePrice = 0;
     priceMatrix = null;
     allowCashPayment = false;
+    // A choice option's supplement is a price too: dropping the others and keeping it would leave a
+    // form that still charges.
+    items = items.map((item) =>
+      item.options?.length
+        ? { ...item, options: item.options.map((o) => ({ ...o, priceModifier: 0 })) }
+        : item
+    );
   }
 
   /** Whether the form carries a price today, whatever its kind - the only case a no-sale kind shows. */
@@ -117,6 +124,16 @@
 </script>
 
 {#if associationSells || hasPrice}
+  {#if !associationSells}
+    <!-- Outside the disabled fieldset on purpose: making a priced form FREE is the one way out. -->
+    <button
+      type="button"
+      onclick={makeFree}
+      class="border-cn-border text-text-main hover:bg-cn-bg mb-3 rounded-xl border px-4 py-2.5 text-sm font-bold"
+    >
+      {m.form_payment_make_free_button()}
+    </button>
+  {/if}
   <fieldset disabled={!associationSells} class="m-0 min-w-0 border-0 p-0">
     <FormSection title={m.form_section_payment()} icon={CreditCard}>
       {#if !associationSells}

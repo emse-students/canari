@@ -100,6 +100,7 @@ import {
   assertUniqueItemIds,
   decidesPrice,
   freeFallbackCells,
+  isChoiceQuestion,
   type PricedItem,
 } from './answer-options';
 import { coreUrl } from '../internal/service-urls';
@@ -162,9 +163,11 @@ export function stableJson(value: unknown): string {
  * switch, the grid (key-order-insensitive) and every choice option's supplement.
  */
 export function priceFingerprint(form: CreateFormDto): string {
-  const supplements = ((form.items ?? []) as PricedItem[]).flatMap((item) =>
-    (item.options ?? []).map((o, i) => [item.id, o.id ?? i, o.priceModifier ?? 0])
-  );
+  const supplements = ((form.items ?? []) as PricedItem[])
+    .filter(isChoiceQuestion)
+    .flatMap((item) =>
+      (item.options ?? []).map((o, i) => [item.id, o.id ?? i, o.priceModifier ?? 0])
+    );
   return stableJson({
     base: form.basePrice ?? 0,
     pay: form.requiresPayment === true,
@@ -1423,7 +1426,12 @@ export class FormsService {
       // A question the grid prices on has already been paid for by the cell it selected. Adding its
       // modifier on top would charge the same choice twice, silently, in the direction that
       // overcharges - so it is skipped here rather than trusted to be zero in the document.
-      if (answer && item.options?.length && !pricedQuestions.has(item.id)) {
+      if (
+        answer &&
+        isChoiceQuestion(item) &&
+        item.options?.length &&
+        !pricedQuestions.has(item.id)
+      ) {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
     }
