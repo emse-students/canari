@@ -11,6 +11,7 @@
  * server would refuse to ANSWER, and it mirrors the guards each section's own endpoints carry.
  */
 import {
+  ASSOCIATION_ADMIN_PRESET,
   AssociationPermissionFlag,
   mayActOnAssociation,
   type Association,
@@ -120,17 +121,93 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
 }
 
 /**
- * The sections a LIST's management area has: its profile, its roster, its bookable spaces (D38: the
- * bookings tab opens for all three kinds) and the archive/delete card. A list sells nothing, so the
- * shop and payment sections do not exist for it; the rights are the SAME `mayOpenEditSection`
- * answers, only the roster of keys is shorter.
+ * THE ONE TABLE OF WHICH SECTIONS EACH KIND OF ENTITY HAS (owner, 2026-10-31).
+ *
+ * An association has every section. A LIST and an INSTITUTION sell nothing - no shop, cotisations,
+ * purchases, delegation or payments - but both keep documents, forms, bookable spaces,
+ * partnerships and the republication/co-organisation queue. An institution alone has an audience
+ * (a global admin's, `AUDIENCE_INSTITUTION_ADMIN_ONLY`; a list's audience stays the BDE's, written
+ * from the association edit tooling, not a section of its own). The rights are the SAME
+ * `mayOpenEditSection` answers; only the roster of keys differs.
+ *
+ * The permission editor's offered flags are derived from THIS table (`permissionFlagsFor`), so a
+ * kind is never offered a right whose section it does not have.
  */
-export const LIST_EDIT_SECTIONS: readonly EditSection[] = [
+const SELLING_FREE_SECTIONS: readonly EditSection[] = [
   'profile',
   'members',
+  'documents',
+  'formulaires',
   'reservations',
+  'partnerships',
+  'republications',
   'danger',
 ];
+
+export const EDIT_SECTIONS_BY_KIND: Record<Association['type'], readonly EditSection[]> = {
+  association: EDIT_SECTIONS,
+  list: SELLING_FREE_SECTIONS,
+  institution: EDIT_SECTIONS.filter((s) => SELLING_FREE_SECTIONS.includes(s) || s === 'audience'),
+};
+
+/** The sections a list's management area has (see `EDIT_SECTIONS_BY_KIND`). */
+export const LIST_EDIT_SECTIONS: readonly EditSection[] = EDIT_SECTIONS_BY_KIND.list;
+
+/** The association rights each section is gated on, mirroring `mayOpenEditSection`. */
+const SECTION_FLAGS: Record<EditSection, readonly AssociationPermissionFlag[]> = {
+  profile: [],
+  members: [AssociationPermissionFlag.MANAGE_MEMBERS],
+  payments: [
+    AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+    AssociationPermissionFlag.MANAGE_PRODUCTS,
+  ],
+  documents: [AssociationPermissionFlag.MANAGE_DOCUMENTS],
+  achats: [AssociationPermissionFlag.MANAGE_PRODUCTS],
+  cotisations: [
+    AssociationPermissionFlag.MANAGE_MEMBERS,
+    AssociationPermissionFlag.MANAGE_PRODUCTS,
+  ],
+  delegation: [AssociationPermissionFlag.MANAGE_PRODUCTS],
+  formulaires: [AssociationPermissionFlag.MANAGE_FORMS],
+  reservations: [AssociationPermissionFlag.MANAGE_BOOKINGS],
+  partnerships: [AssociationPermissionFlag.MANAGE_PARTNERSHIPS],
+  republications: [AssociationPermissionFlag.POST_AS_ASSO, AssociationPermissionFlag.PROPOSE_EVENT],
+  audience: [],
+  danger: [AssociationPermissionFlag.MANAGE_MEMBERS],
+};
+
+/**
+ * The permission bits a kind's role editor offers: the union of the flags of its sections. The BDE
+ * flags are not here - `AssociationMemberRow` adds them for a BDE association on top.
+ */
+export function permissionMaskFor(kind: Association['type']): number {
+  let mask = 0;
+  for (const section of EDIT_SECTIONS_BY_KIND[kind]) {
+    for (const flag of SECTION_FLAGS[section]) mask |= flag;
+  }
+  return mask;
+}
+
+/**
+ * The admin preset a new member of `kind` receives: `ASSOCIATION_ADMIN_PRESET` narrowed to the
+ * rights the kind has a section for, so a list's President is never handed a shop right.
+ */
+export function adminPresetFor(kind: Association['type']): number {
+  return ASSOCIATION_ADMIN_PRESET & permissionMaskFor(kind);
+}
+
+/** Whether `kind` has `section` at all, whatever the reader's rights. */
+export function kindHasSection(kind: Association['type'], section: EditSection): boolean {
+  return EDIT_SECTIONS_BY_KIND[kind].includes(section);
+}
+
+/** Whether the role editor of `kind` offers `flag`. */
+export function kindOffersFlag(
+  kind: Association['type'],
+  flag: AssociationPermissionFlag
+): boolean {
+  return (permissionMaskFor(kind) & flag) !== 0;
+}
 
 /** Where a management area lives: associations and institutions under `/associations`, lists under `/lists`. */
 export type EditBase = '/associations' | '/lists';
