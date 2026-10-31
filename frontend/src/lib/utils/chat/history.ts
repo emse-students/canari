@@ -30,11 +30,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
 import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
-import {
-  admissionRefusedEntrant,
-  classifyIncomingDecryptError,
-} from '$lib/mls-client/mlsDecryptError';
-import { freezeForAdmissionRefusal } from './admissionFreeze';
+import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
@@ -1244,17 +1240,6 @@ export async function replayConversationHistory(params: {
             // exactly as long as such rows can exist - one `RETENTION_WINDOW_MS` past the deploy,
             // after which the stream cannot hold one. See `docs/wiki/legacy-compatibility.md`.
             ownFramesSkipped++;
-            seenCipherHashes.add(rowKey);
-            markSeenUpdated();
-            continue;
-          }
-          if (kind === 'admission-refused') {
-            // A COMMIT BRINGING A NEW USER INTO A CLOSED GROUP, refused unmerged (`admission.rs`).
-            // Not a loss and not a desync: the group is FROZEN for a person and the commit is marked
-            // seen so the replay stops re-offering it. What follows it in the stream is read as the
-            // frozen group's, never repaired - every recovery would rebuild this device from the
-            // server's state, which holds the person.
-            freezeForAdmissionRefusal(id, admissionRefusedEntrant(err));
             seenCipherHashes.add(rowKey);
             markSeenUpdated();
             continue;

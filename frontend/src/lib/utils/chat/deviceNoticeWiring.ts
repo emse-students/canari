@@ -5,14 +5,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { listRefusedDevices, setRefusedDeviceListener } from '$lib/mls-client/refusedDevices';
 import { isNewToItsOwner, keyFingerprintOf, type KeyFirstSight } from '$lib/mls-client/deviceTrust';
-import { canonicalIdentity, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
-import {
-  admissionFreezes,
-  setAdmissionFreezeListener,
-  type AdmissionFreeze,
-} from './admissionFreeze';
-import { showToast } from '$lib/stores/toast.svelte';
-import { m } from '$lib/paraglide/messages';
+import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 import {
   deliverDeviceEvents,
   forgetDeviceNotices,
@@ -73,7 +66,6 @@ export function unregisterDeviceNotices(): void {
   registeredMls = null;
   registeredSession = null;
   setRefusedDeviceListener(null);
-  setAdmissionFreezeListener(null);
   forgetDeviceNotices();
 }
 
@@ -254,11 +246,6 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
   loadDeviceNotices(session.getUserId());
   registeredMls = mls;
   registeredSession = session;
-  // A group frozen by a refused admission is told to its member the moment it is frozen, from
-  // wherever the refusal surfaced (the live pipeline, the commit replay, the archive replay): the
-  // group stops following the server, and a person has to be able to see why.
-  setAdmissionFreezeListener((freeze) => void announceAdmissionFreeze(freeze, session));
-  for (const freeze of admissionFreezes()) void announceAdmissionFreeze(freeze, session);
   const onPhone = isMobileTauriRuntime();
   const refusedCtx = () => ({ ownUserId: session.getUserId() });
   // The refusals this device already remembers, then each new one as it is recorded - logged only.
@@ -291,39 +278,4 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       now: () => Date.now(),
     })
   );
-}
-
-/**
- * Says, in the conversation and as a toast, that a group was frozen by a refused admission.
- *
- * The line carries a deterministic id, so it is written once per group however many times this runs
- * (the listener at the freeze, and the sweep at registration for a freeze made before it). It names
- * the entrant by the account's own name for them when it knows one. A conversation row not loaded yet
- * cannot take the line - the toast is the part that always lands - and a failure never un-freezes
- * anything: the freeze is what protects, the alert only explains it.
- */
-async function announceAdmissionFreeze(
-  freeze: AdmissionFreeze,
-  session: DeviceNoticeSession
-): Promise<void> {
-  try {
-    const userId = userIdOfLeaf(freeze.entrant) || freeze.entrant;
-    const names = await resolveDisplayNames([userId]);
-    const user = names(userId);
-    const convo = session.conversations.get(freeze.groupId);
-    const messageId = `admission-refused:${freeze.groupId}`;
-    if (convo && !convo.messages.some((msg) => msg.id === messageId)) {
-      await session.addMessageToChat(
-        'system',
-        m.chat_system_admission_refused({ user }),
-        freeze.groupId,
-        { isSystem: true, messageId }
-      );
-    }
-    showToast(m.admission_frozen_toast({ user }), 'error');
-  } catch (e) {
-    console.error(
-      `[ADMISSION] the freeze of ${freeze.groupId.slice(0, 8)}... could not be announced (it stays frozen): ${String(e)}`
-    );
-  }
 }

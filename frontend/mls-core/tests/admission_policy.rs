@@ -1,27 +1,28 @@
-//! Admission policy: a compromised delivery server must not be able to bring a NEW USER into a
-//! CLOSED group (a conversation).
+//! Admission policy: the rule that names an entry no member made into a CLOSED group (a
+//! conversation) - and, since the owner's decision of 2026-10-31, the proof that it REFUSES NOTHING.
 //!
 //! The server holds every GroupInfo and accepts every commit, so a server under hostile control can
-//! build an external commit for an identity of its choosing and hand it to every member. A closed
-//! group refuses it before merging, and is left exactly as it was.
+//! build an external commit for an identity of its choosing and hand it to every member. #2815
+//! refused such a commit unmerged and froze the group; legitimate paths produce exactly that commit
+//! (a skipped KeyPackage, a swept or evicted only leaf), so the rule is DISARMED: the verdict is
+//! computed and logged, and the commit is MERGED as before (`mls-core` `admission.rs`).
 //!
 //! The rule is a PURE FUNCTION OF (the tree at the commit's base epoch, the commit): two honest
 //! members at the same epoch hold the same tree, so they reach the same verdict whenever each of
 //! them processes the commit. Nothing else is read.
 //!
 //! - A member (`Sender::Member`) may add anyone: a human invitation, signed by the member's leaf.
-//! - An external commit is accepted by a closed group only if its user ALREADY has a leaf in the
-//!   pre-commit tree: a new device of a member, or a device rejoining after losing its state.
-//! - Three states. A group nobody classified keeps the behaviour it always had (its external
-//!   commits are merged) until a session classifies it; the app closes a conversation and opens a
-//!   key-distribution group, whose members enter by external commit by design. The choice survives
-//!   a save, a reload and a `forget_group`.
-//! - A refusal is the typed `MlsError::AdmissionRefused`, and the group is left as it was.
+//! - An external commit is `Admitted` by a closed group's rule only if its user ALREADY has a leaf in
+//!   the pre-commit tree: a new device of a member, or a device rejoining after losing its state.
+//!   Any other is `Uninvited` - and merged, while the rule is disarmed.
+//! - Three states. A group nobody classified keeps the behaviour it always had; the app opens a
+//!   key-distribution group, whose members enter by external commit by design, and closes nothing
+//!   while the rule is disarmed. The choice survives a save, a reload and a `forget_group`.
 //!
-//! The one case this policy cannot close is a device FORGED under an existing member's identity:
+//! The one case this policy cannot name is a device FORGED under an existing member's identity:
 //! a `BasicCredential` binds nothing, so only a device endorsement signed by one of that user's
 //! leaves can tell it apart. It is the `#[ignore]`d test at the end.
-use mls_core::{AdmissionPolicy, DecryptErrorKind, MlsError, MlsManager};
+use mls_core::{AdmissionPolicy, AdmissionVerdict, MlsManager, judge_external_commit};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -71,31 +72,45 @@ fn assert_still_converged(alice: &mut MlsManager, bob: &mut MlsManager, gid: &st
     assert_eq!(plaintext, b"still us");
 }
 
+/// The rule's verdict on `entrant` entering `gid` by external commit, judged on `member`'s CURRENT
+/// tree - which is the pre-commit tree when it is asked before the commit is processed.
+fn verdict_on(member: &MlsManager, gid: &str, entrant: &str) -> AdmissionVerdict {
+    judge_external_commit(
+        member.admission_policy(gid),
+        &sorted_identities(member, gid),
+        Some(entrant),
+    )
+}
+
 #[test]
-fn an_external_commit_by_a_user_absent_from_the_tree_is_refused_and_changes_nothing() {
+fn an_external_commit_by_a_user_absent_from_the_tree_is_merged_while_the_rule_is_disarmed() {
+    // THE OWNER'S DECISION OF 2026-10-31: refusing this commit froze the conversation for every
+    // legitimate self-rejoin (a skipped KeyPackage, a swept or evicted only leaf). The verdict still
+    // names it, and every member MERGES it - the same epoch, the same roster, still converged.
     let gid = "g-admission-intruder";
     let (mut alice, mut bob) = conversation_alice_bob(gid);
     let epoch_before = alice.get_epoch(gid).expect("epoch");
-    let roster_before = sorted_identities(&alice, gid);
 
     let mut mallory = make_device("mallory", "dev1");
     let commit = external_commit_from(&alice, gid, &mut mallory);
+    assert_eq!(
+        verdict_on(&alice, gid, "mallory:dev1"),
+        AdmissionVerdict::Uninvited(Some("mallory:dev1".to_string())),
+        "the rule still names the entry no member made"
+    );
 
     for (name, member) in [("alice", &mut alice), ("bob", &mut bob)] {
-        let verdict = member.process_incoming_message(gid, &commit);
-        assert!(
-            matches!(verdict, Err(MlsError::AdmissionRefused(_))),
-            "{name} must refuse a new user entering on their own, got {verdict:?}"
-        );
+        member
+            .process_incoming_message(gid, &commit)
+            .unwrap_or_else(|e| panic!("{name} must merge it while the rule is disarmed: {e:?}"));
         assert_eq!(
             member.get_epoch(gid).expect("epoch"),
-            epoch_before,
-            "{name}: a refused commit must not advance the epoch"
+            epoch_before + 1,
+            "{name}: the commit advanced the epoch"
         );
-        assert_eq!(
-            sorted_identities(member, gid),
-            roster_before,
-            "{name}: a refused commit must not add a leaf"
+        assert!(
+            sorted_identities(member, gid).contains(&"mallory:dev1".to_string()),
+            "{name}: the entrant holds a leaf"
         );
     }
 
@@ -103,41 +118,19 @@ fn an_external_commit_by_a_user_absent_from_the_tree_is_refused_and_changes_noth
 }
 
 #[test]
-fn the_refusal_names_the_identity_it_refused() {
-    // The line a user and an operator both read: WHICH identity tried to enter.
+fn the_verdict_names_the_identity_it_judged() {
+    // The line a user and an operator both read: WHICH identity entered.
     let gid = "g-admission-named";
-    let (alice, mut bob) = conversation_alice_bob(gid);
-    let mut mallory = make_device("mallory", "dev7");
-    let commit = external_commit_from(&alice, gid, &mut mallory);
-
-    let err = bob
-        .process_incoming_message(gid, &commit)
-        .expect_err("refused");
-    let said = err.to_string();
-    assert!(
-        said.starts_with("ADMISSION_REFUSED:"),
-        "typed prefix, got {said}"
+    let (_alice, bob) = conversation_alice_bob(gid);
+    assert_eq!(
+        verdict_on(&bob, gid, "mallory:dev7"),
+        AdmissionVerdict::Uninvited(Some("mallory:dev7".to_string()))
     );
-    assert!(
-        said.contains("mallory:dev7"),
-        "names the refused identity, got {said}"
+    assert_eq!(
+        judge_external_commit(Some(AdmissionPolicy::Closed), &[], None),
+        AdmissionVerdict::Uninvited(None),
+        "an unreadable credential cannot be vouched for"
     );
-}
-
-#[test]
-fn a_refusal_is_its_own_kind_for_every_boundary_to_classify() {
-    // The native layers read the kind, never the text: a refusal that fell into `Other` would be
-    // retried, and one read as a ratchet gap would be queued - and the recovery either starts is
-    // the one that rebuilds the device from the state it just refused.
-    let gid = "g-admission-kind";
-    let (alice, mut bob) = conversation_alice_bob(gid);
-    let mut mallory = make_device("mallory", "dev1");
-    let commit = external_commit_from(&alice, gid, &mut mallory);
-
-    let err = bob
-        .process_incoming_message(gid, &commit)
-        .expect_err("refused");
-    assert_eq!(err.decrypt_kind(), DecryptErrorKind::AdmissionRefused);
 }
 
 #[test]
@@ -167,6 +160,10 @@ fn an_external_commit_by_a_new_device_of_an_existing_user_is_accepted() {
     let (mut alice, _bob) = conversation_alice_bob(gid);
     let mut bob_phone = make_device("bob", "dev2");
     let commit = external_commit_from(&alice, gid, &mut bob_phone);
+    assert_eq!(
+        verdict_on(&alice, gid, "bob:dev2"),
+        AdmissionVerdict::Admitted
+    );
 
     alice
         .process_incoming_message(gid, &commit)
@@ -182,6 +179,10 @@ fn a_device_rejoining_after_losing_its_state_is_accepted() {
     let (mut alice, _bob) = conversation_alice_bob(gid);
     let mut bob_reinstalled = make_device("bob", "dev1");
     let commit = external_commit_from(&alice, gid, &mut bob_reinstalled);
+    assert_eq!(
+        verdict_on(&alice, gid, "bob:dev1"),
+        AdmissionVerdict::Admitted
+    );
 
     alice
         .process_incoming_message(gid, &commit)
@@ -205,39 +206,44 @@ fn the_verdict_is_the_same_for_a_member_that_processes_it_late() {
     let mut mallory = make_device("mallory", "dev1");
     let intrusion = external_commit_from(&alice, gid, &mut mallory);
 
-    let alice_verdict = alice.process_incoming_message(gid, &intrusion);
+    let alice_verdict = verdict_on(&alice, gid, "mallory:dev1");
+    alice
+        .process_incoming_message(gid, &intrusion)
+        .expect("alice merges it");
     bob.process_incoming_message(gid, &add_carol)
         .expect("bob replays the legitimate Add");
-    let bob_verdict = bob.process_incoming_message(gid, &intrusion);
+    let bob_verdict = verdict_on(&bob, gid, "mallory:dev1");
+    bob.process_incoming_message(gid, &intrusion)
+        .expect("bob merges it late");
 
-    assert!(matches!(alice_verdict, Err(MlsError::AdmissionRefused(_))));
-    assert!(matches!(bob_verdict, Err(MlsError::AdmissionRefused(_))));
+    assert_eq!(alice_verdict, bob_verdict);
+    assert!(matches!(alice_verdict, AdmissionVerdict::Uninvited(_)));
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         bob.get_epoch(gid).expect("epoch"),
-        "both stopped at the same epoch, before the refused commit"
+        "both merged it, at the same epoch"
     );
 }
 
 #[test]
-fn a_new_user_entering_by_an_admitted_new_device_cannot_vouch_for_another_user() {
-    // The rule is per USER in the pre-commit tree, never "someone already entered this way": two
-    // intruders do not admit each other.
+fn a_leaf_of_one_user_never_vouches_for_another_user() {
+    // The rule is per USER in the pre-commit tree, never "someone already entered this way".
     let gid = "g-admission-chain";
     let (alice, mut bob) = conversation_alice_bob(gid);
     let mut mallory = make_device("mallory", "dev1");
     let first = external_commit_from(&alice, gid, &mut mallory);
-    assert!(matches!(
-        bob.process_incoming_message(gid, &first),
-        Err(MlsError::AdmissionRefused(_))
-    ));
+    bob.process_incoming_message(gid, &first)
+        .expect("merged while the rule is disarmed");
 
-    let mut mallory_two = make_device("mallory", "dev2");
-    let second = external_commit_from(&alice, gid, &mut mallory_two);
     assert!(matches!(
-        bob.process_incoming_message(gid, &second),
-        Err(MlsError::AdmissionRefused(_))
+        verdict_on(&bob, gid, "eve:dev1"),
+        AdmissionVerdict::Uninvited(_)
     ));
+    assert_eq!(
+        verdict_on(&bob, gid, "mallory:dev2"),
+        AdmissionVerdict::Admitted,
+        "mallory now holds a leaf, so a further device of hers is a member's device"
+    );
 }
 
 #[test]
@@ -353,12 +359,9 @@ fn a_device_forged_under_an_existing_members_identity_is_refused() {
     // vouches for it. Today this is indistinguishable from `an_external_commit_by_a_new_device_of_
     // an_existing_user_is_accepted`; the endorsement is what will separate the two.
     let gid = "g-admission-forged";
-    let (mut alice, _bob) = conversation_alice_bob(gid);
-    let mut forged = make_device("bob", "forged");
-    let commit = external_commit_from(&alice, gid, &mut forged);
-
+    let (alice, _bob) = conversation_alice_bob(gid);
     assert!(matches!(
-        alice.process_incoming_message(gid, &commit),
-        Err(MlsError::AdmissionRefused(_))
+        verdict_on(&alice, gid, "bob:forged"),
+        AdmissionVerdict::Uninvited(_)
     ));
 }

@@ -1718,13 +1718,6 @@ export class WebMlsService extends BaseMlsService {
     this.client.set_admission_policy(groupId, policy);
   }
 
-  /** WASM client wrapper - the admission policy a group was classified with. */
-  async getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'> {
-    if (!this.client)
-      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s admission policy`);
-    return this.client.admission_policy(groupId) as 'closed' | 'open' | 'unclassified';
-  }
-
   /** WASM client wrapper - the tree's signature key for one leaf, or null when it has none. */
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     if (!this.client)
