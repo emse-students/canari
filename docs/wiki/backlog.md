@@ -71,6 +71,27 @@ These are the lines of the same log that fix does NOT cover, each with its count
   [the item below](#p2---the-boot-restore-opens-the-frame-pipeline-before-any-conversation-row-exists-a-queued-frame-for-a-stored-conversation-is-refused-absent-conversation-not-acked-and-re-pulled-found-by-the-141-dev-campaign-decided-to-defer):
   **425 absent-conversation refusals, up to 124 unacked frames in one boot** on this log.
 
+## P2 - A CallKit Decline is still refused for a user whose launch signs in by itself (review of #2782, 2026-10-31)
+
+#2782 stops the heartbeat holding the foreground guard at the PIN gate. A launch that signs in
+WITHOUT the PIN still loads a manager in the background, and that page holds the guard, correctly:
+biometrics with no prompt due (`ChatBackgroundService.svelte`, `biometricLogin(..., { unattended:
+!promptDue })`), or "stay signed in" on a hardware-held key (`sessionAuth.ts`, `[PIN] Stay signed in on
+a hardware-held key`). Its Decline is then refused (`encryptQueuedMessages: ok=false (... foreground
+active ...)`) and the caller rings out. The fix is to send the decline THROUGH the page's loaded
+manager when one exists, not a second background writer. Named in
+[calls](frontend/modules/calls.md#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31).
+
+## P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)
+
+The recovery reads `mls.bin` early (`sessionAuth.ts`, `loadMlsState(userId)`), checks the PIN, then
+hands those bytes to the native login, which installs them via `mark_foreground_manager_loading`
+(`commands/mls.rs`, the `(supplied, _)` arm) - never re-reading the file under `mls_bin_write_lock`.
+With #2782 the guard is no longer held at the PIN gate, so an in-process background write (a CallKit
+Decline, a quick reply) landing during the PIN check can be erased by the recovery's next blind
+write. Mitigated by `reconcileSendRatchets`. Fix: pass `stateOnDisk` so the native side reads under
+the lock, or compare a digest of the supplied bytes under the lock and refuse on a difference.
+
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
 
 **Blocked on** the first stable carrying #2692 being served by BOTH Play and the App Store. The
@@ -392,7 +413,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
 A production count of legacy tier tags without a consistent issuer is owed to the operator after
 the stack deploys ([cotisations](cotisations.md#a-tag-counts-only-for-the-association-that-issued-it)).
 
-## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
+## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix MERGED (#2647), read `PASS`, not shipped
 
 On a Mi 9T running `1.5.1` on dev, a member picked a video from the gallery in the CanaReels camera,
 reviewed it and published it. The app's logs and the system's own records agree on two short,
@@ -405,8 +426,11 @@ unrequested opens. Nothing stayed open: the session released the late stream its
 | +33 s, +78 s, and in the reel viewer | nothing | no camera client, no recording |
 
 Causes, the fix and its tests: [reels](frontend/modules/reels.md#the-camera-does-not-open-again-once-the-member-has-left-it-mi-9t-2026-10-28).
-**Owed: one reading on the Mi 9T** - no CONNECT and no CAMCORDER window after a publish or a gallery
-return.
+**Read `PASS` on the Mi 9T, rig build `5c362c0e1` on dev (2026-10-28)**, the same path with a
+synthetic video: one CONNECT when the camera opened and one DISCONNECT when the gallery picker
+opened, the CAMCORDER recording stopping with it; after the pick's return and after Publish, no
+CONNECT, no recording, and `appops` still dating the last camera and microphone access to the
+picker's open. Logcat's `CameraService` shows the same single pair. Owed: nothing but the release.
 
 ## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 
@@ -656,13 +680,48 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
     device until a reload. Stopping the re-ask waits for the server row below.
     Mechanism: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
 
-## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built)
+## P2 - A further device's ask is memory on the requester and 24 h on the server: make it a server row (decided in review, 2026-10-30, not built) - SUPERSEDED
+
+**Superseded the same day: a device of a member enters by itself, so it asks nobody and this row is moot - see [the 2026-10-30 decision](#a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible-trace-owner-2026-10-30-the-whatsapp-model-not-built).** The reasoning below is kept for the ask that still exists in 1.5.2.
 
 - Today a further device of a member with no seat has no durable ask. The requester re-asks on its
   cadence, about once a minute per group, and the server keeps a stored ask for 24 h.
 - The real fix: store the ask as a server row, as a link's ask is (`GroupMember.awaitingAdmission`),
   and let every member's pending sweep re-raise it. The requester then stops asking once the row
   exists. Cost today: [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-further-devices-ask-is-decided-once-and-asked-on-the-cadence).
+
+## A new device of a member ENTERS BY ITSELF, with a history and a visible trace (owner, 2026-10-30, the WhatsApp model, not built)
+
+Final decision of 2026-10-30, guided by "je ne veux pas importuner les utilisateurs du tout". It
+SUPERSEDES both the 2026-10-27 interim gate (the mandatory tap) and the "one approval per device"
+decision recorded earlier the same day. Planned for the release after 1.5.2.
+
+1. **Entry.** A new device of a person who is already a member enters by itself. No tap and no ask,
+   from anyone: not the owner's other devices, not contacts.
+2. **History.** That device receives the whole history its person was entitled to, filtered on that
+   person's own presence windows: the existing addressed-answer rule, rule 2, "a new device of a
+   continuous member", in [history-answer-addressing](protocols/history-answer-addressing.md).
+3. **Visibility.**
+   - A silent system line, "X a ajouté un appareil", in each of X's conversations: no notification
+     and no unread count.
+   - A discreet alert, "Nouvel appareil connecté", on X's other devices, with "Ce n'est pas moi",
+     which revokes that device.
+   - This is what makes a device added through a compromised login visible. **Accepted residual
+     risk, stated plainly:** such a device reads new messages and history until X reacts.
+4. **New persons are unchanged.** The 2026-10-21 decision stands: a newcomer receives nothing from
+   before their arrival, filtered on arrivals and departures. Link joins still wait for a member's
+   Add (decided 2026-10-23).
+5. **Delivery.** Step A of history addressing (built, draft PR) ships TOGETHER with this model, in
+   the release after 1.5.2.
+6. **Interim in 1.5.2.** Device asks leave the global banner and stay only as the in-conversation
+   row (a separate PR).
+
+**Rejected earlier the same day:** one approval per device (a tap, account-wide and durable, plus a
+durable server row when the owner has no other device) - replaced by self-entry; self-entry on
+revoking old devices (it reopens the stolen-session lock-in); an account recovery key (USK,
+[mls-protocol](protocols/mls-protocol.md) shape B), which costs users an action.
+
+Mechanism and the superseded interim: [mls-protocol](protocols/mls-protocol.md#an-unseen-device-of-a-member-2026-10-27-interim).
 
 ## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 
@@ -2586,7 +2645,42 @@ Reuse the bench phones with screen recording to make demo videos and screenshots
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
 built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
-Mi 9T and iPhone 12 readings.
+iPhone 12 readings, and on the Mi 9T what is listed as owed below.
+**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
+and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
+in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
+text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
+(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
+the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
+and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
+post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
+chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
+`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
+file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
+showing `share_staged` with the right type and size; deleting the three messages (one choice, a
+definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
+next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
+says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
+Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
+open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
+a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
+the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
+dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
+covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
+publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
+"Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
+read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
+was deleted from that page's menu - the viewer itself has no author menu.
+**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
+text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
+drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
+`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
+the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
+the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once the defect below was
+fixed.)
+**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
+system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
+`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
 **S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
 Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
@@ -2594,6 +2688,101 @@ is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
 `APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
 suggestions (`INSendMessageIntent`).
+
+## P1 - The reel viewer's share sheet does nothing: every row reads a post id its own close erased (Mi 9T, 2026-10-28)
+
+In the CanaReels viewer, "Partager" opens `PostShareSheet`, and each of its rows - a conversation of
+the grid, "Copier le lien", "Partager via..." - closes the sheet and nothing else happens: no
+landing, no clipboard, no chooser, and the WebView logs `Uncaught TypeError: Cannot read properties
+of null (reading 'slice')` (three of three rows read, 1.5.1 `da43b8447`). **The cause, read in the
+code:** the sheet's `act()` calls `close()` BEFORE the action, and `ReelViewer` mounts the sheet with
+`postId={shareFor}` and `onClose={() => (shareFor = null)}`; the action then reads the live prop,
+now `null`, and `sendPostLinkInApp` / `copyPostLink` / `sharePostLinkOut` throw on `postId.slice`.
+The post menu and the `/posts/<id>` page pass a constant id and a boolean `open`, which is why the
+same sheet works there. Fix where the id is read: the row captures `postId` before it closes, and a
+viewer test drives a row of the REAL sheet rather than `PostShareSheetStub`, whose one button
+closes and never reads the id afterwards. #2609's "the viewer closes after an in-app send" is unread until then.
+**Fix MERGED (#2644), read `PASS` on the Mi 9T, rig build `203e46606` on dev (2026-10-28), synthetic reel:**
+a tap on a conversation of the viewer's sheet closes the viewer and opens that DM with the reel's link
+waiting in its composer, NOT sent (#2609's dismissal; `[sharePost] sending the link of <id>`, then
+`[SHARE] landing on <conversation>`). "Partager via..." opens the system chooser on the link, and
+"Copier le lien" logs `copying the public link of <id>`. No error in the window. The draft was cleared
+and the reel deleted.
+
+## P3 - A late native-library pick after "Rouvrir la camera" still reaches the review (#2655 review, 2026-10-28)
+
+On the native library path (`ReelCapture.openGallery`, the iOS app), tapping "Rouvrir la camera"
+while `pickNatively` is still pending runs `endPicking` early; the promise's later `.finally` is then
+a no-op, but a file it hands over still goes through `takePickedVideo` and replaces the live camera
+with a review. Arguably right (the member did pick it), and untested either way: owed a test that
+settles the native promise after the reopen, and a decision on whether a pick that arrives after the
+member chose the camera is kept or dropped.
+
+## P3 - Tests that read the source tree or spawn a worker time out under CPU load (2026-10-28)
+
+Tests that read the source tree or spawn a worker hit vitest's 5 s default when the machine is
+loaded: in a whole-suite local run (the CPU at 97 %), `environment.test.ts`,
+`globalChatSingleton.importCycle.test.ts`, `encryption.worker.test.ts`,
+`ChatArea.entryWindow.svelte.test.ts` and `graine/distributionGroup.test.ts` timed out, and each
+passed alone. CI was not hit. Give them an explicit timeout sized to their measured cost.
+
+## P3 - New-device alerts queue one at a time, never forget a device that has left, and push the full-screen camera down (Mi 9T, 2026-10-28)
+
+On the Mi 9T's bench account, a reinstall surfaced a queue of "Nouvel appareil sur votre compte"
+alerts, one per enrolment of that account's other clients (dated 25 Oct 12:15, 12:20, 17:47,
+23:13, ...). Read from `NewDeviceBanner.svelte` and `deviceNotices.svelte.ts`, three things, and
+none of them is bench-only:
+
+- **One at a time.** The banner draws `pendingDeviceNotices()[0]`, and "Compris" and "Voir mes appareils"
+  dismiss that one alone, so N devices added while this one was away cost N taps. "Voir mes appareils"
+  opens the list that shows them all, yet it dismisses one.
+- **Nothing prunes an alert whose device has since left the account.** A pending alert is
+  removed by a dismissal or by "Ce n'est pas moi", never by the device's revocation elsewhere. That
+  is unread: whether the queued devices here are still enrolled.
+- **The banners sit above the full-screen CanaReels camera and the reel composer.** They take the top
+  third of the screen, and the camera's own controls start under them.
+
+Owed: one alert per batch (or "Voir mes appareils" dismisses every pending alert), an alert dropped
+when its device is no longer on the account, and the banner hidden or deferred on a full-screen
+capture surface. Read on the Mi 9T against the rig build `5c362c0e1`.
+
+## P3 - Whose is the deep-link manifest diff found in the main checkout? (2026-10-28)
+
+The main checkout held an uncommitted
+`frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml` diff, restored before an A1 build:
+`org.chromium.arc.intent.action.VIEW` added to the `signed-out` deep-link filter, and
+`android:path` entries (`/chat`, `/communities`, `/notifications`, `/calendar`, `/shop`,
+`/bookings`, ...) added under the `canari-emse.fr` host filter. The ARC action is already on `main`
+in the other filters (`git log -S`), and the paths are in `tauri.conf.json`'s deep-link config. This
+file is the one that `tauri android build` regenerates from that config (`REGENERATED_MANIFEST`,
+`tools/cross-client-harness/a1apk.mjs`). The diff was already in the checkout when the session
+started, before any build of it. An `a1apk.mjs` build of `5c362c0e1` then left the tree CLEAN,
+although neither the config nor the committed manifest differs between `fb7994232` and
+`5c362c0e1`. So which build wrote the diff, and why the same config regenerates differently, are
+both unanswered. Owed: reproduce it from a clean tree. If a build regenerates a manifest that
+differs from the committed one, the committed copy is stale and is regenerated in a pull request.
+
+## P3 - Three loose ends of the reel camera's no-start-after-leave fix (review of #2647, 2026-10-28)
+
+- **A picker that never answers leaves the camera stopped for good.** `deferOpen` is cleared when
+  the gallery picker answers, including the file input's `cancel` event; an engine without that
+  event (WebView or browser before Chromium 113, Safari before 16.4) or a native picker dismissal
+  the plugin never settles leaves it set, and the screen stays on its "starting" spinner with no
+  control to retry - the controls render only while live. Owed: a way out that is a gesture, not a
+  timer (a tap on the stand-in clears the deferral, or a reopen control while stopped and deferred),
+  and the WebView floor written down.
+- **The clear of `leaving` is untested.** The `afterNavigate` that clears it while the screen stays
+  mounted is mocked to a no-op in the tests, so deleting its body passes: capture the callback and
+  assert drain, then `afterNavigate` while mounted, then the camera opens again.
+- **`leaving` can outlive a navigation that does not happen** (theoretical): a non-shallow
+  navigation that drains the take and is then cancelled, or a bfcache restore, leaves it set. No
+  guard that cancels a navigation is mounted with the camera today.
+
+## P3 - A share already drained into the picker does not survive a kill (Mi 9T, 2026-10-28)
+
+Accepted as designed (2026-10-28): [sharing](frontend/sharing.md) promises a waiting share survives
+a kill only while the page has not taken it. Read on 1.5.1: a text share left open in "Envoyer
+a..." (`pending_share.json drained`), the app force-stopped and relaunched - nothing offered again.
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
@@ -2659,6 +2848,13 @@ list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent
 the most recent conversation, so the one the member just left is at the top everywhere except
 there. Deciding: whether the forward and the share-in picker split their order, or both go to
 `'recent'` ([sharing](frontend/sharing.md)).
+
+## P3 - A toast draws over the dev-only "Environnement de test" banner (Mi 9T, 2026-10-28)
+
+On a dev build the `share_items_lost` toast lands on top of the test-environment banner at the top
+of the screen and the two texts overlap. Production carries no such banner, so only dev and tester
+builds show it; any toast placed at the top meets it the same way. Deciding: whether toasts sit
+below the banner or the banner yields while a toast shows.
 
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
@@ -4126,7 +4322,7 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **The paste-the-key field is DELETED.** Businesses already linked are migrated with the user in lot 1, a read-only count first. An outside Business still cannot be added without a database edit. **Re-running enrolment while a Business is linked is REFUSED** (unlink first, with confirmation).
 
-**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). `removecashier` fails (error 2): until Lydia fixes it, "Remove" reduces the rights to collect only and says how to finish in the console.
+**Cashiers:** Canari keeps its own list (a new table, so a migration; phone numbers, so the GDPR register and the privacy policy change with it), managed by `MANAGE_PAYOUT_ACCOUNT` holders. A cashier is a member of the association, the number typed at the add. Three roles: Responsable (all rights), Tresorier (statements, refunds, cancels), Vendeur (collect only). Lydia's SMS on, plus a Canari notification leading to a help page ("you are a cashier of X"). Removal goes through Lydia's cashier-removal call (its shape is in the private operations notes), measured on homologation 2026-10-30 ([lydia-api](lydia-api.md#5b-what-lydias-own-documentation-says-read-2026-10-27)); every revoke re-reads `business/getpermission` and counts only "0 rights" as success - anything else is an ERROR surfaced to the manager, never shown as success. Lot 3 ships no "add" before this revoke is proven once in production. This replaces the "reduce the rights + finish in the console" fallback, which the measurement made unnecessary.
 
 **Refunds from Canari, in this chantier:** total and partial, by `MANAGE_PAYOUT_ACCOUNT` holders, confirmed, with an audit of who refunded. A total refund withdraws the membership or frees the seat, EXCEPT a Cercle top-up, never reversed automatically (the manager is told). **Statement:** Canari's own records only, no `transaction/list`.
 
@@ -4134,7 +4330,11 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 **Delivery in lots, each a pre-release on dev then a stable:** lot 1 - outgoing calls signed over encoded values, the key captured at creation, the webhook, re-run refused, existing Businesses migrated; lot 2 - the step-by-step screen; lot 3 - cashiers; lot 4 - refunds.
 
-**Owed first:** one production check that a cashier added by the API sees the Business in the Lydia Pro app (the 2026-10-23 blocker); approved by the user on 2026-10-30.
+**Lot 2 carries the enrolment-in-flight marker (parked 2026-10-30, review of lot 1):** a durable marker written on the association BEFORE `business/create` and cleared by the link, so a second attempt is REFUSED rather than only discouraged by the "check before retrying" line - lot 1 cannot hold it because it is a column, and its migration rides lot 2's ([payments](frontend/modules/payments.md#a-businesscreate-with-no-answer-the-outcome-is-unknown-and-the-screen-says-so)).
+
+**The production check is DONE (2026-10-30):** a cashier added by the Provider-signed `business/addcashier` gets Lydia's SMS and sees the Business in the Lydia Pro app - the 2026-10-23 blocker is lifted ([lydia-api](lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+
+**Lot 2 storage, confirmed by the owner directly on 2026-10-30:** the Responsable's phone is stored sealed, only `phoneEnd` readable, with a migration, an Art. 30 register entry and a privacy policy update together in the same lot.
 
 ### The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up
 

@@ -116,6 +116,7 @@
         >
           <div class="mt-0.5 shrink-0">
             <AssociationAvatar
+              id={entry.associationId}
               name={entry.associationName}
               logoUrl={entry.associationLogoUrl}
               size="sm"
