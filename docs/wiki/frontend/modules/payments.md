@@ -649,10 +649,13 @@ What the admin does, in this order:
 2. **Confirm that NO association holds that token** - the link may have committed after its answer was
    lost, and deleting a linked Business would cut a working association off. Ask social-service's own
    lookup (the one the webhook uses), from inside the core-service container, which carries both
-   variables:
+   variables (core reaches social-service through `FORM_URL`, and social-service serves every route
+   under `/api` - the sibling internal routes `lydia-callback-key` and `lydia-disconnect` answered at
+   that shape in production on 2026-10-30). Run it on an estate where enrolment lot 1 is deployed:
+   before that the route does not exist and answers 404 (dev, measured 2026-10-31):
 
    ```sh
-   bun -e 'const r = await fetch(`${process.env.SOCIAL_URL || "http://social-service:3014"}/internal/associations/lydia-business-of-vendor-token`, {method: "POST", headers: {"Content-Type": "application/json", "X-Internal-Secret": process.env.INTERNAL_SECRET}, body: JSON.stringify({vendorToken: process.argv[1]})}); console.log(r.status, await r.text())' '<vendor_token>'
+   bun -e 'const r = await fetch(`${process.env.FORM_URL || "http://social-service:3014"}/api/internal/associations/lydia-business-of-vendor-token`, {method: "POST", headers: {"Content-Type": "application/json", "X-Internal-Secret": process.env.INTERNAL_SECRET}, body: JSON.stringify({vendorToken: process.argv[1]})}); console.log(r.status, await r.text())' '<vendor_token>'
    ```
 
    Only `200 {"associationId":null,"onboardingComplete":null}` lets step 3 go on. An `associationId` means

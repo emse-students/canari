@@ -657,6 +657,26 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
     expect(sum).toBeLessThan(PAYMENTS_PROXY_READ_TIMEOUT_MS);
   });
 
+  it('nginx really gives /api/payments the read timeout the budget is measured against', () => {
+    // The budget above is only true if nginx waits at least PAYMENTS_PROXY_READ_TIMEOUT_MS: read
+    // the single source of the nginx config and fail the day someone tightens that location.
+    const conf = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'infrastructure', 'local', 'Dockerfile.frontend'),
+      'utf8'
+    );
+    const start = conf.indexOf('location /api/payments {');
+    expect(start).toBeGreaterThan(-1);
+    const block = conf.slice(start, conf.indexOf('}', start));
+    const set = /proxy_read_timeout\s+(\d+)(ms|s|m)?\s*;/.exec(block);
+    // None set: nginx's default, 60 s, is what the constant names.
+    const units = { ms: 1, s: 1_000, m: 60_000 } as const;
+    const effectiveMs =
+      set === null ? 60_000 : Number(set[1]) * units[(set[2] ?? 's') as keyof typeof units];
+    expect(effectiveMs).toBeGreaterThanOrEqual(PAYMENTS_PROXY_READ_TIMEOUT_MS);
+    // And with none set, the constant must BE nginx's default, not merely below it.
+    expect(set === null ? PAYMENTS_PROXY_READ_TIMEOUT_MS : effectiveMs).toBe(effectiveMs);
+  });
+
   it('surfaces the {status, code, message} error shape, distinct from the {error, message} one', async () => {
     // The actual cause of the incident above, once logging existed to see it: a REJECTED
     // business/create (unrecognized provider_token) answers in a completely different shape from
