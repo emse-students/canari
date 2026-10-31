@@ -4250,7 +4250,6 @@
   "bookings_avail_problem_empty": "The start and the end are the same",
   "bookings_avail_problem_date": "Choose a date",
   "bookings_avail_problem_order": "The end is before the start",
-  "bookings_avail_247_warning": "Open all day on consecutive days ({days}): a booking cannot run across the midnight between two whole days. To allow a night, write an evening range that ends the next morning.",
   "bookings_refusal_resource_has_bookings": "This resource has been booked before: its history is kept as long as the space exists. Close it instead (remove its hours or add a closure).",
   "bookings_refusal_too_many_spaces": "You have reached the maximum number of personal spaces.",
   "bookings_refusal_too_many_resources": "This space has reached the maximum number of resources.",

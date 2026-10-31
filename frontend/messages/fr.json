@@ -4250,7 +4250,6 @@
   "bookings_avail_problem_empty": "Le début et la fin sont identiques",
   "bookings_avail_problem_date": "Choisissez une date",
   "bookings_avail_problem_order": "La fin est avant le début",
-  "bookings_avail_247_warning": "Ouvert toute la journée plusieurs jours de suite ({days}) : une réservation ne peut pas passer minuit entre deux journées entières. Pour permettre une nuit, écrivez une plage du soir qui finit le lendemain matin.",
   "bookings_refusal_resource_has_bookings": "Cette ressource a déjà été réservée : son historique est conservé tant que l'espace existe. Fermez-la plutôt (retirez ses plages ou ajoutez une fermeture).",
   "bookings_refusal_too_many_spaces": "Vous avez atteint le nombre maximal d'espaces personnels.",
   "bookings_refusal_too_many_resources": "Cet espace a atteint le nombre maximal de ressources.",

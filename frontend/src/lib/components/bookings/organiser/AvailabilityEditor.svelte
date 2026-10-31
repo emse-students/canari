@@ -24,7 +24,6 @@
     MAX_AVAILABILITY_LINES,
     timeChoices,
     toStoredLines,
-    wholeDaysInARow,
     weekdayNames as weekdayNamesIn,
     type Closure,
     type EditorLine,
@@ -184,19 +183,6 @@
     )
   );
 
-  /** The days the 24/7 warning names, in the reader's words. */
-  const wholeDays = $derived(
-    wholeDaysInARow(rows).map((key) =>
-      key.startsWith('w')
-        ? (weekdayNames[Number(key.slice(1)) - 1] ?? key)
-        : new Date(`${key.slice(1)}T12:00:00Z`).toLocaleDateString(locale, {
-            day: 'numeric',
-            month: 'short',
-            timeZone: 'UTC',
-          })
-    )
-  );
-
   const lineProblems = $derived(rows.map(lineProblem));
   const closureProblems = $derived(closures.map(closureProblem));
   const blocked = $derived(
@@ -333,16 +319,6 @@
       {m.bookings_avail_add_date()}
     </button>
   </div>
-
-  {#if wholeDays.length}
-    <p
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm"
-      role="status"
-    >
-      <TriangleAlert size={15} class="mt-0.5 shrink-0" />
-      <span>{m.bookings_avail_247_warning({ days: wholeDays.join(', ') })}</span>
-    </p>
-  {/if}
 
   <div class="space-y-3">
     <h4 class="text-text-main text-sm font-bold">{m.bookings_avail_closures()}</h4>
