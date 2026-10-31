@@ -12,12 +12,10 @@ import {
   noteDeviceAddedByAMember,
   withholdHistoryFrom,
 } from './historyWithheld';
-import { approveMemberDevice, resetMemberDeviceAnswers } from './memberDeviceAnswers';
 
 /**
  * HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE until a member vouches for it: an Add of that very
- * device by a device that is not withheld there, or this member's approval of it under the key it
- * entered with. What a withheld device adds is withheld too.
+ * device by a device that is not withheld there. What a withheld device adds is withheld too.
  */
 describe('historyWithheld', () => {
   const stillThere = async () => true;
@@ -25,7 +23,6 @@ describe('historyWithheld', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
     bindHistoryWithheld([], null);
-    resetMemberDeviceAnswers();
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -155,15 +152,6 @@ describe('historyWithheld', () => {
     expect(committerIsWithheld('g1', 'bob:web-11', 'alice:phone-a')).toBe(false);
     noteDeviceAddedByAMember('g1', 'bob:web-9', 'bob:web-10');
     expect(historyWithheldFrom('g1', 'bob:web-9')).toBe(true);
-  });
-
-  it('is lifted by an approval under the key it entered with, and only that key', async () => {
-    await withholdHistoryFrom('g1', 'bob:web-9', 'fp-entered', stillThere);
-    approveMemberDevice('bob', 'web-9', 'fp-other');
-    expect(historyWithheldFrom('g1', 'bob:web-9')).toBe(true);
-    approveMemberDevice('bob', 'web-9', 'fp-entered');
-    expect(historyWithheldFrom('g1', 'bob:web-9')).toBe(false);
-    expect(historyWithheldEntries()).toEqual([]);
   });
 
   it('persists every change through the bound account, and restores what it was given', async () => {

@@ -1740,12 +1740,6 @@ export class WebMlsService extends BaseMlsService {
     return wasmGraineSignatureEngine();
   }
 
-  /** WASM client wrapper - this device's own credential signature key, public half. */
-  async ownSignatureKey(): Promise<Uint8Array> {
-    if (!this.client) throw new Error('[MLS] WASM client not ready - no own signature key yet');
-    return this.client.own_signature_key() as Uint8Array;
-  }
-
   /** WASM client wrapper - this device's credential key signs `message` (a v2 endorsement). */
   async signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array> {
     if (!this.client) throw new Error('[MLS] WASM client not ready - cannot sign an endorsement');

@@ -1795,11 +1795,6 @@ export class TauriMlsService extends BaseMlsService {
     return invoke<GraineRunReading>('graine_run', { groupId });
   }
 
-  /** This device's own credential signature key (`mls_own_signature_key`). */
-  async ownSignatureKey(): Promise<Uint8Array> {
-    return new Uint8Array(await invoke<number[]>('mls_own_signature_key'));
-  }
-
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */
   async signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array> {
     return new Uint8Array(

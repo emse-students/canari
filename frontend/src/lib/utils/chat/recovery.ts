@@ -939,9 +939,9 @@ export async function requestReAdd(
   // ASKED ON THE CADENCE, NOT ONCE: no answer the server gives makes the ask durable. A `forwarded`
   // ask lives on one member's screen, a `stored` one is drained to a member's screen at its next
   // connection, and a screen that reloads before deciding loses it; nothing on this device can see
-  // that happen, so a record of "already asked" would strand the device in a quiet group. The member
-  // says its decision once and counts repeats (`askAboutUnseenDevice`). The durable shape - the ask as
-  // a server row, re-raised by every member's sweep - is on the backlog.
+  // that happen, so a record of "already asked" would strand the device in a quiet group. The member's
+  // device adds it with no one asked (`automaticAdmission`: the gate is on the user). The durable
+  // shape - the request as a server row, re-read by every member's sweep - is on the backlog.
   if (outcome.reason === 'further_device') {
     await askAMemberToReAddUs(
       groupId,

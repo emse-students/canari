@@ -124,15 +124,15 @@ ok("... a seed verified only from the server's keys is NOT", !forgiven(S, 'W2', 
 ok('... a seed for another channel is NOT', !forgiven(S, 'W2', SEED.replace('channel 33333333', 'channel 99999999')));
 
 // THE MINTED OWNER DEVICE OF DEVREVOKE-KEYGROUP, as W1 meets it.
+// The device ask of the 2026-10-27 interim is gone (owner, 2026-10-31): a member's device is added,
+// so a line asking about it is dirt.
 const WELCOME_REQ = (u) => `log: [WELCOME_REQ] ${u.slice(0, 8)}…:web-${u.slice(0, 8)}... is a device this one never saw, of a member of a1c4da59... - not added automatically, a member's approval of key 21ff15a1… is asked`;
-const JOIN_REQ = (u) => `log: [JOIN_REQUEST] an unseen device web-${u.slice(0, 8)}... of ${u.slice(0, 8)}… asks to join a1c4da59... under key 21ff15a1… - a member's answer is awaited`;
 const WITHHOLD = 'info: [GRAINE] withholding 1 seed(s) from aaaa1111… on community 11111111: 1 of a salon riding another key group, 0 not listed on this device';
 const NOT_ANSWERING = 'info: [GRAINE] not answering aaaa1111…\'s history ask in community 11111111: 1 seed(s) withheld for their salon\'s roster - not "I hold nothing"';
 const FIRST_SIGHT = 'log: [DEVICE_NOTICE] a new device was added to this account (first-sight)';
-ok('the minted device: first sight, the approvals asked, the history withheld - forgiven on W1 in DEVREVOKE-KEYGROUP', [FIRST_SIGHT, WELCOME_REQ(OWNER), JOIN_REQ(OWNER), WITHHOLD, NOT_ANSWERING].every((l) => forgiven(DV, 'W1', l, devIds)));
-ok('... NOT in a kick or a salon revoke, where nothing is minted', [FIRST_SIGHT, WELCOME_REQ(OWNER), JOIN_REQ(OWNER)].every((l) => !forgiven(K, 'W1', l) && !forgiven(S, 'W1', l)));
-ok("... NOT for another account's device", !forgiven(DV, 'W1', WELCOME_REQ(SUBJ), devIds) && !forgiven(DV, 'W1', JOIN_REQ(SUBJ), devIds));
-ok('... a user-level join ask (no device) is NOT', !forgiven(DV, 'W1', JOIN_REQ(OWNER).replace('an unseen device web-aaaa1111... of ', ''), devIds));
+ok('the minted device: first sight, the history withheld - forgiven on W1 in DEVREVOKE-KEYGROUP', [FIRST_SIGHT, WITHHOLD, NOT_ANSWERING].every((l) => forgiven(DV, 'W1', l, devIds)));
+ok('... NOT in a kick or a salon revoke, where nothing is minted', [FIRST_SIGHT].every((l) => !forgiven(K, 'W1', l) && !forgiven(S, 'W1', l)));
+ok('... an ask about the device is NOT - a member\'s device is added, never asked about', !forgiven(DV, 'W1', WELCOME_REQ(OWNER), devIds));
 ok('... a withholding in another community is NOT', !forgiven(DV, 'W1', WITHHOLD.replace('community 11111111', 'community 99999999'), devIds));
 ok('... seeds that do not open with this key (the warn branch) are NOT', !forgiven(DV, 'W1', 'warn: [GRAINE] not answering aaaa1111…\'s history ask in community 11111111: 2 seed row(s) held and 1 do not open with this device\'s key - not "I hold nothing"', devIds));
 
@@ -202,7 +202,6 @@ ok('the one message sent twice is NOT', !allForgiven(K, 'W1', ['log: [SALON-ECHO
 const ANSWERED_WEB = ANSWERED(OWNER).replace(/tauri-(\w+)…-mvn33w3u-4b2d/, 'web-$1…-mvsslaf7-h7qh');
 ok('each owner device answered once is forgiven; the same device answered twice is NOT', allForgiven(K, 'W1', [ANSWERED(OWNER), ANSWERED_WEB]) && !allForgiven(K, 'W1', [ANSWERED(OWNER), ANSWERED(OWNER)]));
 ok('the departure from the salon looping is NOT', !allForgiven(S, 'W1', [DEPARTURE, DEPARTURE]));
-ok('the minted device asking twice is NOT', !allForgiven(DV, 'W1', [WELCOME_REQ(OWNER), WELCOME_REQ(OWNER)], devIds));
 ok('a grant narrated in a row that grants nothing is NOT (budget 0)', !forgiven(DV, 'W1', 'log: [GRAINE] ADMIT salon grantee bbbb2222 to 22222222 (community 11111111)', devIds) && forgiven(K, 'W1', 'log: [GRAINE] ADMIT salon grantee bbbb2222 to 22222222 (community 11111111)'));
 
 // THE BOOT NARRATION (review, 2026-10-29): only the document the row replaced on purpose - W2 opening
@@ -230,8 +229,6 @@ for (const [file, text] of [
   ['utils/chat/deviceNotices.svelte.ts', '[DEVICE_NOTICE] a new device was added to this account (${event.trust})'],
   ['utils/chat/salonRepeatProof.ts', 'a repeated send is answered with its row - ${waiters.size} waiting repeat(s) released`'],
   ['utils/chat/salonUnsent.ts', 'entr(y/ies) forgotten: the server holds them`'],
-  ['utils/chat/actions.ts', "- not added automatically, a member's approval of key ${key.fingerprint} is asked`"],
-  ['utils/chat/joinRequests.svelte.ts', "under key ${ask.keyFingerprint ?? '(none)'}${known ? ' (its key changed since the last ask)' : ''} - a member's answer is awaited`"],
   ['utils/graine/frameHandler.ts', 'of a salon riding another key group, ${notListed} not listed on this device`'],
   ['utils/graine/frameHandler.ts', "' - v2 endorsement verified from the tree'"],
   ['utils/graine/runtime.ts', 'salon(s) once for the seeds it brought`'],

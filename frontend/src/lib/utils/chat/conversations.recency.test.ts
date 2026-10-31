@@ -9,6 +9,7 @@ import {
   toConversationMeta,
 } from './conversations';
 import { advanceLastMessageAt } from './messageOrder';
+import { deviceAddedLineId } from './listPreview';
 import { mkCallStartedEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { ChatMessage, Conversation } from '$lib/types';
 
@@ -108,6 +109,24 @@ describe('a freshly created conversation holding only its creation notice', () =
       'fresh',
       'old',
     ]);
+  });
+});
+
+describe('the "X added a device" line (owner, 2026-10-31: never moves its conversation)', () => {
+  /** The line as `deviceNotices.svelte.ts` writes it: sent by `system`, flagged, its own id. */
+  const deviceLine = (at: number): ChatMessage => ({
+    ...msg(deviceAddedLineId('a', 'bob:phone-2|00ff'), at),
+    senderId: 'system',
+    isSystem: true,
+    content: 'Bob added a device',
+  });
+
+  it('leaves the conversation where its last real message put it', () => {
+    const a = convo('a', [msg('1', 100), deviceLine(900)], 100);
+    const b = convo('b', [msg('1', 500)]);
+    expect(conversationRecency(a)).toBe(100);
+    expect([a, b].sort(compareConversationRecency).map((x) => x.id)).toEqual(['b', 'a']);
+    expect(advanceLastMessageAt(100, [deviceLine(900)])).toBe(100);
   });
 });
 

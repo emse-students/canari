@@ -17,6 +17,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
+  import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { m } from '$lib/paraglide/messages';
 
   interface ConvItem {
@@ -93,10 +94,10 @@
       isReady: conv.lifecycle === 'active',
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
+      // Only device lines loaded: the baseline's preview, never an empty row.
       lastMessageContent:
-        conv.messages?.length > 0
-          ? conv.messages[conv.messages.length - 1].content
-          : baseline?.lastMessageContent,
+        (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
+        baseline?.lastMessageContent,
     };
   }
 

@@ -274,9 +274,8 @@ describe('deliverDeviceEvents - the owner alert', () => {
   const own = event({ identity: 'alice:laptop-9', keyFingerprint: 'cc', addedBy: 'bob:phone-1' });
 
   it('records one durable alert per device and key, from any group, and claims it natively', async () => {
-    const { ctx, addMessageToChat } = makeCtx({ deviceLabel: async () => 'Firefox on Linux' });
+    const { ctx } = makeCtx({ deviceLabel: async () => 'Firefox on Linux' });
     await deliverDeviceEvents([own, { ...own, groupId: 'community-key' }], ctx);
-    expect(addMessageToChat).not.toHaveBeenCalled();
     expect(pendingDeviceNotices()).toEqual([
       { key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: NOW, label: 'Firefox on Linux' },
     ]);
@@ -303,11 +302,36 @@ describe('deliverDeviceEvents - the owner alert', () => {
     expect(pendingDeviceNotices()).toEqual([]);
   });
 
-  it('an own device first seen in a community key group alerts the owner and writes no line', async () => {
+  it("writes the same line as a member's in every private conversation of the account, once", async () => {
+    // Owner, 2026-10-31: the account's other devices read "X added a device" where the contacts do.
     const { ctx, addMessageToChat } = makeCtx();
     await deliverDeviceEvents([{ ...own, groupId: 'community-key' }], ctx);
+    await deliverDeviceEvents([own], ctx);
     expect(pendingDeviceNotices()).toHaveLength(1);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual([
+      'dm-1',
+      'group-1',
+      'group-no-bob',
+      'dm-carol',
+    ]);
+    const [sender, , , options] = addMessageToChat.mock.calls[0];
+    expect(sender).toBe('system');
+    expect(options).toMatchObject({
+      isSystem: true,
+      messageId: 'device-added:dm-1:alice:laptop-9|cc',
+    });
+  });
+
+  it('writes no line on the added device itself, nor in a key group or a salon', async () => {
+    const { ctx, addMessageToChat } = makeCtx({ ownDeviceId: 'laptop-9' });
+    await deliverDeviceEvents([own], ctx);
     expect(addMessageToChat).not.toHaveBeenCalled();
+
+    const other = makeCtx();
+    await deliverDeviceEvents([own], other.ctx);
+    const written = linesWrittenIn(other.addMessageToChat.mock.calls);
+    expect(written).not.toContain('community-key');
+    expect(written).not.toContain('salon-1');
   });
 
   it('one failing event costs only itself', async () => {
@@ -345,13 +369,31 @@ describe('deliverDeviceEvents - only a device new to its owner is announced', ()
     expect(addMessageToChat).not.toHaveBeenCalled();
   });
 
-  it('a key the server history never dated is old: no line, no alert', async () => {
+  it('a key the server lists with no date predates its history: no line, no alert', async () => {
     const { ctx, addMessageToChat } = makeCtx({
-      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'undated' })),
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'before-history' })),
     });
     await deliverDeviceEvents([event(), own], ctx);
     expect(addMessageToChat).not.toHaveBeenCalled();
     expect(pendingDeviceNotices()).toEqual([]);
+  });
+
+  it('A SERVER THAT STAYS SILENT DOES NOT SILENCE IT: a key it left out gets its line and alert', async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'unknown' })),
+    });
+    await deliverDeviceEvents([event(), own], ctx);
+    expect(addMessageToChat).toHaveBeenCalled();
+    expect(pendingDeviceNotices()).toHaveLength(1);
+  });
+
+  it("the account's own device first seen weeks ago: the alert, but no line written late", async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: NOW - 8 * DAY })),
+    });
+    await deliverDeviceEvents([own], ctx);
+    expect(pendingDeviceNotices()).toHaveLength(1);
+    expect(addMessageToChat).not.toHaveBeenCalled();
   });
 
   it('a real new device: a line, and the key it names is the one dated', async () => {

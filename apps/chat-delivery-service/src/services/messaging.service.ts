@@ -401,6 +401,19 @@ class WelcomeSeatGone extends Error {
 }
 
 /**
+ * Thrown inside `validateCommit`'s transaction when a commit from a door that is no member's gesture
+ * (`mayAnswerAsk: false`, the background Welcome) would admit a person whose seat still awaits a
+ * member's admission: rolls the commit back and is answered `awaiting_admission`. A type, so the
+ * catch never reads a message.
+ */
+class AskNotAnswerable extends Error {
+  constructor() {
+    super('an ask is answered only by a member');
+    this.name = 'AskNotAnswerable';
+  }
+}
+
+/**
  * Thrown inside the advance's transaction when the epoch it would move is no longer the base the
  * gate read - another commit at the same base landed first - or when the commit log already holds
  * a commit for that base. The transaction rolls back and the commit is refused `epoch_mismatch`; a
@@ -2152,11 +2165,18 @@ export class MessagingService {
    *
    * Returns accepted=true with newEpoch on success, or accepted=false with
    * currentEpoch and a reason string when the commit is rejected.
+   *
+   * @param opts.mayAnswerAsk `false` from a door that is never a member's gesture - the background
+   *   Welcome a push answers: a seat still awaiting a member's admission (an invitation link's ask)
+   *   is then refused UNDER THE SEAT LOCK, answered `awaiting_admission`, never lifted
+   *   ({@link enrolAdmittedPeople}). Not a body field, so no client can set it. Default `true`.
    */
   async validateCommit(
     body: ValidateCommitBody,
-    authUserIdRaw: string
+    authUserIdRaw: string,
+    opts: { mayAnswerAsk?: boolean } = {}
   ): Promise<ValidateCommitResult> {
+    const mayAnswerAsk = opts.mayAnswerAsk ?? true;
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -2648,7 +2668,7 @@ export class MessagingService {
           // its roster, when it carries one, else the base epoch's (`invitationSeatGeneration`).
           // The inline Welcome's target is a person this commit admits too, held to the same bar.
           if (!distributionScopeOf(group)) {
-            const { refused, committerNotOnRoster } = await this.enrolAdmittedPeople(
+            const { refused, committerNotOnRoster, awaitingAsk } = await this.enrolAdmittedPeople(
               m,
               groupId,
               committer,
@@ -2657,8 +2677,12 @@ export class MessagingService {
                 : admitted,
               invitationSeatGeneration ?? seatGenerations.base,
               invitationSeatGeneration === undefined ? 'base_epoch' : 'invitation',
-              traceId
+              traceId,
+              mayAnswerAsk
             );
+            // A DOOR THAT IS NO MEMBER'S GESTURE NEVER ANSWERS AN ASK, typed apart from every other
+            // admission refusal so the push that tried is told why, and records the target.
+            if (awaitingAsk) throw new AskNotAnswerable();
             // A Welcome stored with this advance would hand a refused person the epoch's secrets:
             // refused as for a Welcome whose seat went, the answer that commit's sender reads.
             if (welcome && refused.has(welcome.userId)) {
@@ -2787,6 +2811,7 @@ export class MessagingService {
           e instanceof SeatClaimOvertaken ||
           e instanceof AdmitRefused ||
           e instanceof WelcomeSeatGone ||
+          e instanceof AskNotAnswerable ||
           (e instanceof EpochAdvanceLost && e.lost === 'epoch_moved')
         ) {
           const duplicate = await this.answerIfAlreadyAccepted(
@@ -2824,6 +2849,14 @@ export class MessagingService {
                 reason: 'admit_refused',
                 userIds: e.userIds,
               };
+        }
+        // A push tried to answer an invitation link's ask: nothing was written.
+        if (e instanceof AskNotAnswerable) {
+          return {
+            accepted: false,
+            currentEpoch: group.activeEpoch,
+            reason: 'awaiting_admission',
+          };
         }
         // The seat went between the target check and this transaction: nothing was written.
         if (e instanceof WelcomeSeatGone) {
@@ -4049,6 +4082,8 @@ export class MessagingService {
    *   Add. Ordered by a COUNTER every removal and Decline moves under the seat lock, never by a clock.
    *   An AWAITING seat is asked the same question: a person declined who asked AGAIN holds a new
    *   awaiting seat, and an Add built before the Decline must not lift that second ask either;
+   * - ANY AWAITING SEAT, from a door that is no member's gesture (`mayAnswerAsk: false`, the
+   *   background Welcome): answered `awaiting_admission` by the caller ({@link AskNotAnswerable});
    * - AN AWAITING SEAT WHOSE PERSON EVER DEPARTED OR WAS EVER DECLINED, when the commit carries no
    *   invitation generation (`departed_and_undated`): the base epoch alone cannot order it against
    *   that departure.
@@ -4077,10 +4112,11 @@ export class MessagingService {
     admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
     decidedAt: number,
     decidedBy: 'invitation' | 'base_epoch',
-    traceId: string
-  ): Promise<{ refused: Set<string>; committerNotOnRoster: boolean }> {
+    traceId: string,
+    mayAnswerAsk = true
+  ): Promise<{ refused: Set<string>; committerNotOnRoster: boolean; awaitingAsk: boolean }> {
     const refused = new Set<string>();
-    const none = { refused, committerNotOnRoster: false };
+    const none = { refused, committerNotOnRoster: false, awaitingAsk: false };
     const people = [...new Set(admitted.map((a) => a.userId))].filter((u) => u !== committer);
     if (people.length === 0) return none;
     const seats = m.getRepository(GroupMember);
@@ -4109,7 +4145,16 @@ export class MessagingService {
     });
     if (!committerSeat) {
       for (const userId of candidates) refuse(userId, 'committer_not_on_roster');
-      return { refused, committerNotOnRoster: true };
+      return { refused, committerNotOnRoster: true, awaitingAsk: false };
+    }
+    // A DOOR THAT IS NO MEMBER'S GESTURE (`mayAnswerAsk: false`, the background Welcome a push
+    // answers) NEVER ANSWERS AN ASK: the seat's flag was read above in this transaction, under the
+    // seat lock a Decline takes, so no route check before it can be overtaken. The phone's verdict
+    // reads only its tree, where a removed member's leaf can outlive the removal.
+    const asks = mayAnswerAsk ? [] : candidates.filter((u) => held.get(u) === true);
+    if (asks.length > 0) {
+      for (const userId of asks) refuse(userId, 'awaiting_admission door=push');
+      return { refused, committerNotOnRoster: false, awaitingAsk: true };
     }
     // A removal or a self-leave closes a stretch; a Decline deletes the ask's stretch and records
     // its generation on the person's eviction row instead (`withdrawAwaitingSeat`).
@@ -4180,7 +4225,7 @@ export class MessagingService {
       }
       toEnrol.push(userId);
     }
-    if (refused.size > 0) return { refused, committerNotOnRoster: false };
+    if (refused.size > 0) return { refused, committerNotOnRoster: false, awaitingAsk: false };
     // Admitted on the base epoch's order alone, an awaiting seat is said at WARN, so how often an
     // undated Add answers an ask is counted.
     for (const userId of undated) {
@@ -5845,10 +5890,24 @@ export class MessagingService {
 
     // Wake up offline peers via FCM so they reconnect and drain the pending request
     // without waiting for an organic reconnection.
-    await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+    //
+    // NOT FOR AN ASK OF A SEAT AWAITING A MEMBER (2026-10-31): the only thing that wake does is let
+    // a shut Android phone answer the request by itself (`welcome_request_pending`, the background
+    // Welcome), and a push never answers an ask - the route and the gate refuse it
+    // (`awaiting_admission`). Sending it would only spend a lock, a key package and a refusal per
+    // member's phone on every re-ask, to learn by failing what this seat already says. The stored
+    // frames above still reach every member's app when it opens, where the ask is a member's gesture.
+    if (awaitingAsk) {
+      say(
+        `[WELCOME_REQ][${traceId}] no background wake for group=${groupId} requester=${senderKey} - an ask is answered only by a member's app`
+      );
+    } else {
+      await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
+    }
 
     say(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis` +
+        (awaitingAsk ? ', no FCM wake (an ask awaits a member)' : ', FCM sent to peers')
     );
     return { status: 'no_peer_online' };
   }
