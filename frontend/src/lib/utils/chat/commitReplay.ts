@@ -1,8 +1,3 @@
-import {
-  admissionRefusedEntrant,
-  classifyIncomingDecryptError,
-} from '$lib/mls-client/mlsDecryptError';
-import { freezeForAdmissionRefusal } from './admissionFreeze';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { noteFrameConsumed } from '$lib/utils/chat/history';
@@ -110,16 +105,6 @@ export async function attemptCommitReplay(
       noteFrameConsumed(userId, groupId, bytes);
       applied++;
     } catch (e) {
-      // A COMMIT BRINGING A NEW USER INTO A CLOSED GROUP IS NOT A REPLAY THAT FAILED, it is a proof:
-      // the group is frozen here, and the rung-2 this loop's `break` would otherwise hand the caller
-      // is the one that rebuilds this device from the very state the commit came from.
-      if (classifyIncomingDecryptError(e) === 'admission-refused') {
-        freezeForAdmissionRefusal(groupId, admissionRefusedEntrant(e));
-        log(
-          `[GAP] replay stopped at epoch ${c.baseEpoch}: the commit admits somebody no member added - group frozen, not recovered`
-        );
-        break;
-      }
       log(`[GAP] replay stopped at epoch ${c.baseEpoch}: ${String(e).slice(0, 80)}`);
       break;
     }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CloudOff, RefreshCw, SignalLow } from '@lucide/svelte';
+  import { CloudOff, RefreshCw } from '@lucide/svelte';
   import Banner from './Banner.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -23,33 +23,14 @@
    */
   let reconnecting = $derived(!connectivity.isOffline && session.isOfflineSession);
 
-  /**
-   * The third state (WP-OFF-5): answers are arriving, slowly. A small discreet icon, no strip (user,
-   * 2026-10-11: the band was too present, and not always justified) - nothing is disabled,
-   * because a slow link is not an offline one and the queue is still sending. Derived from observed answer latency, never from a timer that guesses (see
-   * `connectivity.slow`), and never shown on top of the offline banner.
+  /*
+   * The third state, a slow link (WP-OFF-5), is NOT drawn here: it is an amber ring around the
+   * header avatar (`slowLink`, announced by `SlowLinkAnnouncer`). A floating badge read as a
+   * smudge over that avatar (owner, 2026-10-31).
    */
-  let showSlow = $derived(session.isLoggedIn && !show && connectivity.slow);
 </script>
 
-{#if showSlow}
-  <!-- A hint, not a banner: a fixed 20 px badge in the top corner, so it takes no band of the screen
-       and shifts nothing. Never focusable and never intercepting a tap (`pointer-events-none`); the
-       text lives in the live region and in `title` for a pointer hover.
-       BELOW THE BANNER COLUMN, through `--app-banner-height`: being `fixed`, it reserves nothing and
-       learns nothing of the column it is rendered in, so at a bare `top` it was drawn over the dev
-       "Environnement de test" strip and its close button (Mi 9T reading of `v1.2.4-alpha.2`). -->
-  <div
-    class="bg-banner text-text-muted border-cn-border pointer-events-none fixed top-[calc(var(--safe-area-inset-top,0px)+var(--app-banner-height,0px)+0.5rem)] right-2 z-(--z-banner) flex size-7 items-center justify-center rounded-full border opacity-80"
-    role="status"
-    aria-live="polite"
-    aria-label={m.slow_indicator_label()}
-    title={m.slow_indicator_label()}
-    data-testid="slow-link-indicator"
-  >
-    <SignalLow size={16} aria-hidden="true" />
-  </div>
-{:else if show}
+{#if show}
   <Banner busy={reconnecting}>
     {#if reconnecting}
       <RefreshCw size={15} class="shrink-0 animate-spin opacity-70" aria-hidden="true" />
