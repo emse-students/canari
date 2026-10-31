@@ -1117,6 +1117,23 @@ Built, owed a real-browser reading (every gate here is fakes: no picker can be d
   End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
   of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
   have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Review fixes (2026-10-31)**:
+  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
+    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
+  - **The mixing `AudioContext` is resumed** (`mixAudio`): it is built after two awaits and a suspended
+    context mixes nothing (a silent live). One that is not `running` after `resume()` is closed, the
+    share's audio stopped, and the microphone goes on alone, with a `warn`.
+  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
+    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
+  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
+    `goOnAir`), instead of going on air on a dead share and re-opening the picker without a click. The
+    Retry message promises "go back to the camera" only in the preview, where the source buttons are
+    enabled; on air or away it says the share stopped and nothing else.
+  - **The source buttons are locked while the picker is open** (`choosingSource`).
+  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
+    windows included.
+  - **The preview logs its resolution** on each `resize` (`[camera] preview resolution WxH`), one line per
+    change of the display track.
 - **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
   switch-camera button is hidden while the source is the screen.
 

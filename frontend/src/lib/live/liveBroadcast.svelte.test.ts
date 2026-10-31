@@ -713,6 +713,45 @@ describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
     expect(deps.openScreen).not.toHaveBeenCalled();
   });
 
+  it('a share stopped WHILE THE LIVE IS STARTING ends it the moment the start lands', async () => {
+    const { b, deps, cam } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let land: () => void = () => {};
+    deps.startLive.mockImplementationOnce(
+      (...args: Parameters<typeof real>) =>
+        new Promise((resolve) => {
+          land = () => resolve(real(...args));
+        })
+    );
+    const starting = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    expect(deps.endLive).not.toHaveBeenCalled();
+    land();
+    await starting;
+    await vi.waitFor(() => expect(b.phase).toBe('ended'));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).not.toBe('starting');
+  });
+
+  it('the source choice is locked while the picker is open', async () => {
+    const { b, deps } = await desktop();
+    let answer: (s: MediaStream) => void = () => {};
+    deps.openScreen.mockImplementationOnce(() => new Promise<MediaStream>((r) => (answer = r)));
+    const choosing = b.chooseSource('screen');
+    await vi.waitFor(() => expect(b.choosingSource).toBe(true));
+    await b.chooseSource('camera');
+    expect(b.source).toBe('screen');
+    answer({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream);
+    await choosing;
+    expect(b.choosingSource).toBe(false);
+  });
+
   it('a hidden page does not pause a screen share, and does pause a camera', async () => {
     const screen = await desktop();
     await screen.b.chooseSource('screen');

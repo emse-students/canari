@@ -220,6 +220,10 @@ export class LiveBroadcast {
   readonly canShareScreen: boolean;
   /** What the live broadcasts; chosen in the preview ({@link chooseSource}), fixed once on air. */
   source = $state<LiveSource>('camera');
+  /** True while the screen picker (or the camera it falls back to) is opening: the choice is locked. */
+  choosingSource = $state(false);
+  /** The share was stopped from the browser's bar while the live was still starting: end on landing. */
+  #screenGoneWhileStarting = false;
   /** The camera's opener, kept while the screen's stands in for it. */
   #cameraOpener: CameraOpener | null = null;
 
@@ -414,12 +418,22 @@ export class LiveBroadcast {
    * is then the one shown.
    */
   async chooseSource(next: LiveSource): Promise<void> {
-    if (this.phase !== 'preview' || next === this.source) return;
+    if (this.phase !== 'preview' || next === this.source || this.choosingSource) return;
     if (next === 'screen' && !this.canShareScreen) {
       console.warn('[LIVE-BROADCAST] the screen was chosen where it cannot be shared - ignored');
       return;
     }
     console.log(`[LIVE-BROADCAST] source ${this.source} -> ${next}`);
+    this.choosingSource = true;
+    try {
+      await this.#switchSource(next);
+    } finally {
+      this.choosingSource = false;
+    }
+  }
+
+  /** The body of {@link chooseSource}, run with the choice locked. */
+  async #switchSource(next: LiveSource): Promise<void> {
     this.source = next;
     if (next === 'screen') {
       const previous = this.camera.swapOpener(this.#deps.openScreen);
@@ -445,7 +459,17 @@ export class LiveBroadcast {
    * not re-ask for a screen, which needs a click this code does not have.
    */
   async screenShareStopped(): Promise<void> {
-    if (this.source !== 'screen' || (this.phase !== 'live' && this.phase !== 'away')) return;
+    if (this.source !== 'screen') return;
+    if (this.phase === 'starting') {
+      // The live row is being created: it cannot be ended yet, and going on air on a dead share would
+      // re-open the screen without a click. It ends the moment the start lands ({@link goOnAir}).
+      console.log(
+        '[LIVE-BROADCAST] the screen share stopped while starting - ending once it lands'
+      );
+      this.#screenGoneWhileStarting = true;
+      return;
+    }
+    if (this.phase !== 'live' && this.phase !== 'away') return;
     console.log('[LIVE-BROADCAST] the screen share was stopped from the browser - ending the live');
     await this.end();
   }
@@ -606,6 +630,13 @@ export class LiveBroadcast {
 
   /** Starts recording the camera in hand, or goes `away` when there is none to record. */
   #goOnAir(): void {
+    if (this.#screenGoneWhileStarting) {
+      this.#screenGoneWhileStarting = false;
+      console.log('[LIVE-BROADCAST] the screen share is gone - ending the live that just started');
+      this.phase = 'away';
+      void this.end();
+      return;
+    }
     const stream = this.camera.stream;
     if (this.#deps.isHidden() || this.camera.phase !== 'live' || !stream) {
       console.debug('[LIVE-BROADCAST] no camera to record yet - away until it is back');

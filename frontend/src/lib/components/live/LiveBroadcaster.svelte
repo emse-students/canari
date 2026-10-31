@@ -355,7 +355,7 @@
                 type="button"
                 role="radio"
                 aria-checked={broadcast.source === option}
-                disabled={broadcast.phase !== 'preview'}
+                disabled={broadcast.phase !== 'preview' || broadcast.choosingSource}
                 class="{pill} flex-1 justify-center {broadcast.source === option
                   ? 'bg-white text-black'
                   : 'bg-white/15 hover:bg-white/25'}"
@@ -466,7 +466,9 @@
         <div class="flex items-center justify-between gap-3" role="alert">
           <p class="text-sm text-white/80">
             {broadcast.source === 'screen'
-              ? m.live_source_screen_stopped()
+              ? broadcast.phase === 'preview'
+                ? m.live_source_screen_stopped()
+                : m.live_source_screen_stopped_on_air()
               : CAMERA_FAULT_TEXT[camera.fault]()}
           </p>
           <button

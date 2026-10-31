@@ -41,8 +41,15 @@ class FakeMediaStream {
 
 const contexts: { close: ReturnType<typeof vi.fn>; mixed: ReturnType<typeof track> }[] = [];
 
+/** What a fresh context says once resumed: `running`, or `suspended` for a browser that refuses. */
+let stateAfterResume: AudioContextState = 'running';
+
 class FakeAudioContext {
   close = vi.fn(async () => {});
+  state: AudioContextState = 'suspended';
+  resume = vi.fn(async () => {
+    this.state = stateAfterResume;
+  });
   constructor() {
     contexts.push({ close: this.close, mixed: track('audio') });
   }
@@ -60,6 +67,7 @@ function stubDevices(devices: Partial<MediaDevices> | undefined) {
 
 beforeEach(() => {
   contexts.length = 0;
+  stateAfterResume = 'running';
   vi.stubGlobal('MediaStream', FakeMediaStream);
   vi.stubGlobal('AudioContext', FakeAudioContext);
   for (const level of ['debug', 'warn'] as const) {
@@ -83,6 +91,12 @@ describe('screenShareAvailable', () => {
     vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
     expect(screenShareAvailable()).toBe(false);
     stubDevices(undefined);
+    expect(screenShareAvailable()).toBe(false);
+  });
+
+  it('is never offered in the Tauri shell, mouse or not (no reliable picker)', () => {
+    stubDevices({ getDisplayMedia: vi.fn() } as unknown as MediaDevices);
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }), __TAURI_INTERNALS__: {} });
     expect(screenShareAvailable()).toBe(false);
   });
 });
@@ -131,6 +145,30 @@ describe('openLiveScreen', () => {
     expect(mic.stop).toHaveBeenCalled();
     expect(shareAudio.stop).toHaveBeenCalled();
     expect(contexts[0].close).toHaveBeenCalledTimes(1);
+  });
+
+  it('RESUMES the mixing context, and a context that stays suspended falls back to the microphone alone', async () => {
+    const run = async () => {
+      const video = track('video');
+      const shareAudio = track('audio');
+      const mic = track('audio');
+      stubDevices({
+        getDisplayMedia: vi.fn(async () => streamOf(video, shareAudio)),
+        getUserMedia: vi.fn(async () => streamOf(mic)),
+      } as unknown as MediaDevices);
+      return { stream: await openLiveScreen(), shareAudio, mic };
+    };
+    const running = await run();
+    expect(contexts).toHaveLength(1);
+    expect(running.stream.getAudioTracks()).toEqual([contexts[0].mixed]);
+
+    contexts.length = 0;
+    stateAfterResume = 'suspended';
+    const stuck = await run();
+    expect(stuck.stream.getAudioTracks()).toEqual([stuck.mic]);
+    expect(stuck.shareAudio.stop).toHaveBeenCalled();
+    expect(contexts[0].close).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('after resume'));
   });
 
   it('a dismissed picker is a typed refusal and the microphone is never asked', async () => {

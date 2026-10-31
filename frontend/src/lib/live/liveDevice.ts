@@ -10,6 +10,7 @@
 import { CameraAccessError, classifyCameraError, type CameraFacing } from '$lib/reels/cameraAccess';
 import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
 import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
 import {
   LIVE_BATTERY_WARN_LEVEL,
@@ -186,11 +187,65 @@ export function batteryWarrantsWarning(level: number | null): boolean {
 /**
  * Whether this browser can broadcast its SCREEN instead of the camera (owner, 2026-10-31): the
  * engine has `getDisplayMedia`, and the primary pointer is a mouse - phones and tablets keep the
- * camera.
+ * camera. **NEVER IN THE TAURI SHELL, EXPLICITLY**: its webviews have no reliable screen picker
+ * (WebView2 and WebKitGTK each answer `getDisplayMedia` differently, or not at all), and a desktop
+ * app that offers a button that may do nothing is worse than one that does not offer it. The check
+ * is on the runtime, not on the pointer, because a Tauri desktop window has a mouse.
  */
 export function screenShareAvailable(): boolean {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) return false;
+  if (isTauriRuntime()) return false;
   return !isCoarsePointerDevice();
+}
+
+/**
+ * Mixes the microphone and the share's audio into ONE track through an `AudioContext`, or answers
+ * `null` (and logs why) when the context cannot run - the caller then keeps the microphone alone.
+ *
+ * KNOWN LIMIT: the mixed track's `ended` event does NOT follow the microphone. A microphone that
+ * dies mid-live (a USB headset pulled) leaves the mixed track alive and silent for the mic's half,
+ * with the share's sound still in it - the recorder keeps recording, nothing ends, and the live goes
+ * on with the share only. Wiring it would mean ending a live over a half of its audio that the
+ * member has no way to restore from a click-less state; the live is not interrupted over it. Stopping
+ * the mixed track stops every source and closes the context.
+ */
+async function mixAudio(
+  mic: MediaStreamTrack,
+  share: MediaStreamTrack,
+  sources: MediaStreamTrack[]
+): Promise<MediaStreamTrack | null> {
+  let context: AudioContext | null = null;
+  try {
+    context = new AudioContext();
+    await context.resume();
+    if (context.state !== 'running') {
+      console.warn(
+        `[LIVE-CAM] the audio context is ${context.state} after resume - the microphone alone goes on air, without the share's sound`
+      );
+      void context.close();
+      return null;
+    }
+    const destination = context.createMediaStreamDestination();
+    context.createMediaStreamSource(new MediaStream([mic])).connect(destination);
+    context.createMediaStreamSource(new MediaStream([share])).connect(destination);
+    const track = destination.stream.getAudioTracks()[0];
+    const stopMixed = track.stop.bind(track);
+    const owned = context;
+    track.stop = () => {
+      stopMixed();
+      for (const source of sources) source.stop();
+      void owned.close();
+    };
+    console.debug("[LIVE-CAM] screen audio: the microphone mixed with the share's own audio");
+    return track;
+  } catch (err) {
+    console.warn(
+      "[LIVE-CAM] mixing the share's audio failed - the microphone alone goes on air",
+      err
+    );
+    void context?.close();
+    return null;
+  }
 }
 
 /**
@@ -244,18 +299,12 @@ export async function openLiveScreen(): Promise<MediaStream> {
   const sources: MediaStreamTrack[] = micTrack ? [micTrack, ...shareAudio] : [...shareAudio];
   let audio: MediaStreamTrack | undefined = micTrack;
   if (micTrack && shareAudio.length > 0) {
-    const context = new AudioContext();
-    const destination = context.createMediaStreamDestination();
-    context.createMediaStreamSource(new MediaStream([micTrack])).connect(destination);
-    context.createMediaStreamSource(new MediaStream([shareAudio[0]])).connect(destination);
-    audio = destination.stream.getAudioTracks()[0];
-    const stopMixed = audio.stop.bind(audio);
-    audio.stop = () => {
-      stopMixed();
-      for (const source of sources) source.stop();
-      void context.close();
-    };
-    console.debug("[LIVE-CAM] screen audio: the microphone mixed with the share's own audio");
+    // The context is built AFTER two awaits (the picker, the microphone), so the browser may have
+    // left it `suspended` (autoplay policy): a suspended context mixes NOTHING and the live would go
+    // out silent. It is resumed, and a context that will not run is given up for the microphone alone.
+    const mixed = await mixAudio(micTrack, shareAudio[0], sources);
+    if (mixed) audio = mixed;
+    else for (const track of shareAudio) track.stop();
   } else {
     console.debug(`[LIVE-CAM] screen audio: ${micTrack ? 'the microphone alone' : 'none'}`);
   }
