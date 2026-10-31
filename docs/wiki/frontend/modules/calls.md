@@ -855,9 +855,13 @@ returned, both on `canari_ios_is_in_foreground()`).
 **The fact carried instead: whether the page holds the gateway socket** (`page_ring.rs`). The page
 states it at the one seam that holds its socket - the setter of `TauriMlsService.ws`, which every
 open, close, pause, zombie kill and `pagehide` release already goes through - with the synchronous
-command `set_page_gateway_socket`; a change is reported, a repeat is not. A document that starts
-loading voids it (`on_page_load`, `PageLoadEvent::Started`): a new page holds no socket, whatever the
-last one said or failed to say. The native ring reads it next to the platform's own fact:
+command `set_page_gateway_socket`; a change is reported, a repeat is not. Each `TauriMlsService`
+instance states it under its own holder id, and the page rings while ANY holder holds a socket: two
+instances that overlap (an account switch) cannot erase each other's statement. A document that
+starts loading voids every statement (`on_page_load`, `PageLoadEvent::Started`): a new page holds no
+socket, whatever the last one said or failed to say; on iOS a dead web content process clears them
+too, before the reload its handler asks for (`on_web_content_process_terminate`). The native ring
+reads it next to the platform's own fact:
 `foregroundPageRings()` (Kotlin, `isInForeground && nativePageRingsInApp()`) and
 `CanariForegroundPageRings()` (Objective-C, through `canari_ios_page_rings_in_app`). The foreground
 guard of `onMessageReceived` lets `call_ring` through - a ring touches no `mls.bin` - and the ring
@@ -882,12 +886,38 @@ itself is the one place that decides. So:
   surface for a case the native ring already covers with its answer, decline and caller name.
 
 **The iPhone answers from an active app.** CallKit answered while Canari is already active is
-followed by no `didBecomeActive`, so the handover (`CanariHandOverCallsToPage`: end every CallKit call
-`AnsweredElsewhere`, then tell the page) runs from `performAnswerCallAction` itself when the app is
-active, after the file is written. Not observed on hardware: whether iOS resigns the app while its
-CallKit UI is up; a second handover is a no-op either way.
+followed by no `didBecomeActive`, so the handover (`CanariHandOverCallsToPage`: end the ANSWERED
+CallKit calls `AnsweredElsewhere`, then tell the page) runs from `performAnswerCallAction` itself
+when the app is active, after the file is written. Not observed on hardware: whether iOS resigns the
+app while its CallKit UI is up. If it does, the activation runs the handover a second time, and that
+run finds the answered call already ended and the file drained.
+
+**The handover never ends an unanswered ring the page cannot ring** (review of #2785). It used to
+end every CallKit call on `didBecomeActive`. With CallKit now ringing an app in front at the PIN
+gate, that ended the call's only ring whenever the app re-activated without an answer: a pull of
+Control Center or Notification Center, an expanded banner swiped back, or Canari opened from its
+icon while a backgrounded app rang. An unanswered call is ended there only when the page holds the
+gateway socket (the overlay owns it); otherwise it rings on, to its answer, decline, `call_ring_end`
+or timeout.
+
+**An End between the handover's end and the tell cancels the answer.** The handover ends an
+answered call asynchronously, which removes its ringing entry, and tells the page after. A user's End
+landing in between used to find no entry, cancel no file, and let the tell hand the answer over. The
+answer's facts are now kept past the ringing entry until the tell has run
+(`CanariAnsweredUntilTold`), and the End reads them there.
 
 **Named limitations.**
+- **A socket counted as held that rings nothing.** The statement is "the page holds an open socket",
+  not "the invite will ring". A connection that died without a `Close` counts as held until the
+  heartbeat kills it (three missed pings, up to ~30 s), and the server, which considers the device
+  offline, skips the invite. An invite at an epoch the page cannot decrypt yet (a commit still to be
+  absorbed) reaches the page and rings nothing. In both cases the native ring stood back and the call
+  rings nowhere: the gap this fix closes, narrowed to those two states.
+- **The narrow double-ring windows.** Two windows: a socket that opens between the push and the
+  invite (the unlock below), and an invite that reaches a page whose socket is released just after the
+  push stood back. In either, one call may show two ring surfaces, or none, for the length of the
+  overlap. The answer covers the double: either surface's answer joins the same call, and its ring-end
+  stops the other.
 - **The unlock that races the ring.** A PIN entered between the `call_ring` push and the caller's
   invite (sent right after the ring is accepted) opens the socket in time for the invite: the overlay
   rings over a native ring still showing. Both are the same call: the first answer joins it

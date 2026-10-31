@@ -207,6 +207,16 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
   it('the page states it at its socket setter, and a new document voids it', () => {
     expect(libRs).toContain('page_ring::set_page_gateway_socket,');
     expect(libRs).toMatch(/PageLoadEvent::Started \{\s*page_ring::forget_on_page_load\(\);/);
+    // A dead WKWebView content process: cleared, then reloaded (Tauri's default reload, kept).
+    const terminate = between(
+      libRs,
+      '.on_web_content_process_terminate(|webview| {',
+      '});',
+      'the web content process termination handler'
+    );
+    expect(terminate).toMatch(
+      /page_ring::forget_on_web_content_terminated\(\);[\s\S]*?webview\.reload\(\)/
+    );
     const setter = between(tauriMls, 'private set ws(', '\n  }\n', 'the socket setter');
     expect(setter).toContain('reportPageGatewaySocket(');
     // Every write goes through the setter: no other field holds the socket.
@@ -361,6 +371,40 @@ describe('the native answer is a private intent carrying every fact the join nee
       /writeToFile:[\s\S]*?\[action fulfill\];[\s\S]*?if \(\[UIApplication sharedApplication\]\.applicationState == UIApplicationStateActive\) \{[\s\S]*?CanariHandOverCallsToPage\(/
     );
     expect([...answer.matchAll(/CanariHandOverCallsToPage\(/g)]).toHaveLength(1);
+    // The answer is kept past its ringing entry until the page is told.
+    expect(answer).toContain('CanariAnsweredUntilTold()[action.callUUID.UUIDString] = answered;');
+  });
+
+  it('iOS: the handover never ends an unanswered ring the page cannot ring (review of #2785)', () => {
+    // A Control Center pull over an app ringing at the PIN gate re-activates it: ending every
+    // CallKit call there ended the call's only ring.
+    const handover = between(
+      pushMm,
+      'static void CanariHandOverCallsToPage(NSString *why) {',
+      '\n}\n',
+      'CanariHandOverCallsToPage'
+    );
+    expect(handover).toContain('BOOL pageRings = canari_ios_page_rings_in_app();');
+    expect(handover).toMatch(
+      /if \(answered\) \{[\s\S]*?\} else if \(!pageRings\) \{[\s\S]*?continue;\s*\}\s*CanariEndCallKitCall\(callId, CXCallEndedReasonAnsweredElsewhere\);/
+    );
+    // The answered records are dropped only once the page was told.
+    expect(handover).toMatch(
+      /CanariTellPageOfPendingCallAccept\(\);[\s\S]*?\[CanariAnsweredUntilTold\(\) removeObjectsForKeys:toldUUIDs\];/
+    );
+  });
+
+  it('iOS: an End between the handover end and the tell still cancels the answer (review of #2785)', () => {
+    const end = between(
+      pushMm,
+      'performEndCallAction:(CXEndCallAction *)action {',
+      '\n}\n',
+      'performEndCallAction'
+    );
+    expect(end).toContain(
+      'NSDictionary *info = g_ringingCallInfo[uuid] ?: CanariAnsweredUntilTold()[uuid];'
+    );
+    expect(end).toMatch(/if \(answered\) \{\s*CanariCancelPendingCallAccept\(callId\);/);
     const tell = between(
       pushMm,
       'static void CanariTellPageOfPendingCallAccept(void) {',

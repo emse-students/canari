@@ -18,21 +18,37 @@ type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknow
  * Called by the socket's setter in `TauriMlsService` on every change, never by a call site. A failed
  * report is logged and leaves the previous statement in place: no retry, which would reorder it.
  */
-export function reportPageGatewaySocket(held: boolean, invokeFn: Invoke = invoke): void {
+export function reportPageGatewaySocket(
+  holder: string,
+  held: boolean,
+  invokeFn: Invoke = invoke
+): void {
   console.log(
     held
-      ? '[CallRing] the page holds the gateway socket - an incoming call rings in the page'
-      : '[CallRing] the page holds no gateway socket - an incoming call rings natively'
+      ? `[CallRing] ${holder} holds the gateway socket - an incoming call rings in the page`
+      : `[CallRing] ${holder} holds no gateway socket - an incoming call rings natively unless another holder does`
   );
   // The command is sent synchronously (an async body runs up to its first await), so two
   // statements leave in the order they were made.
   void (async () => {
     try {
-      await invokeFn(SET_PAGE_GATEWAY_SOCKET_COMMAND, { held });
+      await invokeFn(SET_PAGE_GATEWAY_SOCKET_COMMAND, { holder, held });
     } catch (e) {
       console.warn(
-        `[CallRing] the native side was not told (held=${held}): ${String(e)} - its ring keeps the previous statement`
+        `[CallRing] the native side was not told (${holder} held=${held}): ${String(e)} - its ring keeps the previous statement`
       );
     }
   })();
+}
+
+/** The last holder id handed out in this document; the native set is cleared per document. */
+let lastHolder = 0;
+
+/**
+ * A holder id for one socket owner (one `TauriMlsService` instance): two instances that overlap
+ * (an account switch) state their sockets apart, so one letting go never erases the other's.
+ */
+export function nextGatewaySocketHolder(): string {
+  lastHolder += 1;
+  return `mls-service-${lastHolder}`;
 }

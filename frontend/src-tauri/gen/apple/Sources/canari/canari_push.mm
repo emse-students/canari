@@ -2844,19 +2844,55 @@ static BOOL CanariForegroundPageRings(void) {
   return canari_ios_is_in_foreground() && canari_ios_page_rings_in_app();
 }
 
-/// THE HANDOVER: once the app is active, the page owns the call. Every CallKit call still open is
-/// ended `AnsweredElsewhere` (a session left open would show a dangling green bar), THEN the page is
-/// told an answer waits - queued on the main queue behind those ends, so it runs once no CallKit End
-/// can remove the file any more. Run on `didBecomeActive`, and at an Answer made while the app is
-/// already active (the PIN gate in front), which no activation follows. Idempotent: a second run
-/// finds no CallKit call, and a drained file is not there to tell.
+/// The answered CallKit calls whose answer the page has not been told of yet, by CallKit UUID - the
+/// answer's facts, kept PAST the ringing entry. The handover's End (`CanariEndCallKitCall`, async)
+/// removes `g_ringingCallInfo`; a user's End delivered after it but before the Tell must still know
+/// the call was answered, to cancel the file. Emptied by the Tell, once the page holds the answer.
+static NSMutableDictionary<NSString *, NSDictionary *> *CanariAnsweredUntilTold(void) {
+  static NSMutableDictionary<NSString *, NSDictionary *> *answered = nil;
+  if (answered == nil) {
+    answered = [NSMutableDictionary dictionary];
+  }
+  return answered;
+}
+
+/// THE HANDOVER: once the app is active, the page owns an ANSWERED call. Each answered CallKit call
+/// is ended `AnsweredElsewhere` (a session left open would show a dangling green bar), THEN the page
+/// is told an answer waits - queued on the main queue behind those ends. Run on `didBecomeActive`,
+/// and at an Answer made while the app is already active (the PIN gate in front), which no
+/// activation follows.
+///
+/// AN UNANSWERED RING IS NOT HANDED OVER unless the page holds the gateway socket. At the PIN gate
+/// the page cannot ring it (the invite was skipped), so ending it would end the call's only ring:
+/// a pull of Control Center over an app ringing at the gate resigns and re-activates the app, and
+/// the caller rang out with nobody told. It ends by its own answer, decline, `call_ring_end` or
+/// timeout. With the socket held, the overlay owns the call and the ring is ended as before.
+///
+/// Not idempotent by construction but by state: a second run finds the answered calls already
+/// ended, an unanswered one judged the same way, and a drained file not there to tell.
 static void CanariHandOverCallsToPage(NSString *why) {
-  NSLog(@"[CanariCallKit] handover to the page (%@)", why);
+  // The app is active here by construction: the page's own fact decides, not the foreground flag,
+  // whose observer may not have run yet.
+  BOOL pageRings = canari_ios_page_rings_in_app();
+  NSLog(@"[CanariCallKit] handover to the page (%@, page holds the socket=%d)", why, pageRings);
+  NSMutableArray<NSString *> *toldUUIDs = [NSMutableArray array];
   for (NSString *callId in [g_ringingCalls.allKeys copy]) {
+    NSString *uuid = g_ringingCalls[callId].UUIDString;
+    BOOL answered = [g_ringingCallInfo[uuid][@"answered"] boolValue];
+    if (answered) {
+      [toldUUIDs addObject:uuid];
+    } else if (!pageRings) {
+      NSLog(@"[CanariCallKit] call=%@ still rings unanswered and the page cannot ring it - kept",
+            callId);
+      continue;
+    }
     CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
   }
   dispatch_async(dispatch_get_main_queue(), ^{
     CanariTellPageOfPendingCallAccept();
+    // Told (or the file was cancelled by an End that landed before this): no End of these calls
+    // can cancel the answer from here on.
+    [CanariAnsweredUntilTold() removeObjectsForKeys:toldUUIDs];
   });
 }
 
@@ -2869,6 +2905,7 @@ static void CanariHandOverCallsToPage(NSString *why) {
   (void)provider;
   [g_ringingCalls removeAllObjects];
   [g_ringingCallInfo removeAllObjects];
+  [CanariAnsweredUntilTold() removeAllObjects];
   NSLog(@"[CanariCallKit] provider reset");
 }
 
@@ -2889,6 +2926,8 @@ static void CanariHandOverCallsToPage(NSString *why) {
     NSMutableDictionary *answered = [info mutableCopy];
     answered[@"answered"] = @YES;
     g_ringingCallInfo[action.callUUID.UUIDString] = answered;
+    // Kept past the ringing entry until the page is told (`CanariAnsweredUntilTold`).
+    CanariAnsweredUntilTold()[action.callUUID.UUIDString] = answered;
   }
 
   // THE PENDING ACCEPT IS THE WHOLE ANSWER: every fact the join needs, from the ring. The webview
@@ -2944,15 +2983,21 @@ static void CanariHandOverCallsToPage(NSString *why) {
 /// decline - this device never joined.
 - (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
   (void)provider;
-  NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
+  NSString *uuid = action.callUUID.UUIDString;
+  // An answered call the handover already ended (its ringing entry gone) is still known here until
+  // the page is told: an End landing in that window must cancel the answer, never let it join.
+  NSDictionary *info = g_ringingCallInfo[uuid] ?: CanariAnsweredUntilTold()[uuid];
   NSString *callId = info[@"callId"] ?: @"";
   NSString *groupId = info[@"groupId"] ?: @"";
   BOOL answered = [info[@"answered"] boolValue];
-  NSLog(@"[CanariCallKit] %@ call=%@", answered ? @"ended after the answer" : @"declined", callId);
+  NSLog(@"[CanariCallKit] %@ call=%@%@", answered ? @"ended after the answer" : @"declined", callId,
+        g_ringingCallInfo[uuid] == nil && info != nil ? @" (after the handover's end, before the tell)"
+                                                      : @"");
   if (callId.length > 0) {
     [g_ringingCalls removeObjectForKey:callId];
   }
-  [g_ringingCallInfo removeObjectForKey:action.callUUID.UUIDString];
+  [g_ringingCallInfo removeObjectForKey:uuid];
+  [CanariAnsweredUntilTold() removeObjectForKey:uuid];
   [action fulfill];
   if (answered) {
     CanariCancelPendingCallAccept(callId);

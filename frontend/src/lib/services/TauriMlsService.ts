@@ -59,7 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
-import { reportPageGatewaySocket } from './pageGatewaySocket';
+import { nextGatewaySocketHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -101,6 +101,8 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
 export class TauriMlsService extends BaseMlsService {
   /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
   private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** This instance's name in the native ring's holder set (`page_ring.rs`). */
+  private readonly socketHolder = nextGatewaySocketHolder();
   private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
     return this._ws;
   }
@@ -113,7 +115,7 @@ export class TauriMlsService extends BaseMlsService {
   private set ws(next: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null) {
     const before = this._ws !== null;
     this._ws = next;
-    if (before !== (next !== null)) reportPageGatewaySocket(next !== null);
+    if (before !== (next !== null)) reportPageGatewaySocket(this.socketHolder, next !== null);
   }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;

@@ -1407,6 +1407,18 @@ pub fn run() {
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_system_components::init());
 
+    // A WKWebView whose web content process died has lost its page, and with it every socket that
+    // page held: the ring facts are cleared BEFORE the reload (Tauri's own default, kept), so no ring
+    // arriving in between is left to a dead page (`page_ring`).
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    let builder = builder.on_web_content_process_terminate(|webview| {
+        log::warn!("[CALL_RING] the web content process terminated - reloading the page");
+        page_ring::forget_on_web_content_terminated();
+        if let Err(e) = webview.reload() {
+            log::error!("[CALL_RING] the page could not be reloaded after its process died: {e}");
+        }
+    });
+
     builder
         .manage(AppState {
             mls_manager: Arc::new(Mutex::new(None)),
