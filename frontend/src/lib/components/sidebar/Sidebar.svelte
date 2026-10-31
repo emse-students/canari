@@ -701,7 +701,7 @@
       />
     {:else}
       <div
-        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
+        class="glass-chrome sticky top-0 z-10 flex items-center justify-between rounded-none border-x-0 border-t-0 px-4 py-3"
       >
         <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
           <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />

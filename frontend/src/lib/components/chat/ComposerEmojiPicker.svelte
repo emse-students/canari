@@ -67,7 +67,7 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 200, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="bg-cn-surface fixed z-(--z-popover) flex w-[min(92vw,22rem)] flex-col overflow-hidden rounded-2xl border border-black/5 shadow-2xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
+    class="glass-chrome fixed z-(--z-popover) flex w-[min(92vw,22rem)] flex-col overflow-hidden rounded-2xl"
   >
     {#if recentEmojis.length > 0}
       <div

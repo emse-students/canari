@@ -54,7 +54,7 @@
   tabindex="-1"
   aria-label={m.sidebar_community_menu_label({ name: communityName })}
   data-community-menu
-  class="bg-surface-elevated border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl border p-1.5 shadow-lg"
+  class="glass-chrome fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
   onkeydown={(e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();
