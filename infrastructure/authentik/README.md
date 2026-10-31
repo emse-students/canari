@@ -34,7 +34,7 @@ un artefact deploye**, et il a derive de celui qui tourne :
 | --- | --- | --- | --- |
 | Image | `ghcr.io/goauthentik/server` | `docker.io/authentik/server` | `ghcr.io/...` - **ce fichier** |
 | Version | `2026.8.5` (2026-10-23, version corrective courante) | `2026.8.0` | `2026.8.0` jusqu a la mise a jour de l operateur |
-| Volume | `database_18` (nomme `miconnect_database_18` par le projet) | `miconnect_database`, `external: true` | `database_18` depuis le passage a PostgreSQL 18 du 2026-10-31 ; `database` (16) garde pour le retour arriere |
+| Volume | `database_18` (nomme `miconnect_database_18` par le projet) | `miconnect_database`, `external: true` | `database_18` depuis le passage a PostgreSQL 18 du 2026-10-31 ; l ancien volume (16) a ete supprime le meme jour |
 
 **La derive est fermee : c est ce `compose.yml` qui tourne maintenant**, au `.env`
 pres - sauf la version, que ce fichier porte en avance : aucun pipeline ne relance
