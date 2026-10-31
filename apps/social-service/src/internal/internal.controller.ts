@@ -27,6 +27,24 @@ import { PostMediaRetentionService } from '../posts/post-media-retention.service
 import { type ErasureDb, eraseSocialRows, keptPostMediaIds } from './account-erasure';
 import type { EntityManager } from 'typeorm';
 
+/** A membership row of the external profile projection (`GET users/:userId/associations`). */
+export interface ProfileAssociationRow {
+  type: Association['type'];
+  /** Campaign year of a list, null for the other kinds. */
+  promo: number | null;
+  name: string;
+  slug: string;
+  role: string;
+  logoUrl: string | null;
+}
+
+/** A former row: an archived membership (no years) or a role-history entry (years; no slug when the association is gone). */
+export interface ProfileFormerAssociationRow extends Omit<ProfileAssociationRow, 'slug'> {
+  slug: string | null;
+  startYear: number | null;
+  endYear: number | null;
+}
+
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
  * NOT exposed through Nginx: only reachable via Docker-internal networking.
@@ -188,40 +206,39 @@ export class InternalController {
     const assocs = ids.length ? await this.assocRepo.find({ where: { id: In(ids) } }) : [];
     const byId = new Map(assocs.map((a) => [a.id, a]));
 
-    const current: {
-      name: string;
-      slug: string;
-      role: string;
-      logoUrl: string | null;
-    }[] = [];
-    const former: {
-      name: string;
-      role: string;
-      logoUrl: string | null;
-      startYear: number | null;
-      endYear: number | null;
-    }[] = [];
+    const current: ProfileAssociationRow[] = [];
+    const former: ProfileFormerAssociationRow[] = [];
 
     for (const m of members) {
       const a = byId.get(m.associationId);
       if (!a) continue;
       if (a.archived) {
         former.push({
+          ...kindOf(a),
           name: a.name,
+          slug: a.slug,
           role: m.role,
           logoUrl: a.logoUrl,
           startYear: null,
           endYear: null,
         });
       } else {
-        current.push({ name: a.name, slug: a.slug, role: m.role, logoUrl: a.logoUrl });
+        current.push({
+          ...kindOf(a),
+          name: a.name,
+          slug: a.slug,
+          role: m.role,
+          logoUrl: a.logoUrl,
+        });
       }
     }
 
     for (const h of history) {
       const a = byId.get(h.associationId);
       former.push({
+        ...(a ? kindOf(a) : { type: 'association' as const, promo: null }),
         name: a?.name ?? 'Association',
+        slug: a?.slug ?? null,
         role: h.roleTitle,
         logoUrl: a?.logoUrl ?? null,
         startYear: h.startYear,
@@ -304,6 +321,14 @@ export class InternalController {
     );
     return { ok: true };
   }
+}
+
+/**
+ * The kind of an entity and, for a list, its campaign year. ADDITIVE fields of the external profile
+ * projection (Sky tells associations, campaign lists and institutions apart with them).
+ */
+function kindOf(a: Association): Pick<ProfileAssociationRow, 'type' | 'promo'> {
+  return { type: a.type, promo: a.promo ?? null };
 }
 
 /** The erasure's database port over a TypeORM manager, whose raw `query` answers a write `[rows, count]`. */
