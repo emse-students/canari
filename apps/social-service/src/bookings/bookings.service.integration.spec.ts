@@ -1170,6 +1170,24 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ).toEqual([]);
     });
 
+    it('lists a review account only the cohort spaces, and a member never one (review-cohort.ts)', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      try {
+        const school = await setup({ name: '0008 school' });
+        const reviewer = await setup({ name: '0009 reviewer', ownerId: DAN });
+        const personal = await setup({ name: '0010 own', associationId: null, ownerId: DAN });
+        const mine = [school.space.id, reviewer.space.id, personal.space.id];
+        expect(await listedAmong(DAN, mine)).toEqual([reviewer.space.id, personal.space.id]);
+        for (const viewer of [ALICE, ORGA]) {
+          expect(await listedAmong(viewer, mine)).toEqual([school.space.id]);
+        }
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
+    });
+
     it('keeps the page when core-service fails: only a space needing the profile is left out', async () => {
       const open = await setup({ name: '0005 open' });
       const promo = await setup({ name: '0006 promo', audience: { promo: { values: [2024] } } });

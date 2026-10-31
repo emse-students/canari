@@ -70,10 +70,13 @@ for **server deployment**:
 | External API (Le Cercle) | `CERCLE_API_KEY` (key for `/api/public/cotisant-status`, consumed by Le Cercle before it lets a member drink; must match `CANARI_API_KEY` on the Cercle's side). Empty rejects every request. The other half of the link, the `balance_topup` webhook secret, is per-product data in the database, not an environment variable - see [`docs/PROD-TEST-CERCLE.md`](../docs/PROD-TEST-CERCLE.md) |
 | Link safety (WP-SAFELINK-1, optional) | `GOOGLE_SAFE_BROWSING_API_KEY` (Google Cloud Safe Browsing API key, restricted to the deploy server's outbound IP; fails OPEN when unset - no lookup, no warning shown, no link ever blocked) |
 
-Secret: `SERVICE_ACCOUNT_USER_ID` (dev: `DEV_SERVICE_ACCOUNT_USER_ID`) names the Google/Apple
-verification account (hides it from non-admins in search, directory, and feed; only sees
-admins itself). If not defined, the deploy warns and there is no restriction: the id is a
-real account's, so this public repository does not carry it as a template default.
+Secret: `SERVICE_ACCOUNT_USER_ID` (dev: `DEV_SERVICE_ACCOUNT_USER_ID`) names the **review cohort**,
+the Google/Apple reviewers' accounts: a COMMA-SEPARATED list of user ids (lower-case hex; one id is
+a one-member cohort). The cohort is a space of its own - its members find, read and list only each
+other, and no member ever finds, reads or lists one of them ([profiles-and-access](../docs/wiki/profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)).
+An entry that is not a user id stops core-service and social-service at boot, rather than leaving
+that account visible. If not defined, the deploy warns and there is no restriction: the ids are
+real accounts', so this public repository does not carry them as a template default.
 
 
 **TWO SECRETS ABOVE ARE NOT DEPLOYMENT SECRETS, AND THEY WERE MISSING FROM THIS INVENTORY UNTIL

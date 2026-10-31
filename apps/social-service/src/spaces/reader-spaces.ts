@@ -1,4 +1,5 @@
 import { acceptedFollowSql } from '../follows/follow-status';
+import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
 import { ruleReachesSpaceSql } from './rule-sql';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -16,6 +17,12 @@ import type { SpaceCampus, SpaceFormation } from './space.entity';
  * `cursus` would then fail on a dependency it cannot see. A fragment costs nothing to the schema
  * and every caller still states the rule by naming the one function that holds it.
  *
+ * A REVIEW ACCOUNT HAS NO SPACE, WHATEVER ITS PROFILE (`review-cohort.ts`, 2026-10-31): the store
+ * reviewers' accounts share a world of their own - the cohort counts as ONE space among themselves
+ * (`sharesSpaceWithAuthorSql`, the feed gate) and reaches no real one (`isReaderSpaceSql`). So a
+ * reviewer reads only what the cohort writes, and a member never reads it, without anybody having
+ * to keep the cohort's profiles empty.
+ *
  * EVERY FRAGMENT IS PARENTHESISED, because each is meant to be combined with `AND`: the gate this
  * module replaces recorded what an unparenthesised `OR` did (it admitted every admin row, whoever
  * asked).
@@ -29,6 +36,8 @@ export interface SpacePair {
 
 /** The two profile facts spaces are computed from, as `users` stores them (WP3). */
 export interface ReaderProfile {
+  /** The reader's id, when known: a review account has no space, whatever its profile. */
+  id?: string;
   campus: string | null;
   /** jsonb `[{formation, promo}]`; anything that is not an array is no cursus. */
   cursus: unknown;
@@ -41,6 +50,7 @@ export interface ReaderProfile {
  * through spaces they do not have.
  */
 export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]): SpacePair[] {
+  if (isInReviewCohort(user.id)) return [];
   if (!user.campus || !Array.isArray(user.cursus)) return [];
   const formations = new Set(
     (user.cursus as unknown[])
@@ -59,6 +69,7 @@ export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]):
  * own-spaces rule, whether or not a space exists for that entry).
  */
 export function campusWideReaderCampus(user: ReaderProfile): string | null {
+  if (isInReviewCohort(user.id)) return null;
   if (!user.campus) return null;
   if (user.cursus === null || user.cursus === undefined) return user.campus;
   return Array.isArray(user.cursus) && user.cursus.length === 0 ? user.campus : null;
@@ -71,10 +82,11 @@ export function campusWideReaderCampus(user: ReaderProfile): string | null {
 /**
  * Space row `space` is one of user row `user`'s spaces. Containment (`@>`) rather than
  * `jsonb_array_elements`: a malformed `cursus` (not an array) simply contains nothing, where the
- * function would raise and take every reader's query down with one bad row.
+ * function would raise and take every reader's query down with one bad row. A review account has
+ * none (`review-cohort.ts`).
  */
 export function isReaderSpaceSql(space: string, user: string): string {
-  return `(${space}.campus = ${user}.campus AND ${user}.cursus @> jsonb_build_array(jsonb_build_object('formation', ${space}.formation)))`;
+  return `(${space}.campus = ${user}.campus AND ${user}.cursus @> jsonb_build_array(jsonb_build_object('formation', ${space}.formation)) AND NOT ${inReviewCohortSql(`${user}.id`)})`;
 }
 
 /** Rule row `rule` reaches at least one space of user row `user`. */
@@ -201,11 +213,16 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
 /**
  * User row `user` shares at least one space with the author whose id is the expression `author` -
  * what makes a PERSONAL item (a post, a live) visible. No read grant ever reaches it (WP7).
+ *
+ * The review cohort is a space of its own: two review accounts share it, and nobody else does - a
+ * review account has no real space (`isReaderSpaceSql`), so the first disjunct never pairs one with
+ * a member, in either direction.
  */
 function sharesSpaceWithAuthorSql(author: string, user: string): string {
-  return `EXISTS (
+  return `(EXISTS (
       SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
-      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})`;
+      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})
+    OR (${inReviewCohortSql(author)} AND ${inReviewCohortSql(`${user}.id`)}))`;
 }
 
 /**
@@ -348,12 +365,13 @@ export function eventVisibleToViewerSql(event: string, viewer: string): string {
 
 /**
  * THE FEED GATE: may user `$1` use the feed at all - an admin, someone with at least one space, a
- * member of at least one association (whose content D21 opens to them), or a named reader holding a
- * read grant (WP7). Answers `inAudience`.
+ * member of at least one association (whose content D21 opens to them), a named reader holding a
+ * read grant (WP7), or a review account (whose cohort is a space of its own). Answers `inAudience`.
  */
 export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_user WHERE gate_user.id = $1 AND (
     ${isAdminSql('gate_user')}
     OR EXISTS (SELECT 1 FROM spaces gate_space WHERE ${isReaderSpaceSql('gate_space', 'gate_user')})
+    OR ${inReviewCohortSql('gate_user.id')}
     OR EXISTS (SELECT 1 FROM association_members gate_member WHERE gate_member."userId" = gate_user.id)
     OR EXISTS (SELECT 1 FROM read_grants gate_grant WHERE gate_grant.user_id = gate_user.id)
   )) AS "inAudience"`;
@@ -374,8 +392,8 @@ export async function readInFeedAudience(
 export const READER_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s JOIN users u ON u.id = $1
   WHERE ${isReaderSpaceSql('s', 'u')} ORDER BY s.campus, s.formation`;
 
-/** The two profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
-export const READER_PROFILE_SQL = `SELECT campus, cursus FROM users WHERE id = $1`;
+/** The profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
+export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id = $1`;
 
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a

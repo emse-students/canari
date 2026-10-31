@@ -2141,6 +2141,7 @@ export class AssociationsService {
     let campusWide: string | null = null;
     if (spaces.length === 0) {
       const rows = (await this.assoRepo.manager.query(READER_PROFILE_SQL, [userId])) as Array<{
+        id: string;
         campus: string | null;
         cursus: unknown;
       }>;

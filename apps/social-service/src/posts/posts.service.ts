@@ -54,6 +54,7 @@ import {
   readInFeedAudience,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
+import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
@@ -168,17 +169,6 @@ interface PostCapabilities {
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
   private static readonly LIST_CACHE_TTL = 30; // seconds
-
-  /**
-   * Verification service account (Google/Apple app review). Its authored posts are hidden
-   * from the feed for everyone except global admins and the account itself. Configurable via
-   * the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed). Only a hex user id is accepted
-   * so it can be safely inlined into raw SQL; anything else disables the restriction.
-   */
-  private readonly serviceAccountId = (() => {
-    const raw = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
-    return /^[a-f0-9]{1,128}$/i.test(raw) ? raw : '';
-  })();
 
   /** PostgreSQL BIGINT fields break JSON.stringify - convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
@@ -1160,13 +1150,15 @@ export class PostsService {
   }
 
   /**
-   * The store-review service account is invisible to every reader but itself and a platform admin.
-   *
-   * `serviceAccountId` is validated as hex at construction, so inlining it is safe.
+   * A review account's posts are invisible to every reader outside the cohort but a platform admin
+   * (`review-cohort.ts`). The visibility predicate already keeps them apart - the cohort is a space
+   * of its own - and this clause states it again on the author, so a post a review account writes
+   * AS an association it somehow joined still never reaches a member's feed or search.
    */
   private serviceAccountFilterSql(isAdmin: boolean, viewerId: string | undefined): string {
-    if (!this.serviceAccountId || isAdmin || viewerId === this.serviceAccountId) return '';
-    return `AND posts."authorId" <> '${this.serviceAccountId}'`;
+    if (isAdmin || isInReviewCohort(viewerId)) return '';
+    const authorInCohort = inReviewCohortSql('posts."authorId"');
+    return authorInCohort === 'false' ? '' : `AND NOT ${authorInCohort}`;
   }
 
   /**

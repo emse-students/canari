@@ -39,6 +39,12 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the review cohort: which accounts are the store reviewers, and the SQL that names them',
+    compare: 'exact',
+    why: 'core-service hides the cohort from search and the directory, social-service from posts, lives and booking spaces; the two must agree on who is in it, from one secret. No shared TS package, for the reason the CORS allowlist below gives; the file imports nothing, which is what lets the copies be identical. Its spec sits beside the core-service copy.',
+    files: ['apps/core-service/src/review-cohort.ts', 'apps/social-service/src/review-cohort.ts'],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',

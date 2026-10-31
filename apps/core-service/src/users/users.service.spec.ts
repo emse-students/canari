@@ -376,3 +376,81 @@ describe('UsersService.directory campus and post filters', () => {
     expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
   });
 });
+
+/**
+ * The review cohort (`review-cohort.ts`) in the directory and the search: a review account finds
+ * the cohort only, a member never finds a review account, an admin finds everybody.
+ */
+describe('UsersService review cohort', () => {
+  const COHORT = 'aa01,bb02';
+  const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+  beforeEach(() => {
+    process.env.SERVICE_ACCOUNT_USER_ID = COHORT;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+    else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+  });
+
+  function makeService(requesterIsAdmin: boolean) {
+    const where: Array<[string, unknown]> = [];
+    const qb: Record<string, jest.Mock> = {};
+    for (const m of [
+      'select',
+      'addSelect',
+      'orderBy',
+      'addOrderBy',
+      'skip',
+      'take',
+      'andWhere',
+      'where',
+      'setParameters',
+      'setParameter',
+    ]) {
+      qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
+        if (m === 'andWhere') where.push([sql as string, params]);
+        return qb;
+      });
+    }
+    qb.getCount = jest.fn().mockResolvedValue(0);
+    qb.getMany = jest.fn().mockResolvedValue([]);
+    qb.getRawOne = jest.fn().mockResolvedValue({ admin: requesterIsAdmin });
+    const userRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
+    return { service, where };
+  }
+
+  it('shows a review account the cohort and nobody else, admins included', async () => {
+    const { service, where } = makeService(false);
+    await service.directory({ campus: 'saint-etienne' }, 'bb02');
+    expect(where).toContainEqual([
+      'user.id IN (:...reviewCohort)',
+      { reviewCohort: ['aa01', 'bb02'] },
+    ]);
+    expect(where.some(([sql]) => sql.includes('user.admin'))).toBe(false);
+  });
+
+  it('never shows a member a review account, in the search either', async () => {
+    const { service, where } = makeService(false);
+    await service.search('Camille', 'cc03');
+    expect(where).toContainEqual([
+      'user.id NOT IN (:...reviewCohort)',
+      { reviewCohort: ['aa01', 'bb02'] },
+    ]);
+  });
+
+  it('shows a global admin everybody, so the team can reach the review accounts', async () => {
+    const { service, where } = makeService(true);
+    await service.directory({ campus: 'saint-etienne' }, 'dd04');
+    expect(where.some(([sql]) => sql.includes('reviewCohort'))).toBe(false);
+  });
+
+  it('restricts nothing with no cohort configured', async () => {
+    delete process.env.SERVICE_ACCOUNT_USER_ID;
+    const { service, where } = makeService(false);
+    await service.directory({ campus: 'saint-etienne' }, 'aa01');
+    expect(where.some(([sql]) => sql.includes('reviewCohort'))).toBe(false);
+  });
+});

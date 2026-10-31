@@ -29,6 +29,7 @@ import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { assertMintableUserId } from './user-id';
 import { UserIdTakenError, UserRowGoneError, updateUserColumns } from './user-write';
+import { reviewCohort } from '../review-cohort';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 /** Service managing user persistence and OIDC upsert logic. */
@@ -37,14 +38,6 @@ export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
-  /**
-   * Verification service account used by Google/Apple app reviewers. It is hidden from
-   * non-admin users (search + directory) and can itself only discover global admins.
-   * Configurable via the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed); empty
-   * disables all service-account restrictions.
-   */
-  private readonly serviceAccountId = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
-
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -333,24 +326,25 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Restricts a user query builder (alias `user`) to enforce service-account visibility:
-   * - The service account itself may only discover global admins.
-   * - Non-admin requesters never see the service account.
-   * - Global admins are unaffected. No-op when no service account is configured.
+   * Restricts a user query builder (alias `user`) to the review cohort's rule (`review-cohort.ts`):
+   * - a review account finds the cohort and nobody else - no member, no admin, so no real name;
+   * - anybody else but a global admin never finds a review account;
+   * - a global admin finds everybody, so the team can reach the review accounts.
+   * No-op when no cohort is configured.
    */
-  private async applyServiceAccountVisibility(
+  private async applyReviewCohortVisibility(
     qb: SelectQueryBuilder<User>,
     requesterId?: string
   ): Promise<void> {
-    const sa = this.serviceAccountId;
-    if (!sa) return;
-    if (requesterId && requesterId === sa) {
-      // The verification account must not be able to browse the wider student body.
-      qb.andWhere('user.admin = :saAdminOnly', { saAdminOnly: true });
+    const cohort = reviewCohort();
+    if (cohort.length === 0) return;
+    if (requesterId && cohort.includes(requesterId)) {
+      this.logger.debug(`[REVIEW_COHORT] ${requesterId.slice(0, 8)} finds the cohort only`);
+      qb.andWhere('user.id IN (:...reviewCohort)', { reviewCohort: [...cohort] });
       return;
     }
     if (!(await this.isUserAdmin(requesterId ?? ''))) {
-      qb.andWhere('user.id != :serviceAccountId', { serviceAccountId: sa });
+      qb.andWhere('user.id NOT IN (:...reviewCohort)', { reviewCohort: [...cohort] });
     }
   }
 
@@ -405,7 +399,7 @@ export class UsersService implements OnModuleInit {
     const applied = applyFuzzyNameSearch(qb, query);
     if (!applied) return [];
 
-    await this.applyServiceAccountVisibility(qb, requesterId);
+    await this.applyReviewCohortVisibility(qb, requesterId);
     await this.applyBlockVisibility(qb, requesterId);
 
     return qb.take(10).getMany();
@@ -491,7 +485,7 @@ export class UsersService implements OnModuleInit {
       qb.andWhere('user.id IN (:...memberUserIds)', { memberUserIds });
     }
 
-    await this.applyServiceAccountVisibility(qb, requesterId);
+    await this.applyReviewCohortVisibility(qb, requesterId);
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {

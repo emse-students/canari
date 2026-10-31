@@ -1385,6 +1385,47 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 
 Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
 
+### The review cohort - store reviewers in a world of their own (2026-10-31)
+
+**The owner's requirement (2026-10-31):** the Google Play and App Store reviewers sign in with accounts
+the team gives them, and they must see no real person's data while no member ever sees what they do.
+Until then ONE review account was hidden from search, the directory and the feed, but it carried a
+real student profile, so it READ that space's posts and lives, and a live it started reached that
+space; a second account (a counterpart to call and to watch) had no rule at all.
+
+**The rule, stated in two places and nowhere else:** the review accounts are a COHORT that is a space
+of its own. A review account finds, reads and lists only the cohort; a member never finds, reads or
+lists a review account. It holds **whatever profile the identity provider hands the account**, so
+nobody has to keep a reviewer's profile empty.
+
+| Surface | Rule | Where |
+| --- | --- | --- |
+| Search and the people directory | a review account finds the cohort only (no member, no admin); anybody but a global admin never finds a review account; an admin finds everybody, so the team can reach them | `applyReviewCohortVisibility`, core-service `users.service.ts` |
+| Spaces | a review account has NO real space (`isReaderSpaceSql`, and its pure twin `readerSpaces`) | `spaces/reader-spaces.ts` |
+| Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
+| The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |
+| Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `serviceAccountFilterSql`, `posts.service.ts` |
+| Booking spaces (the Reservations page) | a review account lists only spaces a review account owns, and nobody else lists those | `listedSpaces`, `bookings.service.ts` |
+
+What a review account still reaches is what any account with no space and no membership reaches:
+messaging with someone whose id it already holds, and a page reached by its link. An association
+post or event reaches it only by membership, so **a review account is never made a member of a real
+association**.
+
+**Where the cohort comes from:** `SERVICE_ACCOUNT_USER_ID` (dev `DEV_SERVICE_ACCOUNT_USER_ID`), a
+comma-separated list of user ids, read by `review-cohort.ts` - one module, byte-identical in
+core-service and social-service (declared duplicate). An entry that is not a lower-case hex id stops
+the service at boot: dropping it would leave that account visible with no sign of it. The ids, the
+accounts and their credentials are in the private operations notes, never here
+([MIGRATION](../../infrastructure/MIGRATION.md)). Pinned by `review-cohort.spec.ts` (core-service),
+`review-cohort.integration.spec.ts` (social-service, a reviewer still carrying a real student
+profile, against PostgreSQL), the cohort case of `bookings.service.integration.spec.ts` and the
+cohort block of `users.service.spec.ts`.
+
+**What it does not do:** it changes no account. Seeding the cohort's own content (a few fictional
+posts, a conversation, a link-only booking space) is an operator step after the deploy, and the
+review notes are on [store-review-live-checklist](store-review-live-checklist.md).
+
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 
 Proven cause: `FeedAudienceGuard` answers a signed-in reader with no space and no association `403` (by design, tested in `feed-audience.guard.spec.ts`), and `routes/posts/+page.svelte` mapped EVERY rejected posts read to `posts_load_error_title`. The redirect to `/chat` only fires on a KNOWN `false` verdict, so an unknown or stale `true` verdict (revalidated behind the render, no redirect) landed on the error. Fix on the client, by status: `isFeedAudienceRefusal` / `isOutsideFeedAudience` (`lib/posts/feedAudience.ts`) classify a 403, correct the remembered verdict, and the page renders the `posts_no_audience_*` empty state; 401/5xx/transport keep the generic error and its retry. Test: `feedAudienceRefusal.test.ts`.

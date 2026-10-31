@@ -24,6 +24,7 @@ import {
   type ConditionalItem,
 } from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
+import { inReviewCohortSql, isInReviewCohort } from '../review-cohort';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
@@ -382,7 +383,9 @@ export class BookingsService {
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
    * - an association space only while its association is not ARCHIVED;
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
-   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code.
+   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
+   * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
+   *   space (`review-cohort.ts`): a store reviewer and a member never list each other's spaces.
    *
    * The audience (D6) is judged here with the facts `assertMayUse` judges a read with, so a listed
    * space always opens - but built ONCE for the page, never per space: the rights in one bulk
@@ -404,6 +407,9 @@ export class BookingsService {
       .andWhere(
         '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
         { me: actor.userId }
+      )
+      .andWhere(
+        `${isInReviewCohort(actor.userId) ? '' : 'NOT '}${inReviewCohortSql('s."ownerId"')}`
       )
       .orderBy('s.name', 'ASC')
       .addOrderBy('s.id', 'ASC')
