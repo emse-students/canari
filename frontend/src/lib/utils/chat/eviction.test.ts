@@ -19,13 +19,22 @@ function convo(id: string, lifecycle: Conversation['lifecycle'] = 'active'): Con
   } as unknown as Conversation;
 }
 
+/** The MLS surface `retireIfEvicted` reads and, for our own re-admission, drops the state through. */
+function droppable(active: () => Promise<boolean>) {
+  return {
+    isGroupActive: vi.fn(active),
+    forgetGroup: vi.fn(),
+    persistCheckpoint: vi.fn(async () => {}),
+  };
+}
+
 function deps(
   active: () => Promise<boolean>,
   conversations: Map<string, Conversation>,
   log = vi.fn()
 ) {
   return {
-    mlsService: { isGroupActive: vi.fn(active) },
+    mlsService: droppable(active),
     conversations,
     groupId: 'g1',
     evidence: 'remove-commit' as const,
@@ -135,11 +144,9 @@ describe('readLocalMembership - three answers, and the third is the point', () =
   it('keeps the wording retireIfEvicted has always logged', async () => {
     const log = vi.fn();
     await retireIfEvicted({
-      mlsService: {
-        isGroupActive: vi.fn(async () => {
-          throw new Error('WASM client not ready');
-        }),
-      },
+      mlsService: droppable(async () => {
+        throw new Error('WASM client not ready');
+      }),
       conversations: new Map([['g1', convo('g1')]]),
       groupId: 'g1',
       evidence: 'remove-commit',
@@ -165,7 +172,7 @@ describe('membershipIsDurablyLost - the guard on the members-only endpoint', () 
     expect(membershipIsDurablyLost(conversations.get('g1'))).toBe(false);
 
     await retireIfEvicted({
-      mlsService: { isGroupActive: vi.fn(async () => false) },
+      mlsService: droppable(async () => false),
       conversations,
       groupId: 'g1',
       evidence: 'remove-commit',
@@ -259,6 +266,44 @@ describe('a Remove commit this device asked for is the first half of a re-admiss
 
     expect(await retireIfEvicted(d)).toBe(false);
     expect(conversations.get('g1')!.lifecycle).toBe('removed');
+  });
+});
+
+/**
+ * THE EVICTED STATE IS DROPPED WITH THE ROW MARKED (review of #2804). Kept, a `pending` row over a HELD
+ * group was a wait nothing could end - `requestReAdd` and the watchdog both read a held group as
+ * needing nothing - so a re-admission whose Welcome never came was stuck for good, the user never
+ * told. Dropped, the row is the ordinary awaiting-Welcome state the recovery ends on the server's word.
+ */
+describe('the Remove half of our own re-admission drops the evicted state', () => {
+  it('forgets the group and checkpoints, so nothing reads it as held any more', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: true };
+
+    await retireIfEvicted(d);
+
+    expect(d.mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(d.mlsService.persistCheckpoint).toHaveBeenCalled();
+    expect(conversations.get('g1')!.lifecycle).toBe('pending');
+  });
+
+  it('drops nothing on a removal this device never asked for - the evicted state still opens its past', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: false };
+
+    await retireIfEvicted(d);
+
+    expect(d.mlsService.forgetGroup).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
+  });
+
+  it('drops nothing under a real exclusion already recorded', async () => {
+    const conversations = new Map([['g1', convo('g1', 'removed')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: true };
+
+    await retireIfEvicted(d);
+
+    expect(d.mlsService.forgetGroup).not.toHaveBeenCalled();
   });
 });
 

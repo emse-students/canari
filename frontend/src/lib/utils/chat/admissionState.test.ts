@@ -1,6 +1,6 @@
 import type { UserGroupRow } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
-import { isNeverAdmitted, syncAdmissionFlags } from './admissionState';
+import { isNeverAdmitted, reconcileRestoredLifecycles, syncAdmissionFlags } from './admissionState';
 
 const row = (lifecycle: Conversation['lifecycle'], awaitingAdmission?: boolean): Conversation => ({
   id: 'g1',
@@ -67,5 +67,85 @@ describe('syncAdmissionFlags', () => {
     expect(syncAdmissionFlags(conversations, listed(null))).toEqual([]);
     expect(syncAdmissionFlags(conversations, listed(seat()))).toEqual([]);
     expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
+  });
+});
+
+/**
+ * THE RESTORE PROMOTES A PENDING ROW ON MEMBERSHIP, NEVER ON HELD STATE ALONE (review, 2026-10-31).
+ * An evicted group stays held, so a row awaiting the Welcome of its re-admission was promoted to
+ * `active` at boot, and the outbox then failed the next message as evicted.
+ */
+describe('reconcileRestoredLifecycles', () => {
+  const mls = (active: () => Promise<boolean>) => ({
+    isGroupActive: vi.fn(active),
+    forgetGroup: vi.fn(),
+    persistCheckpoint: vi.fn(async () => {}),
+  });
+  const named = (id: string, lifecycle: Conversation['lifecycle']): Conversation => ({
+    ...row(lifecycle),
+    id,
+    contactName: id,
+  });
+
+  it('promotes a pending row whose held group says this device is a member', async () => {
+    const conversations = new Map([['g1', named('g1', 'pending')]]);
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set(['g1']),
+      mlsService: mls(async () => true),
+      log: () => {},
+    });
+    expect(out).toEqual({ demoted: [], promoted: ['g1'], awaiting: [] });
+    expect(conversations.get('g1')?.lifecycle).toBe('active');
+  });
+
+  it('keeps PENDING a row whose held group says this device is out, and drops the evicted state', async () => {
+    // A re-admission awaiting its Welcome, written by a client that kept the evicted state: dropped,
+    // it is the ordinary awaiting-Welcome state the recovery ends - kept, nothing would.
+    const conversations = new Map([['g1', named('g1', 'pending')]]);
+    const service = mls(async () => false);
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set(['g1']),
+      mlsService: service,
+      log: () => {},
+    });
+    expect(out).toEqual({ demoted: [], promoted: [], awaiting: ['g1'] });
+    expect(conversations.get('g1')?.lifecycle).toBe('pending');
+    expect(service.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(service.persistCheckpoint).toHaveBeenCalled();
+  });
+
+  it('promotes nothing when the membership cannot be read, and says so', async () => {
+    const unreadable = mls(async () => {
+      throw new Error('unreadable');
+    });
+    const conversations = new Map([['g1', named('g1', 'pending')]]);
+    const lines: string[] = [];
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set(['g1']),
+      mlsService: unreadable,
+      log: (l) => lines.push(l),
+    });
+    expect(out.promoted).toEqual([]);
+    expect(unreadable.forgetGroup).not.toHaveBeenCalled();
+    expect(conversations.get('g1')?.lifecycle).toBe('pending');
+    expect(lines.some((l) => l.includes('could not be read'))).toBe(true);
+  });
+
+  it('demotes an active row whose group is not held, as an admitted one', async () => {
+    const conversations = new Map([['g1', { ...named('g1', 'active'), awaitingAdmission: true }]]);
+    const out = await reconcileRestoredLifecycles({
+      conversations,
+      localGroups: new Set<string>(),
+      mlsService: mls(async () => true),
+      log: () => {},
+    });
+    expect(out.demoted).toEqual(['g1']);
+    expect(conversations.get('g1')).toMatchObject({
+      lifecycle: 'pending',
+      awaitingAdmission: false,
+    });
   });
 });

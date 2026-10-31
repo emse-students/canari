@@ -1234,7 +1234,7 @@ backoff timer, and `enqueue`. **THREE are external moments nothing inside the mo
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
-| `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
@@ -1250,9 +1250,68 @@ flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it 
 goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
 flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
 
-`outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
-for each that the same gate refuses it shut and drains it open, and a source check pins the three
-external sites so a fourth has to be argued for rather than added.
+`outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
+`resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
+open, and a source check pins the three external sites so a fourth has to be argued for rather than
+added.
+
+### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
+
+Four defects of one seam, found by a read-only review and fixed together:
+
+- **A message sent during this device's own re-admission was failed for good (P2).** A
+  re-admission is a Remove then an Add, about 3 s apart. After the Remove the group is held, its
+  epoch gap cleared (`isGroupHealthy` yes) and `isGroupActive` false; `retireIfEvicted` has
+  already read `reAddInFlight` and written the row `pending` (`markAwaitingReAdmission`). The send
+  gate then took `failPermanently(..., 'evicted')`, and `recordEviction` retired the row, posted
+  the removal notice and deleted the entry - three seconds before the Welcome re-admitted the
+  device. Now **the Remove half DROPS the evicted state** (`retireIfEvicted`'s `reAddInFlight`
+  branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
+  `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
+  a group this device does not hold. A send in the window meets an unsendable group and is HELD
+  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
+  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+- **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
+  fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
+  `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
+  re-admission whose Welcome never came was waited on for ever behind a `pending` bubble. With the
+  state dropped, every pass reaches the server: a Welcome owed is waited for, a seat with none is
+  joined, and NO seat retires the row (`stopRecovering` on the roster's 403). The outbox reads the row
+  AFTER its `requestReAdd` and fails a held entry on a `removed` row (`failPermanently(...,
+  'removed')`: the row's banner tells the member, the bubble goes `error`, nothing is re-recorded).
+  The guard and its three readers (`recordEviction`, `verifyCurrentUserMembership`, the outbox) are
+  deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
+  the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
+  an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
+  rare and the inviter's history push covers. Drop before mark, so a kill between them leaves an
+  `active` row over no state, which the restore demotes to `pending` - the same end.
+- **The boot restore undid that row.** It promoted any `pending` row whose group
+  `getLocalGroups()` listed, and an evicted group stays listed. `reconcileRestoredLifecycles`
+  (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` DROPS the held
+  evicted state (a row written by the first version, or a kill after the mark) and keeps the row
+  `pending`; `null` promotes nothing.
+- **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
+  flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
+  after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
+  Every hold for the group writes the entry into `repairHeld` (in memory, like `transportHeld`);
+  `resumeGroup(conversationId)` moves that group's ids, and only those, into `resuming` and drains.
+  A group that becomes ready INSIDE the attempt that holds it (an external join landing within the
+  `requestReAdd` that attempt awaited) is caught by a per-group count of ready announcements read at
+  the gate and again after the hold: when it moved, the hold resumes itself and the lane re-runs. A
+  count of events, not a clock.
+- **A successful external join raised nothing (P3).** It set the row `active` and called
+  `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
+  REQUIRED and raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE
+  implementation both a Welcome and an external join reach (resume, statuses, deferred welcome
+  requests, the debounced invitation sweep). The two `RecoveryDeps` built outside the session -
+  `verifyCurrentUserMembership`'s direct-conversation repair and `startNewConversation`'s 1:1 repair
+  (`groupCreation.ts`) - reach it through `groupReadyAnnouncer.ts`, which the session registers and
+  clears with the outbox; a join landing with no live session says so in a `warn` line.
+
+Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
+recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no
+seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.test.ts`,
+`admissionState.test.ts` and `setupMessageHandler.test.ts` (`onGroupReady` on both Welcome paths).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

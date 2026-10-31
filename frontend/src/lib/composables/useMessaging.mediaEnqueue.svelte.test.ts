@@ -111,6 +111,50 @@ describe('an attachment the queue cannot take', () => {
   });
 });
 
+/**
+ * A FILE IS NOT QUEUED INTO A GROUP THAT CANNOT TAKE IT YET - a row awaiting (re-)admission, or a
+ * member check answering no. Refused with the "session establishing" sentence, nothing enqueued and
+ * no placeholder written (`useMessaging.svelte.ts`, the media branch of `handleSendChat`).
+ */
+describe('the media refusal before the queue', () => {
+  beforeEach(() => enqueueMock.mockReset());
+
+  it('refuses a file for a row awaiting re-admission, writing no placeholder', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    ctx.conversations.set(CONVO, { ...ctx.conversations.get(CONVO)!, lifecycle: 'pending' });
+    // Out of the group, awaiting the Welcome: `verifyCurrentUserMembership` answers no.
+    ctx.verifyCurrentUserMembership = async () => false;
+    const file = entryOf(async () => new ArrayBuffer(3));
+    await messaging.handleSendChat(ctx, '', { files: [file] });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
+    expect(vi.mocked(ctx.log).mock.calls.some(([l]) => String(l).includes('media refused'))).toBe(
+      true
+    );
+  });
+
+  it('reads the row AFTER the barrier: a Remove merged during it refuses the file', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    // The member check still answers yes (its cache), but the Remove half of a re-admission merged
+    // while the send waited for the inbound queue, and wrote the row `pending`.
+    ctx.ensureMls = (() => ({
+      waitForMessageQueueIdle: async () => {
+        ctx.conversations.set(CONVO, { ...ctx.conversations.get(CONVO)!, lifecycle: 'pending' });
+      },
+    })) as never;
+    await messaging.handleSendChat(ctx, '', { files: [entryOf(async () => new ArrayBuffer(3))] });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
+  });
+});
+
 describe('the staging belongs to ONE conversation and ONE account', () => {
   const pdf = (name: string) => new File(['%PDF'], name, { type: 'application/pdf' });
 

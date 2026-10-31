@@ -95,6 +95,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       saveConversation: vi.fn().mockResolvedValue(undefined),
       addMessageToChat: vi.fn().mockResolvedValue(undefined),
       loadHistoryForConversation: vi.fn().mockResolvedValue(undefined),
+      // REQUIRED: every installed group is announced ready (`announceGroupReady` in the session).
+      onGroupReady: vi.fn(),
       log: vi.fn(),
       ...overrides,
     };
@@ -147,6 +149,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // removed when a later send was refused - and the outbox read that refusal as transient and
     // retried it up its full backoff ladder against a group that would refuse every attempt.
     const deps = baseDeps();
+    // A member's row: a `pending` one over an evicted group is one awaiting its re-admission, which
+    // the eviction policy leaves to the Welcome (2026-10-31).
+    deps.conversations.set(groupId, emptyConversation(groupId, { lifecycle: 'active' }));
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     mls.isGroupActive = vi.fn().mockResolvedValue(false);
@@ -170,6 +175,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.mocked(reAddIsInFlight).mockReturnValue(true);
 
     const deps = baseDeps();
+    // From `active`, so `pending` below is the transition and not the fixture's default.
+    deps.conversations.set(groupId, emptyConversation(groupId, { lifecycle: 'active' }));
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     mls.isGroupActive = vi.fn().mockResolvedValue(false);
@@ -221,6 +228,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // through to the out-of-sync arm: `requestReAdd`, asking the server to undo a moderation
     // action, then a commit request that can only return 403.
     const deps = baseDeps();
+    deps.conversations.set(groupId, emptyConversation(groupId, { lifecycle: 'active' }));
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     mls.isGroupActive = vi.fn().mockResolvedValue(false);
@@ -271,7 +279,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   });
 
   it('processes Welcome for known placeholder conversation (not ready)', async () => {
-    const deps = baseDeps();
+    const onGroupReady = vi.fn();
+    const deps = baseDeps({ onGroupReady });
     const mls = deps.mlsService as any;
     mls.processWelcome = vi.fn().mockResolvedValue(undefined);
     mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
@@ -295,6 +304,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // at ERROR level either way. GRP-5 and GRP-8 recorded PASS-DIRTY on nothing else.
     expect(mls.registerMember).not.toHaveBeenCalled();
     expect(deps.conversations.get(groupId)?.lifecycle).toBe('active');
+    // THE FRESH JOIN ANNOUNCES THE GROUP READY, with the row already `active`: it is what resumes
+    // the messages the outbox held for it (`resumeOutboxGroup`). Pinned since 2026-10-31 - only the
+    // redelivered-Welcome path was.
+    expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
   /**
@@ -921,7 +934,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // kick-and-re-add - precisely the outcome the duplicate-leaf repair is designed to produce - so
     // it outlives the GRP-4 race that exposed it. The old state is forgotten first: the new Welcome
     // must install on nothing, and the evicted state can neither read nor send anything anyway.
-    const deps = baseDeps();
+    const onGroupReady = vi.fn();
+    const deps = baseDeps({ onGroupReady });
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     mls.isGroupActive = vi.fn().mockResolvedValue(false);
@@ -940,6 +954,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 0);
     expect(mls.processWelcome).toHaveBeenCalled();
+    // The re-admission's Welcome is what resumes the messages held while the row awaited it.
+    expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
   it('Welcome after the ANNOUNCEMENT path → the notice is withdrawn although no state is held', async () => {

@@ -15,7 +15,9 @@
  * before the Welcome makes it false, and nothing retracts a notice. The frame cannot say which it
  * is; the device asking can, and `reAddIsInFlight` is that fact. `retireIfEvicted` reads it BEFORE
  * recording anything - see {@link markAwaitingReAdmission} for why the row becomes `pending` rather
- * than staying `active`. Observed on a production handset, 2026-09-15.
+ * than staying `active`. Observed on a production handset, 2026-09-15. And it DROPS the evicted
+ * state there (2026-10-31): a `pending` row over a group this device does not hold is the ordinary
+ * awaiting-Welcome state, which the recovery seam already ends one way or the other.
  *
  * The fact is read from OpenMLS (`isGroupActive`), never mirrored into a flag of our own: the group
  * state is already durable, and a second copy can only ever be wrong in the direction that matters
@@ -61,6 +63,7 @@ import {
   markAwaitingReAdmission,
   retireConversation,
 } from '$lib/utils/chat/conversations';
+import { dropGroupState, type DroppableMlsService } from '$lib/utils/chat/dropGroupState';
 
 /**
  * How this device found out, and the ONLY thing the five learning sites legitimately differ in.
@@ -268,7 +271,8 @@ export async function retractEvictionNotice(deps: {
 
 /** Everything {@link retireIfEvicted} needs, kept to the narrowest set both call sites can supply. */
 export interface EvictionCheckDeps extends Omit<RecordEvictionDeps, 'groupId' | 'evidence'> {
-  mlsService: Pick<IMlsService, 'isGroupActive'>;
+  /** `forgetGroup` / `persistCheckpoint`: the Remove half of our own re-admission drops the state. */
+  mlsService: Pick<IMlsService, 'isGroupActive'> & DroppableMlsService;
   groupId: string;
   /**
    * How this device came to be asking.
@@ -348,11 +352,33 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   // already knows the Remove it is holding is the first half of the answer. Recording an eviction
   // here writes a permanent notice into the thread that the Welcome falsifies seconds later, and
   // nothing retracts it.
+  //
+  // AND THE EVICTED STATE IS DROPPED HERE, which is what makes the wait END (review of #2804). Kept,
+  // it left a `pending` row over a HELD group: the outbox sees a sendable group it is not a member
+  // of, `requestReAdd` stands down on any held group, the watchdog reads a held group as healthy -
+  // so a re-admission whose Welcome never came was waited on for ever, and the user never told.
+  // Dropped, the row is the ordinary awaiting-Welcome state: the outbox holds and asks
+  // `requestReAdd`, the watchdog re-drives it, and the server's answer ends it - a Welcome owed is
+  // waited for, a seat with none is joined, NO seat retires the row (`stopRecovering`). The state
+  // could not send or read anything after this Remove; the past it opened is stored decrypted
+  // locally, and the Welcome installs on nothing, as a fresh join does.
+  //
+  // DROPPED BEFORE THE ROW IS MARKED, so a kill between the two leaves an `active` row over no
+  // state - which the restore demotes to `pending`, the same end - and never a `pending` row over
+  // the evicted one. `deferred`: the commit path holds the MLS client mutex.
   if (reAddInFlight) {
     const key = findConversationKeyByGroupId(rest.conversations, groupId);
-    if (key) await markAwaitingReAdmission({ ...rest, key });
+    const row = key ? rest.conversations.get(key) : undefined;
+    if (key && row && row.lifecycle !== 'removed') {
+      await dropGroupState(mlsService, groupId, {
+        reason: "the Remove half of this device's own re-admission - awaiting the Welcome",
+        checkpoint: 'deferred',
+        log,
+      });
+      await markAwaitingReAdmission({ ...rest, key });
+    }
     log(
-      `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, awaiting the Welcome`
+      `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, state dropped, awaiting the Welcome`
     );
     return false;
   }

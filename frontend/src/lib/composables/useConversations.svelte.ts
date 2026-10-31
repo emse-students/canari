@@ -81,6 +81,7 @@ import {
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { announceGroupReadyToSession } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
@@ -1967,6 +1968,7 @@ export function useConversations() {
               if (id) selectConversationWithCtx(id, ctx);
             },
             saveConversation: (name: string) => saveConversation(name, ctx),
+            onGroupReady: announceGroupReadyToSession,
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);
