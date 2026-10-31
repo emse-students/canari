@@ -40,6 +40,8 @@ export type HubIcon = import('svelte').Component<{ size?: number }>;
 
 /** An organisation's logo as a row's lead; the row's `icon` is what draws when it has none. */
 export interface HubLogo {
+  /** The association id: seeds the placeholder colour. */
+  id: string;
   name: string;
   logoUrl: string | null;
 }
