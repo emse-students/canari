@@ -51,7 +51,10 @@ const logger = new Logger('GroupMembership');
  * the clock `sendMessage` stamps `queued_message.createdAt` with - the server time a window is
  * compared against. The database's `now()` is a different clock; the two agree only by accident.
  * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
- * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
+ * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation. It
+ * is ASSERTED at every boot, at ERROR, by `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`):
+ * this function, which compares a `new Date()` against a `now()`-dated device row, is the other
+ * instance it guards.
  *
  * **AND IT RECORDS AN ADMISSION THAT PRECEDED IT** (review of #2226). When a device row of this
  * person in this group is older than the enrolment - a commit admitted an invitee who came online
@@ -650,17 +653,23 @@ export function withholdsArrivalSpan(
  * person was never a member then (a Decline DELETES that interval for the same reason,
  * {@link withdrawAwaitingSeat}). So the lift moves both to the admission:
  *
- * - the open interval's `joinedAt` becomes this instant, on this process's clock like every other
- *   interval instant ({@link ensureGroupMember}), and its `admittedAt` is cleared - the device rows
- *   it was copied from predate the admission too;
- * - the person's device rows in the group are dated `now()`, the database instant a row the
- *   admitting commit wrote would carry (`ValidateCommitBody.admits`), which is what
+ * - the open interval's `joinedAt` becomes this instant, and its `admittedAt` is cleared - the
+ *   device rows it was copied from predate the admission too;
+ * - the person's device rows in the group are dated the SAME instant, which is what
  *   {@link withheldWindows} reads them as: "a device row is written when a commit admits the device".
+ *
+ * **ONE VALUE FOR BOTH COLUMNS, NEVER `now()` FOR ONE OF THEM.** Both are `timestamp WITHOUT time
+ * zone`: a JavaScript `Date` is stored as this process's local wall time, `now()` as the database
+ * session's, and both are read back as this process's. Two sources made the arrival - the earlier of
+ * the two - wrong by the offset between the two zones whenever they differ: measured an hour early
+ * under `TZ=Europe/Paris` against a UTC database, an hour of the group's past handed to the newcomer
+ * (review of #2800). One value also removes the transaction-start skew `now()` carried. The other
+ * writer that still mixes the two clocks is {@link ensureGroupMember}; the boot check
+ * `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`) accuses any estate where they disagree.
  *
  * A former member asking again through a link keeps their closed intervals: the gap since their
  * departure now runs to this admission, so the time they spent waiting is withheld with it - the
- * 2026-10-14 rule. Two clocks, bounded as {@link withheldWindows} states: the database instant is the
- * transaction's start, so it can only be early, by this one transaction.
+ * 2026-10-14 rule.
  *
  * @param m the commit's transactional manager - the lift, this and the advance commit together.
  * @param userIds the people whose ask this commit answered (their flag was just lifted).
@@ -673,16 +682,14 @@ export async function dateArrivalAtAdmission(
 ): Promise<{ intervals: number; devices: number }> {
   if (userIds.length === 0) return { intervals: 0, devices: 0 };
   const people = [...userIds];
+  const at = new Date();
   const intervals = await m
     .getRepository(GroupMembershipInterval)
-    .update(
-      { groupId, userId: In(people), leftAt: IsNull() },
-      { joinedAt: new Date(), admittedAt: null }
-    );
+    .update({ groupId, userId: In(people), leftAt: IsNull() }, { joinedAt: at, admittedAt: null });
   const devices = await m
     .createQueryBuilder()
     .update(DeviceGroupMembership)
-    .set({ createdAt: () => 'now()' })
+    .set({ createdAt: at })
     .where('"groupId" = :groupId AND "userId" IN (:...people)', { groupId, people })
     .execute();
   return { intervals: intervals.affected ?? 0, devices: devices.affected ?? 0 };

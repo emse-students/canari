@@ -404,6 +404,74 @@ describe('a history read names who asked', () => {
         ).toEqual(['1-0', '2-0', '3-0']);
       });
 
+      /**
+       * A MEMBER HOLDING NO INTERVAL IS NOT AN ADMIN (review of #2800): the admin is named by its
+       * header, and a roster member the enrolment failed to record is repaired - or, when nothing can
+       * be opened, served nothing rather than everything.
+       */
+      describe('a NON-admin caller holding no interval at all', () => {
+        /** `openMissingIntervals`' transaction: the roster rows it finds, and what its insert opens. */
+        const repairOpens = (roster: { userId: string; joinedAt: Date }[]) => {
+          const chain = (end: Record<string, unknown>) => {
+            const qb: Record<string, unknown> = { ...end };
+            for (const k of [
+              'select',
+              'addSelect',
+              'where',
+              'andWhere',
+              'setLock',
+              'insert',
+              'into',
+              'values',
+              'orIgnore',
+              'returning',
+            ])
+              qb[k] = () => qb;
+            return qb;
+          };
+          const tx = {
+            getRepository: () => ({
+              createQueryBuilder: () => chain({ getRawMany: async () => roster }),
+            }),
+            createQueryBuilder: () => chain({ execute: async () => ({ raw: roster }) }),
+          };
+          const internals = service as unknown as {
+            groupRepo: { manager: { transaction?: unknown } };
+          };
+          internals.groupRepo.manager.transaction = async (fn: (m: typeof tx) => unknown) => fn(tx);
+        };
+        const windowsOf = (s: MessagingService) =>
+          (
+            s as unknown as {
+              ownWithheldWindows: (u: string, g: string, admin: boolean) => Promise<unknown>;
+            }
+          ).ownWithheldWindows(USER, GROUP, false);
+
+        it('is repaired from the roster, and withheld what preceded that arrival', async () => {
+          intervalFind
+            .mockResolvedValueOnce([])
+            .mockResolvedValue([
+              { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+            ]);
+          repairOpens([{ userId: USER, joinedAt: at(day(5)) }]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([
+            { from: 0, until: at(day(5)).getTime() },
+          ]);
+          expect(lines()).toContain('opened a missing interval');
+        });
+
+        it('fails closed when nothing can be opened: every row withheld, said at ERROR', async () => {
+          intervalFind.mockResolvedValue([]);
+          repairOpens([]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([{ from: 0, until: null }]);
+          expect(lines()).toContain('withheld whole rather than served unfiltered');
+        });
+      });
+
       it('a caller holding no interval (a global admin outside the group) is not narrowed', async () => {
         intervalFind.mockResolvedValue([]);
         groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);

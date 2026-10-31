@@ -813,9 +813,12 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   Decline deletes that interval for the same reason). The commit that lifts `awaitingAdmission`
   (`liftAwaitingAdmission`, the one door) now re-dates both in its own transaction
   (`dateArrivalAtAdmission`, `utils/group-membership.ts`): the open interval's `joinedAt` becomes the
-  lift's instant and its `admittedAt` is cleared, and the person's device rows are dated `now()`, the
-  instant a row the admitting commit wrote carries - which is what "a device row is written when a
-  commit admits the device" assumed. A former member coming back through a link keeps their first
+  lift's instant and its `admittedAt` is cleared, and the person's device rows are dated the SAME
+  instant - one value for both, never `now()` for one of them: both columns are `timestamp WITHOUT
+  time zone`, and a `now()` beside a `new Date()` read an hour early under `TZ=Europe/Paris` against
+  a UTC database, an hour of the past handed to the newcomer. Every boot asserts the two clocks agree
+  (`checkDatabaseClockAgreement`, ERROR above a minute, never fatal); `ensureGroupMember` is the other
+  place that compares them. A former member coming back through a link keeps their first
   stretch; the gap since their departure now runs to the Add. Not retroactive: a link joiner admitted
   before this keeps the arrival recorded at their ask.
 - **The server's own stream is held to the same span (2026-10-31).** `GET /history` and
@@ -825,8 +828,11 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   the stream was served the ciphertexts of the whole past and only their client discarded them
   (`dropOwnExcludedMessages`); a newcomer's state cannot open frames sealed before its Welcome, but
   their absence no longer rests on the client. A new device of a continuous member is unchanged: the
-  span is the PERSON's. A 1:1 and a key group are unchanged. A caller holding no interval at all (a
-  global admin outside the group) is not narrowed, as before.
+  span is the PERSON's. A 1:1 and a key group are unchanged. A global admin - named by its
+  `x-global-admin` header, never inferred from a missing interval - reading a group it holds no
+  interval in is not narrowed, as before; any other caller holding no interval is a roster member the
+  enrolment failed to record, repaired by `openMissingIntervals` as the exclusions route does, and
+  served nothing at all (one window over everything, at ERROR) when nothing could be opened.
 - Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
   (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
   person's withheld windows.
@@ -859,6 +865,9 @@ itself and asks only about a new person):
 | Graine seeds and checkpoints | communities only - their own recorded decision (`shared`, past only to a proven admission); a checkpoint is the device's own local state |
 | A 1:1 | nobody is added to one (no add path: the panel offers it in a group conversation only, and `isGroup` is fixed at creation), so the span does not apply |
 | A member's own new device | everything since its person's arrival, gaps withheld - the same windows, read per user |
+| Pins and read marks (the bundle's `state`) | METADATA only, accepted: the pin register (ids, pinned or not, a date) and the read watermarks travel even when every message is withheld; no content, and a pin naming a message the newcomer never received points at nothing |
+| A reply, a reaction or an edit sent AFTER the arrival about an earlier message | a reply carries its quoted `preview`, ACCEPTED as on WhatsApp (review of #2800, 2026-10-31); a reaction carries an id only; an edit of a message the receiver does not hold is refused (`mutationIsAuthorised`, no owner) |
+| Media by id | the blob is ciphertext; its key (CEK) travels only inside the message that carries it |
 
 ### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
 

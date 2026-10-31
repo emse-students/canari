@@ -6440,7 +6440,11 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownWithheldWindows(headerUserId, groupId);
+      const windows = await this.ownWithheldWindows(
+        headerUserId,
+        groupId,
+        headerGlobalAdmin === 'true'
+      );
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -6482,14 +6486,20 @@ export class MessagingService {
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
    *
-   * **A CALLER WITH NO INTERVAL AT ALL GETS NO ARRIVAL SPAN.** Every enrolment opens one
-   * (`ensureGroupMember`) and migration 030 backfilled the rest, so an admitted member always holds
-   * one; a caller with none is a global admin reading a group it is not in, which this filter has
-   * never narrowed.
+   * **A GLOBAL ADMIN IS NAMED BY ITS HEADER, NEVER INFERRED FROM A MISSING INTERVAL** (review of
+   * #2800). An admin holding no interval reads a group it is not in, and this filter has never
+   * narrowed that read. Anyone else reached here through the roster (`authorizeHistoryGroups`), so a
+   * caller holding NO interval at all is a member the enrolment failed to record - repaired like the
+   * one with no open interval, above. Should the repair open nothing (the roster row went
+   * meanwhile), the read FAILS CLOSED: one window over everything, said at ERROR - an absent record
+   * never reads as "withhold nothing".
+   *
+   * @param globalAdmin the caller's `x-global-admin` header said `true`.
    */
   private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string
+    groupId: string,
+    globalAdmin: boolean
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
@@ -6499,7 +6509,10 @@ export class MessagingService {
         select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
-    if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
+    // An admin's read of a group it never joined has nothing to repair; every other caller is on the
+    // roster, and a member outside every open interval - none at all included - is a record to repair.
+    const unrecorded = intervals.length === 0 && !globalAdmin;
+    if ((intervals.length > 0 || unrecorded) && !intervals.some((r) => r.leftAt === null)) {
       // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
       const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
       if (opened.length > 0) {
@@ -6511,7 +6524,13 @@ export class MessagingService {
       // removal may have closed it since - the table is the only answer to both.
       intervals = await read();
     }
-    if (intervals.length === 0) return [];
+    if (intervals.length === 0) {
+      if (globalAdmin) return [];
+      this.logger.error(
+        `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} holds no membership interval and none could be opened - the stream is withheld whole rather than served unfiltered`
+      );
+      return [{ from: 0, until: null }];
+    }
     const group = await this.groupRepo.findOne({
       where: { id: groupId },
       select: {
@@ -6590,7 +6609,11 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownWithheldWindows(headerUserId, groupId);
+          const windows = await this.ownWithheldWindows(
+            headerUserId,
+            groupId,
+            headerGlobalAdmin === 'true'
+          );
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
