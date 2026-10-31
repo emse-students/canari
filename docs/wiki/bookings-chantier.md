@@ -185,6 +185,24 @@ the hour height, no axis when empty) and `SpaceGrid.drag.svelte.test.ts` (every 
 plus a folded closed day). **Not yet seen** on a phone or against a running API; seen only where the
 next paragraph says.
 
+## The week grid draws blocks, not cells (2026-10-31, owner: "propre et joli")
+
+Rendering only (`SpaceGrid.svelte`, `lib/bookings/gridRuns.ts`); the server still sends one unit per
+step. A booking, an organiser block, a free stretch, a not-bookable stretch and the range being drawn
+are each ONE rounded block over faint hour lines. `buildRuns` merges touching units that read the same
+(same booking id, same block id, same free / closed / past kind), inside one day column - so nothing
+crosses midnight (a booking that does is two runs) and units sharing the width (lanes) are never
+merged; in a fixed-slots space free slots stay one block each (a slot is booked whole). `cutRange`
+splits a free run around the live selection. A booking or block is ONE button (full label as its
+accessible name and tooltip); every free step keeps an invisible button, so tap, drag and keyboard
+are unchanged. A short block says less: name and hours, then avatar and hours, then the avatar alone.
+
+**The booker's photo (owner, 2026-10-31).** Shown with the shared `Avatar` exactly where the name
+already is: `bookingView` sends `holderId` in the SAME branch as `holderName` (the space shows names,
+or the viewer is one of the booking's people or the organiser), and `booking-views.spec.ts` proves
+the two appear and disappear together. Elsewhere the block wears an anonymous icon; no other field
+was added. (The name was already readable by whoever receives the id, so the id adds only the photo.)
+
 ## WP-R3 as built - the poster as a thumbnail (D45, 2026-10-27)
 
 Front only. `GET spaces` already returned `poster`; the Reservations list was `SectionHub` rows,

@@ -20,6 +20,7 @@
     type GridRun,
     type RunKind,
   } from '$lib/bookings/gridRuns';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
   import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { User } from '@lucide/svelte';
@@ -45,7 +46,8 @@
    * keyboard still walks the units. A block that is too short for its text says less (name and
    * range, then avatar and range, then the avatar alone) and the whole reading stays in its tooltip
    * and its accessible name. The avatar is the initials placeholder: the server sends a booker's
-   * name and never their id, so no photo can be asked for ([bookings-chantier]).
+   * name and, exactly where it sends the name, their id (`holderId`), which the shared `Avatar` turns into
+   * their photo; where the name is hidden the block shows an anonymous icon ([bookings-chantier]).
    *
    * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
    * range follows the pointer, held by `dragRange` to free touching units and to what one booking
@@ -302,7 +304,15 @@
       state: text,
     });
     const holder = unit.state === 'booked' ? unit.booking.holderName : undefined;
-    return { text, time, label, holder, mine: unit.state === 'booked' && unit.booking.mine };
+    const holderId = unit.state === 'booked' ? unit.booking.holderId : undefined;
+    return {
+      text,
+      time,
+      label,
+      holder,
+      holderId,
+      mine: unit.state === 'booked' && unit.booking.mine,
+    };
   }
 
   /** Place a block on its day column, in its lane. */
@@ -428,9 +438,7 @@
               </button>
             {:else}
               <div
-                role="img"
-                aria-label={run.kind === 'free' ? undefined : r.label}
-                aria-hidden={run.kind === 'free' ? 'true' : undefined}
+                aria-hidden="true"
                 style={boxStyle(run.topMin, run.heightMin, run.lane, run.lanes)}
                 class="pointer-events-none absolute block p-px"
               >
@@ -469,6 +477,7 @@
               class="pointer-events-none absolute z-20 block p-px"
             >
               <span
+                data-selection
                 class="block h-full overflow-hidden rounded-lg border px-1.5 py-1 text-xs leading-tight font-bold shadow-sm motion-safe:transition-colors {blockMode
                   ? 'bg-red-err/20 text-red-err border-red-err'
                   : 'bg-cn-yellow text-cn-ink border-cn-yellow'}"
@@ -479,12 +488,13 @@
           {/if}
           {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}`)}
             {@const unit = placed.unit}
-            {#if unit.state === 'free' && offered(unit)}
+            {#if unit.state === 'free'}
               <button
                 type="button"
                 data-cell
                 data-day={dayIndex}
                 data-idx={idx}
+                disabled={!offered(unit)}
                 onclick={() => {
                   if (swallowClick) {
                     swallowClick = false;
@@ -499,7 +509,7 @@
                 })}
                 title={formatTimeRange(unit.startMs, unit.endMs, space.timeZone)}
                 style={boxStyle(placed.topMin, placed.heightMin, placed.lane, placed.lanes)}
-                class="focus-visible:ring-cn-yellow absolute z-10 block cursor-pointer rounded-lg outline-none focus-visible:ring-2 motion-safe:transition-colors {blockMode
+                class="focus-visible:ring-cn-yellow absolute z-10 block cursor-pointer rounded-lg outline-none focus-visible:ring-2 disabled:cursor-default motion-safe:transition-colors {blockMode
                   ? 'hover:bg-red-err/10'
                   : 'hover:bg-green-ok/20'}"
               ></button>
@@ -519,16 +529,18 @@
 {/if}
 
 {#snippet bookingFace(
-  r: { text: string; time: string; holder: string | undefined },
+  r: { text: string; time: string; holder: string | undefined; holderId: string | undefined },
   density: 'full' | 'line' | 'icon',
   unit: SlotUnit
 )}
   <span class="flex items-start gap-1.5">
-    {#if r.holder}
+    {#if r.holderId}
+      <Avatar userId={r.holderId} size="sm" shape="circle" fallbackLabel={r.holder ?? ''} />
+    {:else if r.holder}
       <AvatarPlaceholder
         seed={unit.state === 'booked' ? unit.booking.id : ''}
         initials={getInitials(r.holder)}
-        class="text-2xs h-6 w-6 shrink-0 rounded-full"
+        class="h-6 w-6 shrink-0 rounded-full text-xs"
       />
     {:else}
       <AvatarPlaceholder
