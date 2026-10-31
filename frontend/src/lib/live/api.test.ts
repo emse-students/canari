@@ -281,9 +281,9 @@ describe('refusals, typed at the throw', () => {
     expect(cut.endReason).toBe('cut');
     expect(isLiveCut(cut)).toBe(true);
 
-    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'max_duration' }));
+    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'dropped' }));
     const hour = await refusal(fetchLive(LIVE));
-    expect(hour.endReason).toBe('max_duration');
+    expect(hour.endReason).toBe('dropped');
     expect(isLiveCut(hour)).toBe(false);
   });
 

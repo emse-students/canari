@@ -131,7 +131,6 @@ export function classifyLiveRefusal(
 const LIVE_END_REASONS: ReadonlySet<string> = new Set<LiveEndReason>([
   'broadcaster',
   'dropped',
-  'max_duration',
   'erased',
   'cut',
 ]);

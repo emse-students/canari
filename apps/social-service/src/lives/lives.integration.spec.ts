@@ -38,7 +38,6 @@ import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
 import {
-  LIVE_BYTE_BUDGET,
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_SEGMENT_BURST,
   LIVE_RULES_VERSION,
@@ -1282,23 +1281,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
   });
 
   describe('what one broadcaster may store (P2-2)', () => {
-    it('refuses a segment that would cross the byte budget: 413, nothing recorded', async () => {
+    it('has NO total byte budget (owner, 2026-10-31): storedBytes counts what is held and refuses nothing', async () => {
       const live = await start();
-      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
-        live.id,
-        LIVE_BYTE_BUDGET - segment(0).length + 1,
-      ]);
-      expect(await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).toEqual({
-        status: HttpStatus.PAYLOAD_TOO_LARGE,
-        code: 'LIVE_BUDGET_EXHAUSTED',
-      });
-      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
-        live.id,
-        LIVE_BYTE_BUDGET - segment(0).length,
-      ]);
+      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [live.id, 5_000_000_000]);
       await lives.ingest(ALICE, live.id, 0, segment(0));
       expect(await q(`SELECT "storedBytes" FROM lives WHERE id = $1`, [live.id])).toEqual([
-        { storedBytes: String(LIVE_BYTE_BUDGET) },
+        { storedBytes: String(5_000_000_000 + segment(0).length) },
       ]);
     });
 
@@ -1416,26 +1404,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       });
     });
 
-    it('ends a live past its hour, from the sweep or from the ingest that finds it', async () => {
-      const bySweep = await start(ALICE);
-      const byIngest = await start(BOB);
+    it('has NO longest duration (owner, 2026-10-31): a live many hours old, still sending, is neither ended by the sweep nor refused', async () => {
+      const live = await start(ALICE);
       await q(
-        `UPDATE lives SET "startedAt" = now() - interval '61 minutes', "lastSegmentAt" = now()
-          WHERE id = ANY($1::uuid[])`,
-        [[bySweep.id, byIngest.id]]
+        `UPDATE lives SET "startedAt" = now() - interval '14 hours', "lastSegmentAt" = now() WHERE id = $1`,
+        [live.id]
       );
-      store.failPurge = true;
-      expect((await refusal(lives.ingest(BOB, byIngest.id, 0, segment(0)))).status).toBe(
-        HttpStatus.GONE
-      );
-      await sweeper.sweepOnce();
-      const reasons = await q(`SELECT id, "endReason" FROM lives ORDER BY "endReason"`);
-      expect(reasons).toEqual(
-        expect.arrayContaining([
-          { id: bySweep.id, endReason: 'max_duration' },
-          { id: byIngest.id, endReason: 'max_duration' },
-        ])
-      );
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ ended: 0 });
+      await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
+        nextIndex: 1,
+      });
+      expect(await q(`SELECT "endedAt" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endedAt: null },
+      ]);
     });
 
     it('EVERYTHING IS GONE AFTER THE SWEEP: a purge refused at the end is finished by the next run', async () => {

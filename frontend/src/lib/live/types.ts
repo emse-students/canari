@@ -9,7 +9,7 @@
  */
 
 /** Why a live ended - the row's `endReason` (`LiveEndReason` on the server). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'erased' | 'cut';
 
 /**
  * A live as `POST /api/lives` (201) and `GET /api/lives/:id` answer it: the KEY included (L2, Q4).
@@ -180,9 +180,7 @@ export interface LiveRemovedViewer {
 export interface LiveLimits {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
-  maxDurationMs: number;
   manifestWindow: number;
-  byteBudget: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;

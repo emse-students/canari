@@ -90,9 +90,9 @@ they close. What must be true before lives open in production, and in what order
 | --- | --- | --- | --- |
 | Largest segment | 4 MiB of ciphertext | `LIVE_SEGMENT_MAX_BYTES`, `lives/live.constants.ts` (and the store's own refusal in media-service) | `GET /api/lives/limits` |
 | Reconnect window (Q5) | 60 s without a segment ends the live | `LIVE_RECONNECT_WINDOW_MS`, same file | same route |
-| Longest live (L4) | 60 min | `LIVE_MAX_DURATION_MS`, same file | same route |
+| Longest live (L4) | **NONE (owner, 2026-10-31).** A live ends by its broadcaster, by 60 s without a segment, by staff or by an erasure - never by a clock | `maxDurationMs` is still served, as `LIVE_LEGACY_MAX_DURATION_MS` (a safe integer) for builds up to 1.5.x that print it ([legacy-compatibility](../legacy-compatibility.md)); nothing enforces it | same route, ignored by current clients |
 | Manifest window | 10 segments | `LIVE_MANIFEST_WINDOW`, same file | same route |
-| Byte budget per live | 1 687 500 000 B = 2.5 Mb/s (`LIVE_PLANNING_BITRATE_BPS`) x 60 min x 1.5 (`LIVE_BYTE_BUDGET_MARGIN`: encoder overshoot, container, AEAD tag) | `LIVE_BYTE_BUDGET`, same file | same route (`byteBudget`) |
+| Byte budget per live | **NONE (owner, 2026-10-31).** `storedBytes` is still counted on the row, as an observation of what a live holds, never a limit; the 4 MiB segment cap and the segment rate bound what an abusive client can send | `lives."storedBytes"` | `byteBudget` is no longer served |
 | Segment rate | segment `index` accepted only while `index < 15 + floor(age / 1 s)` | `LIVE_SEGMENT_BURST`, `LIVE_SEGMENT_MIN_DURATION_MS` | same route |
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
@@ -135,7 +135,7 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `POST /api/lives/broadcasters/:userId/withdrawal` `{ reason, details? }` | a content moderator | `{ userId, reason, withdrawnAt, newlyWithdrawn, cutsOnRecord }`, idempotent. `403 LIVE_WITHDRAWAL_FORBIDDEN` (asked first), `400 LIVE_ACCOUNT_INVALID`, the cut's two `400`s, `409 LIVE_WITHDRAWAL_NOT_DUE` (with `cutsOnRecord`, `required: 3`) |
 | `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID` |
 
-**Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `max_duration`, `erased` or `cut`, and a screen branches on it, never on a message.
+**Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `erased` or `cut` (`max_duration` is no longer written: no live has a longest duration, and the database check still allows it for rows of the past), and a screen branches on it, never on a message.
 
 ### Who may watch: the rule of a post
 
@@ -321,7 +321,7 @@ all, and nobody has measured that path.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
   broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
   frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
-  ORDINARY end (broadcaster, silence, the hour) keeps them: they are what its purge
+  ORDINARY end (broadcaster, silence) keeps them: they are what its purge
   [waits for](#deletion-at-the-end-plus-a-sweep-q10-l3), and each viewer gives its own back on the
   end's `410` (or lets it lapse within the lease - no renewal is possible after the end).
   The member's live id is LOWER-CASED (`seatMember`): the take is keyed by the row's id, while a
@@ -519,7 +519,7 @@ keeps only `"liveKeyCiphertext"` + `"liveKeyVersion"`:
 | --- | --- |
 | `broadcaster` | `POST /api/lives/:id/end` |
 | `dropped` | the sweep, when `COALESCE(lastSegmentAt, startedAt)` is 60 s old |
-| `max_duration` | the sweep, or the ingest that finds the hour up (it writes the end and answers 410) |
+| `max_duration` | NEVER WRITTEN since 2026-10-31 (no duration cap); kept in the database check only |
 | `erased` | the account erasure (below) |
 | `cut` | a content moderator, `POST /api/lives/:id/cut` ([moderation](#moderation-wp-l8-server-half)) |
 
@@ -533,7 +533,7 @@ of 2026-10-18 the ingest held `SELECT ... FOR UPDATE` - a pooled connection - wh
 every connection of the pool (10) and stalled every other route of social-service. The ingest is now
 THREE steps:
 
-1. **Reserve** - one short transaction: every check under the row lock (owner, end, hour, order,
+1. **Reserve** - one short transaction: every check under the row lock (owner, end, order,
    repeat, rate, budget), then `pendingName` / `pendingSha256` / `pendingAt` written and COMMITTED.
 2. **Store** - no transaction open, no connection held.
 3. **Confirm** - one short transaction: under the row lock, insert the segment, advance `nextIndex`,
@@ -571,10 +571,16 @@ purge; a purge waits for a live reservation and ignores an abandoned one.
 
 Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a typed refusal:
 
-- **A byte budget per live**, `storedBytes` on the row against `LIVE_BYTE_BUDGET` (table above). A
-  segment that would cross it is REFUSED (`413 LIVE_BUDGET_EXHAUSTED`) and the live is NOT ended by
-  it: nothing more is accepted, so it ends by its broadcaster or, with no segment for 60 s, by the
-  sweep - one end path, not a second one for a case only an abusive client reaches.
+- **NO total byte budget and NO longest duration (owner, 2026-10-31, reversing the 2026-10-18 budget).**
+  The budget was 2.5 Mb/s x 60 min x 1.5, a duration cap in disguise. **What a live really stores**
+  (read from the code, not assumed): EVERY sealed segment, for the whole live, in the media store under
+  `live/<id>/` and as one `live_segments` row each - **nothing is trimmed while the live runs**; the
+  manifest LISTS only the newest window (`LIVE_MANIFEST_WINDOW`) but the older segments stay until the
+  end's purge. A live keeps about 1.1 GB an hour at the planning 2.5 Mb/s. Nothing is stored AFTER the
+  live, but a long live holds its whole length in storage until it ends. Every segment is
+  self-contained, so trimming the ones behind the window would be safe (a bound that is a function of
+  the retained window, not of the duration) - NOT BUILT, reported to the owner. `storedBytes` stays
+  counted as the observation.
 - **A segment rate held as a COUNT in durable state**: `nextIndex` is the number of segments taken,
   compared with the live's age read from the database clock (`index < 15 + floor(age / 1 s)`), so
   one segment a second on average, whatever retries do, with a burst that covers a reconnect's
@@ -617,7 +623,7 @@ cut of a live already ended keeps its earlier reason, and the erasure writes
 So an ordinary end's segments outlive it by at most the lease plus one sweep, whatever Redis does.
 The steps of a sweep:
 
-1. end every open live past the reconnect window or the hour;
+1. end every open live past the reconnect window;
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the
    prefix again**; social-service deletes the row (segments and removed viewers cascade) **only when
    that listing is empty and no delete failed** - termination from a proof, not from a call that
@@ -1103,7 +1109,7 @@ The numbers (`chatMessageMaxChars`, `chatSealedMaxBytes`, the two rates, `chatBa
 2026-10-19).** The erasure DELETES the rows (no copy is left on the server, and a joiner never
 sees them), but it emits no tombstone: a tombstone needs a new sequence number under each live's
 row lock, one per message, inside the erasure's transaction. A viewer who already drew such a
-message keeps it until it closes the viewer - at most the live's hour - and nothing can fetch it
+message keeps it until it closes the viewer - as long as the live - and nothing can fetch it
 again. **Reporting ONE chat message** is `contentType: 'live_chat'` since 2026-10-21 ([a reported
 chat line](#a-reported-chat-line-wp-l8b)).
 
@@ -1119,7 +1125,7 @@ the first dev reading with several viewers is owed (below).
 The account erasure deletes the account's messages and bursts AFTER `lives_broadcaster` (the
 lives-then-rows order every chat write takes), so an erasure and a message on the account's own live
 wait for each other rather than deadlock. A message whose transaction commits after the erasure's
-DELETE was not visible to it and survives - until its live ends, at most an hour later (C2).
+DELETE was not visible to it and survives - until its live ends (C2).
 
 ## The migration: `091_lives.sql`
 

@@ -23,34 +23,17 @@ export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
  */
 export const LIVE_RECONNECT_WINDOW_MS = 60_000;
 
-/** L4 (live.md): a first-version live lasts at most an hour; past it, the live is ended. */
-export const LIVE_MAX_DURATION_MS = 60 * 60_000;
+/**
+ * THE VALUE `maxDurationMs` TAKES FOR AN INSTALLED CLIENT (owner, 2026-10-31: NO DURATION CAP, L4).
+ * A live has no longest duration: nothing here reads or enforces this number. It is still served
+ * because a build up to 1.5.x prints `floor(maxDurationMs / 60000)` in its sheet ("N minutes au
+ * plus") and a missing field would print NaN, `null` zero. The largest integer a JS client counts
+ * exactly keeps that line harmless; it leaves with the shim (legacy-compatibility.md).
+ */
+export const LIVE_LEGACY_MAX_DURATION_MS = Number.MAX_SAFE_INTEGER;
 
 /** How many segments one manifest answer lists at most - a viewer polls from its last index. */
 export const LIVE_MANIFEST_WINDOW = 10;
-
-/**
- * The bitrate the plan sizes a live for (live.md: 720p at ~2.5 Mb/s, as C3 targets for reels), in
- * bits per second. Only the byte budget below is derived from it; nothing measures a live's bitrate.
- */
-export const LIVE_PLANNING_BITRATE_BPS = 2_500_000;
-
-/**
- * The margin on top of the planning bitrate over a full hour: an encoder overshoots its target on a
- * scene change, and every segment carries its container and the AEAD tag. 1.5x is a planning figure
- * like the bitrate, to be re-read on the WP-L1 bench.
- */
-export const LIVE_BYTE_BUDGET_MARGIN = 1.5;
-
-/**
- * THE MOST ONE LIVE MAY STORE, in bytes: the planning bitrate for the longest live, plus the margin
- * (312 500 B/s x 3 600 s x 1.5 = 1 687 500 000 B). Counted durably on the row (`storedBytes`); a
- * segment that would cross it is REFUSED (413 `LIVE_BUDGET_EXHAUSTED`) and the live stays open with
- * nothing more accepted, so it ends by its broadcaster or by the reconnect window like any other.
- */
-export const LIVE_BYTE_BUDGET = Math.round(
-  (LIVE_PLANNING_BITRATE_BPS / 8) * (LIVE_MAX_DURATION_MS / 1000) * LIVE_BYTE_BUDGET_MARGIN
-);
 
 /**
  * The shortest segment the server expects, in ms. The plan cuts segments of a few seconds (about
@@ -137,7 +120,7 @@ export const LIVE_VIEWER_CAP = Math.floor(
 export const LIVE_SEAT_LEASE_MS = 30_000;
 
 /** Why a live ended - the `endReason` column. `cut`: staff ended it (WP-L8, `POST /api/lives/:id/cut`). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'erased' | 'cut';
 
 /**
  * THE REASON CODES OF A STAFF CUT - the report reasons of `content_reports`
@@ -290,9 +273,9 @@ export const LIVE_REACTION_PAGE = 500;
 export function liveLimits(): {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
+  /** LEGACY, never enforced: see {@link LIVE_LEGACY_MAX_DURATION_MS}. */
   maxDurationMs: number;
   manifestWindow: number;
-  byteBudget: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
@@ -314,9 +297,8 @@ export function liveLimits(): {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
     reconnectWindowMs: LIVE_RECONNECT_WINDOW_MS,
-    maxDurationMs: LIVE_MAX_DURATION_MS,
+    maxDurationMs: LIVE_LEGACY_MAX_DURATION_MS,
     manifestWindow: LIVE_MANIFEST_WINDOW,
-    byteBudget: LIVE_BYTE_BUDGET,
     segmentMinDurationMs: LIVE_SEGMENT_MIN_DURATION_MS,
     segmentBurst: LIVE_SEGMENT_BURST,
     startsPerHour: LIVE_STARTS_PER_HOUR,

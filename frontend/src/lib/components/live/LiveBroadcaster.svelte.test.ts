@@ -125,7 +125,7 @@ describe('LiveBroadcaster', () => {
     const text = document.body.textContent!;
     expect(text).toContain(m.live_rule_audience_member());
     expect(text).toContain(m.live_rule_moderation());
-    expect(text).toContain(m.live_rule_duration({ minutes: 60 }));
+    expect(text).not.toMatch(/60 minutes|minutes au plus/);
     expect(text).toContain(m.live_rule_background({ seconds: 60 }));
     expect(q('[data-live-battery]')).toBeNull();
     const start = q<HTMLButtonElement>('[data-live-start]')!;

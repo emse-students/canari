@@ -28,7 +28,7 @@ reached by API, and is unaffected.
 | L1 | Who may start a live? | **Any member.** |
 | L2 | Who may watch? | **The whole Canari network** - C9: the live's key travels in the row, as a post CEK does. **Narrowed 2026-10-19 by the lead on review (a safe default, reversible): a live RESPECTS SPACES LIKE A POST** - a member's live is watched by, and pushed to, readers sharing a space with the broadcaster; an association's live by the readers the association reaches (its members, its rules, a read grant for watching only). One predicate, `liveVisibleToUserSql` in `spaces/reader-spaces.ts`, gates the list, the key, the manifest and the push ([lives](../../services/lives.md#who-may-watch-the-rule-of-a-post)). |
 | L3 | Is a live kept afterwards? | **No replay: a live disappears when it ends.** The broadcaster may save it locally on their own device. |
-| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). |
+| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). **NO DURATION CAP (owner, 2026-10-31):** a live lasts as long as its broadcaster sends; the 60-minute cap and the byte budget derived from it are removed (server, client, sheet, [lives](../../services/lives.md#what-one-broadcaster-may-store)). "30 to 60 minutes" above is a planning figure, no longer a limit. |
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
@@ -727,8 +727,8 @@ goes out under the identity chosen in the composer: the member, or an associatio
 "anonymous" is chosen, nor while the chosen association is missing from the list read.
 
 **The pre-live screen is the rules, shown before EVERY live (L11)**: visible like a post by the same
-identity and only while on air; reportable and cuttable by moderation; at most `maxDurationMs`; the
-camera may be away at most `reconnectWindowMs` - both read from `GET /api/lives/limits`. A warning
+identity and only while on air; reportable and cuttable by moderation; with no longest duration (L4, 2026-10-31); the
+camera may be away at most `reconnectWindowMs`, read from `GET /api/lives/limits`. A warning
 under 60 % battery where the engine has the Battery API (Android; WebKit has none), charging or not
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
@@ -808,7 +808,7 @@ disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the
 while the End drains labels the end screen as the server's (or as a cut, below), never as
 the member's. On air, a `410` from the uploader ends the screen with no end call - the cause is
 `cut` when its `endReason` says so (title `live_broadcast_cut_title`, no sentence under it:
-"Votre live a été interrompu par la modération"), `server` otherwise (the hour; the sentence no
+"Votre live a été interrompu par la modération"), `server` otherwise (the sentence no
 longer mentions moderation); a cut read on return from the background (`fetchLive` answering `410`
 `cut`) and one answering the End are the same cause; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
