@@ -87,7 +87,10 @@
      match the cards. Glass at EVERY width, unlike the phone-only conversation header, because the
      row floats over cards that scroll under it on desktop too. -->
 <div class="flex items-center gap-2" data-feed-tab-row>
-  <div class="glass-chrome flex h-11 min-w-0 flex-1 rounded-full p-1" data-feed-pill>
+  <div
+    class="glass-chrome flex h-11 min-w-0 flex-1 rounded-full p-1 md:pointer-fine:h-9.5"
+    data-feed-pill
+  >
     <div
       bind:this={tabs}
       class="no-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto"

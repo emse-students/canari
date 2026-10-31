@@ -79,7 +79,7 @@ The user's two decisions, for posts, reels and comments alike:
 **The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
 band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
 pill (the conversation header's recipe and tokens: `--glass-chrome-*`, nothing new) and the CanaReels
-entry is the matching round glass button (`size-11`, 44 px). The sticky wrapper has NO background and
+entry is the matching round glass button (the `ui-icon-button` box: 44 px touch, 38 px pointer; the pill follows the same split with `h-11` and `md:pointer-fine:h-9.5`, never a size on the button itself, which `iconButtonScale.test.ts` forbids). The sticky wrapper has NO background and
 no horizontal inset, so both edges are the feed column's own gutters and cards scroll under the glass;
 it is `pointer-events-none` with its buttons `auto`, so the gaps stay the feed's. The glass is drawn at
 every width, unlike the phone-only conversation chrome (`usesGlassChrome`), because on desktop the row
