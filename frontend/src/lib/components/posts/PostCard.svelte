@@ -762,6 +762,9 @@
         {comments}
         commentCount={commentCountOf(localPost)}
         {currentUserId}
+        {authToken}
+        pendingCommentIds={thread.pending}
+        onLike={(id) => void thread.like(id)}
         onOpen={openCommentsSheet}
       />
     </div>

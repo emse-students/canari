@@ -2,6 +2,8 @@
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import CommentMedia from './CommentMedia.svelte';
+  import CommentLikeButton from './CommentLikeButton.svelte';
   import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
@@ -25,11 +27,25 @@
     /** The server's total, replies included. */
     commentCount: number;
     currentUserId: string;
+    /** Decrypts the comment's picture. */
+    authToken?: string;
+    /** Local ids of comments the server has not acknowledged: a like names the id, so it is withheld. */
+    pendingCommentIds?: ReadonlySet<string>;
+    /** Likes or unlikes a comment: the card's own write path, the one the thread uses. */
+    onLike: (commentId: string) => void;
     /** Opens the sheet; `write` puts the caret in its box. */
     onOpen: (opts: { write: boolean }) => void;
   }
 
-  let { comments, commentCount, currentUserId, onOpen }: Props = $props();
+  let {
+    comments,
+    commentCount,
+    currentUserId,
+    authToken = '',
+    pendingCommentIds,
+    onLike,
+    onOpen,
+  }: Props = $props();
 
   /** The newest top-level comment: the one a reader opening the post would see first. */
   const latest = $derived(
@@ -45,9 +61,9 @@
   /** Who wrote the newest comment, when it is anonymous and the server told this reader. */
   const revealedAuthorId = $derived(latest ? commentRevealedAuthorId(latest) : null);
 
-  /** A tap on the comment opens the sheet, except on a link inside it (a mention goes to its profile). */
+  /** A tap on the comment opens the sheet, except on a link inside it (a mention goes to its profile) or on its like heart. */
   function openFromComment(e: MouseEvent) {
-    if ((e.target as Element).closest('a')) return;
+    if ((e.target as Element).closest('a, button')) return;
     onOpen({ write: false });
   }
 </script>
@@ -94,7 +110,19 @@
               />
             </div>
           {/if}
+          {#if latest.media && authToken}
+            <CommentMedia media={latest.media} {authToken} compact />
+          {/if}
         </div>
+        {#if !pendingCommentIds?.has(latest.id)}
+          <!-- A control of its own, outside the tappable text: a like never opens the sheet. -->
+          <CommentLikeButton
+            liked={latest.likes?.includes(currentUserId) ?? false}
+            count={latest.likes?.length ?? 0}
+            onLike={() => onLike(latest.id)}
+            class="mt-0.5 shrink-0"
+          />
+        {/if}
       </div>
     {/if}
 
