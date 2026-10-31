@@ -11,6 +11,7 @@ import {
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
   LYDIA_ORPHAN_LOG_TAG,
   LYDIA_ORPHAN_SUSPECT_LOG_TAG,
+  LydiaCashierAddedUnconfirmedException,
   LydiaPaymentProvider,
   PAYMENTS_PROXY_READ_TIMEOUT_MS,
   PAYMENT_PROVIDER_REFUSED,
@@ -469,12 +470,19 @@ describe('LydiaPaymentProvider.createOnboarding', () => {
       .mockResolvedValueOnce({ data: { status: 'ok' } });
 
     const provider = makeProvider();
+    const order: string[] = [];
+    const onBusinessCreated = jest.fn(async (token: string) => {
+      order.push(`pending:${token}:${mockedAxios.post.mock.calls.length}`);
+    });
     const result = await provider.createOnboarding({
       associationId: 'assoc-1',
       refreshUrl: 'r',
       returnUrl: 'u',
       legalProfile,
+      onBusinessCreated,
     });
+    // The vendor token is handed over after business/create and BEFORE the key check.
+    expect(order).toEqual(['pending:vendor-token-xyz:1']);
 
     expect(result).toEqual({
       url: 'https://lydia-app.com/console/xyz',
@@ -964,14 +972,40 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
     });
   });
 
-  it('a read-back short of every right is REFUSED, never counted as added', async () => {
+  it('a read-back short of every right is ADDED-UNCONFIRMED, never counted as confirmed', async () => {
     mockedAxios.post
       .mockResolvedValueOnce({ data: { error: '0' } })
       .mockResolvedValueOnce({ data: { error: '0', ...allRights, access_fee: '0' } });
-    await expect(withKey().addBusinessHolder('asso-1', 'vendor-1', PHONE)).rejects.toMatchObject({
-      status: 502,
-      response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE },
-    });
+    const err = await withKey()
+      .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+    expect(err).toMatchObject({ status: 502, response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE } });
+  });
+
+  it.each([
+    ['a typed refusal of the read-back', { data: { error: '444', message: 'x' } }, 502],
+    ['no usable answer to the read-back', new Error('socket hang up'), 503],
+  ])(
+    '%s after the add answered is ADDED-UNCONFIRMED, its status kept',
+    async (_, second, status) => {
+      mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } });
+      if (second instanceof Error) mockedAxios.post.mockRejectedValueOnce(second);
+      else mockedAxios.post.mockResolvedValueOnce(second);
+      const err = await withKey()
+        .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+      expect(err).toMatchObject({ status });
+    }
+  );
+
+  it('a refusal of the ADD itself is never added-unconfirmed', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '444', message: 'x' } });
+    const err = await withKey()
+      .addBusinessHolder('asso-1', 'vendor-1', PHONE)
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
   });
 
   it('never logs the phone, only its last two digits', async () => {

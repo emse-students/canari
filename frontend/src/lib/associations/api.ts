@@ -2453,12 +2453,14 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
-  /** The confirmed Responsable (Lydia cashier with all rights); `phoneEnd` is the ONLY phone data returned. */
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
   responsable?: LydiaResponsable | null;
   /** The last readiness change and its cause; null when none was ever recorded. */
   readiness?: { cause: LydiaReadinessCause; at: string } | null;
   /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
   enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
 }
 
 /** The cause of the last readiness change of a Lydia Business. */
@@ -2473,6 +2475,11 @@ export interface LydiaResponsable {
   userId: string;
   name: string;
   phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**

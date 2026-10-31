@@ -6,8 +6,15 @@ export type LydiaEnrolmentStepId = 'details' | 'responsable' | 'activate' | 'val
 /**
  * Where a step stands. `in-flight` (details only): a `business/create` was started and its outcome
  * is unknown. `paused` (validation only): Lydia refused or blocked after the Business was ready.
+ * `unconfirmed` (responsable only): Lydia answered the add but did not confirm every right.
  */
-export type LydiaEnrolmentStepState = 'done' | 'current' | 'upcoming' | 'in-flight' | 'paused';
+export type LydiaEnrolmentStepState =
+  | 'done'
+  | 'current'
+  | 'upcoming'
+  | 'in-flight'
+  | 'paused'
+  | 'unconfirmed';
 
 /** One step of the enrolment screen. */
 export interface LydiaEnrolmentStep {
@@ -31,8 +38,16 @@ export interface LydiaEnrolmentView {
   recordResponsable: boolean;
   /** The global admin may confirm Lydia's validation by hand (linked and not ready). */
   adminCanValidate: boolean;
-  /** The global admin may clear an in-flight marker after checking with Lydia. */
+  /**
+   * The global admin may clear the in-flight markers after checking with Lydia: whenever EITHER is
+   * set (the enrolment's or the Responsable step's), linked or not, so a claim never sticks with no
+   * screen to clear it.
+   */
   adminCanClearInFlight: boolean;
+  /** A Responsable step was claimed and its outcome is unknown (the admin's notice). */
+  responsableInFlight: boolean;
+  /** The Responsable is a cashier at Lydia whose rights were not confirmed: the resend confirms. */
+  responsableUnconfirmed: boolean;
   /** Set when a request-refused / request-blocked change is the latest one and not ready. */
   pause: LydiaEnrolmentPause | null;
 }
@@ -50,7 +65,9 @@ export function lydiaEnrolmentView(
   const linked = account.lydiaAccountId != null;
   const ready = linked && account.lydiaOnboardingComplete;
   const hasResponsable = account.responsable != null;
+  const responsableUnconfirmed = hasResponsable && account.responsable?.confirmed === false;
   const inFlight = !linked && account.enrolmentInFlightSince != null;
+  const responsableInFlight = account.responsableInFlightSince != null;
   const readiness = account.readiness ?? null;
   const pause: LydiaEnrolmentPause | null =
     linked &&
@@ -65,12 +82,14 @@ export function lydiaEnrolmentView(
     : inFlight
       ? 'in-flight'
       : 'current';
-  const responsableState: LydiaEnrolmentStepState = hasResponsable
-    ? 'done'
-    : linked
-      ? 'current'
-      : 'upcoming';
-  const waiting = linked && hasResponsable && !ready;
+  const responsableState: LydiaEnrolmentStepState = responsableUnconfirmed
+    ? 'unconfirmed'
+    : hasResponsable
+      ? 'done'
+      : linked
+        ? 'current'
+        : 'upcoming';
+  const waiting = linked && hasResponsable && !responsableUnconfirmed && !ready;
   const activateState: LydiaEnrolmentStepState = waiting ? 'current' : 'upcoming';
   const validationState: LydiaEnrolmentStepState = pause
     ? 'paused'
@@ -88,7 +107,10 @@ export function lydiaEnrolmentView(
     ],
     recordResponsable: ready && !hasResponsable,
     adminCanValidate: isGlobalAdmin && linked && !ready,
-    adminCanClearInFlight: isGlobalAdmin && inFlight,
+    adminCanClearInFlight:
+      isGlobalAdmin && (account.enrolmentInFlightSince != null || responsableInFlight),
+    responsableInFlight,
+    responsableUnconfirmed,
     pause,
   };
 }

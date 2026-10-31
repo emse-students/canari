@@ -333,7 +333,7 @@ export class PaymentWebhookController {
    * state and NOTIFIES NOBODY: it is a WARN line naming the association, in this service's log and
    * nowhere else. So no body can turn an association NOT ready. Anything malformed, an unknown event,
    * no holder or two holders writes nothing (200: nothing to retry). A VALIDATED that could not be
-   * APPLIED, or that names no holder while an enrolment's outcome is not yet recorded, answers 503
+   * APPLIED, or that names the Business of an enrolment answered but not linked yet, answers 503
    * to ask for a retry - whether Lydia retries a 503 is UNMEASURED. Bounded and rate-limited like the request callback (multer limits here, nginx zone
    * `lydia_callback` at the edge).
    */
@@ -371,11 +371,19 @@ export class PaymentWebhookController {
       } catch (err: unknown) {
         // A 503 asks Lydia for a retry; that it retries is unmeasured.
         this.logger.error(
-          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied (or no holder while an ' +
-            'enrolment is in flight) - answered 503; whether Lydia retries is unmeasured',
+          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied (or names the pending ' +
+            'Business of an enrolment not linked yet) - answered 503; whether Lydia retries is unmeasured',
           describeHttpError(err as Error)
         );
         throw new ServiceUnavailableException('Failed to apply the business event');
+      }
+      if (applied.outcome === 'no-holder') {
+        // A token no association holds and no enrolment is waiting for: nothing to retry.
+        this.logger.warn(
+          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) for no association of ours ' +
+            'and no pending enrolment - nothing written'
+        );
+        return { received: true };
       }
       this.logger.log(
         `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) applied: ${applied.outcome ?? 'unknown'}` +

@@ -699,10 +699,13 @@ the risk of a forged `BUSINESS_VALIDATED`: it cannot make anyone pay into nothin
 Lydia has not validated answers the first `request/do` with error 5 BEFORE any request exists, and
 that answer reverts the readiness at once (below). So `BUSINESS_VALIDATED` asks social-service's
 `internal/associations/lydia-readiness` for `{ ready: true, cause: 'webhook-validated' }` and nothing
-else; a failure to apply it answers 503 to ask for a retry, and so does a VALIDATED that matches no
-holder while some association's `business/create` outcome is not yet recorded
-(`lydiaEnrolmentStartedAt` set: it may name the Business being linked). **That Lydia retries a 503 is
-UNMEASURED.** An unsigned VALIDATED never clears a holder whose cause is Lydia's own answer
+else; a failure to apply it answers 503 to ask for a retry, and so does a VALIDATED naming the
+PENDING token of an enrolment: `business/create` answered it and the link has not run yet. Core
+records that token on the association (`lydiaEnrolmentVendorToken`, migration 118) through
+`lydia-enrolment-vendor-token` BEFORE the key check and the link; the link, a typed refusal and the
+admin's clear erase it. Any OTHER unknown token is a 200 that writes nothing, at WARN, so one stuck
+enrolment never turns every unknown token into a retry; failing to record the pending token is an
+ERROR and the enrolment goes on. **That Lydia retries a 503 is UNMEASURED.** An unsigned VALIDATED never clears a holder whose cause is Lydia's own answer
 (`request-refused`, `request-blocked`): 200, nothing written, a WARN - only the global admin's
 "Valider l'onboarding" clears those. `BUSINESS_UNVALIDATED` NEVER changes state and NOTIFIES NOBODY: its
 WARN line in core-service's log is the only record. Anything malformed or unknown writes nothing. So no
@@ -775,12 +778,19 @@ member and their phone in E.164:
    (an integration spec races two steps). A typed outcome releases the claim
    (`lydia-responsable-release`); the store clears it in its own transaction; an add with no usable
    answer, or a store that failed after the add, keeps it until a global admin clears it with the
-   enrolment marker (`lydia-enrolment-clear`).
+   enrolment marker (`lydia-enrolment-clear`). The payout read answers `responsableInFlightSince`, and
+   the admin's clear button is drawn whenever EITHER marker is set, linked or not.
 2. **`business/addcashier`** (`LydiaPaymentProvider.addBusinessHolder`): the 13 rights as a JSON array
    of names, `notify=yes` (Lydia sends the SMS), the signature over the URL-ENCODED values with
    `LYDIA_PROVIDER_PRIVATE_TOKEN` (REQUIRED in production since this lot). Then the rights are READ
    BACK (`business/getpermission`): anything short of all 13 is `LYDIA_CASHIER_RIGHTS_INCOMPLETE`,
-   never counted as added. Typed: 444 `LYDIA_SIGNATURE_REFUSED`, 3 `LYDIA_CASHIER_PERMISSIONS_INVALID`,
+   never counted as confirmed. **Once the add has answered, every later failure is "added,
+   unconfirmed"** (`LydiaCashierAddedUnconfirmedException`, the original status kept): Lydia holds a
+   cashier, so core stores the row UNCONFIRMED (`confirmedAt` NULL) at ERROR (association and
+   `phoneEnd` only) and the record releases the claim; if that store fails, the claim stays. An
+   unconfirmed live row guards `PHONE_LOCKED` and `ALREADY_SET` like a confirmed one, the same-number
+   resend confirms it, and the screen shows it as added at Lydia and not confirmed (the admin reads
+   that a revocation may be owed). Typed: 444 `LYDIA_SIGNATURE_REFUSED`, 3 `LYDIA_CASHIER_PERMISSIONS_INVALID`,
    102/103 `LYDIA_BUSINESS_TOKEN_REJECTED` (502); no answer or an HTML page `LYDIA_UNREACHABLE` (503;
    the claim is kept, and a later add is safe once cleared: a second add replaces the rights). **Record mode**, for a Business whose holder is
    already a cashier: no add, the read-back alone, and `access_cashier` is required
@@ -791,7 +801,7 @@ member and their phone in E.164:
    locked: the Business must still be the one claimed (`LYDIA_BUSINESS_CHANGED`), one live Responsable
    per association (a partial unique index, whose violation answers the typed
    `LYDIA_RESPONSABLE_ALREADY_SET`, never a 500), the same person with another number
-   `LYDIA_RESPONSABLE_PHONE_LOCKED`; the same person and number refreshes the confirmation; a row of an
+   `LYDIA_RESPONSABLE_PHONE_LOCKED`; the same person and number confirms an unconfirmed row; a row of an
    EARLIER Business is closed, its phone and `phoneEnd` cleared; the unlink closes every row the same
    way. Nothing ties the phone to the member: the member is not asked, and the manager types it.
    **A live row deleted** - by the account's erasure, or by the association's delete (`ON DELETE

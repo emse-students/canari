@@ -43,8 +43,8 @@ export class InternalLydiaEnrolmentController {
    * is accepted: `BUSINESS_UNVALIDATED` never changes state (decided 2026-10-30), so no body can
    * make this route turn an association NOT ready, nor clear what Lydia itself reported
    * (`held-by-lydia`, a 200 that wrote nothing). Answers what happened; no holder is `no-holder`, a
-   * 200 - nothing to retry - EXCEPT while some association's `business/create` outcome is not yet
-   * recorded (`no-holder-enrolment-in-flight`): the VALIDATED may name the Business being linked,
+   * 200 - nothing to retry - EXCEPT for the token a pending `business/create` answered and that is
+   * not linked yet (`no-holder-enrolment-in-flight`): the VALIDATED names the Business being linked,
    * so this answers 503 and core answers Lydia 503, asking for a retry. That Lydia retries a 503 is
    * UNMEASURED. A failure to apply throws (5xx) the same way.
    */
@@ -151,6 +151,29 @@ export class InternalLydiaEnrolmentController {
     return { ok: true };
   }
 
+  /**
+   * Records the vendor token `business/create` just answered, before the key check and the link
+   * (`AssociationsService.recordLydiaEnrolmentVendorToken`). The token travels in the body.
+   */
+  @Post(':id/lydia-enrolment-vendor-token')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async enrolmentVendorToken(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { vendorToken?: unknown }
+  ): Promise<{ recorded: boolean }> {
+    assertInternalSecret(headerSecret);
+    const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
+    if (!VENDOR_TOKEN_SHAPE.test(vendorToken)) {
+      this.logger.warn('[LYDIA] pending enrolment token refused: malformed body');
+      throw new BadRequestException('vendorToken is required');
+    }
+    return {
+      recorded: await this.associationsService.recordLydiaEnrolmentVendorToken(id, vendorToken),
+    };
+  }
+
   /** Records the Responsable Lydia confirmed (sealed phone; only its last two digits answered). */
   @Post(':id/lydia-responsable')
   @HttpCode(200)
@@ -163,6 +186,7 @@ export class InternalLydiaEnrolmentController {
       userId?: unknown;
       phone?: unknown;
       addedByUserId?: unknown;
+      confirmed?: unknown;
     }
   ): Promise<{ responsable: LydiaResponsableView }> {
     assertInternalSecret(headerSecret);
@@ -171,6 +195,7 @@ export class InternalLydiaEnrolmentController {
       userId: body?.userId,
       phone: body?.phone,
       addedByUserId: body?.addedByUserId,
+      confirmed: body?.confirmed,
     });
     return { responsable };
   }

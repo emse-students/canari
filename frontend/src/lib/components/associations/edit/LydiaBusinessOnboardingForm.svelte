@@ -8,6 +8,7 @@
     getAssociationPayoutAccount,
     type Association,
     type AssociationPayoutAccount,
+    type LydiaResponsable,
   } from '$lib/associations/api';
   import {
     LYDIA_ONBOARDING_REFUSAL,
@@ -231,6 +232,8 @@
         return m.asso_lydia_step_state_in_flight();
       case 'paused':
         return m.asso_lydia_step_state_paused();
+      case 'unconfirmed':
+        return m.asso_lydia_step_state_unconfirmed();
     }
   }
 
@@ -269,7 +272,46 @@
     </div>
   {/snippet}
 
-  {#snippet resendControl(responsable: { userId: string; name: string; phoneEnd: string })}
+  {#snippet adminClear()}
+    {#if view?.adminCanClearInFlight}
+      <div class="space-y-2">
+        {#if view.responsableInFlight}
+          <p class="text-amber-warn text-sm leading-relaxed" role="status">
+            {m.asso_lydia_resp_in_flight_admin()}
+          </p>
+        {/if}
+        <button
+          type="button"
+          onclick={() => void handleClearInFlight()}
+          disabled={clearing}
+          class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+        >
+          {clearing
+            ? m.asso_lydia_in_flight_clear_loading()
+            : m.asso_lydia_in_flight_clear_button()}
+        </button>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet responsableLine(responsable: LydiaResponsable)}
+    {#if responsable.confirmed === false}
+      <p class="text-amber-warn text-sm leading-relaxed" role="status">
+        {m.asso_lydia_resp_unconfirmed({ name: responsable.name, phoneEnd: responsable.phoneEnd })}
+      </p>
+      {#if isGlobalAdmin()}
+        <p class="text-text-muted text-xs leading-relaxed">
+          {m.asso_lydia_resp_unconfirmed_admin()}
+        </p>
+      {/if}
+    {:else}
+      <p class="text-text-muted text-sm">
+        {m.asso_lydia_resp_done({ name: responsable.name, phoneEnd: responsable.phoneEnd })}
+      </p>
+    {/if}
+  {/snippet}
+
+  {#snippet resendControl(responsable: LydiaResponsable)}
     <div class="space-y-2">
       {#if resending}
         <p class="text-text-muted text-xs">{m.asso_lydia_resp_resend_hint()}</p>
@@ -279,6 +321,7 @@
           fixedUserId={responsable.userId}
           submitLabel={m.asso_lydia_resp_resend_button()}
           onDone={() => onResponsableDone(true)}
+          onRefused={loadAccount}
         />
       {:else}
         <button
@@ -319,12 +362,10 @@
       </span>
     </p>
     {#if account.responsable}
-      <p class="text-text-muted text-sm">
-        {m.asso_lydia_resp_done({
-          name: account.responsable.name,
-          phoneEnd: account.responsable.phoneEnd,
-        })}
-      </p>
+      {@render responsableLine(account.responsable)}
+      {#if view.responsableUnconfirmed}
+        {@render resendControl(account.responsable)}
+      {/if}
     {:else if view.recordResponsable}
       <div class="space-y-2">
         <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_resp_record_intro()}</p>
@@ -333,9 +374,11 @@
           mode="record"
           submitLabel={m.asso_lydia_resp_record_button()}
           onDone={() => onResponsableDone(false)}
+          onRefused={loadAccount}
         />
       </div>
     {/if}
+    {@render adminClear()}
     {@render adminAndDisconnect(false)}
   {:else}
     <ol class="space-y-5">
@@ -363,18 +406,6 @@
                 <p class="text-amber-warn text-sm leading-relaxed" role="status">
                   {m.asso_lydia_in_flight_notice()}
                 </p>
-                {#if view.adminCanClearInFlight}
-                  <button
-                    type="button"
-                    onclick={() => void handleClearInFlight()}
-                    disabled={clearing}
-                    class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                  >
-                    {clearing
-                      ? m.asso_lydia_in_flight_clear_loading()
-                      : m.asso_lydia_in_flight_clear_button()}
-                  </button>
-                {/if}
               {:else if step.state === 'current'}
                 <p class="text-text-muted text-sm leading-relaxed">{words.intro()}</p>
 
@@ -432,12 +463,7 @@
               {/if}
             {:else if step.id === 'responsable'}
               {#if account.responsable}
-                <p class="text-text-muted text-sm">
-                  {m.asso_lydia_resp_done({
-                    name: account.responsable.name,
-                    phoneEnd: account.responsable.phoneEnd,
-                  })}
-                </p>
+                {@render responsableLine(account.responsable)}
                 {@render resendControl(account.responsable)}
               {:else if step.state === 'current'}
                 <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_resp_intro()}</p>
@@ -446,6 +472,7 @@
                   mode="add"
                   submitLabel={m.asso_lydia_resp_send_button()}
                   onDone={() => onResponsableDone(false)}
+                  onRefused={loadAccount}
                 />
               {/if}
             {:else if step.id === 'activate'}
@@ -488,6 +515,7 @@
         </li>
       {/each}
     </ol>
+    {@render adminClear()}
     {#if account.lydiaAccountId}
       {@render adminAndDisconnect(view.adminCanValidate)}
     {/if}

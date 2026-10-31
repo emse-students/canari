@@ -76,9 +76,11 @@ export type AssociationPayoutAccount = Pick<
   Association,
   'lydiaAccountId' | 'lydiaDashboardUrl' | 'lydiaOnboardingComplete'
 > & {
-  responsable: { userId: string; name: string; phoneEnd: string } | null;
+  responsable: { userId: string; name: string; phoneEnd: string; confirmed: boolean } | null;
   readiness: { cause: LydiaReadinessCause; at: string } | null;
   enrolmentInFlightSince: string | null;
+  /** The Responsable step's claim (`lydiaResponsableStartedAt`), for the global admin's clear. */
+  responsableInFlightSince: string | null;
 };
 
 /** Projects an association row onto what a signed-in member may read of it. */

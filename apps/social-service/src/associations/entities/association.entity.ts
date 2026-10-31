@@ -77,6 +77,14 @@ export class Association {
   lydiaResponsableStartedAt: Date | null;
 
   /**
+   * The vendor token `business/create` answered while the enrolment is in flight, recorded BEFORE
+   * the key check and the link (migration 118): the one unknown token a `BUSINESS_VALIDATED` may be
+   * retried for. Cleared by the link and every release of the marker. Raw SQL writes only.
+   */
+  @Column({ type: 'varchar', length: 256, nullable: true, insert: false, update: false })
+  lydiaEnrolmentVendorToken: string | null;
+
+  /**
    * The Lydia Business private token, ENCRYPTED (`common/secret-box.ts`, migration 100), that
    * verifies this association's `request/do` callbacks. Never reaches a browser: captured at
    * `business/create` (enrolment lot 1), answered decrypted to core-service alone. Kept out of every

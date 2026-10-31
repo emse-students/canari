@@ -652,10 +652,15 @@ describe('POST /api/payments/lydia-business-webhook - VALIDATED marks ready, not
     });
   });
 
-  it('an unknown vendor_token is social-service`s no-holder, answered 200', async () => {
+  it('an unknown vendor_token is social-service`s no-holder, answered 200 at WARN, never ERROR', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const res = await asMultipart({ vendor_token: 'nobody-holds-it', event: 'BUSINESS_VALIDATED' });
     expect(res.status).toBe(200);
-    expect(lines.join(' | ')).toContain('no-holder');
+    expect(warn.mock.calls.flat().map(String).join(' | ')).toContain(
+      'for no association of ours and no pending enrolment'
+    );
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('a VALIDATED that could not be APPLIED answers 503, so Lydia retries it', async () => {

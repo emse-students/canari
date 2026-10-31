@@ -350,11 +350,16 @@ export type LydiaReadinessOutcome =
     }
   | { kind: 'no-holder' | 'no-holder-enrolment-in-flight' };
 
-/** The confirmed Responsable of an association's CURRENT Business, as the payments screen reads it. */
+/** The Responsable of an association's CURRENT Business, as the payments screen reads it. */
 export interface LydiaResponsableView {
   userId: string;
   name: string;
   phoneEnd: string;
+  /**
+   * False when Lydia answered the add but its read-back did not confirm every right: the person is
+   * a cashier at Lydia that the same-number resend confirms (a revocation may be owed otherwise).
+   */
+  confirmed: boolean;
 }
 
 /** What a Business key is bound to: this association AND this Business. */
@@ -790,8 +795,8 @@ export class AssociationsService {
       );
       for (const cashier of liveCashiers) {
         this.logger.error(
-          `[AUDIT] [LYDIA] association ${id} deleted with a LIVE cashier row: Business ` +
-            `${cashier.vendorToken} - Lydia still lists that cashier`
+          `[AUDIT] [LYDIA] association ${sanitizeLog(id)} deleted with a LIVE cashier row: ` +
+            `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
         );
       }
       await manager.delete(AssociationCalendarEvent, { associationId: id });
@@ -3147,7 +3152,8 @@ ${rejectionReason}`
           SET "lydiaAccountId" = $2,
               "lydiaDashboardUrl" = COALESCE($3, "lydiaDashboardUrl"),
               "lydiaBusinessKeyCiphertext" = $4,
-              "lydiaEnrolmentStartedAt" = NULL
+              "lydiaEnrolmentStartedAt" = NULL,
+              "lydiaEnrolmentVendorToken" = NULL
         WHERE id = $1 AND "lydiaAccountId" IS NULL
         RETURNING id`,
       [id, vendorToken, dashboardUrl, sealed]
@@ -3199,8 +3205,9 @@ ${rejectionReason}`
   /**
    * The payout account of an association, for its MANAGE_PAYOUT_ACCOUNT holders only (the
    * controller checks): the Business columns, the confirmed Responsable of the CURRENT Business
-   * (name and the phone's last two digits, never more), the last readiness change and the
-   * enrolment-in-flight marker - ONE read the payments screen draws every step from.
+   * (name, the phone's last two digits and whether Lydia confirmed it, never more), the last
+   * readiness change and the two in-flight markers - ONE read the payments screen draws every step
+   * from.
    */
   async getPayoutAccount(id: string): Promise<AssociationPayoutAccount> {
     const asso = await this.assoRepo.findOne({
@@ -3213,6 +3220,7 @@ ${rejectionReason}`
         lydiaReadinessCause: true,
         lydiaReadinessAt: true,
         lydiaEnrolmentStartedAt: true,
+        lydiaResponsableStartedAt: true,
       },
     });
     if (!asso) throw new NotFoundException('Association not found');
@@ -3230,6 +3238,9 @@ ${rejectionReason}`
           : null,
       enrolmentInFlightSince: asso.lydiaEnrolmentStartedAt
         ? new Date(asso.lydiaEnrolmentStartedAt).toISOString()
+        : null,
+      responsableInFlightSince: asso.lydiaResponsableStartedAt
+        ? new Date(asso.lydiaResponsableStartedAt).toISOString()
         : null,
     };
   }
@@ -3254,7 +3265,7 @@ ${rejectionReason}`
    *
    * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`). Only a transition
    * logs loudly and notifies the payout managers; a replay is a debug line. No holder, or two
-   * (refused, never guessed), writes nothing; no holder while an enrolment is in flight somewhere is
+   * (refused, never guessed), writes nothing; no holder for the token a pending `business/create` answered (`lydiaEnrolmentVendorToken`) is
    * `no-holder-enrolment-in-flight`, which the webhook route answers 503 so Lydia retries.
    */
   async setLydiaReadiness(
@@ -3300,12 +3311,16 @@ ${rejectionReason}`
           );
           return { kind: 'none', inFlight: false };
         }
+        // Only the token a `business/create` answered and that is not linked YET may be retried
+        // (`lydiaEnrolmentVendorToken`): any other unknown token is a 200, so one stuck enrolment
+        // never turns every unknown token into a retry.
         const [{ n }]: Array<{ n: number }> = await manager.query(
-          `SELECT count(*)::int AS n FROM associations WHERE "lydiaEnrolmentStartedAt" IS NOT NULL`
+          `SELECT count(*)::int AS n FROM associations WHERE "lydiaEnrolmentVendorToken" = $1`,
+          [vendorToken]
         );
         this.logger.warn(
           `${LYDIA_READINESS_LOG_TAG} no association holds the vendor token - nothing written ` +
-            `(${where}); ${n} enrolment(s) in flight`
+            `(${where})${n > 0 ? "; it is a pending enrolment's, a retry is asked for" : ''}`
         );
         return { kind: 'none', inFlight: n > 0 };
       }
@@ -3533,9 +3548,11 @@ ${rejectionReason}`
   async releaseLydiaEnrolment(id: string, why: 'refused' | 'admin'): Promise<void> {
     await this.assoRepo.query(
       why === 'admin'
-        ? `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaResponsableStartedAt" = NULL
+        ? `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL,
+                  "lydiaResponsableStartedAt" = NULL
             WHERE id = $1`
-        : `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL WHERE id = $1`,
+        : `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL
+            WHERE id = $1`,
       [id]
     );
     const line = `[LYDIA] enrolment marker cleared on association ${sanitizeLog(id)} (${why})`;
@@ -3543,8 +3560,34 @@ ${rejectionReason}`
   }
 
   /**
-   * The confirmed Responsable of `vendorToken`'s Business on association `id`: a live
-   * (`removedAt IS NULL`), confirmed row of THAT Business - a Responsable of an earlier Business is
+   * Records the vendor token `business/create` just answered on the association whose enrolment is
+   * in flight, BEFORE its key is checked and it is linked: a `BUSINESS_VALIDATED` naming it while it
+   * is not linked yet is then the ONE unknown token worth a retry (`setLydiaReadiness`). Cleared by
+   * the link and by every release of the enrolment marker. Answers whether a row was written (none
+   * when no enrolment is in flight there).
+   */
+  async recordLydiaEnrolmentVendorToken(id: string, vendorToken: string): Promise<boolean> {
+    const result: unknown[] = await this.assoRepo.query(
+      `UPDATE associations SET "lydiaEnrolmentVendorToken" = $2
+        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NOT NULL AND "lydiaAccountId" IS NULL
+        RETURNING id`,
+      [id, vendorToken]
+    );
+    const written = Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
+    if (written > 0) {
+      this.logger.log(`[LYDIA] pending enrolment token recorded on association ${sanitizeLog(id)}`);
+    } else {
+      this.logger.warn(
+        `[LYDIA] pending enrolment token NOT recorded on association ${sanitizeLog(id)}: no ` +
+          `enrolment in flight there`
+      );
+    }
+    return written > 0;
+  }
+
+  /**
+   * The Responsable of `vendorToken`'s Business on association `id`: the live (`removedAt IS NULL`)
+   * row of THAT Business, confirmed or not (`confirmed`) - a Responsable of an earlier Business is
    * not one of this one. Name and the phone's last two digits; the sealed phone is never read here.
    */
   private async lydiaResponsableOf(
@@ -3552,10 +3595,11 @@ ${rejectionReason}`
     vendorToken: string
   ): Promise<LydiaResponsableView | null> {
     const rows: Array<Record<string, unknown>> = await this.assoRepo.query(
-      `SELECT c."userId", c."phoneEnd", u."displayName", u."firstName", u."lastName"
+      `SELECT c."userId", c."phoneEnd", (c."confirmedAt" IS NOT NULL) AS confirmed,
+              u."displayName", u."firstName", u."lastName"
          FROM lydia_cashiers c LEFT JOIN users u ON u.id = c."userId"
         WHERE c."associationId" = $1 AND c."vendorToken" = $2 AND c.role = 'responsable'
-          AND c."removedAt" IS NULL AND c."confirmedAt" IS NOT NULL
+          AND c."removedAt" IS NULL
         LIMIT 1`,
       [id, vendorToken]
     );
@@ -3565,6 +3609,7 @@ ${rejectionReason}`
       userId: String(row.userId),
       name: formatUserDisplayNameFromRaw(row) || '',
       phoneEnd: String(row.phoneEnd),
+      confirmed: row.confirmed === true,
     };
   }
 
@@ -3632,7 +3677,7 @@ ${rejectionReason}`
       ? await this.assoRepo.query(
           `SELECT "userId", "phoneSealed" FROM lydia_cashiers
             WHERE "associationId" = $1 AND "vendorToken" = $2 AND role = 'responsable'
-              AND "removedAt" IS NULL AND "confirmedAt" IS NOT NULL
+              AND "removedAt" IS NULL
             LIMIT 1`,
           [id, vendorToken]
         )
@@ -3691,30 +3736,45 @@ ${rejectionReason}`
   }
 
   /**
-   * Records the Responsable core-service just added at Lydia (or found already a cashier there),
-   * CONFIRMED by Lydia's read-back: the phone sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`, the
+   * Records the Responsable core-service just added at Lydia (or found already a cashier there):
+   * `confirmed` when Lydia's read-back showed every right, UNCONFIRMED (`confirmedAt` NULL) when the
+   * add answered and anything after it failed - Lydia then holds a cashier, and this row is what
+   * the number lock and the one-Responsable rule guard on. The phone is sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`, the
    * association id as context) and only its last two digits readable. In ONE transaction, the
    * association row locked: refused when the Business linked now is not `vendorToken` (409
    * `LYDIA_BUSINESS_CHANGED`), when another person is the live Responsable (409
    * `LYDIA_RESPONSABLE_ALREADY_SET`, also what a concurrent insert's unique violation answers), or
    * when the same person comes with ANOTHER number (409 `LYDIA_RESPONSABLE_PHONE_LOCKED`; changing
-   * it is lot 3). The same person and number again (a re-sent SMS) refreshes the confirmation. The
+   * it is lot 3). The same person and number again (a re-sent SMS) confirms an unconfirmed row. The
    * step's claim is cleared by the same transaction, and by every typed refusal here. The phone is
    * never logged.
    */
   async recordLydiaResponsable(
     id: string,
-    input: { vendorToken: unknown; userId: unknown; phone: unknown; addedByUserId: unknown }
+    input: {
+      vendorToken: unknown;
+      userId: unknown;
+      phone: unknown;
+      addedByUserId: unknown;
+      confirmed: unknown;
+    }
   ): Promise<LydiaResponsableView> {
     const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
     const vendorToken = text(input.vendorToken);
     const userId = text(input.userId);
     const phone = text(input.phone);
     const addedBy = text(input.addedByUserId);
-    if (!vendorToken || !userId || !addedBy || !E164_RE.test(phone)) {
+    const confirmed = input.confirmed;
+    if (
+      !vendorToken ||
+      !userId ||
+      !addedBy ||
+      !E164_RE.test(phone) ||
+      typeof confirmed !== 'boolean'
+    ) {
       this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`);
       throw new BadRequestException(
-        'vendorToken, userId, addedByUserId and an E.164 phone are required'
+        'vendorToken, userId, addedByUserId, an E.164 phone and confirmed are required'
       );
     }
     if (!isSecretBoxConfigured()) {
@@ -3776,17 +3836,19 @@ ${rejectionReason}`
         }
         if (sameBusiness) {
           await manager.query(
-            `UPDATE lydia_cashiers SET "confirmedAt" = now(), "addedByUserId" = $2, "addedAt" = now()
+            `UPDATE lydia_cashiers
+                SET "confirmedAt" = CASE WHEN $3 THEN now() ELSE "confirmedAt" END,
+                    "addedByUserId" = $2, "addedAt" = now()
               WHERE id = $1`,
-            [current.id, addedBy]
+            [current.id, addedBy, confirmed]
           );
         } else {
           await manager.query(
             `INSERT INTO lydia_cashiers
                ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
                 "addedByUserId", "confirmedAt")
-             VALUES ($1, $2, $3, $4, $5, 'responsable', $6, now())`,
-            [id, vendorToken, userId, sealed, phoneEnd, addedBy]
+             VALUES ($1, $2, $3, $4, $5, 'responsable', $6, CASE WHEN $7 THEN now() END)`,
+            [id, vendorToken, userId, sealed, phoneEnd, addedBy, confirmed]
           );
         }
         await manager.query(
@@ -3807,10 +3869,15 @@ ${rejectionReason}`
       if (err instanceof ConflictException) await this.releaseLydiaResponsable(id);
       throw err;
     }
-    this.logger.log(
-      `[AUDIT] Lydia Responsable recorded on association ${sanitizeLog(id)}: user ` +
-        `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ${sanitizeLog(addedBy).slice(0, 8)}`
-    );
+    const audit =
+      `Lydia Responsable recorded on association ${sanitizeLog(id)}: user ` +
+      `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ${sanitizeLog(addedBy).slice(0, 8)}`;
+    if (confirmed) {
+      this.logger.log(`[AUDIT] ${audit}`);
+    } else {
+      // Lydia holds this cashier and did not confirm its rights: a same-number resend confirms it.
+      this.logger.error(`[AUDIT] ${audit} - UNCONFIRMED: added at Lydia, rights not read back`);
+    }
     const view = await this.lydiaResponsableOf(id, vendorToken);
     if (!view) throw new Error('the Responsable row just written cannot be read back');
     return view;

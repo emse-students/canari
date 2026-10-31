@@ -21,6 +21,9 @@
 -- (4) `associations."lydiaResponsableStartedAt"`: the same marker for the Responsable step, claimed
 --     atomically before `business/addcashier` so two managers cannot both have Lydia add a cashier;
 --     cleared by the record, by a typed refusal, by the unlink, or by a global admin.
+-- (5) `associations."lydiaEnrolmentVendorToken"`: the vendor token `business/create` answered,
+--     written BEFORE its key check and link and cleared by the link or any release of the marker:
+--     the ONE unknown token a `BUSINESS_VALIDATED` is answered 503 (retry) for.
 --
 -- ROLLBACK: an image older than this migration reads none of these; nothing it writes breaks them.
 -- Idempotent for CD: IF NOT EXISTS everywhere.
@@ -54,3 +57,4 @@ ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaReadinessCause" varchar(
 ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaReadinessAt" timestamptz NULL;
 ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaEnrolmentStartedAt" timestamptz NULL;
 ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaResponsableStartedAt" timestamptz NULL;
+ALTER TABLE associations ADD COLUMN IF NOT EXISTS "lydiaEnrolmentVendorToken" varchar(256) NULL;

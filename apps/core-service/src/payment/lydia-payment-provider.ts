@@ -193,6 +193,26 @@ export const LYDIA_CASHIER_NOT_CONFIGURED = 'LYDIA_CASHIER_NOT_CONFIGURED';
 export const LYDIA_UNREACHABLE = 'LYDIA_UNREACHABLE';
 /** The `code` (502) of an add Lydia accepted but whose read-back does not show every right. */
 export const LYDIA_CASHIER_RIGHTS_INCOMPLETE = 'LYDIA_CASHIER_RIGHTS_INCOMPLETE';
+
+/**
+ * Thrown by `addBusinessHolder` when `business/addcashier` ANSWERED (Lydia now holds the cashier)
+ * and what followed - the rights read-back, or rights short of the full set - did not confirm it.
+ * Carries the original status and body (`LYDIA_CASHIER_RIGHTS_INCOMPLETE`, a typed 502, or 503
+ * `LYDIA_UNREACHABLE` for an error that was not one), so the answer to the browser is unchanged;
+ * the TYPE is what tells the caller to record the person as unconfirmed.
+ */
+export class LydiaCashierAddedUnconfirmedException extends HttpException {
+  constructor(cause: unknown) {
+    super(
+      cause instanceof HttpException
+        ? cause.getResponse()
+        : { code: LYDIA_UNREACHABLE, message: 'Lydia did not answer the rights read-back' },
+      cause instanceof HttpException ? cause.getStatus() : 503,
+      { cause }
+    );
+  }
+}
+
 /** The `code` (400) of a cashier phone that is not E.164: refused before any call. */
 export const LYDIA_CASHIER_PHONE_INVALID = 'LYDIA_CASHIER_PHONE_INVALID';
 
@@ -596,17 +616,23 @@ export class LydiaPaymentProvider implements PaymentProvider {
       notify: 'yes',
       signature,
     });
-    const rights = await this.readCashierRights(associationId, vendorToken, phone);
-    const missing = LYDIA_CASHIER_PERMISSIONS.filter((name) => !rights[name]);
-    if (missing.length > 0) {
-      this.logger.error(
-        `[LYDIA-CASHIER] association ${associationId}: business/addcashier answered 0 but the ` +
-          `read-back lacks ${missing.length} right(s): ${missing.join(',')} - NOT counted as added`
-      );
-      throw new BadGatewayException({
-        code: LYDIA_CASHIER_RIGHTS_INCOMPLETE,
-        message: 'Lydia did not confirm every right of the Responsable',
-      });
+    // From here Lydia holds the cashier: whatever fails next is "added, unconfirmed", never a
+    // refusal, so the caller records the person rather than forgetting a cashier Lydia lists.
+    try {
+      const rights = await this.readCashierRights(associationId, vendorToken, phone);
+      const missing = LYDIA_CASHIER_PERMISSIONS.filter((name) => !rights[name]);
+      if (missing.length > 0) {
+        this.logger.error(
+          `[LYDIA-CASHIER] association ${associationId}: business/addcashier answered 0 but the ` +
+            `read-back lacks ${missing.length} right(s): ${missing.join(',')} - added, UNCONFIRMED`
+        );
+        throw new BadGatewayException({
+          code: LYDIA_CASHIER_RIGHTS_INCOMPLETE,
+          message: 'Lydia did not confirm every right of the Responsable',
+        });
+      }
+    } catch (err) {
+      throw new LydiaCashierAddedUnconfirmedException(err);
     }
     this.logger.log(
       `[LYDIA-CASHIER] association ${associationId}: Responsable confirmed with all ` +
@@ -877,6 +903,9 @@ export class LydiaPaymentProvider implements PaymentProvider {
       throw unconfirmed('a 200 with no error and no api_token - see the raw response logged above');
     }
     const vendorToken = data.api_token;
+    // Recorded BEFORE anything else can fail, so a BUSINESS_VALIDATED naming it before the link is
+    // retried rather than dropped. The callback reports its own failure and never throws.
+    await params.onBusinessCreated?.(vendorToken);
     // A Business that answered its vendor token but no dashboard URL exists and cannot be handed to
     // the association as Lydia meant it to: an orphan, recorded like any other.
     if (typeof data.dashboard_url !== 'string' || !data.dashboard_url) {

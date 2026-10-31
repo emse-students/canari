@@ -131,6 +131,8 @@ export class PaymentService {
     existingAccountId?: string;
     /** Required by Lydia's business/create. */
     legalProfile?: BusinessLegalProfile;
+    /** `OnboardingParams.onBusinessCreated`: the vendor token, before the key check and link. */
+    onBusinessCreated?: (vendorToken: string) => Promise<void>;
   }): Promise<OnboardingResult> {
     return (await this.getProvider()).createOnboarding(params);
   }

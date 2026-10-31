@@ -18,9 +18,14 @@
     fixedUserId?: string;
     /** Called after the server accepted; the parent re-reads the payout account. */
     onDone: () => void | Promise<void>;
+    /**
+     * Called after the server refused or failed: Lydia may have answered the add and the person be
+     * recorded UNCONFIRMED, so the parent re-reads the payout account rather than guess.
+     */
+    onRefused: () => void | Promise<void>;
   }
 
-  let { associationId, mode, submitLabel, fixedUserId, onDone }: Props = $props();
+  let { associationId, mode, submitLabel, fixedUserId, onDone, onRefused }: Props = $props();
 
   let members = $state<AssociationMember[]>([]);
   let membersFailed = $state(false);
@@ -73,6 +78,7 @@
     } catch (err) {
       console.error('[Lydia] Responsable refused:', err);
       error = lydiaResponsableErrorText(err);
+      void onRefused();
     } finally {
       sending = false;
     }

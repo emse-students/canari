@@ -38,7 +38,7 @@ type Holder = { id: string; ready: boolean; cause: string | null; holders?: numb
 function makeReadiness(
   row: Holder | null,
   notifier = { enabled: () => true, tell: jest.fn(async () => 1) },
-  world: { enrolmentsInFlight?: number; admins?: string[] } = {}
+  world: { pendingTokens?: string[]; admins?: string[] } = {}
 ) {
   const update = jest.fn(async () => ({ affected: 3 }));
   const find = jest.fn(async () => [{ id: CLUB }]);
@@ -56,8 +56,8 @@ function makeReadiness(
         };
         return Array.from({ length: row.holders ?? 1 }, () => one);
       }
-      if (sql.includes('"lydiaEnrolmentStartedAt" IS NOT NULL')) {
-        return [{ n: world.enrolmentsInFlight ?? 0 }];
+      if (sql.includes('WHERE "lydiaEnrolmentVendorToken" = $1')) {
+        return [{ n: (world.pendingTokens ?? []).filter((t) => t === params[0]).length }];
       }
       if (sql.includes('RETURNING id')) {
         const ready = params[1] as boolean;
@@ -262,12 +262,24 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(logs.error.join('|')).toContain('2 associations hold ONE vendor token');
   });
 
-  it('no holder while an enrolment is in flight is its own outcome (the route answers 503)', async () => {
+  it('no holder for the token of a PENDING enrolment is its own outcome (the route answers 503)', async () => {
     captureLogs();
-    const { service } = makeReadiness(null, undefined, { enrolmentsInFlight: 1 });
+    const { service } = makeReadiness(null, undefined, { pendingTokens: [VENDOR] });
     await expect(
       service.setLydiaReadiness(VENDOR, true, 'webhook-validated', { path: 'webhook' })
     ).resolves.toEqual({ kind: 'no-holder-enrolment-in-flight' });
+  });
+
+  it('any OTHER unknown token is plain no-holder at WARN, even with an enrolment pending elsewhere', async () => {
+    const logs = captureLogs();
+    const { service } = makeReadiness(null, undefined, {
+      pendingTokens: ['another-pending-token'],
+    });
+    await expect(
+      service.setLydiaReadiness(VENDOR, true, 'webhook-validated', { path: 'webhook' })
+    ).resolves.toEqual({ kind: 'no-holder' });
+    expect(logs.error).toEqual([]);
+    expect(logs.warn.join('|')).toContain('no association holds the vendor token');
   });
 
   it('with the switch OFF, a transition writes no notification row and says so', async () => {
@@ -410,6 +422,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     phoneSealed: string | null;
     phoneEnd: string | null;
     removedAt: Date | null;
+    confirmed?: boolean;
   };
   let saved: string | undefined;
   beforeAll(() => {
@@ -438,7 +451,11 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
         r.phoneEnd = null;
         return [];
       }
-      if (sql.includes('SET "confirmedAt" = now()')) return [];
+      if (sql.includes('"confirmedAt" = CASE WHEN $3')) {
+        const r = rows.find((c) => c.id === params[0])!;
+        if (params[2] === true) r.confirmed = true;
+        return [];
+      }
       if (sql.includes('INSERT INTO lydia_cashiers')) {
         if (state.insertFails) throw Object.assign(new Error('duplicate key'), { code: '23505' });
         rows.push({
@@ -448,6 +465,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
           phoneSealed: params[3] as string,
           phoneEnd: params[4] as string,
           removedAt: null,
+          confirmed: params[6] === true,
         });
         return [];
       }
@@ -466,7 +484,12 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
         }
         return rows
           .filter((r) => r.removedAt === null && r.vendorToken === params[1])
-          .map((r) => ({ userId: r.userId, phoneEnd: r.phoneEnd, displayName: 'Ada' }));
+          .map((r) => ({
+            userId: r.userId,
+            phoneEnd: r.phoneEnd,
+            confirmed: r.confirmed !== false,
+            displayName: 'Ada',
+          }));
       }),
       manager: {
         transaction: async (fn: (m: { query: typeof query }) => unknown) => fn({ query }),
@@ -477,11 +500,12 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
       logger: new Logger('AssociationsService'),
     }) as unknown as AssociationsService;
   }
-  const body = (userId = 'user-1', phone = PHONE) => ({
+  const body = (userId = 'user-1', phone = PHONE, confirmed = true) => ({
     vendorToken: VENDOR,
     userId,
     phone,
     addedByUserId: 'treasurer-1',
+    confirmed,
   });
 
   it('stores the phone SEALED, answers and logs its last two digits only, and clears the claim', async () => {
@@ -489,7 +513,7 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     const rows: Cashier[] = [];
     const state = { marker: true, insertFails: false };
     const view = await makeRecord(VENDOR, rows, state).recordLydiaResponsable(HOLDER, body());
-    expect(view).toEqual({ userId: 'user-1', name: 'Ada', phoneEnd: '78' });
+    expect(view).toEqual({ userId: 'user-1', name: 'Ada', phoneEnd: '78', confirmed: true });
     expect(rows).toHaveLength(1);
     expect(state.marker).toBe(false);
     expect(rows[0].phoneSealed).not.toContain('612345678');
@@ -523,6 +547,39 @@ describe('AssociationsService.recordLydiaResponsable - the phone sealed, its end
     });
     expect(rows).toHaveLength(1);
     expect(Object.values(logs).flat().join('|')).not.toContain('600000099');
+  });
+
+  it('an UNCONFIRMED row (added, read-back failed) locks the number, and the same-number resend confirms it', async () => {
+    const logs = captureLogs();
+    const rows: Cashier[] = [];
+    const state = { marker: true, insertFails: false };
+    const service = makeRecord(VENDOR, rows, state);
+    await expect(
+      service.recordLydiaResponsable(HOLDER, body('user-1', PHONE, false))
+    ).resolves.toMatchObject({ phoneEnd: '78', confirmed: false });
+    expect(state.marker).toBe(false);
+    expect(logs.error.join('|')).toContain('UNCONFIRMED');
+    expect(Object.values(logs).flat().join('|')).not.toContain('612345678');
+    await expect(
+      service.recordLydiaResponsable(HOLDER, body('user-1', '+33600000099'))
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_PHONE_LOCKED } });
+    await expect(service.recordLydiaResponsable(HOLDER, body('user-2'))).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_ALREADY_SET },
+    });
+    await expect(service.recordLydiaResponsable(HOLDER, body('user-1'))).resolves.toMatchObject({
+      confirmed: true,
+    });
+    expect(rows).toHaveLength(1);
+  });
+
+  it('a body without a boolean `confirmed` is a 400, nothing written', async () => {
+    captureLogs();
+    const rows: Cashier[] = [];
+    await expect(
+      makeRecord(VENDOR, rows).recordLydiaResponsable(HOLDER, { ...body(), confirmed: undefined })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(rows).toHaveLength(0);
   });
 
   it('a concurrent insert refused by the unique index is the typed ALREADY_SET, never a bare 500', async () => {

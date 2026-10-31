@@ -569,6 +569,45 @@ describe('PaymentController.createOnboarding - one Business per association, its
     });
   });
 
+  it('records the pending vendor token BEFORE the link; a failure to record it is an ERROR, and the link still runs', async () => {
+    const created = jest.fn(
+      async (params: { onBusinessCreated?: (t: string) => Promise<void> }) => {
+        await params.onBusinessCreated?.('vendor-new');
+        return {
+          url: 'https://lydia.example/console/1',
+          accountId: 'vendor-new',
+          businessPrivateToken: 'throwaway-private-key',
+        };
+      }
+    );
+    socialAnswers(claimed);
+    await makeController(created).controller.createOnboarding(
+      { associationId: id, legalProfile },
+      req
+    );
+    const urls = mockedAxios.post.mock.calls.map(([url]) => String(url));
+    const pending = urls.findIndex((u) => u.endsWith(`/${id}/lydia-enrolment-vendor-token`));
+    expect(pending).toBeGreaterThanOrEqual(0);
+    expect(mockedAxios.post.mock.calls[pending][1]).toEqual({ vendorToken: 'vendor-new' });
+    expect(pending).toBeLessThan(urls.findIndex((u) => u.endsWith('/lydia-account')));
+
+    mockedAxios.post.mockReset();
+    socialAnswers(claimed);
+    const link = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation(async (url: string, ...rest: unknown[]) => {
+      if (url.endsWith('/lydia-enrolment-vendor-token')) throw new Error('ECONNREFUSED');
+      return link(url, ...rest);
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(
+      makeController(created).controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).resolves.toEqual({ url: 'https://lydia.example/console/1', accountId: 'vendor-new' });
+    expect(error.mock.calls.flat().map(String).join(' | ')).toContain(
+      'the pending Business token could not be recorded'
+    );
+    expect(postsTo('/lydia-account')).toHaveLength(1);
+  });
+
   /** Every ERROR line the run produced, joined: where the orphan's record must be. */
   async function errorsDuring(run: () => Promise<unknown>): Promise<string> {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -744,6 +783,7 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       userId: 'u1',
       phone: PHONE,
       addedByUserId: 'treasurer',
+      confirmed: true,
     });
     expect(answer).toEqual({
       ok: true,
@@ -849,6 +889,69 @@ describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () 
       "the add's outcome is unknown"
     );
     expect(stores()).toHaveLength(0);
+  });
+
+  it('added at Lydia but the read-back failed: stored UNCONFIRMED at ERROR, the original error answered', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    for (const cause of [
+      new BadGatewayException({ code: provider.LYDIA_CASHIER_RIGHTS_INCOMPLETE }),
+      new BadGatewayException({ code: provider.LYDIA_SIGNATURE_REFUSED }),
+      new Error('socket hang up'),
+    ]) {
+      paymentService.addLydiaBusinessHolder.mockRejectedValueOnce(
+        new provider.LydiaCashierAddedUnconfirmedException(cause)
+      );
+      await expect(
+        controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+      ).rejects.toMatchObject({
+        status: cause instanceof BadGatewayException ? 502 : 503,
+      });
+    }
+    expect(stores()).toHaveLength(3);
+    expect(stores().map(([, body]) => (body as { confirmed: boolean }).confirmed)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    // The record releases the claim; no separate release, and the phone never logged whole.
+    expect(releases()).toHaveLength(0);
+    const logged = error.mock.calls.flat().map(String).join(' | ');
+    expect(logged).toContain('phone ending 78) added at Lydia, UNCONFIRMED - recorded');
+    expect(logged).not.toContain('612345678');
+  });
+
+  it('added at Lydia, unconfirmed, and the store FAILS: the claim is kept, at ERROR', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const claim = claimOf({ vendorToken: 'vendor-1', member: true, currentUserId: null });
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-claim')) return { status: 200, data: claim };
+      throw new Error('ECONNREFUSED');
+    });
+    paymentService.addLydiaBusinessHolder.mockRejectedValueOnce(
+      new provider.LydiaCashierAddedUnconfirmedException(
+        new BadGatewayException({ code: provider.LYDIA_CASHIER_RIGHTS_INCOMPLETE })
+      )
+    );
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({
+      status: 502,
+      response: { code: provider.LYDIA_CASHIER_RIGHTS_INCOMPLETE },
+    });
+    expect(releases()).toHaveLength(0);
+    expect(error.mock.calls.flat().map(String).join(' | ')).toContain(
+      'UNCONFIRMED and NOT recorded - the step stays claimed until a global admin clears it'
+    );
   });
 
   it('record mode READS the rights, never adds, refuses a number that does not manage cashiers, and releases', async () => {

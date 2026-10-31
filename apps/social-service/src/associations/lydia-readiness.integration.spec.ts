@@ -200,10 +200,10 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       `SELECT count(*)::int AS n FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = 'associations'
           AND column_name IN ('lydiaReadinessCause', 'lydiaReadinessAt', 'lydiaEnrolmentStartedAt',
-                              'lydiaResponsableStartedAt')`,
+                              'lydiaResponsableStartedAt', 'lydiaEnrolmentVendorToken')`,
       [schema]
     );
-    expect(cols.n).toBe(4);
+    expect(cols.n).toBe(5);
     await ds.query(
       `INSERT INTO lydia_cashiers ("associationId", "vendorToken", "userId", "phoneEnd", "addedByUserId")
        VALUES ($1, $2, 'u1', '78', 'u0')`,
@@ -317,7 +317,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       await ds.query(
         `UPDATE associations SET "lydiaOnboardingComplete" = $2, "lydiaReadinessCause" = $3,
                 "lydiaReadinessAt" = NULL, "lydiaEnrolmentStartedAt" = NULL,
-                "lydiaResponsableStartedAt" = NULL
+                "lydiaResponsableStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL
           WHERE id = $1`,
         [HOLDER, ready, cause]
       );
@@ -411,6 +411,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           userId,
           phone: PHONE,
           addedByUserId: 'treasurer',
+          confirmed: true,
         });
       };
       const settled = await Promise.allSettled([step('member-1'), step('member-2')]);
@@ -426,6 +427,75 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       ).toEqual([{ n: 1 }]);
     });
 
+    it('an UNCONFIRMED Responsable locks its number and the one-Responsable rule; the same number confirms it', async () => {
+      await reset(true, 'admin');
+      const record = (userId: string, phone: string, confirmed: boolean) =>
+        associations.recordLydiaResponsable(HOLDER, {
+          vendorToken: VENDOR,
+          userId,
+          phone,
+          addedByUserId: 'treasurer',
+          confirmed,
+        });
+      await expect(record('member-1', PHONE, false)).resolves.toMatchObject({ confirmed: false });
+      expect(
+        await ds.query(
+          `SELECT "confirmedAt" IS NULL AS unconfirmed, "lydiaResponsableStartedAt" IS NULL AS released
+             FROM lydia_cashiers c JOIN associations a ON a.id = c."associationId"
+            WHERE c."removedAt" IS NULL`
+        )
+      ).toEqual([{ unconfirmed: true, released: true }]);
+      // The claim reads the unconfirmed row like a confirmed one: another number, another person.
+      await expect(
+        associations.claimLydiaResponsable(HOLDER, 'member-1', '+33600000099')
+      ).resolves.toMatchObject({ phoneMatches: false, claimed: false });
+      await expect(
+        associations.claimLydiaResponsable(HOLDER, 'member-2', PHONE)
+      ).resolves.toMatchObject({ currentUserId: 'member-1', claimed: false });
+      // The same number is claimed, re-added, and the record confirms the SAME row.
+      await expect(
+        associations.claimLydiaResponsable(HOLDER, 'member-1', PHONE)
+      ).resolves.toMatchObject({ claimed: true });
+      await expect(record('member-1', PHONE, true)).resolves.toMatchObject({ confirmed: true });
+      expect(
+        await ds.query(
+          `SELECT count(*)::int AS n, bool_and("confirmedAt" IS NOT NULL) AS confirmed
+             FROM lydia_cashiers WHERE "removedAt" IS NULL`
+        )
+      ).toEqual([{ n: 1, confirmed: true }]);
+    });
+
+    it('a VALIDATED is retried (503) ONLY for the pending token of an unlinked enrolment', async () => {
+      await ds.query(
+        `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaAccountId" = NULL,
+                "lydiaEnrolmentVendorToken" = NULL WHERE id = $1`,
+        [ENROLLING]
+      );
+      const validated = (token: string) =>
+        associations.setLydiaReadiness(token, true, 'webhook-validated', { path: 'webhook' });
+      // No enrolment: nothing is pending, the token is recorded nowhere.
+      await expect(
+        associations.recordLydiaEnrolmentVendorToken(ENROLLING, 'pending-token')
+      ).resolves.toBe(false);
+      await associations.claimLydiaEnrolment(ENROLLING);
+      await expect(
+        associations.recordLydiaEnrolmentVendorToken(ENROLLING, 'pending-token')
+      ).resolves.toBe(true);
+      await expect(validated('pending-token')).resolves.toEqual({
+        kind: 'no-holder-enrolment-in-flight',
+      });
+      // Any other unknown token is a 200 while that enrolment is in flight.
+      await expect(validated('a-stranger-token')).resolves.toEqual({ kind: 'no-holder' });
+      // A typed refusal clears the marker AND the pending token.
+      await associations.releaseLydiaEnrolment(ENROLLING, 'refused');
+      await expect(validated('pending-token')).resolves.toEqual({ kind: 'no-holder' });
+      expect(
+        await ds.query(`SELECT "lydiaEnrolmentVendorToken" AS t FROM associations WHERE id = $1`, [
+          ENROLLING,
+        ])
+      ).toEqual([{ t: null }]);
+    });
+
     it('two simultaneous records of two people: ONE row, the other the typed ALREADY_SET', async () => {
       await reset(true, 'admin');
       const record = (userId: string) =>
@@ -434,6 +504,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           userId,
           phone: PHONE,
           addedByUserId: 'treasurer',
+          confirmed: true,
         });
       const settled = await Promise.allSettled([record('member-1'), record('member-2')]);
       expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);

@@ -33,6 +33,7 @@ import {
   LYDIA_CASHIER_PHONE_RE,
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
   LYDIA_UNREACHABLE,
+  LydiaCashierAddedUnconfirmedException,
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
 } from './lydia-payment-provider';
@@ -233,6 +234,7 @@ export class PaymentController {
         refreshUrl,
         returnUrl,
         legalProfile,
+        onBusinessCreated: (vendorToken) => this.recordPendingEnrolmentToken(assocId, vendorToken),
       });
     } catch (err: unknown) {
       // A REFUSAL (a 400: Lydia's typed refusal, an incomplete profile) created nothing, so the
@@ -343,6 +345,30 @@ export class PaymentController {
     }
   }
 
+  /**
+   * Records the vendor token `business/create` just answered on the association, before its key
+   * check and link, so a `BUSINESS_VALIDATED` racing the link is answered 503 (retry) rather than
+   * dropped. A failure is an ERROR and the enrolment goes on: the link step still decides.
+   */
+  private async recordPendingEnrolmentToken(associationId: string, vendorToken: string) {
+    try {
+      await axios.post(
+        socialUrl(
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-enrolment-vendor-token`
+        ),
+        { vendorToken },
+        { ...internalSocialRequestConfig(), timeout: LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead }
+      );
+      this.logger.debug(`Lydia onboarding of association ${associationId}: pending token recorded`);
+    } catch (err: unknown) {
+      this.logger.error(
+        `Lydia onboarding of association ${associationId}: the pending Business token could not ` +
+          `be recorded - a validation arriving before the link will not be retried ` +
+          `(${describeHttpError(err)})`
+      );
+    }
+  }
+
   /** Releases the enrolment marker (a typed refusal, or a global admin); failures are logged. */
   private async releaseEnrolmentMarker(associationId: string, why: 'refused' | 'admin') {
     try {
@@ -411,8 +437,10 @@ export class PaymentController {
    * manage cashiers (`access_cashier`), with no SMS and no change at Lydia.
    *
    * The person must be a member of the association, and changing the live Responsable is lot 3
-   * (typed refusals, `LYDIA_*` codes in `libs/contracts/lydia-refusal-codes.json`). Only once Lydia's
-   * read-back confirms does social-service store the row, the phone sealed.
+   * (typed refusals, `LYDIA_*` codes in `libs/contracts/lydia-refusal-codes.json`). Lydia's read-back
+   * confirming, social-service stores the row, the phone sealed; once `business/addcashier` has
+   * answered, any later failure stores it UNCONFIRMED (Lydia holds that cashier) and the
+   * same-number resend confirms it.
    */
   @Post('lydia-responsable/:associationId')
   @UseGuards(NginxAuthGuard)
@@ -514,6 +542,17 @@ export class PaymentController {
         }
       }
     } catch (err: unknown) {
+      if (err instanceof LydiaCashierAddedUnconfirmedException) {
+        // Lydia answered the add: it holds a cashier now, so the person is recorded UNCONFIRMED -
+        // locking the number and the one-Responsable rule - and the record releases the claim.
+        // If even that store fails, the claim stays for a global admin.
+        await this.recordUnconfirmedResponsable(associationId, pre.vendorToken, {
+          userId,
+          phone,
+          actorId,
+        });
+        throw err;
+      }
       // A KNOWN outcome releases the claim: a read changes nothing at Lydia, and a typed refusal
       // added nothing. No usable answer to an ADD (`LYDIA_UNREACHABLE`, or an untyped failure)
       // keeps it until a global admin clears it (`lydia-enrolment-clear`).
@@ -537,7 +576,7 @@ export class PaymentController {
     const data = await this.responsableSocialStep(associationId, 'store', () =>
       axios.post<{ responsable: unknown }>(
         socialUrl(`internal/associations/${encodeURIComponent(associationId)}/lydia-responsable`),
-        { vendorToken: pre.vendorToken, userId, phone, addedByUserId: actorId },
+        { vendorToken: pre.vendorToken, userId, phone, addedByUserId: actorId, confirmed: true },
         { ...internalSocialRequestConfig(), timeout: 10_000 }
       )
     );
@@ -545,6 +584,44 @@ export class PaymentController {
       `Lydia Responsable of ${associationId} ${mode === 'add' ? 'added' : 'recorded'}`
     );
     return { ok: true, responsable: data?.responsable ?? null };
+  }
+
+  /**
+   * Stores a Responsable Lydia added but did not confirm (`confirmed: false`), so the number and
+   * the one-Responsable rule are guarded; social-service's record releases the claim. Logged at
+   * ERROR either way (association and the phone's last two digits only): stored, a revocation may
+   * be owed unless the same-number resend confirms it; not stored, the claim stays for an admin.
+   */
+  private async recordUnconfirmedResponsable(
+    associationId: string,
+    vendorToken: string,
+    who: { userId: string; phone: string; actorId: string }
+  ): Promise<void> {
+    const phoneEnd = who.phone.slice(-2);
+    try {
+      await this.responsableSocialStep(associationId, 'store', () =>
+        axios.post<{ responsable: unknown }>(
+          socialUrl(`internal/associations/${encodeURIComponent(associationId)}/lydia-responsable`),
+          {
+            vendorToken,
+            userId: who.userId,
+            phone: who.phone,
+            addedByUserId: who.actorId,
+            confirmed: false,
+          },
+          { ...internalSocialRequestConfig(), timeout: 10_000 }
+        )
+      );
+      this.logger.error(
+        `Lydia Responsable of ${associationId} (phone ending ${phoneEnd}) added at Lydia, ` +
+          `UNCONFIRMED - recorded; the same-number resend confirms it`
+      );
+    } catch {
+      this.logger.error(
+        `Lydia Responsable of ${associationId} (phone ending ${phoneEnd}) added at Lydia, ` +
+          `UNCONFIRMED and NOT recorded - the step stays claimed until a global admin clears it`
+      );
+    }
   }
 
   /**
