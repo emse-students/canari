@@ -1087,6 +1087,63 @@ exactness, what happens when Redis does not answer) is
 - The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
   never draws under the iOS status bar (`LiveBroadcaster.svelte`).
 
+## Broadcasting the screen on a desktop browser (2026-10-31, owner)
+
+Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+
+- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
+  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
+  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
+  `LiveBroadcast.chooseSource`, preview only.
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
+  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
+  `start()`.
+- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
+- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
+  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
+  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
+  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
+  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
+  stops both sources and closes the context.
+- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
+  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
+  recorder takes the display's video track like a camera's, and the viewer's string is the same.
+- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
+  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
+  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
+  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
+  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
+- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
+  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
+  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
+  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Review fixes (2026-10-31)**:
+  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
+    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
+  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
+    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
+    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
+    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
+    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
+  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
+    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
+  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
+    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
+    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
+    Retry message promises "go back to the camera" only in the preview, where the source buttons are
+    enabled; on air or away it says the share stopped and nothing else.
+  - **The source buttons are locked while the picker is open** (`choosingSource`).
+  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
+    windows included.
+- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
+  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
+  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
+  until the bump, so it is refused. There is no override and none is to be added: set `version` in
+  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
+  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
+- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
+  switch-camera button is hidden while the source is the screen.
+
 ## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
 
 "Cet appareil ne peut pas diffuser en direct" had ONE cause in the code: `liveRecordingSupported()`
@@ -1156,5 +1213,5 @@ can be hidden before the grant) and again on `devicechange`; the listener is rem
 read that lands after `stop()` writes nothing (`#watchEpoch`).
 
 **The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
-`[CAMERA_COUNT] videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
 `videoinput=1`, the rule is wrong for that browser and the line is the evidence.

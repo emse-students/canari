@@ -9,6 +9,7 @@ import { LiveRefusalError } from './api';
 import { LiveBroadcast, startProblemOf } from './liveBroadcast.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { fakeCamera, fakeDeps, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
@@ -657,5 +658,162 @@ describe('LiveBroadcast - leaving the screen', () => {
     const { b, deps } = await ready();
     b.dispose();
     expect(deps.endLive).not.toHaveBeenCalled();
+  });
+});
+
+describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
+  /** A preview where the browser can share a screen and the camera is open. */
+  async function desktop() {
+    const f = fakeDeps();
+    f.deps.screenShareAvailable.mockReturnValue(true);
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    return { ...f, cam, b };
+  }
+
+  it('offers the screen only where the browser can share one', async () => {
+    const phone = await ready();
+    expect(phone.b.canShareScreen).toBe(false);
+    await phone.b.chooseSource('screen');
+    expect(phone.b.source).toBe('camera');
+    expect(phone.deps.openScreen).not.toHaveBeenCalled();
+    expect(await desktop().then((d) => d.b.canShareScreen)).toBe(true);
+  });
+
+  it('choosing the screen opens it instead of the camera, and the camera comes back on request', async () => {
+    const { b, cam, deps } = await desktop();
+    expect(cam.control.opened).toHaveLength(1);
+    await b.chooseSource('screen');
+    expect(b.source).toBe('screen');
+    expect(deps.openScreen).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).toBe('live');
+    await b.chooseSource('camera');
+    expect(b.source).toBe('camera');
+    expect(cam.control.opened).toHaveLength(2);
+    expect(deps.openScreen).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dismissed picker returns to the camera at once, on the camera and not on a fault', async () => {
+    const { b, cam, deps } = await desktop();
+    deps.openScreen.mockRejectedValueOnce(new CameraAccessError('denied', 'dismissed'));
+    await b.chooseSource('screen');
+    expect(b.source).toBe('camera');
+    expect(cam.session.phase).toBe('live');
+    expect(cam.session.fault).toBeNull();
+    expect(cam.control.opened).toHaveLength(2);
+  });
+
+  it('the source cannot change once the live started', async () => {
+    const { b, deps } = await desktop();
+    await b.start();
+    await b.chooseSource('screen');
+    expect(b.source).toBe('camera');
+    expect(deps.openScreen).not.toHaveBeenCalled();
+  });
+
+  it('a share stopped WHILE THE LIVE IS STARTING ends it the moment the start lands', async () => {
+    const { b, deps, cam } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let land: () => void = () => {};
+    deps.startLive.mockImplementationOnce(
+      (...args: Parameters<typeof real>) =>
+        new Promise((resolve) => {
+          land = () => resolve(real(...args));
+        })
+    );
+    const starting = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    expect(deps.endLive).not.toHaveBeenCalled();
+    land();
+    await starting;
+    await vi.waitFor(() => expect(b.phase).toBe('ended'));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).not.toBe('starting');
+  });
+
+  it('a stop remembered during a start that FAILS does not end the next start', async () => {
+    const { b, deps } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let fail: (e: unknown) => void = () => {};
+    deps.startLive.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    const first = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    fail(new Error('network'));
+    await first;
+    expect(b.phase).toBe('preview');
+    deps.startLive.mockImplementation(real);
+    await b.start();
+    expect(b.phase).toBe('live');
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it('makes the mixing context synchronously inside the choice, before any await', async () => {
+    const { b, deps } = await desktop();
+    let sync = false;
+    deps.createAudioContext.mockImplementation(() => {
+      sync = true;
+      return null;
+    });
+    const choosing = b.chooseSource('screen');
+    expect(sync).toBe(true);
+    await choosing;
+    expect(deps.openScreen).toHaveBeenCalledWith(null);
+  });
+
+  it('the source choice is locked while the picker is open', async () => {
+    const { b, deps } = await desktop();
+    let answer: (s: MediaStream) => void = () => {};
+    deps.openScreen.mockImplementationOnce(() => new Promise<MediaStream>((r) => (answer = r)));
+    const choosing = b.chooseSource('screen');
+    await vi.waitFor(() => expect(b.choosingSource).toBe(true));
+    await b.chooseSource('camera');
+    expect(b.source).toBe('screen');
+    answer({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream);
+    await choosing;
+    expect(b.choosingSource).toBe(false);
+  });
+
+  it('a hidden page does not pause a screen share, and does pause a camera', async () => {
+    const screen = await desktop();
+    await screen.b.chooseSource('screen');
+    await screen.b.start();
+    screen.setHidden(true);
+    screen.b.appHidden();
+    expect(screen.b.phase).toBe('live');
+    expect(screen.cam.session.phase).toBe('live');
+
+    const camera = await desktop();
+    await camera.b.start();
+    camera.setHidden(true);
+    camera.b.appHidden();
+    expect(camera.b.phase).toBe('away');
+  });
+
+  it('a share stopped from the browser ends the live cleanly, once, and a camera never does', async () => {
+    const { b, deps, cam } = await desktop();
+    await b.chooseSource('screen');
+    await b.start();
+    await b.screenShareStopped();
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    await b.screenShareStopped();
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).not.toBe('starting');
+
+    const camera = await desktop();
+    await camera.b.start();
+    await camera.b.screenShareStopped();
+    expect(camera.b.phase).toBe('live');
   });
 });
