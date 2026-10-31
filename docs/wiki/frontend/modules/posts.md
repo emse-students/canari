@@ -117,6 +117,28 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 The price, stated: after a reload an anonymous voter sees THAT they voted and the results, but not
 which option they picked - the server does not know.
 
+## Who voted: a capped hover, and an info button that opens the full list (2026-10-24)
+
+`PostPolls.svelte` is the ONE poll card, for a post poll and a channel poll (`ChannelPoll` wraps
+it), so this is one implementation. The voter list used to be a hover tooltip on the vote count,
+reached on a phone only by a long press (hard to hold without voting) and as tall as the voter list
+(45 names overflowed the screen).
+
+- **Hover (mouse only)** on the info button shows `POLL_TOOLTIP_MAX_VOTERS` (10) names, then
+  "+ N autres personnes" (`post_poll_voters_more`, plural), and its `max-height` follows the room
+  above the anchor. A touch pointer never opens it (`pointerType === 'mouse'`).
+- **The info button** (Users icon, 44 px) is a SIBLING of the vote button, never a child: the old
+  count badge was a `role=button` nested in the vote button and relied on `stopPropagation`. It
+  opens `PollVotersSheet.svelte` - `Modal`, so a bottom sheet on a phone and a dialog on desktop,
+  with the focus trap, Escape, the back gesture and focus return. The sheet scrolls and, with
+  two options or more, switches option through a row of toggle buttons (`aria-pressed`; a `tablist` is reserved by `sectionMenus.test.ts`).
+- **Anonymous polls and empty options get no button**: the server sends an anonymous poll no voter
+  ids (a tally), and an option with 0 voters has nobody to list. The server is unchanged.
+- Helpers (cap, name resolution) are in `posts/pollVoters.ts`.
+- **Not verifiable without a phone**: the sheet's height and scroll under the keyboard-aware
+  overlay, and that a scroll starting on the info button never votes (it cannot by construction -
+  the button has no vote handler - but nothing here ran on the Mi 9T).
+
 ## Post creation (EditPostForm.svelte)
 
 - Markdown content editor. **A body OR a media entry, and either is enough** - the client's
