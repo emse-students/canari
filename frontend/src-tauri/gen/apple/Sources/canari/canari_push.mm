@@ -1,6 +1,7 @@
 #import "canari_push.h"
 #import "canari_ios.h"
 #import "canari_rust_bridge.h"
+#import "KeyboardMediaBridge.h"
 
 #import <CallKit/CallKit.h>
 #import <Foundation/Foundation.h>
@@ -9,6 +10,7 @@
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
 #import <FirebaseMessaging/FirebaseMessaging.h>
@@ -1852,7 +1854,11 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
     NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
     id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
     if (![json isKindOfClass:[NSDictionary class]] || ![json[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] encryptQueuedMessages: ok=false");
+      // The reason, not only the verdict: a refused write (the foreground guard, a moved
+      // mls.bin) and an unreadable state end here alike, and only the Rust error tells them apart.
+      id reason = [json isKindOfClass:[NSDictionary class]] ? json[@"error"] : nil;
+      NSLog(@"[CanariPush] encryptQueuedMessages: ok=false (%@)",
+            [reason isKindOfClass:[NSString class]] ? reason : @"no reason given");
       return nil;
     }
     id results = json[@"results"];
@@ -2790,6 +2796,44 @@ static void CanariCancelPendingCallAccept(NSString *callId) {
   NSLog(@"[CanariCallKit] answer of call=%@ cancelled by the End - pending accept removed", callId);
 }
 
+/// Tells a live page that the CallKit answer's `pending_call_accept.json` waits -
+/// `canari:call-accept`, on which the page drains it (`drainNativePendingCallAccept`). A page not
+/// loaded yet drains it at its mount instead. A STAT, never a read: nothing is told when no answer
+/// waits.
+///
+/// AN EVENT, BECAUSE THE PAGE SEES NO TRANSITION. PushKit launches a killed app in the background,
+/// and WKWebView loads the page `visible` and keeps it so until the app has been active and left:
+/// on the iPhone 12 (1.5.2-alpha.2, K7 and K8) the page went `0 -> 1` at the launch and never
+/// changed when the answer brought the app to the front, so no `visibilitychange` drained the file
+/// and the call was never joined. The deep link of 1.5.2-alpha.1 was the trigger that hid this; a
+/// link no longer answers (calls.md, "An answer from the ring joins on the ring's facts").
+///
+/// CALLED AT THE HANDOVER, NEVER AT THE ANSWER: until the app is active a CallKit End may still
+/// cancel the answer (`CanariCancelPendingCallAccept` removes the file), and the page must not
+/// already hold it in memory then.
+static void CanariTellPageOfPendingCallAccept(void) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil ||
+      ![[NSFileManager defaultManager]
+          fileExistsAtPath:[dir stringByAppendingPathComponent:kPendingCallAcceptFileName]]) {
+    return;
+  }
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariCallKit] an answer waits before the WebView: the page drains it at mount");
+    return;
+  }
+  [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:call-accept'));"
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariCallKit] ERROR the page was not told of the answer (%@): it drains "
+                      @"at its next mount or resume",
+                      CanariErrorReason(error));
+              }
+            }];
+  NSLog(@"[CanariCallKit] an answer waits - the page was told");
+}
+
 @interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
 @end
 
@@ -2860,8 +2904,9 @@ static void CanariCancelPendingCallAccept(NSString *callId) {
 /// AN END AFTER THE ANSWER CANCELS THE ANSWER. The answer wrote `pending_call_accept.json` for the
 /// webview; ended now, that file is removed (`CanariCancelPendingCallAccept`), or an unlock in the
 /// next minutes would join a call the user hung up. Nothing can be held in the webview's memory yet:
-/// it drains the file only once the app is active, and becoming active ends this CallKit call, so no
-/// End can follow a drain. The caller is told as for a decline - this device never joined.
+/// the page is told of the file only at the handover (`CanariTellPageOfPendingCallAccept`, queued
+/// behind the AnsweredElsewhere ends), so no End can follow a drain. The caller is told as for a
+/// decline - this device never joined.
 - (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
   (void)provider;
   NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
@@ -3228,6 +3273,11 @@ static void CanariCallKitSetup(void) {
                 for (NSString *callId in [g_ringingCalls.allKeys copy]) {
                   CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
                 }
+                // THEN the page is told an answer waits: queued on the main queue behind the ends
+                // above, so it runs once no CallKit End can remove the file any more.
+                dispatch_async(dispatch_get_main_queue(), ^{
+                  CanariTellPageOfPendingCallAccept();
+                });
               }];
   NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }

@@ -1782,7 +1782,9 @@
     // background writers on BOTH platforms, but iOS only refreshes it once (canari_ios_on_resume);
     // without this 10s heartbeat the guard would expire ~30s into a genuinely-foregrounded iOS
     // session and an in-process FCM data push could clobber the warm engine's in-memory state. The
-    // native mls_foreground_heartbeat command is platform-agnostic (mark_foreground_active).
+    // native mls_foreground_heartbeat command is platform-agnostic, and holds the guard only while a
+    // foreground manager is loaded (`heartbeat_foreground_guard`): at the PIN gate there is nothing
+    // to protect, and a page iOS launched in the background believes itself visible.
     // createPausableInterval auto-pauses on hidden, so the guard expires shortly after backgrounding
     // even without a clean `hidden` event.
     const stopForegroundHeartbeat = isMobileTauriRuntime()
@@ -1917,8 +1919,21 @@
       void globalSession.resumeConnection(sessionCb());
     };
 
+    /**
+     * The native side says a CallKit answer waits (`canari:call-accept`, sent at the handover by
+     * `CanariTellPageOfPendingCallAccept`). On an iPhone the answer brings to the front an app
+     * PushKit launched in the background, whose page WKWebView already holds `visible`: no
+     * `visibilitychange` follows, so the drain above never runs (1.5.2-alpha.2, K7/K8). Held now,
+     * logged in or at the PIN gate, it is joined once the socket has caught up.
+     */
+    const handleNativeCallAccept = () => {
+      appendLog('[CallAccept] the native side says an answer waits - draining it');
+      void drainNativePendingCallAccept();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnlineResume);
+    window.addEventListener('canari:call-accept', handleNativeCallAccept);
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1957,6 +1972,7 @@
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
+      window.removeEventListener('canari:call-accept', handleNativeCallAccept);
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);

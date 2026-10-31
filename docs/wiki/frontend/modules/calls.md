@@ -689,7 +689,9 @@ CallKit answer took the same path.
 **The native answer is carried by a private intent, never a public URL.** The answer's facts are
 the RING'S, recorded natively when it rang, and reach the web view through ONE door,
 `pending_call_accept.json`, drained by `read_and_clear_pending_call_accept` (the same command on both
-platforms, at mount, on a signed-in resume, and on a visible resume still at the PIN gate):
+platforms, at mount, on a signed-in resume, on a visible resume still at the PIN gate, and on iOS
+when the native handover says an answer waits, `canari:call-accept` -
+[below](#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31)):
 - **Android** (`CallRingAnswer.kt`): the ring records its facts (group, call, caller, video, the
   instant it rang) under a per-ring nonce in app-private preferences; the Answer intent carries only
   the call id and that nonce as extras, its data the plain conversation link. `MainActivity`
@@ -751,8 +753,8 @@ one act.
 **On iOS an End after Answer ends the call for real.** CallKit's End on a call already answered
 removes `pending_call_accept.json` if it names that call (`CanariCancelPendingCallAccept`), so the web
 view joins nothing later, and sends the same hangup. No in-memory intent can exist to cancel: the
-drain runs only after the app became active, and activation itself ends the CallKit call
-(`AnsweredElsewhere`), so no End can follow a drain.
+page is told of the file only at the handover, queued behind the `AnsweredElsewhere` ends that
+activation makes (`CanariTellPageOfPendingCallAccept`), so no End can follow a drain.
 
 **The background MLS model the decline inherits.** It is the quick-reply send path, unchanged:
 `encryptQueuedMessages` -> `send_messages_background_with_key` under the MLS state lock, the state
@@ -771,6 +773,66 @@ and the tap) and on the iPhone (CallKit); an Answer from a warm app still at the
 End after Answer joins nothing and ends the caller's call; Decline from the Android ring and from
 CallKit ends the caller's ring at once and files "declined". The Objective-C and the JNI/FFI are
 uncompiled here (the iOS CI job is the Objective-C's first compiler).
+
+### The iPhone's answer never joined, and its decline never left (1.5.2-alpha.2, 2026-10-31)
+
+**The readings** (iPhone 12 on TestFlight `1.5.2-alpha.2`, dev, the Mi 9T calling on alpha.1).
+K7 (app killed, Answer on CallKit, then the PIN) and K8 (locked, slide to answer, Face ID, the PIN)
+both landed on the feed: the server saw the device come online and no call-service socket nor room
+token for the call, which rang out `cancelled`. The CallKit Decline of a killed app, and the End
+right after an Answer, logged `encryptQueuedMessages: ok=false` and the caller rang its minute.
+
+**One fact behind both: PushKit launches a killed app in the background, and WKWebView loads its
+page `visible` and keeps it so.** The syslog shows it every time: `view visibility state changed
+0 -> 1` at the launch, `setIsInBackground: 1` 50 ms later with no change back, and the next
+visibility change only when the app, having been active, left (`1 -> 0` at 02:55:03 in K7). So:
+- **No drain after the Answer.** The page mounted 1.5 s after the PushKit launch, before the ring;
+  the Answer wrote the file 30 s later and the app came to the front, and no `visibilitychange`
+  fired - the two resume drains never ran. The file sat on disk until the NEXT process's mount
+  drained it, minutes stale (FSEvents: written 02:53:15, read 03:02:02). In `1.5.2-alpha.1` the
+  Answer's deep link carried `acceptCall`, and `onOpenUrl` fires whatever the visibility: #2765 made
+  the link navigation-only, which removed the one trigger that did not depend on a transition. Not
+  a regression from 1.5.1, where CallKit was compiled out.
+- **The decline's write refused.** At the PIN gate the page's 10 s foreground heartbeat ran (it is
+  paused only by `hidden`), so the guard was always fresh, and `background_write_mls_bin_if_unchanged`
+  refused the hangup's ratchet save; a batch whose save is refused hands out no ciphertext. The MLS
+  state is NOT sealed behind the PIN: the background copy of the device key is in the Keychain
+  (`AfterFirstUnlockThisDeviceOnly`), exactly what the extension and the quick reply use. Rust's
+  reason does not reach the syslog, so this is read from the timings (the guard lives 30 s; the
+  decline came 12 s and the End 10 s after the launch's mount) and the absence of every other cause's
+  line; the native line now carries Rust's reason.
+
+**The fix, at each cause.**
+- **The native side tells the page at the handover.** The `didBecomeActive` observer that ends every
+  CallKit call `AnsweredElsewhere` then queues, on the same main queue, `CanariTellPageOfPendingCallAccept`:
+  if the file exists (a stat), the page gets `canari:call-accept` and drains it
+  (`ChatBackgroundService`); a page not loaded yet drains it at mount. NOT at the Answer: until the
+  app is active a CallKit End may still cancel the answer, and the page must not hold it then.
+- **The heartbeat holds the guard only over a loaded manager** (`heartbeat_foreground_guard`,
+  `concurrency.rs`). The guard protects the state a foreground manager holds in memory; before a
+  login there is none, and the login's read marks the guard itself first. Whether a manager is
+  loaded is a fact this process holds (`live_manager_flag`), where `visibilityState` is the
+  WebView's opinion. No change for a signed-in page.
+
+**A server-side typed decline was weighed and not taken.** The hangup CAN be sealed without the PIN
+(the background key above), so a second, cleartext path for the same act would be a fallback beside
+a primary path that works, and one more fact handed to the server in clear.
+
+**CallKit shows the answered call as connected ("Canari audio - 00:03") while the caller still
+rings: accepted.** `CXAnswerCallAction` is fulfilled at once. The join waits on Face ID, the open
+and the PIN - an unbounded human step - and an action left unfulfilled is failed by CallKit on its
+own deadline, which would end the call under the user; the screen is the callee's own, the caller's
+ring is true, and the handover ends the CallKit call the moment the app is in front.
+
+**Named limitation.** A page that MOUNTS between the Answer and the activation (a launch slower
+than the ring) drains the file at mount, so an End in that window removes the file but not the held
+answer. Not observed: the page mounted 1.5 s after each launch.
+
+**Owed on the iPhone** (TestFlight with this change, against dev): K7 and K8 join after the PIN -
+`[CanariCallKit] an answer waits - the page was told`, then a room token for the call and the
+call-service socket on the server; the Decline of a killed app ends the caller's ring at once -
+`decline call=... sent=1` and the caller's record `declined`; the End right after an Answer joins
+nothing AND ends the caller's ring the same way. Any `ok=false` now names its reason.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
