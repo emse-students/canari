@@ -1162,10 +1162,16 @@ id to the organiser and the linked account, not to a booker.
   grid of the day it opened, its rows after midnight marked "(lendemain)", and every sentence that
   names a day names the right one. An end at midnight reads `24:00`; a time in a fall-back night's
   doubled hour carries its offset ("02:00 (UTC+2) - 02:00 (UTC+1)"), so two ranges never read alike.
-- **THE CLOCK THAT DECIDES IS THE SERVER'S.** The device's clock only DRAWS: a unit outside the
-  window is drawn "Non réservable", redrawn every minute and at the opening instant, and it STILL
-  OPENS - the sheet says the device thinks it is not bookable, and the server answers. Like the
-  server, only the START of a range is judged: a run of steps is never trimmed by the window.
+- **A UNIT THAT CANNOT BE BOOKED NOW IS NOT OFFERED** (owner, 2026-10-31, replacing "it still
+  opens with a note"). A free unit outside the booking window on the device's clock (over, too
+  soon, too far, not open yet) is drawn greyed, redrawn every minute and at the opening instant,
+  and is a DISABLED button on the booker's grid: no tap, no drag starts on it, a drag stops before
+  it, and `SpaceWeek.pick` opens nothing on it. The organiser's block grid keeps it a control. The
+  server's clock still decides: if it refuses at the send (`started`, `notice`...), the sheet says
+  the typed refusal in plain words ("Ce créneau n'est plus disponible"), never a word about a
+  device, a clock or a server. Like the server, only the START of a range is judged.
+  `SpaceGrid.past.svelte.test.ts` pins it. The same pass removed "encrypted on this device" from
+  the two poster hints: the screens say what the reader needs, not how it is done.
 - **A NIGHT WINDOW STILL RUNNING AFTER MIDNIGHT STAYS IN VIEW** (review of #2035). The server
   keeps a unit in `spaceSlots(from, to)` when its WINDOW's date is in the range, so every read
   starts THE DAY BEFORE the date shown (`slotsReadRange`), and the grid opens - and "today" leads -

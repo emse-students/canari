@@ -48,11 +48,6 @@
     initialCount?: number;
     /** Offered to whoever may mark the range unavailable instead. */
     onBlockInstead?: () => void;
-    /**
-     * The DEVICE's clock puts the start outside the booking window. Said, never enforced: the
-     * device may be wrong, and the server answers the request on its own clock.
-     */
-    windowNote: boolean;
     /** Re-reads the grid and the reader's bookings, the sheet staying open. */
     onReread: () => Promise<void>;
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
@@ -65,7 +60,6 @@
     run,
     initialCount = 1,
     onBlockInstead,
-    windowNote,
     onReread,
     onClose,
   }: Props = $props();
@@ -177,14 +171,6 @@
         </p>
       </div>
     </div>
-
-    {#if windowNote}
-      <p
-        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-3 py-2 text-xs"
-      >
-        {m.bookings_sheet_window_note()}
-      </p>
-    {/if}
 
     {#if run.length > 1}
       <div class="space-y-1.5">

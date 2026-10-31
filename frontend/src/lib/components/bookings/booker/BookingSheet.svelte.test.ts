@@ -69,7 +69,6 @@ function render(
         run: over.run ?? run,
         initialCount: over.initialCount,
         onBlockInstead: over.onBlockInstead,
-        windowNote: false,
         onReread: vi.fn(() => Promise.resolve()),
         onClose,
       },

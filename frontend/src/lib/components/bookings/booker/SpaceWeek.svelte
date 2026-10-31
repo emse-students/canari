@@ -74,7 +74,6 @@
         /** The units a drag over the grid already selected (1 for a tap). */
         initialCount: number;
         blockRun: SlotUnit[];
-        windowNote: boolean;
       }
     | { kind: 'block'; resource: BookerResource; run: SlotUnit[]; initialCount: number }
     | { kind: 'detail'; resource: BookerResource; unit: SlotUnit };
@@ -185,12 +184,17 @@
   /**
    * What tapping a unit opens: the reading of a taken unit; on a free one, the booking sheet - with
    * "block instead" for whoever may - or, in block mode, the block sheet with the run a drag drew.
-   * A unit the device's clock puts outside the window still opens, with a note: the server judges
-   * the START of the range, on its clock, and its answer is final.
+   * A free unit that cannot be booked now (over, too soon, too far, not open yet) is not offered:
+   * the grid draws it inert and nothing opens. Should the server still refuse at the send, its
+   * typed refusal is said in plain words (`refusals.ts`).
    */
   function pick(picked: BookerResource, unit: SlotUnit, count = 1) {
     if (unit.state !== 'free') {
       sheet = { kind: 'detail', resource: picked, unit };
+      return;
+    }
+    if (mode !== 'block' && windowRefusal(space, unit.startMs, nowMs) !== null) {
+      Log.d('BOOKINGS', 'pick ignored: the unit is outside the booking window');
       return;
     }
     const units = unitsInOrder(slots, picked.id);
@@ -211,7 +215,6 @@
       run: freeRunFrom(units, unit, bookingUnitLimit(space)),
       initialCount: count,
       blockRun: mayBlock ? freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES) : [],
-      windowNote: windowRefusal(space, unit.startMs, nowMs) !== null,
     };
   }
 
@@ -296,7 +299,6 @@
       resource={s.resource}
       run={s.run}
       initialCount={s.initialCount}
-      windowNote={s.windowNote}
       onReread={reread}
       onBlockInstead={s.blockRun.length
         ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun, initialCount: 1 })

@@ -13,6 +13,8 @@ import SpaceGrid from './SpaceGrid.svelte';
 
 const START = Date.parse('2026-11-02T08:00:00Z');
 const STEP = 30 * 60_000;
+// Before the first unit: every unit drawn is still to come, so the booker's grid offers it.
+const NOW = START - STEP;
 
 function unit(index: number, state: 'free' | 'blocked' = 'free'): SlotUnit {
   return {
@@ -45,10 +47,10 @@ async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false) {
     props: {
       space,
       resource,
-      layout: weekLayout(units, ['2026-11-02'], space, START),
+      layout: weekLayout(units, ['2026-11-02'], space, NOW),
       mode: 'day',
       blockMode,
-      nowMs: START,
+      nowMs: NOW,
       onPick,
     },
   });
@@ -92,7 +94,7 @@ describe('SpaceGrid - drag a range', () => {
         resource,
         layout: weekLayout(free(2), ['2026-11-02', '2026-11-03'], spaceOf(4), START),
         mode: 'week',
-        nowMs: START,
+        nowMs: NOW,
         onPick,
       },
     });
