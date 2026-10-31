@@ -147,14 +147,21 @@
           acceptée, la date d'acceptation ; un refus supprime la demande. Vous pouvez consulter la
           liste de vos abonnés et en retirer quelqu'un. Une personne dont vous avez accepté la
           demande voit vos publications personnelles et vos directs, quels que soient son campus, sa
-          formation ou son espace, y compris un membre du personnel, et elle est notifiée quand vous
-          publiez ou lancez un direct ; elle les trouve dans son onglet « Suivis », pas dans « Tout
-          », qui reste limité aux espaces. Elle ne voit jamais ce que vous publiez de façon anonyme.
-          La retirer de vos abonnés, se désabonner ou un blocage, dans un sens ou dans l'autre, lui
-          retire aussitôt cet accès. Pour ne jamais notifier deux fois la même personne et limiter
-          le nombre de nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande
-          (ou son acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un
-          retrait, un refus ou un blocage. Suivre une association ne demande rien à personne.
+          formation ou son espace, y compris un membre du personnel, et y compris les publications
+          parues avant votre acceptation ; elle est notifiée quand vous publiez ou lancez un direct.
+          Elle trouve vos publications dans son onglet « Suivis » et dans la recherche, pas dans «
+          Tout », qui reste limité aux espaces ; un direct en cours lui est montré quel que soit
+          l'onglet. Les commentaires, les réactions, les votes aux sondages et les messages du chat
+          d'un direct sur une de vos publications personnelles sont lus par tout son public, qui
+          comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de façon anonyme. La
+          retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ; un blocage, dans
+          un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement, qui ne revient
+          pas quand le blocage est levé : il faut une nouvelle demande. Les aperçus déjà reçus dans
+          ses notifications restent visibles jusqu'à leur effacement, au bout de 90 jours. Pour ne
+          jamais notifier deux fois la même personne et limiter le nombre de nouvelles demandes par
+          jour, le serveur garde aussi le fait qu'une demande (ou son acceptation) a déjà été
+          notifiée entre deux comptes, et sa date, même après un retrait, un refus ou un blocage.
+          Suivre une association ne demande rien à personne.
         </dd>
       </div>
       <div>

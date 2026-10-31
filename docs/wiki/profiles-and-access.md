@@ -1418,16 +1418,50 @@ nobody else.
 - **Notifications follow from the predicate**: the announcement sweep already narrows a personal post
   to the author's accepted followers who SEE it, and the live push (`liveAudienceSql`) to followers
   who may watch it; both now reach the cross-space follower, and neither touches an anonymous post.
-- **Revocation is the row**: unfollowing, "Retirer" (`removeFollower`, which also drops the feed
-  cache) or a block deletes or overrides the follow, and the next read no longer counts it. An
-  unfollow by the follower themself leaves their own Suivis page cached for at most its 30 s TTL.
+- **Revocation is the row**: unfollowing (`leave`), "Retirer" (`removeFollower`) or a block
+  deletes or overrides the follow, and the next read no longer counts it; the first two also drop
+  the feed cache, as a block already did, so no cached Suivis page outlives them.
+- **A block's left-over follow cannot come back (F2 of the review)**: the block's severing is
+  best-effort and harmless while the block stands (the predicate checks the block itself), so the
+  durable record that a severing is owed is THE BLOCK ROW: `UserBlocksService.unblock`
+  (core-service) severs the pair, both directions, BEFORE deleting it, and a severing that fails
+  refuses the unblock with a 503 and leaves the block in place. Nothing can recreate a follow in
+  between - an ask and an acceptance are both refused across a block inside their own statement.
+  After an unblock the two people follow each other only through a new request.
+- **The feed gate admits a follower (F3 of the review)**: `IN_FEED_AUDIENCE_SQL` also admits the
+  holder of one follow that opens across spaces, so a staff member with a campus, no cursus and no
+  membership is not pushed a post the gate then refuses (proved through `FeedAudienceGuard`).
+- **Grandfathered follows - held for the owner (F1 of the review)**: migration 114 recorded every
+  pre-request follow as accepted with `acceptedAt = createdAt`. Today they open like any accepted
+  follow. `GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES` (`reader-spaces.ts`) is the one switch: set to
+  `false`, only a follow accepted by an ANSWER (`acceptedAt > createdAt`) opens across spaces and
+  the feed gate. Both settings are proved in `follower-visibility.integration.spec.ts`; the owner
+  decides.
+- **No one-time notice (owner, 2026-10-31: "Non, ouvrir directement")**: the backlog planned a
+  notice to every person before the opening, so the grandfathered followers could be pruned first;
+  the owner waived it. The opening ships as is; the followers list pages to its end (below).
+- **The D38b request menu counts the follower, deliberately (2026-10-31)**: a cross-space follower
+  who may post as an association that can ask sees the "ask to carry" entry on a post they read as a
+  follower, and may ASK. Nothing widens before the AUTHOR consents, exactly as for a reader of the
+  same space.
+- **The three follow lists page by cursor (a precondition of the opening)**: the inbox, the
+  followers and the sent requests answer at most `FOLLOW_PAGE_MAX` (100) rows a page, newest first,
+  ordered `(instant DESC, id DESC)`; each entry carries an opaque `cursor` (`follows/follow-cursor.ts`:
+  PostgreSQL's own text of the instant plus the row id - never a JS `Date`, which drops the
+  microseconds) and `?after=<cursor>` starts the next page right after it, so a row answered or
+  removed while the list is read shifts nothing. `offset` is gone (older clients only ever sent 0).
+  The client appends pages behind a "Voir plus" button (`nextFollowCursor`, `appendFollowPage`);
+  a list of 250 is proved reachable whole, server and client.
 - **Proof**: `spaces/follower-visibility.integration.spec.ts` (real PostgreSQL: accepted / pending /
   none x same space / other space x personal / anonymous / association post, the live, the
   announcement and the live push, a block either way with the row left behind, a removal, an
   unfollow, a read grant, Tout against the default for every non-follower, monotone newly-reached);
   `lives.integration.spec.ts` (an accepted cross-space follower is pushed, listed and let in until a
   block or a removal; a pending one is not); `posts.service.visibility.spec.ts` (which feed arms
-  carry the follower disjunct). `reader-spaces` and `personal-republications` PostgreSQL specs were
+  carry the follower disjunct); `review-cohort.integration.spec.ts` (a follow across the cohort
+  boundary opens nothing, either way); `follow-requests.integration.spec.ts` (250 rows per list,
+  a removal between two pages, a forged cursor, the unfollow's cache drop);
+  `core-service/src/users/user-blocks.service.spec.ts` (sever before lifting, 503 keeps the block). `reader-spaces` and `personal-republications` PostgreSQL specs were
   re-pointed where the opening changes who sees or is newly reached.
 
 ### The review cohort - store reviewers in a world of their own (2026-10-31)

@@ -258,11 +258,36 @@ function sharesSpaceWithAuthorSql(author: string, user: string): string {
 function acceptedFollowerOfAuthorSql(author: string, user: string): string {
   return `(EXISTS (SELECT 1 FROM user_follows vis_follow
       WHERE vis_follow."followedUserId" = ${author} AND vis_follow."followerUserId" = ${user}.id
-        AND ${acceptedFollowSql('vis_follow')})
+        AND ${followOpensAcrossSpacesSql('vis_follow')})
     AND NOT EXISTS (SELECT 1 FROM user_blocks vis_block
       WHERE (vis_block."blockerId" = ${user}.id AND vis_block."blockedId" = ${author})
          OR (vis_block."blockerId" = ${author} AND vis_block."blockedId" = ${user}.id))
     AND ${sameSideOfReviewCohortSql(author, `${user}.id`)})`;
+}
+
+/**
+ * F1 OF THE WP-F5 SECURITY REVIEW - HELD FOR THE OWNER (2026-10-31): whether a GRANDFATHERED follow
+ * opens across spaces. Migration 114 recorded every follow that existed before follow requests as
+ * accepted, with `acceptedAt = createdAt` - nobody ever answered it. `true` (today): every accepted
+ * follow opens, grandfathered ones included. `false`: only a follow ACCEPTED by an answer, whose
+ * `acceptedAt` is strictly after its ask (`createdAt`; an answer is always a later transaction), so
+ * a follow nobody approved keeps filling Suivis from shared spaces but opens nothing beyond them.
+ * THE OWNER'S ANSWER IS THIS ONE CONSTANT; `follower-visibility.integration.spec.ts` proves both.
+ */
+export const GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES = true;
+
+/**
+ * SQL condition: the `user_follows` row aliased `alias` opens its followed person's personal posts
+ * and lives across spaces - an accepted follow, and (with `grandfathered` false) one accepted by an
+ * answer rather than by migration 114.
+ */
+export function followOpensAcrossSpacesSql(
+  alias: string,
+  grandfathered: boolean = GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES
+): string {
+  return grandfathered
+    ? acceptedFollowSql(alias)
+    : `(${acceptedFollowSql(alias)} AND ${alias}."acceptedAt" > ${alias}."createdAt")`;
 }
 
 /**
@@ -477,7 +502,11 @@ export function eventVisibleToViewerSql(event: string, viewer: string): string {
 /**
  * THE FEED GATE: may user `$1` use the feed at all - an admin, someone with at least one space, a
  * member of at least one association (whose content D21 opens to them), a named reader holding a
- * read grant (WP7), or a review account (whose cohort is a space of its own). Answers `inAudience`.
+ * read grant (WP7), a review account (whose cohort is a space of its own), or - since WP-F5 - the
+ * holder of at least one follow that opens a person's posts across spaces. Without that last one a
+ * staff member with no space and no membership was PUSHED a followed person's post and then refused
+ * the feed that holds it (F3 of the WP-F5 review): the push and the read now agree. Which posts
+ * they get is still the per-post predicate. Answers `inAudience`.
  */
 export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_user WHERE gate_user.id = $1 AND (
     ${isAdminSql('gate_user')}
@@ -485,6 +514,8 @@ export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_use
     OR ${inReviewCohortSql('gate_user.id')}
     OR EXISTS (SELECT 1 FROM association_members gate_member WHERE gate_member."userId" = gate_user.id)
     OR EXISTS (SELECT 1 FROM read_grants gate_grant WHERE gate_grant.user_id = gate_user.id)
+    OR EXISTS (SELECT 1 FROM user_follows gate_follow
+      WHERE gate_follow."followerUserId" = gate_user.id AND ${followOpensAcrossSpacesSql('gate_follow')})
   )) AS "inAudience"`;
 
 /**

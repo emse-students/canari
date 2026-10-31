@@ -18,11 +18,14 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import type { ExecutionContext } from '@nestjs/common';
 import { FollowRequestsService } from '../follows/follow-requests.service';
+import { FeedAudienceGuard } from '../posts/feed-audience.guard';
 import { liveAudienceSql } from '../lives/live-announcer';
 import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,
+  followOpensAcrossSpacesSql,
   liveVisibleToViewerSql,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToUserSql,
@@ -57,12 +60,18 @@ const USERS: Record<string, { campus: string | null; cursus: unknown[] }> = {
   blockedByAuthor: { campus: 'gardanne', cursus: ISMIN_GA },
   // Gardanne, accepted - and then THEY blocked the author; the row is left behind as well.
   blockedTheAuthor: { campus: 'gardanne', cursus: ISMIN_GA },
+  // Staff with a campus, no cursus, no membership: outside the feed gate, and follows nobody.
+  staffAlone: { campus: 'saint-etienne', cursus: [] },
+  // The same, but ASKED to follow the author: a request opens neither the posts nor the feed.
+  staffAsked: { campus: 'saint-etienne', cursus: [] },
 };
 const EVERYONE = Object.keys(USERS);
 
 /** The follows of the author, by status. Every accepted one survives in the table on purpose. */
 const ACCEPTED = ['farFollower', 'personnel', 'blockedByAuthor', 'blockedTheAuthor'];
-const PENDING = ['farPending'];
+const PENDING = ['farPending', 'staffAsked'];
+/** Of the accepted follows, the one migration 114 recorded: `acceptedAt = createdAt` (F1). */
+const GRANDFATHERED = 'personnel';
 
 const A1 = '00000000-0000-4000-8000-0000000005a1'; // (ICM, saint-etienne), as migration 071 seeds
 const A2 = '00000000-0000-4000-8000-0000000005a2'; // the whole Gardanne campus
@@ -159,11 +168,13 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
         JSON.stringify(u.cursus),
       ]);
     }
+    // Asked an hour ago, accepted now - except the grandfathered one, accepted "when it was made".
     for (const follower of ACCEPTED) {
       await client.query(
-        `INSERT INTO user_follows ("followerUserId", "followedUserId", status, "acceptedAt")
-           VALUES ($1, 'author', 'accepted', now())`,
-        [follower]
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", "createdAt", status, "acceptedAt")
+           VALUES ($1, 'author', now() - interval '1 hour', 'accepted',
+                   CASE WHEN $1::varchar = $2::varchar THEN (now() - interval '1 hour')::timestamp ELSE now() END)`,
+        [follower, GRANDFATHERED]
       );
     }
     for (const follower of PENDING) {
@@ -363,5 +374,46 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     } finally {
       await client.query('ROLLBACK');
     }
+  });
+
+  it('the FEED GATE admits a follower with no space and no membership, so the push and the read agree (F3)', async () => {
+    const guard = new FeedAudienceGuard({
+      manager: {
+        query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
+      },
+    } as never);
+    const asking = (userId: string) =>
+      guard.canActivate({
+        switchToHttp: () => ({ getRequest: () => ({ headers: { 'x-user-id': userId } }) }),
+      } as unknown as ExecutionContext);
+    // personnel has no space and no membership: told of the author's post (announce above), and let in.
+    await expect(asking('personnel')).resolves.toBe(true);
+    // Neither a staff member following nobody, nor one whose request is unanswered.
+    await expect(asking('staffAlone')).rejects.toMatchObject({ status: 403 });
+    await expect(asking('staffAsked')).rejects.toMatchObject({ status: 403 });
+    // And a removal closes the gate again with the reach: the row is the whole fact.
+    await client.query('BEGIN');
+    try {
+      await client.query(`DELETE FROM user_follows WHERE "followerUserId" = 'personnel'`);
+      await expect(asking('personnel')).rejects.toMatchObject({ status: 403 });
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('F1, HELD: the switch that would open only follows accepted by an ANSWER, not by migration 114', async () => {
+    const openers = async (grandfathered: boolean) =>
+      ids(
+        (
+          await client.query(
+            `SELECT f."followerUserId" AS id FROM user_follows f
+              WHERE f."followedUserId" = 'author' AND ${followOpensAcrossSpacesSql('f', grandfathered)}`
+          )
+        ).rows
+      );
+    // Today (`GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES` true): every accepted follow.
+    expect(await openers(true)).toEqual([...ACCEPTED].sort());
+    // Flipped: the grandfathered follow (acceptedAt = createdAt) no longer opens; a pending one never did.
+    expect(await openers(false)).toEqual(ACCEPTED.filter((u) => u !== GRANDFATHERED).sort());
   });
 });
