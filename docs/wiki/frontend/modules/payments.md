@@ -830,7 +830,7 @@ characters, fails its render naming the secret rather than starting a service th
 
 ### The cashiers (enrolment lot 3)
 
-The owner's decisions of 2026-10-30 ([backlog](../../backlog.md#the-lydia-enrolment-and-cashier-chantier---decided-by-the-user-on-2026-10-30)):
+The owner's decisions of 2026-10-30 ([backlog](../../backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)):
 Canari keeps its own list of the people Lydia lists as cashiers of an association's Business
 (`lydia_cashiers`, migrations 118 and 119), managed by `MANAGE_PAYOUT_ACCOUNT` holders; a cashier is a
 MEMBER of the association, and the manager types their number (E.164). Lydia's SMS stays on.
