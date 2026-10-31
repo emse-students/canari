@@ -21,6 +21,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
 import {
   OPENMLS_BASE,
@@ -89,8 +90,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       query: jest.fn(async (sql: string) =>
         sql.includes('FROM dm_seat_evictions') && txEvictionRow ? [txEvictionRow] : []
       ),
+      createQueryBuilder: () => arrivalUpdateBuilder,
       getRepository: (entity: unknown) => {
         if (entity === Group) return { update: groupUpdate, find: txGroupFind };
+        if (entity === GroupMembershipInterval) return txIntervalRepo;
         // A Welcome carried by the commit is written in the same callback as the advance.
         if (entity === QueuedMessage) return txQueuedRepo;
         // The carried Welcome's target seat, re-read under a lock in the advance's transaction.
@@ -124,6 +127,15 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     values: jest.fn().mockReturnThis(),
     orIgnore: jest.fn().mockReturnThis(),
     execute: jest.fn().mockResolvedValue({}),
+  };
+  /** The arrival a lifted ask is re-dated to (`dateArrivalAtAdmission`): its interval... */
+  const txIntervalRepo = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
+  /** ...and its device rows, through the manager's own update builder. */
+  const arrivalUpdateBuilder = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({ affected: 2 }),
   };
   const txMembershipRepo = {
     createQueryBuilder: jest.fn(() => membershipInsertBuilder),
@@ -2610,10 +2622,39 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(set).toEqual({ awaitingAdmission: false });
     });
 
+    /**
+     * ADDED = ARRIVED (user, 2026-10-21): the link dated the person's interval and device rows when
+     * they ASKED; the Add that answers re-dates both, in the same transaction, so no history answer
+     * and no stream read hands them what was sent while they waited outside.
+     */
+    it("dates the arrival of every person whose ask it lifts at this Add, and nobody else's", async () => {
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      txAsks = [{ id: 'seat-2', userId: 'user-2' }];
+
+      await accept([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      expect(txIntervalRepo.update).toHaveBeenCalledTimes(1);
+      const [where, set] = txIntervalRepo.update.mock.calls[0] as [
+        { groupId: string; userId: FindOperator<string[]>; leftAt: unknown },
+        { joinedAt: Date; admittedAt: null },
+      ];
+      expect(where.groupId).toBe('group-1');
+      expect(where.userId.value).toEqual(['user-2']);
+      expect(where.leftAt).toEqual(IsNull());
+      expect(set.admittedAt).toBeNull();
+      expect(set.joinedAt).toBeInstanceOf(Date);
+      expect(arrivalUpdateBuilder.update).toHaveBeenCalledWith(DeviceGroupMembership);
+      expect(arrivalUpdateBuilder.where).toHaveBeenCalledWith(expect.any(String), {
+        groupId: 'group-1',
+        people: ['user-2'],
+      });
+    });
+
     it('lifts no ask when it admits nobody', async () => {
       await accept();
 
       expect(txSeatRepo.update).not.toHaveBeenCalled();
+      expect(txIntervalRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses the committer itself and a device with no KeyPackage, recording neither', async () => {

@@ -1618,7 +1618,12 @@ years), which no decision ever chose. 6 of 15 live group conversations had admit
 and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds the invitee's span,
 the receiver drops its own) is on `main`. **Step A is MERGED (#2270), in no release yet: every history answer, the
 push included, is addressed to the asking device and filtered on its own windows; migration `035`
-is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; `minClientVersion` past A by
+is applied by the deploy, so the user's yes is the release.** **Two server holes closed by a draft
+pull request (2026-10-31, to ship with #2791):** a link joiner's arrival was dated at their ASK, so
+every answer handed them what was sent while they waited for a member - now dated at the member's
+Add; and the history stream served a newcomer the ciphertexts of the whole past (it dropped gaps
+only) - it now drops the span before arrival too
+([history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)). Owed, in order: the rig row GRP-ADDR-1, with a link joiner who waited before the Add; `minClientVersion` past A by
 [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24); option B, sealing the answer to the asker (X25519 in `mls-core`, an
 ephemeral key carried inside the MLS-signed request). **DECIDED by
 the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;

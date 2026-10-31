@@ -69,10 +69,13 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
+  withheldWindows,
   withholdExcludedHistoryRows,
+  withholdsArrivalSpan,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
@@ -4255,8 +4258,16 @@ export class MessagingService {
       { groupId, id: In(flagged.map((s) => s.id)), awaitingAdmission: true },
       { awaitingAdmission: false }
     );
+    // THE ARRIVAL IS THIS ADD, NOT THE ASK (user, 2026-10-21: "added = arrived"): the link dated the
+    // person's interval and device rows when they asked, and every history answer and the stream
+    // would hand them what was sent while they waited outside.
+    const dated = await dateArrivalAtAdmission(
+      m,
+      groupId,
+      flagged.map((s) => s.userId)
+    );
     this.logger.log(
-      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask`
+      `[${tag}][${traceId}] ADMITTED group=${groupId} users=${flagged.length} door=admits - a member's Add answered their invitation-link ask; arrival dated at this Add (intervals=${dated.intervals} devices=${dated.devices})`
     );
     return flagged.map((s) => ({ userId: s.userId, askId: s.id }));
   }
@@ -6429,7 +6440,7 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownExclusionWindows(headerUserId, groupId);
+      const windows = await this.ownWithheldWindows(headerUserId, groupId);
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -6450,9 +6461,17 @@ export class MessagingService {
   }
 
   /**
-   * The caller's OWN exclusion windows in `groupId` - the spans they were out of the group (user,
-   * 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left, and for
-   * an internal caller with no user header, which reads on nobody's behalf.
+   * Everything the CALLER may not be handed from `groupId`'s history stream: the spans they were out
+   * of the group (user, 2026-10-14: a Remove holds against a later re-add) and, in a GROUP
+   * conversation, everything before their first arrival (user, 2026-10-21: a newcomer reads nothing
+   * from before they were added). The same {@link withheldWindows} the exclusions route answers the
+   * caller with, which every history answer is filtered on - so the server's own stream never hands
+   * a newcomer the ciphertexts an answering member withholds, whatever the reader's build does with
+   * them. Empty for an internal caller with no user header, which reads on nobody's behalf.
+   *
+   * A 1:1 and a key group withhold no arrival span ({@link withholdsArrivalSpan}), so for them this is
+   * the gaps alone, as it always was. A member's NEW device reads everything since its PERSON's
+   * arrival: intervals are per user, never per device.
    *
    * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
    * Postgres hiccup answers that group empty, never the whole batch.
@@ -6462,8 +6481,13 @@ export class MessagingService {
    * since their removal would be dropped although they are a member again. The repair is the one
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
+   *
+   * **A CALLER WITH NO INTERVAL AT ALL GETS NO ARRIVAL SPAN.** Every enrolment opens one
+   * (`ensureGroupMember`) and migration 030 backfilled the rest, so an admitted member always holds
+   * one; a caller with none is a global admin reading a group it is not in, which this filter has
+   * never narrowed.
    */
-  private async ownExclusionWindows(
+  private async ownWithheldWindows(
     headerUserId: string | undefined,
     groupId: string
   ): Promise<ExclusionWindow[]> {
@@ -6472,7 +6496,7 @@ export class MessagingService {
     const read = () =>
       this.groupRepo.manager.find(GroupMembershipInterval, {
         where: { userId, groupId },
-        select: { groupId: true, joinedAt: true, leftAt: true },
+        select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
     if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
@@ -6487,7 +6511,32 @@ export class MessagingService {
       // removal may have closed it since - the table is the only answer to both.
       intervals = await read();
     }
-    return exclusionWindows(intervals);
+    if (intervals.length === 0) return [];
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: {
+        id: true,
+        isGroup: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+        createdAt: true,
+      },
+    });
+    if (!withholdsArrivalSpan(group)) return exclusionWindows(intervals);
+    // The person's earliest device row in the group, the second record of their arrival - read as
+    // the exclusions route reads it, so the two answers are one.
+    const earliest = await this.deviceGroupRepo
+      .createQueryBuilder('d')
+      .select('MIN(d.createdAt)', 'firstDeviceAt')
+      .where('d.groupId = :groupId', { groupId })
+      .andWhere('d.userId = :userId', { userId })
+      .getRawOne<{ firstDeviceAt: Date | string | null }>();
+    return withheldWindows(
+      intervals,
+      true,
+      earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null,
+      group?.createdAt ?? null
+    );
   }
 
   /**
@@ -6541,7 +6590,7 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownExclusionWindows(headerUserId, groupId);
+          const windows = await this.ownWithheldWindows(headerUserId, groupId);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
