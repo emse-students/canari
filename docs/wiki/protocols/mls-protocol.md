@@ -145,7 +145,7 @@ kick gets. The current device has no delete button at all.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
+| POST | `/api/mls/invitations/status` | Report a device's seat `active` or `pending`: promotes or demotes an existing row, never creates one |
 | GET | `/api/mls/invitations/pending/:userId/:deviceId` | Invitations to process |
 | GET | `/api/mls/device-memberships/:userId/:deviceId` | All memberships for device |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
@@ -213,7 +213,7 @@ no catch-up, the existing worker-retry + fallback stands.
 3. Creator: `fetchUserDevices(peerId)` -> get peer's key packages
 4. Creator: `addMembersBulk(groupId, devices, excludeDeviceIds)` -> one staged transaction (C7-A): stage the Add, validate the epoch (`POST /api/mls/commit`), merge on accept and broadcast the commit / roll back on reject. Returns `{ welcome, ratchetTree, addedDeviceIds, skipped }` (`skipped` = `{ deviceId, reason }[]`, the reason a typed `SkippedKeyPackageReason` classified in Rust - see [chat-delivery](../services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)) (the ratchet tree is exported post-merge).
 5. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
-6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` - **BEFORE step 5 on every add path**: the server names a joiner before its Welcome can arrive, so an inviter dying between the two leaves nothing half-registered; a user whose registration fails is sent no Welcome (`groupCreation.inviteOrder.test.ts`)
+6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` - **BEFORE step 5 on every add path**: the server names a joiner before its Welcome can arrive, so an inviter dying between the two leaves nothing half-registered; a user whose registration fails is sent no Welcome (`groupCreation.inviteOrder.test.ts`). **Since ADM-3 the call enrols nobody but the caller, into an empty roster**: the peer was enrolled by the accepted commit of step 4, and the call writes their device rows or answers `409 MEMBER_NOT_ADMITTED` ("The commit is the one writer of a new person")
 
 Only the bulk commit must stay unique (staged under the add-lock). Everything around it is
 plain HTTP and runs in parallel (`groupCreation.ts` / `deliverWelcomes` in `groupActions.ts`):
@@ -510,6 +510,36 @@ reason: a malformed frame would pass the first assertion too).
 
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. **A 403 on the GroupInfo read is a membership ANSWER, not a failed attempt**: it arrives typed (`NotAGroupMemberError`) and retires the conversation instead of falling back, which is what makes this seam terminate on a proof rather than on its throttle — see [mls-recovery-ladder](mls-recovery-ladder.md). Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
+### Our own frame from a PAST epoch was called a loss (2026-10-25)
+
+`CannotDecryptOwnMessage` is only reached at the epoch the frame was sent in. One sent in an epoch
+this device has since left is refused FIRST by the epoch check, as `past epoch application frame`
+(OpenMLS `TooDistantInThePast`), and the live pipeline read that as a message LOST: a `LOST frame`
+line blaming a re-join that never happened, then `Frames are being lost ... reconciling this
+conversation` for a healthy group. Reproduced by the campaign's GAP-2 row, which hands a device its
+own captured frame three epochs later under a queue id it never saw.
+
+**The envelope already says whose frame it is**, so the question is asked of that fact and never of
+MLS's refusal. `isFrameFromThisDevice` (`mls-client/ownDeviceFrame.ts`) is ONE predicate for both
+places that meet such a frame: the live handler (`setupMessageHandler`, before the key-group, the
+unknown-group and the known-group branches) and the archive replay (`history.ts`, unchanged in
+behaviour). It holds when the envelope names this account AND this device's CURRENT id; the frame is
+then ACKed with one `[MLS] Own frame for <group8>… delivered back to this device (...) - ACKed, not
+offered to MLS; ...` line at WARN and nothing else - no decrypt, no ledger, no loss, no reconcile. It
+is a warning because nothing should reach it: the fan-out excludes the sending device (`isSender` in
+chat-delivery's `sendMessage`), so a frame here was addressed back to its writer. The line names the
+two suspects: a rig injecting it (GAP-2 does, deliberately), or the sender exclusion missing -
+`isSender` compares `body.senderId` with the membership `userId` case-sensitively while the send route
+accepts a case-insensitive match. That mismatch is UNMEASURED; this line is what would show it.
+
+- **The device decides, not the user**: a frame of this account's OTHER device is decryptable and
+  wanted, and still reaches MLS.
+- **Only the current id**: an id abandoned at a rotation (`abandonedDevices.ts`) named another MLS
+  client, whose frames this state never held - they are handled as a foreign sender's.
+- An envelope without `senderDeviceId` is never ours by this test.
+
+Pinned by `setupMessageHandler.ownFrame.test.ts`.
+
 ### The base travels inside every commit submission (COMM-22)
 
 Every commit this client makes - external join, staged add, staged remove - submits the GroupInfo
@@ -537,6 +567,14 @@ minted afterwards).
 
 Nothing is replayed to it at that promotion, and nothing is replayed at any other since 2026-09-28: a device joining at the CURRENT epoch cannot decrypt older ciphertexts, the history it actually needs comes re-encrypted through the reconciliation below, and a device a commit ADMITS is queued what it can open at send time ([channel-encryption section 20](channel-encryption.md)).
 
+**Receivers enforce the RFC 9420 external-commit rule: an external commit may remove only the joiner's own prior leaf (2026-10-30).** Section 12.4.3.2 allows at most one Remove in an external commit, for "an old version of" the joiner - the resync. openmls 0.9 checks the proposal list's shape (one ExternalInit; ExternalInit, Remove and PreSharedKey inline) and leaves the identity half to the application (`public_group/validation.rs`: "This MUST be checked by the application"). Two places now check it, before anything moves:
+
+- **Every member, before the merge** (`refuse_foreign_external_remove`, `mls-core/src/messaging.rs`): more than one Remove, or a Remove of a leaf whose credential is not the joiner's, is refused as `MlsError::ForeignExternalRemove` and logged at ERROR. Nothing is merged. Its kind is `SameEpochRefusal` and its text carries the `same-epoch refusal` marker, so both FFI boundaries ACK it and never queue or heal on it. **Its text is `group=<id> removed_leaf=<n>` and nothing else**: the identities are credential bytes the committer chose, and the web classifies this text by substring, so a credential spelling an earlier marker (`unreachable`, `EVICTED:`) would reclassify the refusal. They are on the ERROR line only, escaped.
+- **The delivery service, before the membership gate** (`assertExternalRemoveIsOwnPriorLeaf`, `messaging.service.ts`): `readCommitFrame` reads the index of every Remove from the clear proposals, and the gate reads whose leaf it is from the tree of the stored base (`groupInfoLeafIdentity`, `utils/mls-group-info.ts`) - the GroupInfo the joiner was served. With no base at or past the commit's epoch the leaf cannot be named, and the commit is refused (`commit_identity_mismatch`). **A base PAST the commit's epoch is a race the commit lost, and it is the epoch gate's to answer**: a legitimate resync built on base N and submitted after the group moved to N+1 reads `epoch_mismatch` and rebuilds, where a 403 would end its retry. That is only left to the epoch gate while the group's `activeEpoch` is past the commit too - it never moves back, so the gate is certain to refuse; a base ahead of a group still at the commit's epoch is refused here. Identities are compared in `canonicalDeviceKey` form (`utils/sanitize.ts`), the one this service uses everywhere.
+- **The send routes relay only private (application) frames; a public handshake frame goes through the commit route.** `POST /mls/send` (`clientSendRefusal`) and `POST /mls/push/send` refuse a `PublicMessage` (`isPublicMlsFrame`) with `public_frame_refused` and an ERROR line, so no external commit reaches members without the gate above. No legitimate sender is refused: every client seals with `create_message` in `mls-core` (web through WASM, Android and iOS background sends through `send_authored_message`), and no group sets a wire-format policy, so openmls's default `PURE_CIPHERTEXT` makes every application frame and proposal a `PrivateMessage`; commits, external ones included, go to `POST /mls/commit`.
+
+**"The joiner's own" means the same DEVICE identity (`userId:deviceId`, user half compared ignoring ASCII case), not the same user.** The only Remove our joins carry is the one openmls's external-commit builder adds by itself: the leaf holding the joiner's own signature key, which one device holds under one credential (`welcome.rs`). A further device of the same user enters beside its siblings, never in place of one ([An unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)). A device that lost its state presents a NEW key, so its join carries no Remove at all. Pinned by `mls-core/tests/external_commit_remove_rule.rs` (a fresh join, the resync through `join_by_external_commit`, a resync built by hand, and the refused Remove of another member), `utils/mls-group-info.spec.ts`, `utils/mls-frame-epoch.spec.ts` the `an external commit carrying a Remove` cases of `messaging.commit-log.spec.ts` (which use bytes openmls produced, the lost race included), and the public-frame cases of `messaging.controller.client-fields.spec.ts` and `push.controller.commits.spec.ts`.
+
 On a successful external join the device also marks its conversation `active` (external join does not go through the Welcome path that normally promotes it). The pre-join history it cannot decrypt is not asked for here: it comes from the reconciliation that every connection runs, described below.
 
 **History is no longer solicited from the join event, and that whole mechanism is gone.** What stood here until 2026-08-12 - `solicitHistory`, `historySolicit.ts`, the durable `awaiting-history` registry with its 30-day horizon, the `INITIAL_SOLICIT_DELAY_MS` deferral, the retry backoff, the 30 s response window and its "history pending" banner, the vouching that let one member's silence mean "ask someone else" - was measured in production and found unable to terminate: the marker that gated the ask was discharged only by a peer that answered empty AND was not itself awaiting, and both devices of a DM carried one. It is replaced, as a clean break with no compatibility layer, by a **state-key comparison run on every connection**.
@@ -550,6 +588,161 @@ The single page for it is **[history-reconciliation](history-reconciliation.md)*
 Reception is in two steps, and the order matters. The add-path (`batchAddMessages`) takes only `{senderId, content, messageId, timestamp}` because `AddMessageToChatOptions` cannot carry mutation state; the metadata is merged **afterwards**, onto the messages just added *and* onto any already present (that second half is what makes bundle mutations land on our OWN sent messages, previously skipped as duplicates).
 
 **The unread badge is recomputed, never transported**, and it is derived from the read watermark rather than from any per-message field - see [Read state becomes a watermark](history-reconciliation.md#read-state-becomes-a-watermark).
+
+### A commit that loses a race is rebuilt on proven progress, or surfaced (2026-10-25)
+
+The gate admits ONE commit per epoch. A member's gesture that loses the race is refused
+`epoch_mismatch` (the winner landed) or `concurrent_commit` (the winner held the gate's lock) - one race
+seen at two instants, read alike by `isCommitRaceRefusal` (`CommitRefusedError.ts`). Every gesture now
+ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
+
+- **Rebuilt on proven progress, never on a count or a clock.** `rebuildableRefusal` rebuilds only when
+  the refusal's catch-up took the local epoch past the base the refused commit RECORDED, or on an
+  overtaken seat claim. `rebuildOnRace` (`utils/chat/commitRace.ts`) is the one loop; the bulk Add of
+  an invitation, a 1:1 creation and a group's own devices go through `addDevicesRebuildingOnRace`,
+  which reads the tree first and offers only the devices still without a leaf; the pending-invitation
+  sweep wraps its single Add; the Remove (`groupActions.ts`, see
+  [history-reconciliation](history-reconciliation.md)) and the key-group admission
+  (`admitNewcomer.ts`) apply the same rule.
+- **A `concurrent_commit` reads the commit log once** (`catchUpOnRefusedCommit`): its `currentEpoch` is
+  what the gate read while the winner held the lock, so "not ahead" is not an answer. A winner that
+  landed is applied - the progress the rebuild needs; one that did not leaves the epoch, and no gap is
+  marked. CC-4 lost an Add here: a leaf refresh accepted at epoch 3, the Add beside it refused with
+  `currentEpoch=2`, nothing rebuilt. That read says so in ONE `[COMMIT]` line, never in the replay's
+  `[GAP]` narration: an ordinary race is not a gap, and the GAP rows assert the absence of `[GAP]`
+  lines. The replay's lines are carried, as detail, only when the log shows the server ahead and the
+  group is marked.
+- **Every pass re-checks the gesture's premise BEFORE it stages**, because the commit that won may be
+  a Remove of the very person being added - and a rebuild must never re-admit someone a removal just
+  took out. An abandoned Add throws `AddAbortedError` (`commitRace.ts`), typed by `why`: nothing
+  staged, nothing registered, no history served.
+  - The sweep (`confirmPendingAddPremise`, `actions.ts`) re-runs `automaticAdmission` on a tree
+    confirmed at the server's epoch (`not-a-member-device` when the user holds no leaf there - a
+    removed person is a new person again), then re-reads the pending row (`invitation-withdrawn` when
+    a removal's record deleted it), in EVERY pass, the first included. The confirmed tree is read
+    ONCE PER PASS of a group (`pendingAddFactsOf`: rows judged at one epoch share one commit-log read,
+    a rebuild reads afresh); the pending list is read on EVERY attempt, because a removal deletes the
+    row before its commit lands - a list kept for the pass would re-admit a device being removed.
+  - A member's invitation (`rosterPremise`, `groupCreation.ts`) re-reads the roster before each
+    REBUILD: a person on it when the invitation began and off it now (`removed-meanwhile`) was removed
+    concurrently - an approved join ask another member declined - and the member is told so. What it
+    cannot see: a person absent at the start, added AND removed by other commits between two passes.
+  - A read that would show the premise and fails is `premise-unreadable` - the rebuild is not
+    justified, and the invitation answers `commit-race-lost` (retry). That sentence is slightly
+    inaccurate there: the member reads "the conversation changed at the same moment", while what
+    failed is the read that would have shown whether it had. Both lead to the same gesture, a retry.
+- **A device is filtered out of an Add only on a tree CONFIRMED CURRENT** (`readConfirmedTree`,
+  `utils/chat/confirmedTree.ts` - the helper a Remove's "out" reads too, the whole confirmation under
+  the MLS lock like rung 1). A tree behind a Remove still shows the removed device: filtering on it
+  skipped an Add that was owed, and when every candidate was filtered the invitation answered `added`
+  for people nobody added. A tree holding none of the candidates needs no confirmation (the gate
+  decides the commit built on it); one that cannot be confirmed aborts `tree-unconfirmed`, never
+  `added`. All three bulk Adds go through it: an invitation, a 1:1 creation, a group's own devices.
+- **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
+  durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
+  reason - `commit-race-lost`, `add-lock-busy`, `removed-meanwhile`, `tree-unconfirmed` - and every reason is a sentence the member sees
+  (`reportBulkAdditionRefusal`); the member retries. A sweep's pending row is durable: a race without
+  progress, or a busy add lock, leaves it `pending` for the next sweep.
+
+Not covered: the welcome_request handler (`actions.ts`, the requester asks again by itself), and a
+`concurrent_commit` whose winner has not landed when the log is read - an event-driven wait for the
+winner's epoch is the candidate ([backlog](../backlog.md)).
+
+### An invitation whose KEPT commit did not land is re-planned, or the member is told (2026-10-25)
+
+The rebuild above runs inside the gesture. An Add whose answer was LOST is not refused there: it is
+KEPT (`commitSubmission.ts`) and the gesture returns. The settlement that later finds it did not land
+(`settleUnresolvedLocked`: the resubmission answered `epoch_mismatch`; `settleUnresolvedCommitFromLog`:
+another commit holds its base) CLEARED the stage and caught up - and with the stage went the only
+copy of the invitation. OFF-3 (1.4.1 campaign, 2 of 2): W1 invited W5 at epoch 2 and was cut, W2
+took the group to 5, W1's return logged `refused - cleared`, healed, and W5 never got a seat.
+
+- **The invitation rides in the commit's intent** (`CommitIntent.invitation`: the invited users and
+  the ones on the roster when the gesture BEGAN), written by the stage in the same platform call as
+  the commit, so it is on disk before the first request. Only a member's invitation carries one: an
+  automatic Add is re-derived from its server row, a Remove by the roster collector.
+- **The settlement records it BEFORE the clear** (`owedInvitations.ts`, `[INVITE_OWED]` lines), in
+  the per-account `localStorage` record, synchronously, under the MLS lock - keyed by group and base
+  epoch, so a stage a reload brings back is refused and recorded again under the SAME key.
+- **The cause is the gate's TYPED reason, never the shape of its answer.** A business refusal
+  (`committer_not_member`, `welcome_target_not_member`, `departed`, ...) comes back in a 200 body
+  exactly as the race does, so only `epoch_mismatch` is a `race` (re-planned); every other reason, and
+  a 4xx's code, is `refused` and recorded WITH its reason (told, never re-planned).
+- **It is re-planned after the lock is let go** (`replanOwedInvitations`, a single-flight drain):
+  at once in session, and by a connection's settlement once EVERY kept stage is settled (a drain run
+  before would re-plan an invitation whose stage that settlement is about to record again). **Never
+  while this device holds an add lock**: the server's lock is not re-entrant, so a re-plan run under
+  one would be refused its own and read as "busy" - the drain waits, and the release asks for it.
+- **The add lock has a token per acquisition, and a release this device owes is sent before its
+  next acquire** (`add-lock.ts` on the server, `addLockMarkers.ts` on the client). The server's lock
+  (`SET NX EX`) refuses even its own holder, so a release lost with the connection - or never sent by
+  a page that died mid-Add - would refuse the re-plan for the whole TTL. Every acquisition is marked
+  DURABLY with its token until a release of it is answered, so a reload is the same case as a live
+  page. The marker is claimed synchronously, so two racing acquires never both send it, and no
+  release is sent for a group this page holds. The release names its token, so a late one frees
+  that acquisition or nothing: never a lock taken since, by this page or by the Android background
+  service, which also names its token since this change. A release with no token is the legacy
+  owner-only one
+  ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-add-lock-released-by-owner-alone-with-no-token-2026-10-25)).
+- **The owed release says so on the server line.** Two cases print `released=false by=token`: a slow
+  Add whose TTL ran out under it, and a revived page's owed release of a lock that already expired.
+  Only the client knows which one it is, so the owed release (the one through `claimAddLockMarker`)
+  sends `owed: true`. Both doors take it, ignore anything other than a JSON `true`, and append it at
+  the END of the line, so the prefix stays the same:
+  `[RELEASE_LOCK] group=<g> owner=<u:d> released=<bool> by=<token|owner-legacy> via=<jwt|push> owed=true`.
+  Without the flag the line ends at `via=<door>`, as before.
+- **A refused acquire carries the server's own fact about when the lock ends** (`retryAfterMs`, its
+  `PTTL`). A lost invitation waiting on that group is re-planned at that moment, once per group
+  (`wakeAtAddLockExpiry`). This is the one timer, and the server states its value. The client bounds
+  that value to 0..31 s (`boundAddLockWait`: TTL + 1 s, since `setTimeout` fires at once above
+  2^31-1 ms), reads a non-number as no stated end, and warns when it had to bound one. The wakes go
+  with the session (sign-out) and with the client (`destroy`). The holder's
+  release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
+  registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
+- **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
+  `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
+  the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
+  a refused add lock or a tree that could not be confirmed (a log unread, a replay held behind
+  refused frames, a catch-up short) is `waiting` - the entry stays, and the event that lifts the wait
+  drains again (`notifyConversationAvailable`, the external-join re-admission included, a processed
+  Welcome, a COMMIT APPLIED in the group - from the frame queue or from a log replay
+  (`notifyCommitsApplied`) - the server-stated end of a refused lock, this device's own add lock
+  released, the next connection). Which event lifts which wait: a pending conversation, by its
+  Welcome or its re-admission; a missing row, by `notifyConversationAvailable`; another device's
+  lock, by its stated end (or its commit, as a bound); an unconfirmed tree, by the commits applied
+  that confirm it - a log that could not be read with the socket still open is lifted by the
+  group's next commit or the next connection, and a catch-up stopped short by the commits it did
+  apply, then by the next commit. A `removed` conversation is told as gone; no row and no group (the
+  member deleted it) concludes with a log. **A drain runs for ONE re-planner**: a sign-out during it
+  stops it, and a re-plan that ends after the session did tells nothing and keeps its entry.
+- **The re-plan is the invitation made again** through `processBulkAddition`, under `rosterPremise`
+  in its resumed form: the RECORDED baseline (a person on the roster at the gesture and off it now -
+  removed, or a join ask declined - is `removed-meanwhile`), a departure after the lost commit's base
+  (`removalEpochs`, the case the live premise cannot see), and the first pass checked too. **That
+  premise reads the tree's own record, so it runs on the tree CONFIRMED at the server's epoch**
+  (`premiseReadsTree`): before the catch-up, the Remove that undoes the invitation may sit in the very
+  commits not applied yet, and the Add would undo it. The departures are read AGAIN under the MLS lock
+  right before the stage (`addMembersBulk`'s `beforeStage`), so a Remove applied between the
+  confirmation and the stage is never staged over. A person already holding a leaf is not added
+  twice (`already-in-tree`). The new commit carries the ORIGINAL baseline, so a second loss is judged
+  against the gesture's own start.
+- **A record that cannot be written** (no storage, a full quota) never leaves the refused stage in
+  place - that would block every commit of the group: the stage is cleared, the loss logged at error
+  with its reason, and the member told. A page with no storage says so once.
+- **Idempotent from durable state, not a clock.** The entry leaves only once the re-plan CONCLUDED.
+  A reload in between re-plans it once more, and the confirmed tree answers `already-in-tree` if its
+  Add had merged; a re-plan whose own Add is kept hands the invitation to THAT stage's intent.
+- **The member is told every ending that is not a seat.** The gesture whose Add got no answer now
+  answers `outcome-unknown` ("will be finished once the connection is back"), not `failed`; one that
+  staged nothing behind an EARLIER unanswered commit (`PreviousCommitUnresolvedError`) answers
+  `previous-commit-unresolved`. A re-plan that does not complete is a toast naming the conversation
+  (`reportLostInvitation`); only an ending a new invitation could lift says "invite them again" - a
+  gate refusal and a retired conversation have their own sentences.
+
+Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
+invitation; a kept commit is settled only by a connection, while the toast promises "once it is
+back"; and a re-plan that dies between its merge and its Welcomes finds `already-in-tree` next
+time and sends none.
 
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 
@@ -707,6 +900,19 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
   keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
   join's pending commit forgets the group: there is no prior epoch to fall back to.
+- **An unmerged external join is the crate's marker, never an openmls pending commit (settled
+  2026-10-27, `src/external_join_pending_tests.rs`).** openmls 0.9's `ExternalCommitBuilder::finalize`
+  stages the commit and merges it in the same call, so the joiner's group and its stored
+  `GroupState` are `Operational` at `base + 1` from the start: `has_pending_commit` answers `false`
+  before and after a save and reload, and openmls's `clear_pending_commit` has nothing to clear (it
+  ignores an `External` pending commit too). "Held unmerged" is `pending_external_joins` alone, and it
+  does survive the sealed save and load; `merge_pending_commit_for` after the reload ends it, and the
+  two devices then exchange messages. Dropping the join (`clear_pending_commit_for` -> `forget_group`)
+  leaves the provider's storage byte-identical to before the join, the signature key and key
+  packages included, and a pre-join key package still opens a Welcome. Keeping the group after a
+  "clear" leaves a group at an epoch the real group never reached: a member's frame is refused as
+  `PastEpochApplication`, its own frames are unreadable to the member, and a retry from a fresh base
+  is refused with `GroupAlreadyHeld`. So the only way to drop an external join is to drop the group.
 - **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
   verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
   `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
@@ -758,7 +964,9 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
 
 ### New-device notices (decided by the user 2026-10-22, refined the same day)
 
-No mandatory approval of a new device. Instead, **produced by the client from the signed commit it
+No mandatory approval of a new device - **partly reversed on 2026-10-27, confirmed by the user
+the same day: a device of a member that no member admitted waits for a member's tap**
+([an unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)). Instead, **produced by the client from the signed commit it
 processed, never from a server message** (a server that stays silent must not silence them):
 
 - the account owner gets an alert "a new device was added to your account", in the app and as a
@@ -838,16 +1046,22 @@ that consumes them next.
   reads to that member as "added a device": it is a device under a key they never saw, which is
   what the line says. Defensible, and deliberate - the line never claims the device id is new. A
   repair under the PINNED key announces nothing (`pinned`).
-- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
-  device's name when the device list has one, when this device learned of it, and a link to
-  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
-  last 256 announced keys) until dismissed or followed.
+- **The owner alert in the app** is a row of `/notifications` (`DeviceNoticeRow.svelte`, above the
+  date bands) since 2026-10-30; the app-wide `NewDeviceBanner` is deleted (owner decision: no
+  banner for device notices). It is a LOCAL entry - built on this device from a signed commit, never
+  sent to the server, never a push - and it counts in the bell's unread badge
+  (`postNotifStore.unread` adds `unreadDeviceNoticeCount()`). Opening `/notifications` READS it, as
+  for every other notification (`markDeviceNoticesRead`, persisted as `read` next to the notice): the
+  badge and the dot clear, the row stays until acted on. The row carries the device's name when the
+  device list has one, when this device learned of it, a link to `/settings/security`, "Not me"
+  (confirm, then `revokeNoticedDevice`; the toasts are kept) and "Got it". Durable per account
+  (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the last 256 announced keys) until dismissed,
+  revoked or followed.
 - **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
-  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
-  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
-  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
-  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
-  learns of it only from a device of their own that refuses it too.
+  SHOWN NOWHERE since 2026-10-30: `noteRefusedOwnDevices` only logs it, as an error (an anomaly),
+  once per device per session, from the refusals this device remembers at registration and from each
+  new one (`setRefusedDeviceListener`). The remedy stays the same (remove the device, sign in on it
+  again, and it enrols as a new device). A contact's refused device is not reported at all.
 - **The local notification** is raised by the native background engines only, from a commit they
   merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
   the account's new device once the server accepted it) and the iOS notification extension (a
@@ -884,20 +1098,123 @@ two automatic adders - the pending-invitation sweep (`processPendingInvitations`
 `welcome_request` handler, plus the Android background answer (`prepare_welcome_background_with_key`)
 - act on what the delivery service says: a `pending` row, a roster row, a relayed request. None of
 that is a member's decision. So before either builds an Add, it reads THIS device's tree: a requester
-whose USER already holds a leaf is a member's new or recovering device, and is added as before; a
+whose USER already holds a leaf is a member's new or recovering device, and is added as before -
+unless that device holds no leaf of its own in the tree and no member approved it ([an unseen device of a member](#an-unseen-device-of-a-member-2026-10-27-interim)); a
 user who holds none is a new person, and is not added (`automaticAdmission` in `actions.ts`,
 `MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
 proves no membership, so nothing is added (it used to fall through to the Add).
 
-Instead, the ask is put to a member: **"X asks to join this group. Only a member can add them."** (`join_request_body`), with Add and Decline
-(`JoinRequestBanner` for the conversations not on screen, and `JoinRequestRow` - a card at the end of
-the thread - for the one that is, user decision 2026-10-24: in the conversation, any member may
-accept; `joinRequests.svelte.ts`). The card FOLLOWS the store and is not a persisted system row: a
-stored row would outlive the ask and keep Add and Decline on screen for someone another member
+Instead, the ask is put to a member as **a discreet system line at the end of the conversation it
+concerns** (owner, 2026-10-30, replacing the app-wide banner, which is deleted): **"X veut rejoindre
+la conversation par lien - Accepter / Refuser"** (`join_request_row_text`), the same muted pill as
+the other notices ("X added Y"), two small inline answers, never full-width colour. `JoinRequestRow`
+draws it (user decision 2026-10-24: in the conversation, any member may accept;
+`joinRequests.svelte.ts`). The line FOLLOWS the store and is not a persisted system row: a
+stored row would outlive the ask and keep Accept and Decline on screen for someone another member
 already admitted. Both answer through one path (`answerJoinRequestOrToast`). Add is the member's own Add (`inviteMembersToGroup`,
 signed by their device); Decline withdraws the ask (`declineJoinRequest`, below), which is what
 stops it coming back. The sweep reads the server's `pending` rows, the durable state, so each
-completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
+completed sweep replaces the asks on screen.
+
+**After the answer (2026-10-30).** An accept needs no new line: the Add writes the ordinary
+`memberAdded` notice ("Y a ajouté X au groupe", `sendVisibleNotice`) on every member's device. A
+DECLINE has no frame at all, so the member who declined sees "Vous avez refusé la demande de X" and
+no other member does - a session-only line (`declinedJoinRequests`), deliberately not a stored row.
+While an ask is pending, the conversation-list preview reads the same words ("X veut rejoindre la
+conversation par lien", or "Nouvel appareil de X"; `pendingAskPreview`, derived from the ask store, so the
+ordinary preview returns once it is answered). Preview only: no badge, no unread change, no notification.
+
+**Every online member sees the ask at once, and sees it go at once (2026-10-25).** A
+`welcome_request` reaches ONE elected device, so every other member used to learn of an ask only at
+their next sweep, minutes later. Now chat-delivery announces it itself: `acceptGroupInvite` sends
+`group.join_ask` (`groupId`, `askId`, `requesterUserId`, `requesterDeviceIds`) to every online device
+of every ADMITTED member except the asker, and the outcome goes out the same way as
+`group.join_ask.settled` (`askId`, `outcome: 'admitted' | 'declined' | 'expired' | 'withdrawn'`) -
+after the transaction that lifted `awaitingAdmission` (either door) commits, after a Decline or a
+removal by another member (`declined`), after the asker removes their own awaiting seat
+(`withdrawn`), and after `expireUnansweredAsks` deletes it (`expired`); only for a seat that call
+really changed, so a second Add or a late Decline announces nothing (`utils/join-ask-announce.ts`).
+The announcement never runs inside the commit lock and never delays the HTTP answer: it is dispatched
+after the lock is released, one Redis script per device checking presence and capability and
+publishing together.
+
+**An ask has an IDENTITY, `askId` - the id of the seat its link wrote** (`dm_group_members.id`). A
+Decline deletes the seat and a new ask writes a new one, so a person's second ask is a second
+identity. It is carried on both frames, on the pending sweep rows and on the roster rows while the
+seat awaits. The client settles BY IDENTITY and remembers every settled one for the session
+(`settledAsks`, `joinRequests.svelte.ts`): any read made before a settlement - a sweep, a roster read,
+an announcement - is not raised however late it lands, a settlement of an older identity leaves the
+person's newer ask on screen, and an Add or Decline tapped on an ask already settled runs nothing
+(an answer the server settled WHILE it ran reports nothing left, not a failure). No order of arrival
+is assumed; the earlier `joinRequestClock` (a count of settlements) assumed one and is gone. The
+other direction holds the same way: a completed sweep removes only asks that were ON SCREEN WHEN IT
+STARTED (`beginJoinRequestSweep`, by identity), so an ask announced while it was reading - which its
+rows may predate - is not wiped by its silence. The same snapshot orders two asks of one person: an
+ask on screen before the sweep is older than its rows, so the sweep's different ask replaces it; an
+ask that arrived while it read stays, and the sweep's (older) read is not raised over it
+(`settleSweptJoinRequests`; the snapshot is taken in `processDeviceInvitationsLocally` before the
+read, pinned by `joinRequestSweepOrder.test.ts`).
+
+**Only a client that routes these frames receives them.** A build older than them would log every
+one as reaching no handler, so the socket declares `join-ask-1` (`caps=addressed-history-1,join-ask-1`,
+`gatewaySocketUrl`), chat-delivery publishes to a device only when every live session declared it,
+and the gateway keeps a frame naming `requiresCapability` from any session that did not
+([chat-gateway](../services/chat-gateway.md#presence), [legacy-compatibility](../legacy-compatibility.md)). The client raises the announced ask through the same gates as the
+sweep (`raiseAnnouncedJoinAsk`: a group, the member's own tree read, `automaticAdmission`), and it is
+the same entry, keyed `(group, person)`, so the sweep and the elected device's `welcome_request` do
+not duplicate it. The election stays for the mechanical answer to a member's own new device. A
+settlement removes the ask on every screen, so the member who lost an Add/Decline race sees the
+winner's outcome without a refresh.
+
+**The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
+conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
+for this device's seat, `deviceMembership.awaitingAdmission`; discovery stores it on the row
+(`Conversation.awaitingAdmission`, IndexedDB and SQLite schema v15, `syncAdmissionFlags`), and a
+`pending` row that carries it (`isNeverAdmitted`, `admissionState.ts`) reads "En attente qu'un membre
+vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming such a row - declined,
+or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
+Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
+never-admitted, and both demotions out of `active` clear the flag.
+
+**A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
+2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
+persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the
+declined row and left the marker, so the next pass (after a reload, 27 s later) found no row for its
+device - the decline deletes the seat and its device rows - read that as an `active` row would read
+(`not-pending`: "joined once, serve yourself"), re-created the placeholder, tried an external join the
+server refused with a 403, and retired the placeholder as a `removed` conversation the user then saw
+listed. The changes that close it:
+
+- `purgeLocalConversationRecord` drops the not-ready marker with the row, at every site that drops
+  one, so no pass is scheduled for a conversation that is gone (and logs a stored row it could not
+  delete). The in-memory cooldown is a throttle and stays.
+- `requestReAdd` reads "no row for this device" as its own answer and asks the account's seat on the
+  groups list (`readAccountSeat`, under the `absenceIsEvidence` guard). A list that cannot be
+  believed skips the round. A seated account keeps its door, re-read from the list's own
+  `deviceMembership` when it carries one. No seat ends the recovery - no row created, no join, no
+  ask - but only for what the list can speak for: no conversation row, or a never-admitted one. A
+  row this device was ever in is decided on the group's roster by ONE reader and ONE reducer that
+  discovery now shares (`readStillUserMember`, `decideAbsentGroupFate` in `groupLifecycle.ts`): the
+  typed 403 `NOT_A_MEMBER` is a proven exclusion and retires the row, `active` or `pending` alike - a
+  `pending` row kept on it re-ran recovery on every sweep; a roster that does not answer skips the
+  round; a roster that names us means the list was stale, and the pass goes on to the join.
+  Discovery used to swallow that 403 as doubt (`.catch(() => null)`), so its exclusion branch never
+  fired.
+- `stopRecovering` removes a never-admitted row instead of retiring it - the decision discovery takes
+  for the same row.
+- **The `absenceIsEvidence` guard had a blind spot, now closed (review of #2493).** It refused an
+  empty list whenever the device held trees, and the list never names Graine key groups - so for any
+  community member an honestly empty list (a joiner whose only ask was declined) was unbelievable for
+  ever, and neither recovery nor discovery could end the ask. It now counts conversation trees only
+  (`isDistributionGroup` excluded, `groupSweep.ts`). The price is taken deliberately: a member whose
+  only conversations are pending link asks now believes a transient `200 []` too, and its ask row is
+  removed locally though the seat stands - a second ask from the link, and no history lost, since a
+  never-admitted row holds none.
+
+Nothing local records the decline: the server's missing seat is the terminal state, read afresh on
+every pass, so a member who Adds the person later is not blocked - the Welcome installs the group and
+writes the row.
+
 The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
@@ -907,7 +1224,7 @@ server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pe
 read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
 is not flagged - a member's invite between its roster write and its Add, a seat written before
 migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
-invitation-link ask"). A member's own invite brings such a person in. The banner shows an ask only
+invitation-link ask"). A member's own invite brings such a person in. The line shows an ask only
 while the chat page that answers it is mounted (`canAnswerJoinRequests`).
 
 **An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
@@ -918,13 +1235,24 @@ is `POST mls/groups/:groupId/join-requests/:userId/decline`, answered only to an
 other than the asker (`403 NOT_A_MEMBER` otherwise). Under the seat lock it deletes the seat ONLY
 while `awaitingAdmission` still stands (`withdrawAwaitingSeat`), and answers a typed outcome:
 `withdrawn` (roster row, queued Welcomes and device rows gone, the open interval deleted - no
-eviction and no exclusion interval are written for someone who was never in), `already-admitted`
+exclusion interval is written for someone who was never in; the one record is the seat generation
+the Decline moved the group to, `declinedAtSeatGeneration`, see "An Add enrols its people with the
+accepted commit" below), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
-`gone`. All four leave the screen; a refused or failed call keeps the ask. A Decline that wins
-the race against an Add makes that Add an ordinary invitation by the adding member, which registers
-the roster row as any invite does. Anything else keeps the ask, logged with its reason.
+`gone`. All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
+every Add decided before it, through every writer** (ADM-3, 2026-10-25): the gate orders it against
+the seat generation the inviting member READ (below), enrols nobody and lifts nothing for it, drops
+its admits, and the member-add route that used to undo it enrols nobody any more - see "The commit
+is the one writer of a new person". An Add decided after it is a fresh invite and admits. Anything
+else keeps the ask, logged with its reason.
+
+**An answer is an answer to THAT ask.** `admitJoinRequest` hands the invite the ask's identity
+(`askId`, the seat id); the invitation's first roster read must still find that seat awaiting under
+that id, or the Add stops before anything is staged (`removed-meanwhile`) - declined, or declined and
+asked again (a NEW ask, another id). A seat no longer awaiting was admitted by another member, and
+the invite goes on to find them in the tree.
 
 **The link is an ASK, carried from the server that knows it.** Accepting a link writes the roster row
 with `awaitingAdmission = true` (`dm_group_members`, migration 038; only `acceptGroupInvite` sets it),
@@ -936,19 +1264,22 @@ and the server holds the person outside until a member answers:
 - The external-join base (`GET`/`PUT .../group-info`) answers **409 `awaiting_admission`** to such a
   person - deliberately not a 403, which older clients read as `NotAGroupMemberError` and retire the
   conversation on - and the commit gate refuses every commit from them, external or member.
-- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at the two doors through which a
-  member's Add reaches the server: inside the transaction of an accepted commit, for the devices its
-  `admits` name and the target of its inline Welcome; and inside the transaction that stores a
-  Welcome sent apart (`sendWelcome` -> `enqueueForLiveGroup`). Every Add ships a Welcome, so a
-  member client that declares no `admits` (older than #1151) still lifts it - otherwise its Add
-  would leave the person refused on every commit. Only an admitted member can store that Welcome:
-  `memberOfGroupKind` does not count an awaiting seat, so the asker cannot Welcome themselves.
+- The flag has ONE writer that clears it, `liftAwaitingAdmission`, at ONE door: inside the
+  transaction of an accepted commit, for the people its `admits` name (and the target of its inline
+  Welcome) that the gate admitted. **A Welcome sent apart lifts nothing since ADM-3** (2026-10-25):
+  it lifted for clients that declared no `admits`, but every client at the version floor declares
+  them (#1151, `v0.18.28`), and that door was the second half of a Decline being undone - the gate
+  refused the person and the Welcome then let them in. `sendWelcome` -> `enqueueForLiveGroup` now
+  REFUSES a Welcome whose target seat still awaits (`403 WELCOME_TARGET_NOT_MEMBER`,
+  `reason=awaiting_admission`), read under the same row lock (`seatStandsFor`, `requireAdmitted`).
+  Only an admitted member can store a Welcome at all: `memberOfGroupKind` does not count an awaiting
+  seat, so the asker cannot Welcome themselves.
 - An ACTIVE device row is never read as awaiting: the membership reads report the flag only on a
   row that is not `active`, the client's `readWelcomeOwedFromRow` ignores it on one, and the commit
   gate reads such a seat as admitted and logs `[ADMISSION]` at ERROR - the invariant broke upstream.
   The report of `active` is refused with **409 `awaiting_admission`** while the flag stands, so a
   row cannot become active ahead of the lift. The Welcome path reads the roster row `FOR UPDATE`
-  (`seatStandsFor`), the lock the lift upgrades to, so two Welcomes stored at once cannot deadlock.
+  (`seatStandsFor`), the lock a commit's lift needs, so a store and a commit cannot deadlock.
 - An unanswered ask EXPIRES WHOLE (`expireUnansweredAsks`, in the hourly stale-pending sweep): once
   no device of the person is `active` or pending since the 14-day cutoff, the seat is withdrawn as
   a Decline withdraws it, per seat under its lock; the device-only purge never touches an awaiting
@@ -1016,6 +1347,169 @@ the entry owed rather than guessing. A device that never saw the departure still
 member as `new-person`. The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
 (group, entrant, epoch), so N members reporting one entry make one line, not N.
+
+### An unseen device of a member (2026-10-27, interim)
+
+**Superseded by the 2026-10-30 decision: a new device of a member enters by itself, with a history and a visible trace ([backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).** What follows is the interim built in 1.5.
+
+**A leaf proves the user, not the device.** "Who admits a new person" decides on the USER: one who
+already holds a leaf was a member, and any further device of theirs was added automatically. Since
+2026-10-27 **an unseen device of a member is now asked about before it is added**, exactly as a new
+person is (`automaticAdmission` returns `unseen-device`, `actions.ts`), and the user decided the same
+day to keep BOTH doors: a new person still joins by link, and the tap is mandatory for an unseen
+device of a member. Seen means exactly one of:
+
+- its own leaf is in THIS group's tree - a lost Welcome, a re-add, a replace under the same id;
+- this member approved it this session, under its key (`memberDeviceAnswers.ts`, below).
+
+**A pin of its key is NOT seen.** Pins (`pinnedSignatureKeys`, [device binding](#device-binding))
+are one store for every group, so a pin says the key was met somewhere, never that a member of THIS
+group admitted the device. No decision in this section reads a pin: each is taken per group.
+
+The rule holds on all three automatic adders: the pending sweep, the `welcome_request` handler, and
+the Android background answer, which admits only a device whose own leaf is in the tree
+(`admit_only_a_device_this_tree_holds`, `background.rs`) and refuses anything else as
+`unseen-device`. A device whose leaf is in the tree is refused there by the Add itself
+(`already-member`) and replaced by the foreground, so **a push adds nobody today**; the staging
+machinery is kept, behind that one rule, for the device a signature will vouch for (the real fix
+below), and its tests run under an explicit stand-in rule (`admit_as_if_vouched`).
+
+**One entry per device, bound to its key.** The ask (`kind: 'device'` on `JoinApprovalRequest` and
+`JoinRequest`) is one entry PER DEVICE, beside any ask of the same person, drawn as the same
+discreet line (`JoinRequestRow`; the app-wide banner no longer exists, owner 2026-10-30) with its own words
+(`join_request_device_row_text` - "Nouvel appareil de X", Ajouter / Refuser - or `join_request_device_row_text_own` for the
+signed-in account's own device, `isOwnDeviceAsk`). The fingerprint is not inline: it sits behind a "Details" disclosure. It shows the device's name - the server's, a hint
+only - and the fingerprint of the signature key its KeyPackage carries, in groups of four
+(`deviceAskDetail`). The key is read once per session from one fetched package
+(`keyPackageSignatureKey`, a parse of the RFC 9420 layout held to the real WASM build by
+`deviceTrust.keyPackage.realWasm.test.ts`) and kept, so a waiting ask spends no package per sweep. It
+is raised in ANY conversation row, a 1:1 included, because neither answer touches a seat.
+The waiting device itself shows its own fingerprint (`chat_waiting_own_device_key`) and says what its
+owner does: open the conversation on another device already in it, or ask another member to open
+it, compare the key, tap Add (`join_request_accept`).
+
+- **Add** records the approval of THAT device under THAT fingerprint, across conversations, and
+  starts the pending sweep without waiting for it (`setMemberDeviceSweep`; a sweep already running is
+  followed by one more, `owed`). Every Add made on the approval re-reads the key of the package it is
+  built from (`approvedKeyHolds`): a package under another key is refused at ERROR, the approval
+  withdrawn and the device asked about anew under the key it now shows. One tap never approves a set
+  of devices; an entry naming none, several, or no key approves nothing.
+- **Decline** records the refusal for that device IN THAT CONVERSATION, offers an Undo
+  (`undoMemberDeviceDecline`), and withdraws nothing on the server - the device may be the owner's,
+  and another member may know it.
+
+Both answers live for the session only (`resetJoinRequests` clears them at sign-out, with the sweep
+they owed): an answer lost to a restart is asked again, which never adds anything silently. An Add in
+one conversation never lifts a Decline given in another. A sweep that could not take a group's add
+lock leaves that group's asks on screen (`onGroupNotSwept`), so an ask does not blink while another
+device adds. And a person's ask is never raised for a user who already holds a leaf, whatever the
+seat's flag says (`admissionOfSeat`): that is a member, and the flag an anomaly said at ERROR.
+
+**A further device of a member does not let itself in.** The device's own recovery serves itself an
+external commit on a `pending` seat nothing follows (`unhonoured-seat`). Whether that is its door is
+NOT on the row - the server clears `admittedAtEpoch` on every transition, the demotions included -
+and NOT on the server's device rows either, which can be empty while the tree still holds the user's
+leaves (a stale demotion, a fresh start). It is decided on **the ratchet tree of the very GroupInfo
+the external commit would be built on** (`externalJoin(groupId, { asAFurtherDevice: 'ask' })`,
+`external_join_is_a_further_device` in `welcome.rs`), read again on every attempt, since each retry
+fetches a fresh GroupInfo:
+
+- **a member's Add** (`further_device`, then a `welcome_request`, whose member shows the device ask)
+  when that tree holds a leaf of this device's user and none of this device's own identity;
+- **its own door** otherwise: a 1:1 peer's first device, a user none of whose devices is in the tree,
+  or a device whose own leaf is still there (the external commit replaces it).
+
+That is the observer's predicate (`firstInGroup` + `memberAlreadyPresent` + a self-signed commit),
+read off the same tree and without the departure half, so it is the stricter of the two: **an honest
+device can no longer produce an entry its members flag** (`mls-core/tests/further_device_door.rs`
+builds both and checks them against each other). A new PERSON still joins by link and waits for a
+member's Add (`awaiting-admission`); a community key group is entered as before, never asking. While
+it waits, a further device shows its owner its own key (`chat_waiting_own_device_key`,
+`ownSignatureKey`), the one the member's ask names - never on a person's link ask, whose member is
+shown a person.
+
+**And one that does is said.** A commit signed by the device it admits, whose user already held a
+leaf, for a device that was never in THIS group (`firstInGroup`: no leaf of it in the tree the commit
+was built on, and no departure of it recorded for this group - `device_trust.rs` now records one per
+removed device), is an entry no member made, decided per group whatever the pin says
+(`entersAsUnvouchedDevice`, `deviceTrust.ts`, and its Rust twin, held to one table): in a
+conversation - a 1:1 included - it is logged at ERROR, reported through `[UNINVITED_ENTRY]` as
+`kind=unvouched-device` (the server allowlists it), and written in the conversation
+(`chat_system_unvouched_device_entry`). A device coming back to a group it was in, a member-signed
+Add, a key group and this device's own join say nothing. The owner's alert "a new device was added to your
+account" carries **Not me** (`revokeNoticedDevice`): the device's revocation, as the device list does
+it - its id banned, its logins ended, its seats withdrawn - after which every member's stray collector
+removes its leaf from each conversation (`removeStrayLeaves`, revoked devices).
+
+**History is withheld from an unverified device.** A device written as `unvouched-device` in a
+conversation, or one that changed its own key by its own commit, is sent no history there
+(`historyWithheld.ts`): no answer is addressed to it, a full push sends it not even its state-only
+frame, and while any device of the conversation is withheld no answer there is broadcast, since every
+leaf reads a broadcast (a withheld device that has left the tree no longer counts). What such a
+device adds is unvouched too. The decision is taken one event at a time in commit order,
+so an entry and the Add it makes, merged in one drain, are both caught, and whether or not the
+conversation row is loaded yet (the line waits for the row, the withholding does not). It is lifted
+when a device that is not withheld there adds it, or when this member approves it under the key it
+entered with. The decision is PER MEMBER: each device withholds on its own verdict, and the record
+persists with that account's device notices. An approval is account-wide and lasts the session. A
+history answer reads the record only after every device event already merged has been decided, and
+answers nothing when they could not be (no consumer, a failed take, a failed delivery). Past its
+overall bound only records of conversations this device no longer holds are dropped, and only when
+the list of held conversations is known to describe the state - a device that left a conversation
+still held keeps its record, since it could come back; past a per-conversation bound of withheld
+devices present, or of withheld devices departed (whose records are then dropped), or when the native queue of device events dropped some of a conversation's events past its own
+bound (it keeps the oldest and marks each such conversation), or when one event could not be decided,
+that conversation is sealed and answers no history to anyone - all fail closed.
+
+**What it costs.** Every new device id is unseen by everyone, and a device id lives in the install:
+a new phone, a new browser, a reinstall or factory wipe, a device that lost its state - each enrols
+under a NEW id; only a restore from the account's backup keeps one. In a conversation whose tree
+holds another device of its user, such a device waits for one tap before it enters - its owner's,
+from another device of theirs that is online, which covers all their conversations at once;
+otherwise, a contact's in each conversation they share - where it used to join by itself on its
+unhonoured seats (the P1 of 2026-09-03). Where the tree holds no other device of its user, it still
+joins by itself. A leaf of the user's own OLD device that stopped running counts as another device:
+a user whose only other leaf is that dead device waits for a contact's tap, and with no contact
+online, waits, for as long as that leaf stays in the tree. (Superseded 2026-10-30, not built: the device enters by itself, see [backlog](../backlog.d/a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md).) The owner's other devices no longer serve it from a push, so the local notification
+"a device was added to your account" follows the foreground Add. The rate is owed from production:
+device ids first seen per week, and how many belong to an account that already had one. **This
+reverses part of the 2026-10-22 decision "no mandatory approval of a new device"
+([new-device notices](#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)); the
+user confirmed the mandatory tap on 2026-10-27**
+([backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built)).
+
+**The same class, not gated here.** Some member-initiated paths add a user's devices without the seen
+check, because the member chose the person and there is no tree yet to have seen a device in. They
+close with the real fix below, and are named in the
+[backlog](../backlog.md#an-unseen-device-of-a-member-is-asked-about-before-it-is-added-2026-10-27-interim-built).
+
+#### The real fix: a device is vouched for by its own user (scoped, not built)
+
+The pin is trust on first use, and a first use is exactly where it says nothing
+(`device_trust.rs`, "What proof would lift a refusal": *"no per-user identity signs a user's
+devices"*; `members.rs` refuses a package only for `IdentityMismatch` or `KeyChanged`, and admits a
+first sight). What lifts the ask is a signature the member's client can verify, by something only the
+device's owner holds. Two shapes:
+
+| | A - cross-signing by another device | B - a user signing key |
+| --- | --- | --- |
+| What signs a new device | one of the same user's devices already pinned by the verifier, over `(userId, deviceId, signature key)` | a per-user Ed25519 key (USK), over the same triple |
+| Where the private half lives | each device's own state | sealed in the account's encrypted backup, under the recovery secret the vault already uses - the server holds only ciphertext |
+| What a verifier pins | nothing new (the voucher's existing pin) | the user's USK public key, first sight per USER, seeded from the trees it holds |
+| Reinstall of the user's ONLY device | nobody can vouch: the ask stays | the new device opens the backup and signs itself |
+| Owner's gesture | approve on the old device (today's ask becomes the signing tap) | none beyond the PIN / recovery code they already type |
+| Cost | a certificate extension and a verify; nothing to migrate | a new key, its rotation (signed by the old USK), a migration where existing users mint one |
+
+**Recommendation: B.** The commonest enrolment here is a single phone reinstalled or restored, and A
+leaves exactly that case on a contact's tap; B turns the existing PIN-sealed backup into the proof.
+In both, the certificate rides a leaf-node extension, is checked in `key_package_verdict` for every
+Add this device builds, and is checked for **every commit that admits a device, whoever made it**,
+in `observe_merged_commit` - a merged commit is never refused (that forks the device out), so an
+unvouched admission there becomes a `DeviceEvent` said at ERROR and shown, as `key-changed` is. The
+interim already says the narrowest case, a member device that entered by itself
+(`entersAsUnvouchedDevice`, above); the certificate turns it into the general one. The
+interim ask then remains only for users without a USK, a [legacy-compatibility](../legacy-compatibility.md)
+shim removed when the client floor carries it.
 
 ## Key packages
 
@@ -1132,8 +1626,27 @@ at the next gateway connection (before the pending messages are drained), before
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
 base epoch, which is decided for good. No clock decides anything.
 
+**A 401 is not a refusal of the commit; it is a stale bearer (TOK-1, 2026-10-25).** On `/api/mls` every
+401 is the auth guard's, given before the gate, so the request did nothing - a fact of today's server: a
+handler-level 401 added there would make the resend a second submission, which the gate would still
+answer `duplicate`. `MlsDeliveryApi` applies the one 401 rule of first-party calls (`renewOn401.ts`,
+[sessions](../sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)):
+the token is renewed and the SAME bytes are sent once more. The renewal is bounded by the submission's
+`write` deadline (raced against its signal), so the lock-hold budget holds; a renewal still running at
+the deadline ends the request as a `RequestDeadlineError`, which is no answer. Before, the 401 was an
+`ApiRefusalError` and cleared the staged Add, the group left at its old epoch. A 401 on the renewed
+token too is `DeliveryRefusedRenewedTokenError` - an `ApiRefusalError` with status 401, never a logout
+(the delivery guard also answers 401 for its own faults) - so it reads like any 401: a definitive
+refusal of a first request (nothing reached the gate: the stage is cleared, nothing resubmitted) and
+UNKNOWN on a resubmission. A renewal that FAILS after the 401 - a refresh answered 5xx, or one nobody
+answered - is `DeliveryRenewalFailedError`, the same 401 reading: the server answered, the bytes never
+reached the gate, so a first submission is cleared at once rather than resubmitted into the same 401
+and kept as unknown; never a logout (`BaseMlsService.commit401.test.ts`). One case stays unknown: a
+renewal still running when the submission's deadline aborts it ends as a `RequestDeadlineError`.
+
 **No submission holds the MLS lock unbounded.** Every submission - the first and each resubmission - is
-awaited INSIDE the global MLS lock, which also guards the incoming processing of every group, so a
+awaited INSIDE the global MLS lock, which guarded the incoming processing of every group too until
+DUP-6 ([below](#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)), so a
 POST hung on a half-open connection or a captive portal froze decryption in every conversation. Since
 the periodic refresh makes an unasked commit ordinary, `submitCommit` runs under the `write` head
 deadline (`requestDeadline.ts`: 30 s plus the time its body needs to leave). Its expiry is a
@@ -1146,6 +1659,99 @@ resubmission, the first request, its resubmission - each deadline also stretched
 time), read before each request and again after the checkpoint that precedes the first. A request it
 does not let start leaves the outcome unknown, or - for a first request - is never sent, its stage
 cleared and the commit refused (`lock_budget_spent`).
+
+#### A commit waiting on the network lends the MLS lock to other groups' frames
+
+**Found by rig row DUP-6 on 1.4.1-alpha.4 (2026-10-25), reproduced twice.** An Add in group A was
+posted and got no answer for two `write` deadlines (~62 s). A frame for group B arrived at once and
+opened its drain (`Disk writes deferred (bulk ingest depth=1)`), then waited the whole minute for the
+mutex: it was decrypted, displayed and ACKed in the millisecond the resubmission gave up, and the
+server's push fallback (`still unACKed after 10 s`) had duplicated it through FCM meanwhile. The cause
+was the drain's `acquireMlsLock` (`mlsPerGroupScheduler.ts`) waiting on `runCommitTransaction`'s
+`runUnderMlsLock`, held across `submitRecorded`.
+
+**The commit now LENDS the mutex while a request of it is on the network**
+(`MlsPerGroupScheduler.lendMlsLockWhile`, called by `submitRecorded`, so the first request, every
+resubmission and a settlement's request all lend). The rules, each enforced by the scheduler rather than
+by its callers:
+
+- **Only the commit holding the mutex for that group lends** (`runCommitUnderMlsLock(groupId)` names
+  the group as the mutex is granted, synchronously); any other loan is refused before the request
+  starts.
+- **Only the drain borrows, one frame at a time, never for the committing group nor for an
+  unaddressed frame** (`acquireMlsLockForFrame`). Every other acquirer - a catch-up that swaps the whole
+  client, a Welcome, a settlement, another commit, a key-package worker - stays exclusive of the commit
+  exactly as before.
+- **While a commit holds the mutex the drain holds back what would have to wait for it anyway**: the
+  committing group's frames (another member's commit applied there would clear our stage in flight),
+  unaddressed frames, and a Welcome with the frames queued behind it in its group (the Welcome handler
+  takes the mutex exclusively). They stay in their buckets, still pending - so `isIdle` and
+  `isGroupIdle` do not change meaning - and the commit's end resumes them
+  (`BaseMlsService.resumeFramesHeldByCommit`). The drain's restart guard reads `hasRunnableWork`, not
+  the pending count, so a held-back frame never makes it spin.
+- **A frame picked BEFORE the commit was granted does not hold the drain for the whole commit.** The
+  pick runs before the mutex wait, so with an exclusive holder X ahead and commit A queued behind it,
+  the drain can pick a frame of A (or an unaddressed one) while nothing names A yet, and queue it for
+  the mutex behind A. As A is granted, every queued frame it holds back is BOUNCED - its acquisition
+  resolves without the mutex - and the drain puts it back at the front of its tier and goes on with
+  B's frames under the loan. One predicate (`isFrameHeldBack`) decides the pick, the bounce and,
+  through them, the loan: a frame of A never waits while A holds, so it can never borrow A's loan and
+  apply another member's commit with A's stage in flight. The put-back frame keeps its place WITHIN
+  its tier (the front, where it was picked). The order across tiers is the tiers' own. In `web` mode a
+  Welcome shares the `messages` tier, so the frame goes back ahead of it. In `tauri` mode the tiers
+  are `control`, `welcome` and `messages`, picked in that order. A Welcome for A that arrives while a
+  `messages` frame of A is bounced therefore runs before that frame, which is the precedence a
+  Welcome already has over every queued frame of its group in that mode.
+- **The mutex is taken back before the merge or the clear**: the reclaim waits for the frame being
+  applied under the loan and admits no new borrower - `closing` is what refuses one in the window
+  between the borrower's release and the commit dropping the loan, where `borrowed` is already false.
+
+**The invariant a borrower must keep, or the two deadlock for good:** a borrower never awaits anything
+the commit's caller holds outside the mutex, nor anything that needs the commit to finish - A's send
+barrier, a send of A, a lock or a promise A's caller keeps. A waits in the reclaim for the borrower and
+the borrower would wait for A. The drain's frames keep it because the pipeline awaits no send (below);
+any new await in the frame path is to be read against it. The reclaim wait goes through the drain's
+hang reporter: `[QUEUE] STUCK in the reclaim of the MLS mutex lent by the commit of <group>` every
+minute it lasts, and nothing is cut.
+
+**A slow borrower spends A's lock-hold budget - a behaviour change.** The reclaim waits for the
+borrower, and `COMMIT_LOCK_HOLD_BUDGET_MS` keeps running: a borrowed frame that awaits the network
+inline (the rung-1 replay of a commit, for one) can leave too little budget for A's resubmission, so
+`mayStartCommitRequest` refuses it and the outcome is kept as unknown (`CommitOutcomeUnknownError`, the
+stage kept, settled later) where before the PR it would have been resubmitted at once. Nothing is lost
+- the unknown path is the one a second deadline already took - but the rig should watch for the line
+`the commit of <group> has its answer - waiting for the frame applied under its loan` followed by an
+unknown outcome: that pair is this cost, measured.
+
+**What is left: a Welcome picked before the commit was granted.** Its handler runs a network preamble
+unlocked (`getGroupMeta`, the recovery checks) and then takes the mutex EXCLUSIVELY. A commit granted
+during that preamble makes the Welcome - and the drain inside it - wait for the whole commit, the old
+stall, for one Welcome. It is not bounced, because the handler is half-way through and cannot be put
+back; and it does not borrow, because installing a group (a drop of its evicted state, `processWelcome`,
+a persist, the replay) is not a frame of another group and the loan's safety argument does not cover
+it. Closing it means a handler that can stop before its locked section and requeue the Welcome, in
+`setupMessageHandler.ts`.
+
+**The drain overlay counts what the drain can apply** (`getRunnableCount`), not what is pending: a
+frame a commit holds back is not this drain's work.
+
+**Why the state stays consistent.** The stage and its record are on disk before the first request
+leaves (`checkpointStageBeforeSend`, unchanged, before any loan). A borrower decrypts in group B only,
+so it can neither merge nor clear A's stage; a checkpoint written during the loan (the drain's own, at
+its end) holds A's stage AND B's ratchet, the same state a crash before the merge already had to
+settle. A frame of B is applied exactly once - the drain still applies one frame at a time and the
+loan admits one borrower. The epoch-send barrier keeps its lock order: a borrower can see A's barrier
+raised but never waits on it, because the pipeline awaits no send (the history answers run after the
+mailbox drained), which it already could not, a send being able to settle a commit under the mutex
+the drain holds ([mls-desync-prevention](mls-desync-prevention.md)).
+
+**What is NOT lent:** the stage, the checkpoint before the first request, the merge, the clear, a
+refused commit's catch-up (`catchUpOnRefusedCommit`, network AND MLS writes) and every other
+network wait taken under the mutex outside a commit - a frame waits for those as before. Pinned by
+`mlsPerGroupScheduler.test.ts` ("a commit lending the mutex across its network round trip") and
+`BaseMlsService.crossGroupDrain.test.ts` (the real transaction and drain: B decrypted and ACKed while
+A's answer is held; A's own frame applied only after its merge; a kept-unknown commit settled after
+three loans).
 
 **The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
 first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
@@ -1261,6 +1867,65 @@ owed for the next connection. A joiner handed a copy of a Welcome for a group it
 redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
 (its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
 
+**EVERY accepted Add is merged owing its Welcome, not only a settled one (DUP-7, 2026-10-25).** The
+transaction that READ the accept (`runCommitTransaction`, a first answer or a `duplicate` to its own
+resubmission) used to merge plainly and hand the Welcome to its caller: the obligation lived in the
+caller's hands alone, so a send that failed and a reload after the merge reached disk lost it, and
+only the invitee's own `[READD]` external join let it in. Both paths now go through ONE merge
+(`BaseMlsService.mergeAccepted`): whichever state reaches disk holds either the stage and its record
+(a settlement re-derives the Add) or the merge and its owed Welcome (the connection drain,
+`deliverOwedWelcomes`, sends it) - never the merge alone. The caller still sends the Welcome it was
+handed, and **`sendWelcome` is where the obligation is consumed**: the server's answer - stored, or
+the terminal `WELCOME_TARGET_NOT_MEMBER` - clears that recipient FROM THE ENTRY CARRYING THOSE BYTES
+(`welcome_delivered` matches the Welcome, never the device alone), whoever sent it, and hands the
+change to the next checkpoint. So the connection drain now competes with a live Add's own send; that
+is correct because a send of the same bytes to the same device already in flight is awaited, never
+repeated, and the server stores a copy once (below). A group can owe the Welcomes of SEVERAL Adds,
+so a group's record is a list, one entry per Add; a device admitted again is owed only the newer
+Welcome, and an older Welcome answered late clears nothing (a record of one bare entry, written by
+an older build, still reads - [legacy-compatibility](../legacy-compatibility.md)). The merge records
+the obligation even when the ratchet tree cannot be exported afterwards: the entry carries an empty
+tree, said at error level, and the Welcome goes without one, which a joiner opens from the tree the
+Welcome itself carries (`a_welcome_opens_without_an_external_ratchet_tree`) - never a merged Add
+owing nothing. The connection drain clears every recipient of its pass and schedules ONE persist
+after it; a recipient that names no device is a defect of the record, dropped unsent and said as
+one, never reported as a server refusal.
+
+#### A device the gate did not admit is owed no Welcome - the commit's answer says so (2026-10-25)
+
+Measured on the rig (DEV-3): a member's pending sweep added a device its owner revoked while the Add
+was in flight. The gate accepted the commit and dropped the admit (`ADMIT_REFUSED
+reason=no_key_package`: the revocation had purged the key package), and the member sent the Welcome
+anyway - a 500, then `Add error ... Could not send the secure invitation` - and every other group's
+invitation of that device asked the server again and was told `revoked`, six 404s for one fact. The
+accept now carries **`refusedAdmits`** (`{ userId, deviceId, reason }`, every admit the gate dropped,
+before or inside its transaction). `undeliverableAdmits` (`BaseMlsService.ts`) says each once and returns
+those whose Welcome cannot be delivered - an ALLOWLIST, `no_key_package` alone
+(`admitRefusalMakesWelcomeUndeliverable`; NOT `not_enrolled`, which the sender's own
+`registerMember` enrols before a Welcome that then lands). `mergeAccepted` owes them nothing,
+`addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
+`addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
+sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other
+invitation of that device in the same sweep from that answer - as it now does a `revoked` or
+`unregistered` key-package answer, which is about the device, not the group (`expired` is not carried
+over). The leaf stays in the tree with no seat; the stray sweep removes it. A `duplicate` answer names
+no refusal (the first acceptance decided them and nothing records them), so a settled Add still owes
+that Welcome, and its typed refusal ends it: `404 WELCOME_TARGET_UNKNOWN` is
+`WelcomeTargetUnknownError`, terminal like `WELCOME_TARGET_NOT_MEMBER` (`isTerminalWelcomeRefusal`),
+said at WARN. Tests: `messaging.commit-log.spec.ts`, `add-enrolment.integration.spec.ts`,
+`BaseMlsService.unresolvedCommit.test.ts`, `BaseMlsService.notAdmitted.test.ts`,
+`actions.pendingNotAdmitted.test.ts`, `mlsDeliveryApi.welcomeRefusal.test.ts`.
+
+**The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
+and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
+serialises every store of a Welcome for that device in that group, for a row still queued with that
+payload, and answers `queued` without storing again (`[WELCOME] DUPLICATE`); it hands THAT row to
+the delivery again, since the first request may have died between its store and its delivery and
+the re-send is then the only thing left to arm the live publish and the push - the same row, so
+nothing new is queued, and a device that already joined from it takes the copy as a redelivery. A copy
+arriving after the joiner consumed the first meets a device holding the group, which takes it as a
+redelivery. Pinned by `add-enrolment.integration.spec.ts`.
+
 **What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
 365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
 `COMMIT_LOG_MAX_PER_GROUP` in `messaging.service.ts`), so the window is a commit left unresolved for a
@@ -1270,8 +1935,11 @@ settlement, and if it had landed that device is one epoch behind its own commit 
 
 **Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
 device that merged a commit nobody else did is at the right number on the wrong branch, and its
-refresh would be accepted and break every healthy member. The two commits a MECHANISM decides on
-its own - `refreshOwnLeaf` and the revoked-leaf removal (`removeMemberDevice`, next section) - go
+refresh would be accepted and break every healthy member. The commits a MECHANISM decides on its
+own - `refreshOwnLeaf`, the revoked-leaf removal (`removeMemberDevice`, next section) and, since
+2026-10-27, the departed-member removal a roster DIFF decides (`removeDepartedMembers`: the
+conversation stray sweep and the key-group roster pass; until then it went through the unchecked
+`removeMember`, which stays the path of a removal a PERSON asked for) - go
 through ONE check, `BaseMlsService.assertOnPublishedBranch` (`mls-client/publishedBranch.ts`): it
 reads the published base (outside the MLS lock) and, under the lock, stages only when its epoch is
 ours and our group context - tree hash and confirmed transcript hash - is the one it describes
@@ -1284,6 +1952,16 @@ already takes, for the same reason: rung 1 (replaying the log) cannot help a dev
 behind but beside. The evidence is the base the server stored WITH the accepted commit (strictly
 monotonic, so the first base of an epoch owns it); a commit from a client too old to carry one
 leaves the base to a holder's repair, which is the one way that base could itself be a branch.
+**The base is read where the group keeps it** (`groupInfoChannel`): a key group's lives on
+social-service, and chat-delivery's base route refuses a key group by construction, so a check
+reading there failed every key-group removal before comparing anything. Reading it through the scope
+transport means **`diverged` now reaches key groups too**, which widens the forked-holder P2 in
+[backlog](../backlog.md#p2---a-forked-holders-republished-base-can-send-honest-members-to-rung-2-review-of-2269-2026-10-24-not-built).
+**A conversation that never published a base** has nothing to compare against: its departed-member
+removal is staged as before the check (logged), because refusing would keep the departed member's
+leaves forever - nothing publishes a base on a sweep's behalf; a key group's base is published with
+the group, so its absence stays a refusal. Measured 2026-10-27 on production: every one-to-one
+conversation and all but one group conversation have a base.
 The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
 device, and a stolen signature key is answered by revocation (next section), not by a refresh.
 
@@ -1296,16 +1974,46 @@ single-flight per group. It refreshes only when the leaf is DUE:
 | Leaf age basis | Source | Due when |
 |---|---|---|
 | Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`), and an observation OF THAT LEAF in the ledger | the later of: older than the interval, and the observation plus the offset |
-| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
-| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, mintedAtSec: null}` | the observation plus the offset |
-| No entry, an entry of another incarnation, or one dated in the future | first sight: an observation is recorded | never on first sight |
+| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch, leaf}}`), written after EVERY merge of an own commit (`mergeAccepted`) and external join, by ONE writer (`noteOwnLeafReplaced`) | older than the interval |
+| Replaced by a commit, observed (no refresh of ours on record) | the observation `{at, epoch, observed: true, leaf}` | the observation plus the offset |
+| No entry, an entry naming ANOTHER leaf (or none), or one dated in the future | first sight: an observation is recorded | never on first sight |
+
+**Every entry names the leaf it dates** (`leaf`: the leaf's HPKE key, `own_leaf_encryption_key`,
+read after the merge), and an entry is read only for the leaf it names. The ledger is in
+`localStorage`, which Chrome commits to the profile LAZILY: a write made 2 s or 4.5 s before a hard
+kill of the browser was lost, one made 7 s before survived, and an IndexedDB write made with it
+survived in every case (measured 2026-10-25 on a fresh profile; Chromium also rate-limits those
+commits, so the window can be longer on a busy page). The merge it follows is in the MLS state, on
+disk as soon as its checkpoint completes. KILL-2 on `1.4.1-alpha.4` killed the browser in that gap
+twice in ten runs: the merge survived, the entry did not, and the relaunch read the entry the disk
+kept - armed due, written for the leaf the merge had REPLACED - so its first send refreshed a leaf
+seconds old (two extra commits on the server, each accepted at the next epoch: no fork, one commit
+too many). Naming the leaf lets the state itself say which entry describes it, whatever reached disk;
+an entry of a former leaf reads as a first sight, the direction that costs no commit. Pinned by
+`leafRefresh.test.ts` ("a date written for a FORMER leaf ...") and
+`mls-core/tests/self_update.rs::the_own_leaf_key_names_the_leaf_only_this_device_commits_replace_it`
+and `::the_own_leaf_key_moves_on_an_add_a_remove_and_an_external_join` (every own commit moves
+the key, so every merge's entry names a new leaf).
+
+**The upgrade costs one first sight per group per device, by design.** Entries written before #2489
+name no leaf, so the first send after the upgrade reads each one as a first sight: the leaf is
+observed again and its schedule restarts at that observation plus the offset - up to about seven
+extra days before its next refresh, once, in the direction that costs no commit.
+
+**The observation is written for the leaf in the state when it is written.** The decision runs
+outside the MLS lock, and an own commit can merge while it awaits; that merge dates its own leaf, and
+an observation of the leaf read before it would overwrite the entry with a leaf already gone (a
+false "FORMER leaf" line at the next send). So the leaf is read again just before the write, with no
+await between them, and a leaf that moved writes nothing (`leaf-moved`). An ACTIVE group whose tree
+holds no leaf of this device is not an inactive group: it is a defect, reported as `no-own-leaf` at
+warn level once per group and epoch, never once per send. Pinned by `leafRefresh.test.ts`.
 
 **The first refresh is spread, or it is a herd** (review, 2026-10-23). The day this ships, every
 leaf is older than the interval, so a decision on age alone makes every seat refresh at its first
 send: ~1600 commits in the first week, back to back in the 109-seat group, where a slow device
 keeps only two past epochs (`max_past_epochs`) and loses the frames sealed in the epochs it
 skipped. So a leaf this device holds no refresh of its own for is first OBSERVED - a ledger entry
-written at its first send, naming the leaf by `own_leaf_minted_at`, never due then - and its first
+written at its first send, naming the leaf by its key, never due then - and its first
 refresh is owed at the observation plus an offset in `[0, 7 d)` derived from `(deviceId, groupId)`
 alone (`leafRefreshOffsetMs`: FNV-1a with MurmurHash3's finaliser, `utils/hash32.ts`, the hash
 `historyRangeOf` already used). No clock and no random draw per run choose the day: a reload, a
@@ -1362,6 +2070,262 @@ leaves are refreshed by its own Adds and Removes meanwhile; what refreshing them
 refresh that does not tighten the caps, or caps counted from the redistribution) is in
 [backlog](../backlog.md).
 
+### A joiner whose first frame beats its Welcome waits for it (DUP-2, 2026-10-25)
+
+**The server is right to send it the frame, and the server-side fix was rejected for that reason.** A
+commit that admits a device records its seat `pending` with `admittedAtEpoch`
+(`ValidateCommitBody.admits`), and from then on the fan-out queues it every frame sealed at or after
+that epoch ([chat-delivery](../services/chat-delivery.md)). Those frames are exactly the ones the
+Welcome's epoch can open - a member's Remove at the Add's epoch is the next commit the joiner MUST
+apply. "Do not fan a commit to a device whose Welcome the server has not seen" would therefore cut the
+joiner off its own next epoch, or need a second queue the Welcome releases; the frame already waits
+in the server queue, unacknowledged, which is that queue. When the adder's answer is lost, its
+Welcome is owed state on the adder (above) and goes out only once the late resubmission settles; a
+member committing in between reaches the joiner first.
+
+**What the joiner does with it.** The frame names a group it holds no state for
+(`handleUnknownGroup`): it is buffered, left unacknowledged in the server queue, and the one recovery
+seam `requestReAdd` runs once to read the device's membership row. `[PIPELINE] Recovery attempt
+finished for <g>` is that run settling - the line `startRecovery` writes whatever the seam decided.
+Until DUP-2 the seam read "owed" (a Welcome queued, or a member holding the add lock) and then sent a
+`welcome_request` anyway: every member was asked to do the Add's work again, the adder's lock turned
+them away (`Lock busy`), and a member finding the lock free would have REPLACED the leaf the Add had
+just written - a second commit and a second Welcome. Now the row is read as two facts
+(`readWelcomeOwedFromRow`), and neither asks a member:
+
+- `welcome-queued`: the Welcome is in this device's OWN mailbox, so the mailbox is pulled
+  (`fetchPendingMessages`).
+- `add-in-flight`: some member holds the group's add lock - per group, so not necessarily an Add of
+  this device - and the device waits for it to settle.
+
+A pending row that carries neither fact did not answer: every deployed server writes both since
+2026-09-03, so it reads as unreadable (`null`), the pass is skipped and the line accuses. It used to
+be a reading of its own, `pending-unqualified`, waited on as owed; nothing produced it, and it is
+deleted. Only the leader tab pulls the mailbox for `welcome-queued`; a follower's pass returns.
+
+The not-ready marker keeps the group on the sync watchdog's cadence, each pass re-reads the row, and
+once no fact holds the reading is `unhonoured-seat` and the self-service join is the device's own
+(`recovery.test.ts`, "the wait ENDS on the facts"). A seat from a link (`awaiting-admission`) still
+asks a member: there, the ask IS the admission request. The Graine key-group join waits on the same
+readings (`isWelcomeOwed`).
+
+**A Welcome this device has just spent is not a Welcome on its way.** When a Welcome fails to install
+(`NoMatchingKeyPackage`, `GroupAlreadyExists`), the handler starts the recovery before it returns
+`true`, so before the drain acknowledges that Welcome: the row can still list it as queued. The
+handler says so (`requestReAdd(..., { welcomeHandled: true })`) and the reading looks past the queued
+Welcome, so the repair runs at once instead of waiting a cadence for the Welcome it just spent. The
+log says the Welcome was read past, not that none was queued.
+
+**It reads past EVERY queued Welcome of the group, and the guard is where the join acts, not in the
+reading** (review of #2466). The row is a boolean: it cannot say whether the Welcome it lists is the
+spent one or a second one a member sent with a fresh KeyPackage. Two orders are possible, and both
+are safe:
+
+- **The drain applies the second Welcome first.** The recovery reaches `externalJoin`, which reads the
+  group again UNDER the MLS lock the Welcome took, finds it held, builds nothing and answers
+  `{ joined: true, alreadyHeld: true }`; the recovery drops its bookkeeping and leaves the rest to
+  the Welcome path. The engine refuses the same case by type before building
+  (`MlsError::GroupAlreadyHeld`, `GROUP_ALREADY_HELD:`), and the TS side reads that refusal as joined
+  and accuses the held-groups list that missed it. Before this, the "already present locally" guard
+  sat AFTER OpenMLS's `ExternalCommitBuilder::finalize`, which had already written the built group
+  into the live group's storage rows: memory kept the live group, the next save and load resurrected
+  the external join's one, and the refusal read as `build_failed` asked a member to re-add a healthy
+  leaf (`tests/external_join.rs`, `an_external_join_for_a_group_already_held_leaves_the_live_group_untouched`;
+  `BaseMlsService.externalJoin.test.ts`, "stands down ... while it waited for the lock").
+- **The external commit lands first.** It carries the same signature key as the leaf the second
+  Welcome's Add wrote, and replaces that leaf in one commit (the admitted-seat case below); the late
+  Welcome then meets a group already held and is ignored as a redelivery. If Welcome #2 is ignored
+  (and ACKed) while our commit is built but not yet submitted, and the server then REJECTS that
+  commit, the group is dropped (an external commit cannot be cleared) and the join retries from a
+  fresh base, which already carries #2's leaf for our key: the next commit replaces it the same way,
+  so the race converges on one leaf without the Welcome.
+
+**Whichever way the group was already held, the recovery promotes the roster seat to `active` -
+when `isGroupActive` proves our leaf is in the tree it holds.** The engine's typed refusal can be
+reached with NO Welcome at all - the engine held the group and the service's list missed it (native,
+after a PIN recovery) - and then nothing else ends the `pending` row, which every member is served as
+a work item to Add a leaf already in the tree. The proof is the client's to carry: the server's
+self-report (`POST mls/invitations/status` -> `activateDeviceMembership`, authority `report` ->
+`promoteReportedSeat`) promotes any existing seat that is not kicked and whose owner is not awaiting
+admission - in a key-distribution group, whose owner social-service answers is entitled
+([state machine](mls-graine-state-machine.md#seat-writes-check-membership-2026-10-25)) - and cannot read the tree; an evicted group stays held, so holding is not the proof. After
+a Welcome the promotion is a second write of the same value: the UPDATE matches the active row again,
+logs one `[INVITATION_STATUS]` line and re-adds an existing Redis route, and emits no event. A refusal naming a DIFFERENT group than the one
+asked for is not joined: the served base is unusable for this group and the join reads `build_failed`.
+
+The other design - waiting for the spent Welcome's ACK before reading the row - was not taken: it
+needs a per-delivery acknowledgement barrier through the drain, to buy what the lock already
+guarantees at the one step that can do harm.
+
+**When the Welcome lands, the buffer replays** and the frames left behind as `unknown-group` are
+re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
+live delivery read a moment earlier and has not acknowledged yet - a second read the client gives
+itself, which is a defect of its own, open in
+[backlog](../backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25).
+What is fixed is what that second read was CALLED. MLS refuses it with `SecretReuseError`, which it
+can only reach after opening the frame's sender data under this device's copy of the epoch - so the
+frame is neither from a fork nor damaged. `messaging.rs` classifies it from the error's TYPE
+(`is_spent_generation`) before the fork judgement: one `debug` line, no fork verdict, and the same
+`SecretReuse` error to every caller, whose frame ledger then says `Duplicate delivery ... silent
+ACK`. Until then it logged `[FORK] not a fork ... the frame itself is damaged` at WARN and a
+same-epoch ERROR that `logging.rs` demoted by its marker; the demotion is deleted with the line it
+hid. A frame whose bytes really are damaged keeps its WARN (`tests/spent_generation_is_not_damage.rs`).
+
+**An admitted seat with neither fact joins by itself, and that is safe.** An Add the server accepted
+whose adder holds no lock and has queued no Welcome leaves a seat with `admittedAtEpoch` (on the
+`getDeviceMemberships` row, typed on `DeviceMembershipRow` and named in the recovery's line) that reads
+`unhonoured-seat`. The external commit carries the same signature key as the leaf the Add wrote, and
+OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
+device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).
+Whether any adder path reaches that state, and what its late Welcome then meets, is a verification
+in [backlog](../backlog.md#p3---verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own-leaf-dup-2-review-2026-10-25).
+
+### An Add enrols its people with the accepted commit (2026-10-25)
+
+**Found by the 1.4.1 dev campaign** (rows DUP-2, DUP-4, DUP-5, DUP-6, OFF-1, OFF-2, read from both
+ends): the roster row of an invitee (`dm_group_members`) was written by the inviter's `registerMember`,
+a separate call each Add path made AFTER it read the gate's accept. The settlement of an unresolved
+commit (above) never made it. So an Add whose answer was lost - settled by a resubmission answered
+`duplicate`, or held offline and sent on return, where the FIRST arrival was accepted and still nobody
+enrolled - merged, sent its Welcome, and every copy was refused `welcome_target_not_member`. The
+invitee held a leaf with no seat: its own repair (`[READD]` -> external join) found no membership row
+and retired the conversation, and the inviter's next stray sweep took the leaf back out
+(`removeStrayLeaves`, which was right to: the roster is the authority, and it did not name the person).
+
+**The enrolment is part of the accepted commit** (`enrolAdmittedPeople`, `messaging.service.ts`): in
+the transaction that advances the epoch and writes the log row, every person the commit `admits` a
+device of and the roster does not name is enrolled through `ensureGroupMember` - the route's own
+writer - BEFORE any device row, the one lock order of `utils/seat-eviction.ts`. Whichever request
+lands - the first, a resubmission, an outbox replay - the advance and the seat commit together, and a
+resubmission answered `duplicate` (answered before any transaction) finds exactly the state the first
+accept left. Nothing for the client to remember, no pending-enrolment record, no clock. Judged
+against PostgreSQL in `add-enrolment.integration.spec.ts`. **It is the ONLY writer of a new person
+since ADM-3** - see "The commit is the one writer of a new person" below.
+
+**Refused, and logged `NOT_ENROLLED reason=...`; ANY such refusal refuses the WHOLE commit**
+(answered `200 {accepted: false, reason: 'admit_refused', userIds}` - `userIds` naming the refused
+people, logged `REJECT admit_refused` - the shape `WelcomeSeatGone` already answers, so a client of
+any version clears its staged commit on it): nothing advances, nobody gets a leaf, no device row is
+written. A commit accepted with its admits dropped would still have given those people a leaf in
+every member's tree - a leaf no seat holds - so the gate refuses it rather than accept it in part,
+the reasoning `SEAT_CLAIM_OVERTAKEN` already follows. **Every candidate is decided before anything
+is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
+rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
+
+- everyone not on the roster when the committer holds no admitted seat itself - answered with its
+  own reason, `{accepted: false, reason: 'committer_not_on_roster'}` and no `userIds`: it is about
+  the committer, not the people added, so nothing is rebuilt and nobody is reported removed;
+- a person a block stands between and the committer (`blocked`);
+- **a person who departed after the Add was DECIDED** (`departed_since_decision`, with
+  `decidedBy=invitation|base_epoch`). A removal holds against an Add built before it (owner's rule,
+  2026-10-14). A self-leave makes no
+  commit, a member's Decline of an invitation-link ask makes none either, and a removal's Remove
+  commit can be lost, so an Add held in an outbox can still land at the unchanged epoch after the
+  departure; enrolling then would undo it. Ordered by a COUNTER, never a clock: every removal and
+  every Decline moves the group's `seatGeneration` under the seat lock, a removal stamps it on the
+  stretch it closes (`leftAtSeatGeneration`), a Decline - which DELETES the ask's stretch, since a
+  closed one would read as a gap and withhold its span from every history answer - on the person's
+  `dm_seat_evictions` row (`declinedAtSeatGeneration`), and every advance records the generation its
+  epoch began at (`epochSeatGeneration`, migration 039). **An ask that EXPIRES records nothing:** no
+  member decided anything, and a member's Add built while it was open is the answer it waited for -
+  refusing it because a timer ran would let a clock decide an admission.
+
+  **WHEN the Add was decided is carried by the client from where it is known** (ADM-3). A member's
+  invitation reads its roster WITH the group's seat generation (`GET .../user-members?withSeatGeneration=1`,
+  the generation read BEFORE the rows), records it in the commit's intent beside the roster baseline
+  (`CommitInvitation.seatGeneration`, so a resubmission and a re-plan send the same value) and sends it
+  as `invitationSeatGeneration` with an Add that admits somebody. The gate orders departures against
+  it: one recorded after it holds against the Add, one recorded before it does not - so a deliberate
+  re-invite after a Decline, at an unchanged epoch, is a fresh invite and enrols. A value the group
+  never reached (above its current generation), negative or not an integer is a `400
+  invitation_seat_generation_invalid`. An Add with no invitation (the automatic pending-row and
+  welcome-request Adds, an old client) has none, and is ordered by the base epoch's generation
+  (`decidedBy=base_epoch`): **the one-sided cost accepted by the owner on 2026-10-25 now falls only on
+  those** - a re-invite by a client older than this change, right after a Decline in a quiet group,
+  is refused until the next commit moves the epoch.
+
+- **a person whose seat still AWAITS a member's answer, against the same order** - checked like a
+  newcomer (blocks, the committer's seat, a departure recorded after the decision): a new ask after
+  a Decline is not answered by an Add decided before that Decline. An awaiting
+  seat the gate admits is lifted by the caller (`liftAwaitingAdmission`); one it refuses stays an
+  ask, unanswered.
+- **an awaiting seat of a person who EVER departed - removed, left, or declined by a member - by an
+  Add with no invitation generation** (`departed_and_undated`). Once another commit moved the epoch,
+  the base epoch alone cannot order such an Add against the departure, so only a member's invitation
+  - which carries when it was decided - admits that person again. And an awaiting seat admitted on the base epoch's order alone is logged at WARN
+  (`ADMITTED_UNDATED ... decidedBy=base_epoch`), so how often an undated Add answers an ask is
+  measured, not assumed.
+
+**The client rebuilds, and never loops.** `refusedAdmits` reads the typed `CommitRefusedError`
+(reason `admit_refused` and its `userIds`), never the message; both reasons are not rebuildable as a
+race (`rebuildableRefusal`), since the same commit meets the same answer at any epoch. `addDevicesRebuildingOnRace` drops the named people's candidates and their names from the
+invitation it carries, re-checks the premise without them, and stages again; each such pass drops at
+least one candidate, a refusal naming none of them leaves as thrown, and with nobody left the Add is
+abandoned (`not-admitted`, reported `removed-meanwhile`). A one-device Add - the pending-row sweep,
+the welcome-request answer - has nobody to rebuild without: it logs and stops, the row stays as the
+server holds it. A kept commit settled `admit_refused` (read off the answer's body) is re-planned
+for the other invited people as after a race, and is `refused` (the member told) when it named
+nobody else. A 1:1 creation whose peer is refused is abandoned at once (`mustAdmit`), before anything
+is staged again, and is not created.
+
+**A seat still awaiting a member is always an ask.** The pending-row sweep and the welcome-request
+answer never make an automatic Add for a person whose seat `awaitingAdmission`, whatever the local
+tree holds: they ask a member (`onJoinApprovalRequested`), and only that member's gesture answers.
+The Android background route `send-welcome-and-commit` goes through the same gate; its only admit is
+the Welcome target, so a refusal there is the `WelcomeSeatGone` answer.
+
+A seat already on the roster AND admitted is left as it is. A refused Welcome target refuses the
+whole commit that carries it inline (`WelcomeSeatGone`): the background native Add has no other way
+to learn. A key group has no conversation roster: its people are social-service's entitlement, asked
+before the advance (`claimKeyGroupAdmits`), and nothing here applies to it.
+
+### The commit is the one writer of a new person (ADM-3, 2026-10-25)
+
+Two writers used to decide whether a person is in: the commit's gate, which reads the seat lock and
+the departures, and the member-add route, which read neither - so a Decline the gate honoured could
+be undone by the route the same second. Now the accepted commit is the one writer.
+
+**Every writer that enrols or admits a person, and what it does now:**
+
+| Writer | Since ADM-3 |
+| --- | --- |
+| The accepted commit (`enrolAdmittedPeople` + `liftAwaitingAdmission`) | The ONLY one. Newcomers and awaiting seats, ordered against the invitation's generation, under the seat lock. |
+| `POST mls/groups/:id/members` (`addGroupMember`) | Enrols nobody but the group's recorded creator (`dm_groups."createdBy"`, migration 042), into an empty roster (the bootstrap) - anyone else, and anyone at all on a group with no recorded creator, is refused `403 MEMBERSHIP_NOT_ALLOWED`; creator and roster are re-read under the seat lock taken exclusive, answering `409 MEMBER_NOT_ADMITTED`, nothing written ([chat-delivery](../services/chat-delivery.md#the-creation-bootstrap-admits-the-creator-alone-migration-042-2026-10-29)). For anyone else it re-reads the seat under the seat lock (`writePendingSeats`, `requireAdmitted`): admitted -> writes their device rows, a no-op for the roster; absent or awaiting -> `409 MEMBER_NOT_ADMITTED`, nothing written. |
+| A Welcome sent apart (`sendWelcome`) | Admits nobody; refused for an awaiting seat. |
+| An inline Welcome in a commit | Admitted only if the commit's gate admits its target; otherwise the commit is refused. |
+| Link acceptance (`writePendingSeats`, `enrol`) | Writes an ASK, never an admission. After a Decline it may write a new one: a Decline is not a ban. |
+| `registerDevice` (`writePendingSeats`, no enrol) | Only for a person already on the roster. |
+| `withdrawAwaitingSeat`, `expireUnansweredAsks` | Remove, never admit. |
+
+**The client keeps calling the route after an accepted Add**, because a server older than this
+change still enrols through it ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25)).
+It is typed now: since the gate refuses a commit naming anyone it may not admit, an accepted commit
+enrolled everyone it named, and `MemberNotAdmittedError` after it means the person departed since
+the merge. The client then sends them NO Welcome and does not report them added - every Add path:
+the invitation (`processBulkAddition`), the pending-row Add and the welcome-request Add
+(`actions.ts`), and a 1:1 creation, which is dropped. The departure's own Remove takes their leaf, or
+the stray collector, which reads a seat still awaiting a member as off the roster (`awaiting` in
+`POST mls/group-rosters`, `awaitingAdmission` on the fresh read).
+
+**A leaf is not an admission.** A member answering an ask (`admitJoinRequest`) whose tree already
+holds a leaf of the person reads the seat before claiming another member's Add admitted them: an
+admitted seat is done, one still awaiting (or gone) has its leaf removed by the stray collector first
+and is then admitted by the member's own Add.
+
+**A refused Welcome is no longer owed for ever.** `POST /api/mls/welcome` answers a target off the
+roster `403 WELCOME_TARGET_NOT_MEMBER` (the `error` field kept for older clients), typed client-side
+as `WelcomeTargetNotMemberError`. That refusal cannot change by resending: the target departed, a
+block stands, the committer held no seat, or the commit was accepted by a server that did not enrol.
+So `deliverOwedWelcomes` clears that recipient at `console.error` and keeps every other failure owed;
+until then a settlement re-sent the refused bytes at every connection.
+
+**And the leaf such a refused person holds is the stray sweep's.** The sweep reads the tree first and
+the roster after, and an accepted Add's person is enrolled in the advance unless refused above - so
+the leaves it finds without a seat are exactly the refused ones, which it is right to remove. It
+REMOVES them and repairs nothing: a person refused here needs a new Add to be in. What the
+older shape still leaves is in
+[legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
+
 ### A revoked device's leaf is removed from every conversation
 
 Revoking a device (`DELETE mls/devices/:userId/:deviceId`) writes a `revoked_device` row and purges
@@ -1372,9 +2336,71 @@ whose whole identity is in that list, by device (`removeMemberDevice`), after th
 fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
 candidate, and a device never removes its own leaf. Like the refresh, nobody asked for this commit,
 so it is staged only on the published branch (`assertOnPublishedBranch` above; a refusal is logged
-`[STRAY] ... NOT removed` and nothing is staged). Key groups are not covered yet: their roster
-collector (`reconcileDistributionGroupRoster`) does not read the `revoked` answer, a separate
-question from the refresh's cost ([backlog](../backlog.md)).
+`[STRAY] ... NOT removed` and nothing is staged).
+
+**Key groups too, since 2026-10-27.** `group-rosters` never answers a key group (its roster is
+social-service's), so the key-group roster pass (`reconcileDistributionGroupRoster`) asks its own
+question: `POST mls/groups/:groupId/revoked-leaves` with the leaves the user diff KEEPS (never this
+device's, never a departing user's), answered only to an admitted member of the group, only about
+identities whose user is BOUND TO THAT GROUP (a device row or a seat in it - anybody else's pair is
+answered "not revoked"), throttled per user, the user half without case. It removes the named
+leaves the FRESH tree still holds by device (`removeMemberDevice`, same published-branch check,
+its base read from the scope), after the departures. An unanswered question removes no device that
+pass and says so - never read as "none revoked". **The question is asked again only when the leaves
+asked about changed** since the last answered pass on that group in this session; otherwise that
+answer is reused. A device revoked while a tree stands still is therefore seen at the next
+session's first pass - the convergent pass this always relied on. The read runs under the `read`
+head deadline (`DEADLINE_MS.read`), because it runs inside the scope's serialised roster pass: a
+hang is a `RequestDeadlineError`, the pass ends on it and releases the lane. The server says a
+converged answer (all bound, none revoked) at debug level, a revoked or unbound leaf at log level.
+
+**Each identity is validated as TWO values, never as one** (`parseLeafIdentity`,
+`chat-delivery-service/src/utils/sanitize.ts`): exactly one colon, and each half under the rule that
+half is stored under (`[a-zA-Z0-9_.:@-]{1,128}`, untrimmed). Until 2026-10-28 the whole pair went
+through the generic 128-character allowlist, and a real identity is longer: the device id EMBEDS its
+user (`BaseMlsService.generateDeviceId`, `<platform>-<user>-<base36 time>-<base36 rand>`), so a
+64-hex user gives 147 characters on the web and 149 on a Tauri build. Every request was refused 400
+and the pass logged `could not ask ... no device removed this pass` - the mechanism was inert in the
+field while its specs, written with `bob:phone-1`, were green. `sanitize.leaf-identity.spec.ts` now
+builds identities in the generator's shape and reads the generator's source, so the two cannot drift
+again.
+
+**ONE RULE ON BOTH SIDES, AND A MALFORMED LEAF COSTS ONLY ITSELF** (2026-10-29). A leaf identity is
+whatever a credential in the tree says, so a single crafted credential - a space, a non-ASCII
+letter, a 200-character half - used to make the server refuse the WHOLE batch with 400, and with it
+the revocation answer about every other leaf of that key group, for every member. Now:
+
+- the client sends only what `isAddressableLeafIdentity` (`mls-client/leafIdentity.ts`) accepts, and
+  `revokedLeafCandidates` says the count it left out (`[GRAINE] ...: N leaf/leaves outside the
+  leaf-identity rule ...`, never the identities); a legacy BARE leaf names no device and is left out
+  silently, a known shape;
+- the server SKIPS an identity outside the rule and counts it (`malformed=N`, at warn, since a current
+  client never sends one), still answering the rest; a body that is not a list, or over the 1000 cap,
+  is still a 400;
+- both run every case of `libs/contracts/leaf-identity.cases.json`, and each half's pattern is
+  asserted equal to `libs/contracts/device-id.json`.
+
+The four log fields that carry a leaf identity (`[SENDER_MISMATCH] verified=`, the
+`[UNINVITED_ENTRY]` entrant, `[INTEGRITY] claimedPeer=`, `[COMMIT] external_leaf_foreign leaf=`) go
+through `sanitizeLeafLogValue` (`cutLeafIdentity`, `utils/log-repeat.ts`): the user id cut to 8
+characters as every other line prints a user - in the user half AND inside the device half, which
+embeds it (`web-<user>-<time36>-<rand>`) - and the rest of the device kept, since it is what tells
+two devices of one person apart. Any other run of 64+ hex characters in a device half is cut too,
+since a crafted device can carry somebody else's id. The user/device pairs those four lines print
+as two fields (`reporter=` of all three reports, `envelope=` of `[SENDER_MISMATCH]`, `sender=` of
+`external_leaf_foreign`) go through `sanitizeDevicePairLogValue`, the same masking. No full user id
+reaches these four lines (owner decision, 2026-10-29). Other lines of the service still print user
+ids their own way; this claim is about these four.
+
+**Its scope is limited by the binding**, which is the device rows of a key group (it has no seats);
+the server line counts a leaf it cannot bind as `outside`. **A revocation records what its purge
+deletes** (2026-10-27): the device deletion (`DELETE mls/devices/...`, the one purge that revokes)
+writes one `dm_revoked_device_groups` row per KEY group the device held, `(groupId, userId,
+deviceId)`, in the transaction that deletes its device rows, and the question binds that exact
+device through it. Not a status on the device row, which every routing and admission path reads. A
+row ends with the group (`GROUP_OWNED_TABLES`) and with the account's erasure - never on a commit's
+declared `removes`, which the server cannot prove. A row that outlives its leaf answers only about a
+leaf no tree holds.
 
 **And the revoked device cannot commit** (2026-10-23). The commit gate (`validateCommit`) refuses a
 commit from a device under an active revocation - `403 DEVICE_REVOKED`, FIRST: before the ownership
@@ -1637,12 +2663,80 @@ once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 
 | `IDENTITY_MISMATCH` | `mismatch` | rotates, as before | none |
 
 **On a phone, an owner record comes first.** `mls.bin` is one file per install, so `initialiser_mls`
-writes `mls.owner` (the account id) each time a state OPENS, and `delete_mls_state` removes both. When
-a load fails and the record names ANOTHER account, `TauriMlsService._initImpl` throws
-`SavedStateOfAnotherAccountError` before any branch above runs - nothing re-sealed, rotated or
-written - and the gate (`device_holds_other_account`) withholds the reset that would delete that
-account's state. No record is absence of proof and changes nothing. The browser keeps one state per
-account and has no record.
+writes `mls.owner` (the account id) each time a state OPENS, and a state reset
+(`terminer_session_mls` with `sweepState`) removes both. When a load fails and the record names
+ANOTHER account, `TauriMlsService._initImpl` throws `SavedStateOfAnotherAccountError` before any
+branch above runs - nothing re-sealed, rotated or written - and the gate
+(`device_holds_other_account`) withholds the reset that would delete that account's state. No record
+is absence of proof and changes nothing. The browser keeps one state per account and has no record.
+
+#### The native manager does not outlive its account (2026-10-27)
+
+On a phone the manager is process-wide (`AppState.mls_manager`, with its cached at-rest key
+`device_key`), and a sign-out is an in-app navigation, not a restart. Until 2026-10-27 the slot was
+only ever written `Some`: account A's manager and key stayed installed into account B's session, and a
+FAILED `initialiser_mls` of B left them in place. The guarantee now:
+
+- **One teardown, one hold.** `end_native_session` (`concurrency.rs`) takes
+  `foreground_checkpoint_lock`, then the manager mutex (the device-key mutex inside it), then
+  `mls_bin_write_lock`, and under that one hold empties the slot, clears the key, clears the
+  warm-process mark (`live_manager_in_process`) and - for a reset - sweeps `mls.bin` and every file
+  built from it (`remove_mls_state_held`). Poisoned locks are taken anyway: a teardown that refused
+  would leave the previous manager installed. The manager is dropped after the locks are released, and
+  nothing under the hold calls into the JVM or the WebView.
+- **One command, one helper.** `terminer_session_mls { reason, sweepState }` is the command, and
+  `endNativeMlsSession` (`lib/utils/nativeMlsSession.ts`) the only caller: the MLS holder's retirement
+  (sign-out, account switch - after the final checkpoint, since it needs the manager) and reset (a
+  stopped or failed login, a revoked device), both inside `whenRetired`, which the next login awaits;
+  a failed `initialiser_mls`; `removeMlsState` and the factory wipe (with the sweep). `clear_app_data`
+  also ends it natively before it wipes. A sign-out keeps `mls.bin` for the account's next sign-in.
+- **A failed install leaves the slot empty by construction.** `initialiser_mls` creates an install
+  guard before its first fallible step; every exit that does not reach the install (an `Err`, a panic)
+  runs the teardown when the guard drops.
+- **An absent manager is a typed refusal.** Every MLS command reads the slot through
+  `live_manager` / `live_manager_mut` (`state.rs`) and answers `MLS_MANAGER_ABSENT`, read on the
+  TypeScript side by `isMlsManagerAbsent` - never the sentence. A command waiting on the manager mutex
+  during a teardown gets that code once it is released; it never acts on the previous manager and never
+  waits for a new one. A resume reload into an empty slot is refused the same way: it refreshes a live
+  manager and never installs one.
+- **A LOST MLS SESSION ENDS THE LIVE SESSION ON THIS DEVICE AND REOPENS IT AT THE PIN GATE - it
+  never signs out.** Two paths meet it: a resume whose reload answers `MLS_MANAGER_ABSENT`
+  (`MlsSessionVacantError`, which stops the resume sequence), and a failed `rotateDeviceIdentity`
+  during a live session - reported as an empty slot only when the native side answered
+  `MLS_MANAGER_ABSENT`, as a failed rotation otherwise (a full disk; web has no native slot). Both
+  call `reportMlsSessionLost` (`lib/mls-client/mlsSessionLoss.ts`, at ERROR); the shell answers with
+  `reopenAtPinGate`: `endLostSessionImpl` stops the socket, the timers and the conversations, retires
+  the client WITHOUT a final checkpoint (it no longer describes what is installed) and ends the native
+  session (`lost session`), then the PIN gate opens for the same account. A login or a recovery in
+  flight is STOPPED by it, as by a sign-out: its abort carries `'lost session'`, its next stage check
+  throws `LoginStoppedBySignOutError` (`by: 'lost session'`), and the client retires on its end, which
+  the gate's next login awaits - so a rotation failing in a login's connection sync no longer lets that
+  login run on into group discovery. NOT `clearAuth`: a lost MLS
+  session is a local fact, not a 401/403, and a sign-out would revoke the server session and the
+  identity provider's, clear the restore key, the push registration and the shares - and an offline
+  user could not sign back in. NOT a re-initialisation either: re-installing in place would choose an
+  identity and a key on the user's behalf - the stored device id is still the old one after a failed
+  rotation - where the unlock reopens the disk state through every gate it has.
+- **A sign-out with no live session still retires the holder's client.** The PIN gate's recovery
+  opens the state with the old PIN before its PIN change; when the change fails, the gate's exit finds
+  no session, and the opened manager and key are ended through the same retirement.
+- **A recovery in flight is tracked as a login is** (`loginInFlightSettled`, `loginInFlightAbort`): a
+  sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
+  (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
+  longer land after the native session was ended.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
+  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
+  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
+  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
+  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
+  device's exit) logs at DEBUG.
+- **Open: the slot has no session generation** - a command of a destroyed client landing after the
+  next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+
+The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
+which the holder drops with its account, and the WASM module itself holds no manager or key.
 
 #### v2 - the browser seals with WebCrypto, every platform reads it (2026-10-12)
 
@@ -1733,7 +2827,7 @@ the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_EN
 **the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
 carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
 allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
-[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---the-hardened-reader-merged-2074-the-writer-off-2026-10-12).
+[backlog](../backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md).
 
 **Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
 (`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open

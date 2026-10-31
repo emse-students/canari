@@ -31,6 +31,9 @@ interface EntitlementBody {
 export class InternalDistributionEntitlementController {
   private readonly logger = new Logger(InternalDistributionEntitlementController.name);
 
+  /** The last verdict per (scope, person), bounded: only used to tell a change from a repeat. */
+  private readonly lastVerdict = new Map<string, boolean>();
+
   constructor(private readonly channels: ChannelService) {}
 
   @Post('entitlement')
@@ -49,10 +52,25 @@ export class InternalDistributionEntitlementController {
       this.logger.warn(`[DISTRIBUTION_GROUP] entitlement refused: malformed body kind=${kind}`);
       throw new BadRequestException('kind (workspace|channel), scopeId and userId are required');
     }
-    const entitled = await this.channels.isDistributionGroupEntitled(kind, scopeId, userId);
-    this.logger.log(
-      `[DISTRIBUTION_GROUP] entitlement ${kind}=${scopeId} user=${userId.slice(0, 8)} entitled=${entitled}`
-    );
+    const verdict = await this.channels.distributionGroupEntitlement(kind, scopeId, userId);
+    const entitled = verdict.entitled;
+    // LOGGED WHEN THE DECISION CHANGES, NOT PER READ: chat-delivery asks on every commit it
+    // validates, so the same verdict for the same person and scope came 22 times in 70 s and said
+    // nothing after the first. The first evaluation and a flip speak; a flip to false names its cause.
+    const key = `${kind}:${scopeId}:${userId}`;
+    const previous = this.lastVerdict.get(key);
+    if (previous !== entitled) {
+      this.lastVerdict.delete(key);
+      this.lastVerdict.set(key, entitled);
+      if (this.lastVerdict.size > VERDICT_MEMORY) {
+        this.lastVerdict.delete(this.lastVerdict.keys().next().value as string);
+      }
+      this.logger.log(
+        `[DISTRIBUTION_GROUP] entitlement ${kind}=${scopeId} user=${userId.slice(0, 8)} entitled=${entitled}` +
+          (previous === undefined ? ' (first evaluation)' : ` (was ${previous})`) +
+          ('cause' in verdict ? ` - ${verdict.cause}` : '')
+      );
+    }
     return { entitled };
   }
 
@@ -90,5 +108,8 @@ export class InternalDistributionEntitlementController {
     return { outcome: await this.channels.decideDistributionDeparture(groupId, userId, departure) };
   }
 }
+
+/** Distinct (scope, person) pairs remembered; the oldest is forgotten, and speaks once more. */
+const VERDICT_MEMORY = 5000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

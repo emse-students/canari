@@ -20,10 +20,34 @@ import {
   releaseDecryptedMediaBlobUrl,
 } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
+import { m } from '$lib/paraglide/messages';
+import { showToast } from '$lib/stores/toast.svelte';
+import { Log } from '$lib/utils/Log';
 
 /** Whether this build has a system share sheet to open: the phone apps. */
 export function canShareOut(): boolean {
   return hasNativeGallery();
+}
+
+/**
+ * THE ONE PLACE A SHARE-SHEET FAILURE IS TOLD TO THE MEMBER. Runs `open` (any of the `*Out`
+ * functions below) and, when the sheet did not open, logs it and shows the "could not open" toast -
+ * a tap on "Share" that silently does nothing reads as a dead button. There is no fallback to a
+ * copy: the sheet's rows are only drawn where one exists (`canShareOut`).
+ *
+ * @param what - What is being shared, for the log line only.
+ * @returns `true` once the sheet opened, `false` after the failure toast.
+ */
+export async function runShareOut(what: string, open: () => Promise<void>): Promise<boolean> {
+  Log.d('shareOut', `opening the share sheet on ${what}`);
+  try {
+    await open();
+    return true;
+  } catch (e) {
+    Log.d('shareOut', `the share sheet did not open on ${what}: ${String(e)}`);
+    showToast(m.share_out_failed(), 'error');
+    return false;
+  }
 }
 
 /** Opens the share sheet on a text (a message, a link). @throws {GalleryError} */

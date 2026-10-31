@@ -1,5 +1,6 @@
 import {
   SCHEMA_VERSION,
+  conversationAwaitingAdmissionStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   outboxServerErrorsStatement,
@@ -93,6 +94,47 @@ describe('outboxServerErrorsStatement (v14)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(outboxServerErrorsStatement(['id', 'attempts', 'server_errors'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(14);
+  });
+});
+
+/**
+ * v14 -> v15 on a REAL in-memory SQLite: a stored conversation reads NULL - "not an ask" until the
+ * next discovery says otherwise - and a rerun does nothing.
+ */
+describe('conversationAwaitingAdmissionStatement (v15)', () => {
+  const columnsOf = (engine: any): string[] =>
+    engine
+      .prepare('PRAGMA table_info(conversations)')
+      .all()
+      .map((c: { name: string }) => c.name);
+
+  it('adds the column to an existing conversations table, NULL on every row', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT, image_media_id TEXT)'
+    );
+    engine.exec(
+      "INSERT INTO conversations (id, name, lifecycle) VALUES ('g1', 'Group', 'pending')"
+    );
+
+    const sql = conversationAwaitingAdmissionStatement(columnsOf(engine));
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT awaiting_admission, lifecycle FROM conversations').get()).toEqual(
+      {
+        awaiting_admission: null,
+        lifecycle: 'pending',
+      }
+    );
+    // Rerun: the column is there, nothing to do.
+    expect(conversationAwaitingAdmissionStatement(columnsOf(engine))).toBeNull();
+  });
+
+  it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
+    expect(conversationAwaitingAdmissionStatement(['id', 'name', 'awaiting_admission'])).toBeNull();
+    expect(SCHEMA_VERSION).toBe(15);
   });
 });

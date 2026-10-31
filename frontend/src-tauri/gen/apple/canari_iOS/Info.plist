@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4.1</string>
+	<string>1.5.3</string>
 	<key>CFBundleVersion</key>
-	<string>100400101</string>
+	<string>100500301</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -25,16 +25,15 @@
 		<string>remote-notification</string>
 		<string>processing</string>
 		<string>fetch</string>
-		<!-- NO `voip` HERE, DELIBERATELY. The mode is only legitimate for an app that reports an
-		     incoming call to CallKit, and the native ring is held off (frontend/src/lib/features.ts,
-		     CALLS_NATIVE_RING_COMPILED, its own switch since 2026-10-21; callsCompiled.test.ts asserts
-		     the two agree) until it has been run on hardware. App Review refused the declaration
-		     under guideline 2.5.4 on 2026-08-31 for a VoIP service it could not locate - correctly,
-		     since on that build no iPad could even register a push token. Re-add it in the SAME
-		     commit that flips CALLS_NATIVE_RING_COMPILED and restores CanariCallKitSetup() - not with
-		     CALLS_COMPILED, whose in-app calls ship without the native ring - never before: an
-		     undeclared-but-unused mode is a rejection, and a used-but-undeclared one cannot get a
-		     PushKit token at all. -->
+		<!-- `voip` FOLLOWS THE NATIVE RING (frontend/src/lib/features.ts, CALLS_NATIVE_RING_COMPILED,
+		     ON since the owner's decision of 2026-10-30; callsCompiled.test.ts asserts the two agree).
+		     The mode is only legitimate for an app that reports an incoming call to CallKit, which
+		     this build does on every VoIP push (canari_push.mm, CanariReportVoipCall). App Review
+		     refused the declaration under guideline 2.5.4 on 2026-08-31 for a VoIP service it could
+		     not locate, so the review notes must show where it is: a call to a locked iPhone rings on
+		     the CallKit screen. An undeclared-but-used mode cannot get a PushKit token at all, and a
+		     declared-but-unused one is a rejection: it moves with the ring, never alone. -->
+		<string>voip</string>
 		<!-- `audio` IS HERE SINCE THE FLIP OF CALLS_COMPILED (WP-C-BG-I), ON THE OTHER SWITCH FROM
 		     `voip`. WKWebView mutes a page's microphone when the app is hidden or the screen locks
 		     unless this array holds `audio` (measured on the iPhone 2026-10-20), so an in-app call
@@ -117,9 +116,9 @@
 	     French-first) and act as the fallback; per-locale overrides live in
 	     canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10). -->
 	<key>NSCameraUsageDescription</key>
-	<string>Canari utilise l'appareil photo pour prendre des photos à partager dans vos conversations, des photos et vidéos pour vos publications, et pour filmer vos CanaReels.</string>
+	<string>Canari utilise l'appareil photo pour vos appels vidéo, pour prendre des photos à partager dans vos conversations, des photos et vidéos pour vos publications, pour filmer vos CanaReels et pour diffuser vos directs.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Canari utilise le microphone pour vos appels audio, pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.</string>
+	<string>Canari utilise le microphone pour vos appels audio et vidéo, pour enregistrer des messages vocaux, le son des vidéos que vous filmez pour vos publications et vos CanaReels, et le son de vos directs.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

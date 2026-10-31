@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
@@ -67,6 +67,20 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     { id: 'b', label: 'B', votes: [] },
     { id: 'c', label: 'C', votes: [] },
   ];
+
+  it('answers 404 for a poll id the post does not have, and saves nothing', async () => {
+    const { service, saved } = makeService({
+      id: 'p1',
+      multipleChoice: false,
+      options: options(),
+      votesByUser: {},
+    });
+
+    await expect(
+      service.votePoll('post-1', 'unknown', { userId: 'u1', optionIds: [] })
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(saved).toEqual([]);
+  });
 
   it('refuses more than one option on a single-choice poll', async () => {
     const { service } = makeService({
@@ -172,20 +186,40 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
     expect(post.polls[0].options[0].votes).toEqual([]);
   });
 
-  it('refuses a user id that would shadow a property of the map it is written into', async () => {
-    // `Object.create(null)` stops the shadowing; it does not stop the map CARRYING the key, which
-    // then travels to every reader of the poll and to JSON. The channel poll has refused this
-    // since CodeQL #2477/#2476 and the post poll had only the null prototype.
-    const { service } = makeService({
+  it.each(['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__'])(
+    'refuses the user id %s, which would shadow a property of the map, and saves nothing',
+    async (hostile) => {
+      // `Object.create(null)` stops the shadowing; it does not stop the map CARRYING the key, which
+      // then travels to every reader of the poll and to JSON. The channel poll has refused this
+      // since CodeQL #2477/#2476 and the post poll had only the null prototype.
+      const { service, post, saved } = makeService({
+        id: 'p1',
+        multipleChoice: true,
+        options: options(),
+        votesByUser: {},
+      });
+
+      await expect(
+        service.votePoll('post-1', 'p1', { userId: hostile, optionIds: ['a'] })
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(saved).toEqual([]);
+      expect(Object.keys(post.polls[0].votesByUser)).toEqual([]);
+    }
+  );
+
+  it('writes the vote into a prototype-less map, as an own entry beside the others', async () => {
+    const { service, post } = makeService({
       id: 'p1',
       multipleChoice: true,
       options: options(),
-      votesByUser: {},
+      votesByUser: { u0: ['b'] },
     });
 
-    await expect(
-      service.votePoll('post-1', 'p1', { userId: '__proto__', optionIds: ['a'] })
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
+
+    const map = post.polls[0].votesByUser;
+    expect(Object.getPrototypeOf(map)).toBeNull();
+    expect({ ...map }).toEqual({ u0: ['b'], u1: ['a'] });
   });
 
   describe('an anonymous poll', () => {
@@ -202,15 +236,15 @@ describe('PostInteractionsService.votePoll enforces the poll', () => {
         votesByUser: {},
       }) as unknown as PollFixture;
 
-    it('counts the vote and answers with `voted`, never the voter list', async () => {
+    // What the voter is ANSWERED (`voted`, never the voter list) is the route's per-reader shaping,
+    // pinned in `posts.controller.vote-response.spec.ts`; this returns the stored row to that route.
+    it('counts the vote and returns the stored row for the route to serve', async () => {
       const { service, post } = makeService(anonymousPoll());
       const res = await service.votePoll('post-1', 'p1', { userId: 'u1', optionIds: ['a'] });
       const stored = (post.polls as unknown as Record<string, any>[])[0];
       expect(stored.options[0].votes).toBe(1);
-      const served = (res.polls as Record<string, any>[])[0];
-      expect(served.voted).toBe(true);
-      expect('voters' in served).toBe(false);
-      expect(JSON.stringify(res.polls)).not.toContain('u1');
+      expect(stored.voters).toEqual(['u1']);
+      expect(res).toBe(post);
     });
 
     it('refuses a second vote from the same account', async () => {

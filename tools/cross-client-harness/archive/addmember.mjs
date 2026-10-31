@@ -26,7 +26,9 @@
  * OPENING a conversation, and this is a membership commit. Keeping them apart is what stops the next
  * reader importing half of one to get the other.
  */
+import { assertCampaignOwned } from '../campaign.mjs';
 import { clickAtPoint, evaluate, realClick, until } from '../chat.mjs';
+import { confirmDialog } from '../comm.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -35,8 +37,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *
  * The label is bare - `Ajouter`, not `Ajouter un membre`, which is what a guessed matcher looked for
  * and missed.
+ *
+ * IDEMPOTENT: a panel ALREADY open is the goal reached, not an obstacle. On the phone the side panel
+ * stays open across conversations and covers the header button, so clicking it anyway failed with
+ * "no stable element" (OFF-5 on A1, 2026-10-25, the panel up from the moment the row's group opened).
  */
 export async function openGroupSettings(cx) {
+  if (await evaluate(cx, `/Quitter le groupe/.test(document.body.innerText)`)) return;
   await realClick(cx, '[aria-label="Paramètres du groupe"]');
   await until(cx, `/Quitter le groupe/.test(document.body.innerText)`, 10000);
   await sleep(1200);
@@ -159,6 +166,112 @@ export async function addMember(cx, who, { openSettings = true, openPickerFirst 
   await pointerAt(cx, spot);
   await submitInvite(cx);
   return spot.text;
+}
+
+/**
+ * Invites SEVERAL people in ONE submission - the product's bulk Add, ONE commit for all of them.
+ *
+ * WHY IT IS NOT `addMember` IN A LOOP. Each `addMember` is its own submission and therefore its own
+ * MLS commit: three people cost three epochs. The picker is a multi-select (`MultiUserSelector`,
+ * `clearOnSelect`): every pick becomes a chip, the button reads "Envoyer l'invitation (N)", and one
+ * press sends `inviteMembersToGroup` the whole list, which stages ONE bulk Add
+ * (`processBulkAddition`). FLOOR-2 and BIG-1 of the 1.4.1 campaign ask exactly that question, and
+ * the campaign fixtures are built the same way so their history is the product's ordinary path.
+ *
+ * Each pick is asserted (the option clicked is the one asked for), and so is the COUNT on the button
+ * before it is pressed: a pick that silently did not take would otherwise send N-1 people and look
+ * like a success.
+ *
+ * @param cx a connected client, with the group open
+ * @param {string[]} names display names as the picker renders them, at least one
+ * @param {{openSettings?: boolean, beforeSubmit?: () => Promise<void>}} [options] `beforeSubmit` runs
+ *   after every pick took and before the invite is pressed
+ * @returns {Promise<string[]>} the option texts that were picked, in order
+ */
+export async function addMembers(cx, names, { openSettings = true, beforeSubmit = null } = {}) {
+  if (!names.length) throw new Error('addMembers: nobody to add');
+  if (openSettings) await openGroupSettings(cx);
+  await openPicker(cx);
+  const picked = [];
+  for (const who of names) {
+    await typeQuery(cx, who);
+    const spot = await optionFor(cx, who);
+    if (!spot) throw new Error(`addMembers: the picker offers no ${who}`);
+    if (!spot.text.toLowerCase().includes(who.toLowerCase())) {
+      throw new Error(`addMembers: the picker's option reads ${JSON.stringify(spot.text)}, not ${who}`);
+    }
+    await pointerAt(cx, spot);
+    picked.push(spot.text);
+  }
+  // THE COUNT THE BUTTON SHOWS IS THE SELECTION THE SUBMISSION WILL CARRY (`chat_group_send_invite_button`
+  // plus ` (N)`, ChatGroupPanel.svelte).
+  await until(
+    cx,
+    `[].slice.call(document.querySelectorAll('button')).some(function (x) { return /Envoyer l'invitation \\(${names.length}\\)/.test(x.innerText || ''); })`,
+    8000
+  ).catch(() => {
+    throw new Error(`addMembers: the invite button never read (${names.length}) - a pick did not take`);
+  });
+  // A FAULT THAT MUST HIT THE COMMIT AND NOT THE PICKER'S SEARCH is armed here (NET-3's portal would
+  // otherwise answer the user search and the Add would never be made).
+  if (beforeSubmit) await beforeSubmit();
+  await submitInvite(cx);
+  return picked;
+}
+
+/** The open group panel's `MEMBRES (N)` count, opening the panel first if it is not up; null if unreadable. */
+async function rosterCount(cx) {
+  if (!(await evaluate(cx, `/Quitter le groupe/.test(document.body.innerText)`))) await openGroupSettings(cx);
+  return evaluate(cx, String.raw`(function () { var m = /MEMBRES\s*\((\d+)\)/i.exec(document.body.innerText); return m ? Number(m[1]) : null; })()`);
+}
+
+/**
+ * Removes one member by id from the open group and returns once the roster has actually shrunk -
+ * or once 25 s have passed, without throwing, so the caller fails on the roster as it really stands.
+ *
+ * MOVED HERE FROM `archive/grp.mjs` (2026-10-24), where it was private: the 1.4.1 race rows (CC-2,
+ * CC-3, RM-1) remove a member as their action, and a second copy is how three lessons ended up in
+ * three files last time (this module's header).
+ *
+ * THE POST-CONDITION IS THE ROSTER, not the click: a Remove is a commit and a network round trip,
+ * exactly as an Add is. THE CLICK ONLY ASKS: the removal is confirmed in `showConfirm` since #816
+ * ("Retirer ce membre du groupe ?"); unanswered, the dialog left the roster at two and covered every
+ * later click (GRP-3..10, 2026-10-22).
+ *
+ * @param {string} userId the member's user id (`[data-remove-member]`, the panel's only per-member hook)
+ * @param {string} name the group's name, for the R5 ownership guard
+ * @returns {Promise<{before: number|null, after: number|null}>} the roster counts read around the removal
+ */
+export async function removeMember(cx, userId, name, { label = 'removeMember' } = {}) {
+  // R5: a removal is a commit on THIS group, so the open group must be the campaign's.
+  assertCampaignOwned({ kind: 'group', name }, label);
+  const before = await rosterCount(cx);
+  await realClick(cx, `[data-remove-member="${userId}"]`);
+  await confirmDialog(cx, 'common_remove_label');
+  if (before !== null) {
+    await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000).catch(() =>
+      console.log(`[${label}] the roster did not reach ${before - 1} within 25 s`)
+    );
+  }
+  await sleep(2000);
+  return { before, after: await rosterCount(cx) };
+}
+
+/**
+ * Leaves the open group, through BOTH steps the panel requires (`Quitter le groupe` only arms a
+ * confirmation; the `Quitter` inside it calls `onGroupLeave`). Moved from `archive/grp.mjs` with
+ * {@link removeMember}, for RM-8.
+ */
+export async function leaveGroup(cx, name, { label = 'leaveGroup' } = {}) {
+  assertCampaignOwned({ kind: 'group', name }, label);
+  await realClick(cx, 'text=Quitter le groupe');
+  // CASE-INSENSITIVE, because the confirmation is a `<p class="... uppercase">` and `innerText`
+  // returns what CSS renders: "QUITTER CE GROUPE ?". The exact-case test timed out on every run of
+  // GRP-6 and read as the product refusing to arm its own confirmation.
+  await until(cx, `/quitter ce groupe/i.test(document.body.innerText)`, 8000);
+  await realClick(cx, 'text=Quitter');
+  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) === -1`, 30000);
+  await sleep(2000);
 }
 
 /**

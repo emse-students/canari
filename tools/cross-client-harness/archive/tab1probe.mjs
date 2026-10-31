@@ -11,7 +11,8 @@
  */
 import { APP_TAB, awaitMessage, client, ensureConversation, evaluate, send } from '../chat.mjs';
 import { background } from './tabs.mjs';
-import { ORIGIN, PORTS, peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { ORIGIN } from '../site.mjs';
 
 const marker = `T1P-${Math.random().toString(36).slice(2, 10)}`;
 const w1 = await client(PORTS.W1, APP_TAB);

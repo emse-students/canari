@@ -50,11 +50,7 @@ beforeEach(() => {
   tauriInvokeStub.mockImplementation(() => Promise.resolve(null));
   // The service asks the OS, not the user agent, so this is what decides the platform now.
   osPlatformStub.mockReturnValue('android');
-  globalThis.fetch = vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({}),
-    text: async () => '',
-  });
+  globalThis.fetch = vi.fn().mockImplementation(async () => Response.json({}));
 });
 
 // A LONGER TIMEOUT, AND IT IS NOT ABOUT THE CODE UNDER TEST: its cases re-import the module after

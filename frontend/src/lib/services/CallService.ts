@@ -4,12 +4,20 @@ import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
-import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
+import {
+  callEndReasonFromWire,
+  encodeAppMessage,
+  mkCallAnswered,
+  mkCallBusy,
+  mkCallHangup,
+  mkCallInvite,
+  type CallEndReason,
+} from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
-import { consumePendingCallAccept } from '$lib/stores/pendingCallAccept';
+import { takePendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
@@ -33,9 +41,9 @@ import {
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
-import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -91,7 +99,17 @@ interface IceServerConfig {
 /** Optional hook to mirror call lifecycle events into the chat timeline. */
 export interface CallChatNotifier {
   onCallStarted: (groupId: string, callId: string) => void | Promise<void>;
-  onCallEnded: (groupId: string, callId: string) => void | Promise<void>;
+  /**
+   * A call this device ended (or lost) LOCALLY. `outcome` is the typed reason it ended unanswered,
+   * absent for an answered call; `starterId` is the caller, absent when it is this account. The
+   * notifier hands it to the ONE call-record writer; remote hangups never come through here.
+   */
+  onCallEnded: (
+    groupId: string,
+    callId: string,
+    outcome?: CallEndReason,
+    starterId?: string
+  ) => void | Promise<void>;
 }
 
 /**
@@ -424,8 +442,15 @@ export class CallService {
   public incomingHasVideo = false;
 
   private callHasVideo = false;
-  /** `visibilitychange` listener installed during a call; removed on cleanup. */
-  private backgroundVisibilityHandler: (() => void) | null = null;
+  /**
+   * Whether this call carries VIDEO: set with the microphone (before `localStreamStore` publishes it,
+   * so a reader woken by the stream sees it already), and true once the camera joined mid-call.
+   */
+  public get hasVideo(): boolean {
+    return this.callHasVideo;
+  }
+  /** Unsubscribes the on-screen listener installed during a call (`onAppScreenChange`); cleanup calls it. */
+  private backgroundUnsubscribe: (() => void) | null = null;
   /** True while the camera was auto-paused because the tab/app went to the background. */
   private videoPausedByBackground = false;
   /**
@@ -583,7 +608,29 @@ export class CallService {
 
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
-        this.endCall(false);
+        // Remote origin: `handleCallSignalForChat` writes this call's record from the same frame.
+        this.endCall(false, callEndReasonFromWire(callMsg.endReason), true);
+      }
+      return;
+    }
+
+    if (callMsg.busy) {
+      // The callee's device is in another call: only the caller's device, still ringing THIS call,
+      // acts on it. Our own other devices (a sibling of the caller, or a busy sibling of the callee
+      // answering for itself) have nothing to end.
+      if (
+        senderNorm !== userNorm &&
+        callMsg.callId === this.currentCallId &&
+        get(this.callState) === 'calling' &&
+        !this.peerArrived
+      ) {
+        appendLog(`[Call] ${senderId} is busy - ending call ${callMsg.callId} at once`);
+        showToast(m.call_busy(), 'info');
+        this.endCall(true, 'busy');
+      } else {
+        appendLog(
+          `[Call] busy answer for ${callMsg.callId} ignored (state=${get(this.callState)})`
+        );
       }
       return;
     }
@@ -625,15 +672,6 @@ export class CallService {
         );
         return;
       }
-      if (get(this.callState) !== 'idle') {
-        // BUSY: a second call does not ring over the one in progress, and nothing is sent for it.
-        // A hangup would reach the whole conversation - our own other devices included, which are
-        // free to answer it - so this device stays out of it; the caller's ring window decides.
-        appendLog(
-          `[Call] invite ${callMsg.callId} in ${groupId} not rung - busy (state=${get(this.callState)} call=${this.currentCallId})`
-        );
-        return;
-      }
       // An invite with no window comes from a build before the ring window existed: it would
       // ring here for as long as nobody touched it. Calls are dev-only, so it is refused, named.
       const ringTimeoutMs = callMsg.ringTimeoutMs ?? 0;
@@ -645,6 +683,17 @@ export class CallService {
       }
 
       if (!(await this.admitInvite(senderNorm, callMsg.callId))) return;
+
+      // Only an ADMITTED invite (permission, ring window, no block) can meet a busy device: busy is
+      // answered only for an admitted invite. Re-read AFTER the await above, which another invite
+      // may have used to take the slot.
+      if (get(this.callState) !== 'idle' || this.currentCallId) {
+        if (
+          !(await this.yieldToOrAnswerBusy(senderNorm, groupId, callMsg.callId, currentDeviceId))
+        ) {
+          return;
+        }
+      }
 
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
@@ -660,16 +709,68 @@ export class CallService {
       }
       this.callState.set('incoming');
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
-
-      // WP-XP-5: the user may have ALREADY answered this call on a system surface (Android
-      // CallStyle notification deep link / iOS CallKit) before the app was unlocked and the
-      // invite reached us over WS. Consume the recorded intent and auto-accept.
-      const pendingAccept = consumePendingCallAccept(callMsg.callId);
-      if (pendingAccept) {
-        appendLog(`[Call] auto-accepting call ${callMsg.callId} (system-surface answer)`);
-        void this.acceptCall(groupId, callMsg.callId);
-      }
+      // An answer already given on a system surface is not looked for here: it joins on its own
+      // facts the moment the session can ({@link answerFromSystemSurface}), and this invite, if it
+      // arrives after, meets that call as its own redelivery.
     }
+  }
+
+  /**
+   * JOINS A CALL THE USER ANSWERED ON A SYSTEM SURFACE (the Android ring, iOS CallKit), from the
+   * facts that answer carries - never from the caller's MLS `call_invite`.
+   *
+   * That invite is a TRANSPORT frame: the server hands it only to a device online when it is sent
+   * (`TRANSPORT_SKIPPED_OFFLINE`), and a phone the native ring reached was, by construction, closed.
+   * Waiting for it made every answer from a closed phone ring out its window into "missed" on both
+   * sides (1.5.2-alpha.1, Mi 9T). Nothing the invite carries is needed to join: the conversation,
+   * the call and whether it is video came with the ring, and every rule the invite's admission
+   * applies here was applied by the server before it rang (calls_mode, the conversation's
+   * permission, blocks) and is applied AGAIN by the room token this join asks for - a closed window
+   * or a block set since is its `410`/`403`, an answer, not a guess.
+   *
+   * Called by `pendingCallAccept.ts` once BOTH an intent is held and the session's socket has
+   * caught up (`ConnectionDeps.onCaughtUp`), whichever comes second; the intent is taken once
+   * ({@link takePendingCallAccept}).
+   *
+   * @param why What called it, for the log.
+   */
+  public answerFromSystemSurface(why: string): void {
+    if (!CALLS_ENABLED) return;
+    const intent = takePendingCallAccept();
+    if (!intent) return;
+    const state = get(this.callState);
+    if (state !== 'idle' && state !== 'incoming' && this.currentCallId === intent.callId) {
+      // This answer's call is already being joined, held, or just ended here: a second answer of
+      // it is a duplicate - no warning, no second setup, and never a rejoin of a call ended.
+      console.debug(`[Call] system-surface answer of call=${intent.callId} - already ${state}`);
+      return;
+    }
+    appendLog(
+      `[Call] system-surface answer of call=${intent.callId} (${why}) meets state=${state} call=${this.currentCallId}`
+    );
+    if (state === 'incoming' && this.currentCallId === intent.callId) {
+      // The invite did reach this device (it was online when it left): the same call, answered.
+      void this.acceptCall(intent.groupId, intent.callId);
+      return;
+    }
+    if (state === 'ended') this.cleanup();
+    if (get(this.callState) !== 'idle') {
+      // In another call: the answer cannot be honoured without dropping that one, which only the
+      // user decides. Its ring rings out; said, never silent.
+      appendLog(
+        `[Call] WARN system-surface answer of call=${intent.callId} dropped - this device is in call=${this.currentCallId}`
+      );
+      return;
+    }
+    this.currentCallId = intent.callId;
+    this.currentGroupId = intent.groupId;
+    this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
+    this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
+    this.callState.set('incoming');
+    appendLog(
+      `[Call] joining call=${intent.callId} from the system-surface answer - no invite awaited`
+    );
+    void this.acceptCall(intent.groupId, intent.callId);
   }
 
   /**
@@ -677,7 +778,7 @@ export class CallService {
    * across a block, so an honest caller never sends this invite; a client that skips them can
    * still send the MLS `call_invite` itself, and THIS is where that ring is stopped - a block must
    * not ring the in-app UI either. A failure to ASK is not an answer, so it does not ring and says
-   * so at error level. Re-checks the slot afterwards: another invite may have rung during the await.
+   * so at error level. It checks the block ONLY: the caller re-reads the slot after it.
    */
   private async admitInvite(senderNorm: string, callId: string): Promise<boolean> {
     try {
@@ -689,11 +790,61 @@ export class CallService {
       console.error(`[Call] invite ${callId} not rung: could not ask whether a block stands`, e);
       return false;
     }
-    if (get(this.callState) !== 'idle' || this.currentCallId) {
-      appendLog(`[Call] invite ${callId} not rung: another call took this device meanwhile`);
-      return false;
-    }
     return true;
+  }
+
+  /**
+   * A new admitted invite meets a device that is not idle. BUSY means THIS DEVICE is in a call.
+   *
+   * - The invite of the call this device is already in (a redelivery) is itself: ignored, no answer.
+   * - The ENDED summary is not a call: it is cleared at once (its timer too) and the invite RINGS,
+   *   as a glare loser's does. Dropping it would leave the caller ringing into nothing.
+   * - GLARE (both sides calling each other in one conversation): the LOWER callId wins. The winner
+   *   ignores the other invite and sends no busy; the loser drops its own call and rings the
+   *   winner's. Both sides decide from the two ids alone, so they cannot both yield or both stay.
+   * - Otherwise a typed busy frame answers it, which ends the caller's ring at once (a hangup would
+   *   have reached every device of the conversation).
+   *
+   * @returns True when this device is idle again and the invite may ring (a glare it lost).
+   */
+  private async yieldToOrAnswerBusy(
+    senderNorm: string,
+    groupId: string,
+    callId: string,
+    deviceId: string
+  ): Promise<boolean> {
+    const state = get(this.callState);
+    appendLog(
+      `[Call] invite ${callId} in ${groupId} meets state=${state} call=${this.currentCallId}`
+    );
+    if (callId === this.currentCallId) return false;
+    if (state === 'ended') {
+      appendLog(`[Call] invite ${callId} meets the ended summary - clearing it to ring`);
+      this.cleanup();
+      return get(this.callState) === 'idle';
+    }
+    // 'calling' with no id yet is a call still in its setup (`startCall` takes the id from the
+    // server after it sets the state): it has rung nobody, so it loses any glare in its conversation.
+    if (state === 'calling' && this.currentGroupId === groupId) {
+      if (this.currentCallId && this.currentCallId < callId) {
+        appendLog(`[Call] glare with ${callId}: this call wins (lower id), no busy sent`);
+        return false;
+      }
+      // The loser's own hangup reaches the winner, whose record writer files it as a missed call
+      // from the loser (the loser did call, and the winner never rang for it): accepted.
+      appendLog(
+        `[Call] glare with ${callId}: this call loses (higher id or none yet) - dropping it to ring`
+      );
+      this.endCall(true, 'cancelled');
+      this.cleanup();
+      return get(this.callState) === 'idle';
+    }
+    try {
+      await this.sendMlsNotification(groupId, mkCallBusy(callId, deviceId));
+    } catch (e) {
+      console.error(`[Call] busy answer for ${callId} to ${senderNorm} not sent`, e);
+    }
+    return false;
   }
 
   /** Stops an incoming ring without notifying the group (sibling device answered). */
@@ -715,7 +866,7 @@ export class CallService {
         return;
       }
       appendLog(`[Call] ring window (${ringTimeoutMs} ms) closed unanswered - call=${callId}`);
-      if (side === 'calling') this.endCall(true);
+      if (side === 'calling') this.endCall(true, 'not-answered');
       else this.dismissIncomingCall();
     }, ringTimeoutMs);
   }
@@ -810,7 +961,8 @@ export class CallService {
       console.error('Error starting call:', e);
       // Once the invite has left, the other party is ringing: hang up so it stops, rather than
       // leaving it to ring into a call that will never answer.
-      this.endCall(this.inviteSent);
+      // A setup that failed AFTER the invite left is a call nobody answered, not one the user cancelled.
+      this.endCall(this.inviteSent, 'not-answered');
       throw e;
     }
   }
@@ -902,8 +1054,19 @@ export class CallService {
     }
   }
 
-  /** Ends the active call and optionally notifies the group via MLS. */
-  public endCall(notify: boolean = true) {
+  /**
+   * Ends the active call and optionally notifies the group via MLS.
+   *
+   * @param reason Why a call that was never answered ended (typed, sent on the hangup). Left out,
+   *   it is inferred from what this device was doing: a ring refused is 'declined', a ring the user
+   *   abandoned is 'cancelled'. An answered call carries none, and a call whose callee already
+   *   reached the room (`peerArrived`) is ANSWERED even if its media never connected: no outcome,
+   *   whatever `reason` says - so the record cannot depend on whether the relay's `PeerLeft` or the
+   *   MLS hangup arrives first (both reach the one writer with the same fact).
+   * @param remoteOrigin True when the OTHER party ended it (its MLS hangup): the call-record writer
+   *   already has that frame, so this device writes nothing.
+   */
+  public endCall(notify: boolean = true, reason?: CallEndReason, remoteOrigin: boolean = false) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
     // Guard against double-calls: if cleanup already ran - or the call is already showing its
@@ -912,27 +1075,49 @@ export class CallService {
     const state = get(this.callState);
     if (state === 'idle' || state === 'ended') return;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
-    const wasCalling = get(this.callState) === 'calling';
+    const wasCalling = state === 'calling';
+    // Typed, and only for a call nobody answered: incoming = a ring this device refused; calling =
+    // a ring someone was actually rung by (a call that failed before its invite rang nobody), AND
+    // whose callee never reached the room: `peerArrived` means it ANSWERED and the media had not
+    // connected yet, which is an answered call (a duration), not an unanswered one.
+    const outcome: CallEndReason | undefined =
+      state === 'incoming'
+        ? (reason ?? 'declined')
+        : wasCalling && this.inviteSent && !this.peerArrived
+          ? (reason ?? (notify ? 'cancelled' : 'not-answered'))
+          : undefined;
+    // No typed outcome is one of TWO facts, and the log names which: a ring that never left (a
+    // call that failed before its invite: still `calling`, nobody arrived) rang nobody; anything
+    // else was ANSWERED. One label for both read as a doubt on every answered call (#2706).
+    const ended = outcome ?? (wasCalling && !this.peerArrived ? 'unrung' : 'answered');
+    appendLog(
+      `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`
+    );
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
     if (notify && groupId && callId) {
-      this.sendMlsNotification(groupId, mkCallHangup(callId, this.mlsService.getDeviceId())).catch(
-        console.error
-      );
+      this.sendMlsNotification(
+        groupId,
+        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
+      ).catch(console.error);
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
-      void this.endServerRing(groupId, callId, wasCalling ? 'cancelled' : 'ended');
+      void this.endServerRing(
+        groupId,
+        callId,
+        wasCalling && !this.peerArrived ? 'cancelled' : 'ended'
+      );
     }
-    if (groupId && callId) {
-      void this.chatNotifier?.onCallEnded(groupId, callId);
-      // Missed only if someone was actually rung: a call that failed before its invite (the
-      // initiate refused, no ICE servers, no microphone) rang nobody and missed nothing.
-      if (wasCalling && this.inviteSent) {
-        const ctx = getCallSystemMessageContext();
-        const callerId = ctx?.userId ?? '';
-        void recordCallMissed(ctx, groupId, callId, callerId);
-      }
+    if (groupId && callId && !remoteOrigin) {
+      // The one record writer, told WHY the call ended. A call that failed before its invite
+      // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
+      void this.chatNotifier?.onCallEnded(
+        groupId,
+        callId,
+        outcome,
+        state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined
+      );
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
@@ -948,7 +1133,9 @@ export class CallService {
       this.writeEndReport();
       this.endedAt.set(Date.now());
       this.callState.set('ended');
-      setTimeout(() => {
+      this.clearEndedSummaryTimer();
+      this.endedSummaryTimer = window.setTimeout(() => {
+        this.endedSummaryTimer = null;
         if (get(this.callState) === 'ended') {
           this.cleanup();
         }
@@ -965,8 +1152,8 @@ export class CallService {
    * network blip alone is resumed, never ended here). Without this, a dead media path
    * left the UI stuck "in call" on a frozen stream. No-op once the call is already
    * idle, so overlapping failure events (ICE + connection both fire `failed`) only
-   * tear down once. Ends only this leg without broadcasting an MLS hangup: in a group
-   * call one peer's failed relay must not end everyone else's call.
+   * tear down once. It DOES send the MLS hangup (calls are 1:1): the other party's ring stops and
+   * its record row is finalized by it.
    */
   private failCall(reason: string, cause?: Error): void {
     const state = get(this.callState);
@@ -977,7 +1164,8 @@ export class CallService {
     // A TYPED cause reads as its own sentence (`describeCallFailure`); anything else is a transport
     // failure, the connection lost.
     showToast(cause ? describeCallFailure(cause) : m.call_connection_lost(), 'error');
-    this.endCall(false);
+    // The hangup goes out: the other party's row is finalized by it, and its ring (if any) stops.
+    this.endCall(true, 'not-answered');
   }
 
   /**
@@ -1002,7 +1190,18 @@ export class CallService {
     }).catch(() => {});
   }
 
+  /** The pending close of the ended summary; cleared by `cleanup` so it cannot cut a LATER call's summary short. */
+  private endedSummaryTimer: number | null = null;
+
+  private clearEndedSummaryTimer(): void {
+    if (this.endedSummaryTimer !== null) {
+      window.clearTimeout(this.endedSummaryTimer);
+      this.endedSummaryTimer = null;
+    }
+  }
+
   private cleanup() {
+    this.clearEndedSummaryTimer();
     // Any setup still awaiting belongs to the call ending here (`assertSetupLive`).
     this.callSetupSeq += 1;
     // Read before the reset below: only a call that connected owes a final worker report.
@@ -1293,9 +1492,11 @@ export class CallService {
       credential: s.credential,
     }));
 
+    // EVERY url, not a preview: the relay is listed LAST, so a cut at two hid it, and a reading of a
+    // call could not tell "no TURN configured" from "TURN configured and unused". The query
+    // (`?transport=`) is dropped; no credential is in a url.
     const urlPreview = mapped
       .flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]))
-      .slice(0, 2)
       .map((u) => (typeof u === 'string' ? u.split('?')[0] : u))
       .join(', ');
     appendLog(
@@ -1789,7 +1990,7 @@ export class CallService {
       if (e instanceof CallSetupAbandonedError) return;
       if (e instanceof CallSignallingRefusedError) {
         appendLog(`[Call] signalling resume refused (${e.reason}) - the call is over`);
-        this.endCall(false);
+        this.endCall(true, 'not-answered');
         return;
       }
       appendLog(`[Call] signalling resume attempt ${this.resumeAttempts} failed: ${String(e)}`);
@@ -2533,7 +2734,11 @@ export class CallService {
       this.e2eRechecks = 0;
       this.e2ePathInconclusive = false;
       this.e2eLastUnjudged = '';
-      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      // THE SUCCESS LINE, worded as what it proved: every packet counted on every side carried a
+      // frame through the transform (the bypass check above found none around it).
+      appendLog(
+        `[Call] E2E path check (${why}): PASS - all media went through the E2E transform (${counts})`
+      );
       // A call carrying video says, at each conclusive check, whether the picture DECODES - an
       // encrypted frame can reach the decoder and still never show (frame rate, freezes, PLIs).
       if (stats && packets.sent.video + packets.received.video > 0) {
@@ -3081,31 +3286,55 @@ export class CallService {
    * keeps the capture open and sends black frames the peer cannot tell from a camera). The peer
    * sees the avatar meanwhile; the audio goes on. A phone's OS stops a hidden page's capture
    * anyway, so this is what the peer would get - said instead of frozen.
+   *
+   * **Both signals, through `onAppScreenChange`**: `visibilitychange` on web, desktop and iOS, and
+   * `canari:foreground` on Android, whose WebView reports `visible` in the background and fires no
+   * visibility event at all (MainActivity.kt, `utils/appForeground.ts`). Listening to the first
+   * alone left an Android camera to the OS, which ended it as `ended by the system` with no resume.
    */
   private installBackgroundHandler() {
-    if (typeof document === 'undefined' || this.backgroundVisibilityHandler) return;
-    const handler = () => {
+    if (this.backgroundUnsubscribe) return;
+    this.backgroundUnsubscribe = onAppScreenChange((onScreen) => {
       if (!this.localStream) return;
-      if (document.hidden) {
-        if (get(this.isVideoOff) && !this.cameraBusy) return; // camera already off - nothing to pause
+      if (!onScreen) {
+        // Only a camera HEADED ON is paused: one the user turned off (an off in flight, or an off
+        // queued behind an opening camera) must never come back at the return.
+        if (!this.cameraHeadedOn()) return;
         this.videoPausedByBackground = true;
         appendLog('[Call] backgrounded - camera off until the app returns (audio continues)');
         void this.cameraOff('app in the background');
-      } else if (this.videoPausedByBackground) {
-        this.videoPausedByBackground = false;
-        appendLog('[Call] foregrounded - camera on again');
-        void this.cameraOn();
+        return;
       }
-    };
-    document.addEventListener('visibilitychange', handler);
-    this.backgroundVisibilityHandler = handler;
+      if (!this.videoPausedByBackground) return;
+      if (this.cameraBusy && this.cameraOpTarget === 'on' && this.offPending) {
+        // The pause's own off is still queued behind a camera that is opening - on Android, the
+        // permission dialog itself pauses the activity. Cancel it: the opening camera is the answer.
+        this.offPending = false;
+        this.videoPausedByBackground = false;
+        appendLog('[Call] foregrounded - the queued background off is cancelled, the camera opens');
+        return;
+      }
+      if (this.cameraBusy && this.cameraOpTarget === 'off') {
+        // The pause's off is still running: its end turns the camera on again (`cameraOff`).
+        appendLog('[Call] foregrounded - camera on again once the running off ends');
+        return;
+      }
+      this.videoPausedByBackground = false;
+      appendLog('[Call] foregrounded - camera on again');
+      void this.cameraOn();
+    });
+  }
+
+  /** Where the camera is going: the running operation's target unless an off is queued, else its state. */
+  private cameraHeadedOn(): boolean {
+    return this.cameraBusy
+      ? this.cameraOpTarget === 'on' && !this.offPending
+      : !get(this.isVideoOff);
   }
 
   private removeBackgroundHandler() {
-    if (this.backgroundVisibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this.backgroundVisibilityHandler);
-    }
-    this.backgroundVisibilityHandler = null;
+    this.backgroundUnsubscribe?.();
+    this.backgroundUnsubscribe = null;
     this.videoPausedByBackground = false;
   }
 
@@ -3292,7 +3521,7 @@ export class CallService {
         `[Call] camera switched to ${get(this.cameraFacing)}${t ? ' (replaceTrack: same sender, same transform)' : ''}`
       );
     } finally {
-      this.endCameraOp();
+      this.endCameraOp(call);
     }
   }
 
@@ -3305,12 +3534,20 @@ export class CallService {
     return { callId: this.currentCallId, stream: this.localStream };
   }
 
+  /** Whether `token` names the call that is up now (no log: `sameCameraCall` is the logged form). */
+  private isCameraCallCurrent(token: {
+    callId: string | null;
+    stream: MediaStream | null;
+  }): boolean {
+    return this.isCallLive(token.callId) && this.localStream === token.stream;
+  }
+
   /** The call a camera operation was started for is still the live one (`cameraCallToken`). */
   private sameCameraCall(
     token: { callId: string | null; stream: MediaStream | null },
     what: string
   ): boolean {
-    if (this.isCallLive(token.callId) && this.localStream === token.stream) return true;
+    if (this.isCameraCallCurrent(token)) return true;
     appendLog(
       `[Call] camera ${what} of call ${token.callId ?? 'none'} resolved after it ended - capture stopped, not adopted`
     );
@@ -3343,8 +3580,13 @@ export class CallService {
     return true;
   }
 
-  /** Releases the camera lock, then applies an OFF that was asked meanwhile (`offPending`). */
-  private endCameraOp(): void {
+  /**
+   * Releases the camera lock, then applies an OFF that was asked meanwhile (`offPending`) - only
+   * for the call the operation was started for: an operation that outlived its call (the call was
+   * hung up, `cleanup` reset the lock, another call began) must not release THAT call's lock.
+   */
+  private endCameraOp(token: { callId: string | null; stream: MediaStream | null }): void {
+    if (!this.isCameraCallCurrent(token)) return;
     this.cameraBusy = false;
     if (!this.offPending) return;
     this.offPending = false;
@@ -3377,6 +3619,16 @@ export class CallService {
     track.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
     track.onended = () => {
       if (!this.localStream?.getVideoTracks().some((t) => t === track)) return;
+      // Only a camera HEADED ON is the background pause's (as in the handler): one the user was
+      // already turning off stays off at the return.
+      if (!isAppOnScreen() && this.cameraHeadedOn()) {
+        // The OS took the camera of an app already off screen, before the background handler
+        // could: the same pause as the handler's, so the return turns it on again.
+        this.videoPausedByBackground = true;
+        appendLog('[Call] the system ended the camera of a backgrounded app - on again at return');
+        void this.cameraOff('app in the background');
+        return;
+      }
       appendLog('[Call] WARN the system ended the camera - turning it off');
       void this.cameraOff('ended by the system');
     };
@@ -3451,7 +3703,7 @@ export class CallService {
       }
       this.addCameraTransceiver(pc, track);
     } finally {
-      this.endCameraOp();
+      this.endCameraOp(call);
     }
   }
 
@@ -3544,11 +3796,24 @@ export class CallService {
    */
   private async cameraOff(why: string): Promise<void> {
     if (!this.beginCameraOp('off', 'off')) return;
+    const call = this.cameraCallToken();
     try {
       for (const track of this.localStream?.getVideoTracks() ?? []) this.releaseCameraTrack(track);
       await this.sendNoCamera(why);
     } finally {
-      this.cameraBusy = false;
+      // An off that outlived its call touches nothing of the next one: its lock, its resume.
+      if (this.isCameraCallCurrent(call)) this.finishCameraOff();
+    }
+  }
+
+  /** The end of a current call's `cameraOff`: the lock released, then a deferred background resume. */
+  private finishCameraOff(): void {
+    this.cameraBusy = false;
+    // A background pause whose return came while this off was still running: resume now.
+    if (this.videoPausedByBackground && isAppOnScreen() && this.callUp()) {
+      this.videoPausedByBackground = false;
+      appendLog('[Call] foregrounded during the background off - camera on again');
+      void this.cameraOn();
     }
   }
 

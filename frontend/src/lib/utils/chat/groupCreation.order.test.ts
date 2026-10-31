@@ -163,9 +163,14 @@ function dmDeps() {
     // Annotated to `IMlsService`'s own shape rather than inferred from this one happy answer: a
     // test below replaces the mock with the empty result, which an inferred `welcome: Uint8Array`
     // would refuse.
+    // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
+    getGroupMemberIdentities: vi.fn(async () => [] as string[]),
+    // The Add reads its tree under the MLS lock (`readConfirmedTree`).
+    runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
     addMembersBulk: vi.fn(async (): Promise<BulkAddResult> => ({
       addedDeviceIds: ['peer-dev'],
       skipped: [],
+      notAdmitted: [],
       welcome: new Uint8Array([1]),
     })),
     sendWelcome: vi.fn(async () => {}),
@@ -225,7 +230,7 @@ describe('startNewConversation - a new DM must not be recoverable before it is r
     const d = dmDeps();
     d.mlsService.addMembersBulk = vi.fn(async () => {
       d.local.delete('g-dm');
-      return { addedDeviceIds: [], skipped: [], welcome: undefined };
+      return { addedDeviceIds: [], skipped: [], notAdmitted: [], welcome: undefined };
     });
 
     await startNewConversation('peer', d.args as never);

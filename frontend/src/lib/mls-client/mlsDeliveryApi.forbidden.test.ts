@@ -299,9 +299,7 @@ describe('the windows read against a server that predates `withheld`', () => {
 
 describe('submitCommit declares whom the commit removes', () => {
   it('sends `removes` when there are any, and omits the field otherwise', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockImplementation(async () => new Response(JSON.stringify({ accepted: true })));
+    const fetchImpl = vi.fn().mockImplementation(async () => Response.json({ accepted: true }));
     const delivery = new MlsDeliveryApi({
       historyUrl: 'https://example.test',
       getToken: async () => 'token',

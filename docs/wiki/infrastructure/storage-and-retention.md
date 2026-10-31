@@ -7,9 +7,9 @@ operators' private notes: it maps a shared host. The model and history are in
 
 ## 1. The host disk
 
-Disk pressure on the shared host is real and is the reason for the standing image and build-cache
-prune (never a volume) above a usage threshold. Reclaimable space is mostly dangling images from
-the eight Canari services, about two gigabytes per deploy generation.
+Disk pressure on the shared host is real. Reclaimable space is mostly dangling images from the
+eight Canari services, about two gigabytes per deploy generation; nothing is installed on that host
+to reclaim it without the DSI's written agreement ([durable-rules](../durable-rules.md)).
 
 ### Logs
 
@@ -19,8 +19,13 @@ deploy-log archive since 2026-10-16 ([logging](logging.md#the-90-day-ceiling-202
 logs and co-tenant containers are the host owner's to bound
 ([dsi-log-retention-request](dsi-log-retention-request.md)).
 
+### Why the nightly dump grew
+
+Measured 2026-10-24: one table, `queued_message`, and in it one community key group's queue
+([backup](backup.md#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13)).
+
 ## 2. What is still UNMEASURED
 
-The media index by retention class and per-table sizes of `auth_db` (why the nightly dump grew), the
+The media index by retention class, the
 real size of the container runtime's directory, and the automatic-cleanup inventory with the last run
 of each.

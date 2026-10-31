@@ -39,7 +39,8 @@
 import { APP_TAB, ensureChat, client, countMessage, openDM, send } from "../chat.mjs";
 import { installTag, userTag } from "../devices.mjs";
 import { isUp, killBrowser, startBrowser } from "../launch.mjs";
-import { ACCOUNT_OF, ORIGIN, PORTS, SITE, peerNameFor } from "../names.mjs";
+import { ACCOUNT_OF, PORTS, peerNameFor } from "../names.mjs";
+import { ORIGIN, SITE } from "../site.mjs";
 import { unlockClient } from "./pingate.mjs";
 import { becomeANewDeviceAndConfirm } from "../newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";

@@ -128,12 +128,14 @@ describe('a queued frame - one delivery, two routes', () => {
                     // the store lifts any invitation-link ask it answers (none here).
                     {
                       findOne: jest.fn().mockResolvedValue({ id: 'seat' }),
+                      find: jest.fn().mockResolvedValue([]),
                       update: jest.fn().mockResolvedValue({ affected: 0 }),
                     }
                   : entity === KeyPackage
                     ? // ...and its key package: every device asked for is still registered.
                       { find: jest.fn(async ({ where }: { where: unknown[] }) => where) }
-                    : { save: queuedSave },
+                    : // No copy of this Welcome is queued yet (`findQueuedWelcome`).
+                      { save: queuedSave, findOne: jest.fn().mockResolvedValue(null) },
         })
       ),
     },

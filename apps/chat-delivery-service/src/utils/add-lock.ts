@@ -1,5 +1,6 @@
 import type { Logger } from '@nestjs/common';
 import type Redis from 'ioredis';
+import { randomUUID } from 'crypto';
 
 /**
  * HOW LONG THE ADD-LOCK LIVES, AND THE ONLY PLACE THAT IS DECIDED.
@@ -38,51 +39,101 @@ export function addLockKey(groupId: string): string {
 }
 
 /**
- * The value a holder writes into the key. It identifies a DEVICE, not a user: the same account on
- * two devices must not be able to release the other's lock.
+ * Who holds the lock: a DEVICE, not a user - the same account on two devices must not be able to
+ * release the other's lock. The prefix of every value the key holds.
  */
 export function addLockOwner(userId: string, deviceId: string): string {
   return `${userId}:${deviceId}`;
 }
 
 /**
- * Deletes the key only if this device still owns it, atomically.
+ * The value ONE acquisition writes: its owner and a token minted for it alone.
  *
- * A separate GET + DEL is a race: the lock can expire and be retaken by another device between the
- * two, and the release would then delete a lock it does not hold.
+ * WHY A TOKEN, AND NOT THE OWNER ALONE: one device takes the lock through two doors (the foreground
+ * client and the Android background service) and, in one page, more than once. A release checked
+ * against the owner alone deletes WHICHEVER of those acquisitions holds the key - a release sent
+ * late (its first send was lost with the connection) freed a live lock taken since, mid-Add: the
+ * two-committers-one-epoch class (H1) the lock exists to prevent. A release carrying its token
+ * deletes the acquisition it names, or nothing.
  */
-const RELEASE_IF_OWNER =
+export function addLockValue(owner: string, token: string): string {
+  return `${owner}#${token}`;
+}
+
+/**
+ * Deletes the key only if it holds exactly ARGV[1] - this acquisition's value - atomically.
+ *
+ * A separate GET + DEL is a race: the lock can expire and be retaken between the two, and the
+ * release would then delete a lock it does not hold.
+ */
+const RELEASE_IF_TOKEN =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 /**
- * Takes the group's add-lock for this device, or reports that someone else holds it.
+ * LEGACY - a release that names no token (`legacy-compatibility.md`): deletes the key if this
+ * device holds it under ANY acquisition - the bare owner a server before the token wrote (ARGV[1]),
+ * or a token value of the same owner (prefix ARGV[2]). It keeps a client that predates the token
+ * releasing at all; it is exactly as blind as the release it replaces, and no worse.
+ */
+const RELEASE_IF_OWNER_LEGACY =
+  "local v = redis.call('get', KEYS[1]) " +
+  'if v and (v == ARGV[1] or string.sub(v, 1, string.len(ARGV[2])) == ARGV[2]) ' +
+  "then return redis.call('del', KEYS[1]) else return 0 end";
+
+/**
+ * What an acquisition answers:
+ * - taken: the token to release it with;
+ * - refused: how long the key has left to live, in ms (`PTTL`), the server's own fact - so a waiter
+ *   wakes when the lock CAN no longer be held, instead of polling or waiting for an event the
+ *   holder's release does not send. `0` when the key vanished between the two reads.
+ */
+export type AddLockAcquisition =
+  | { acquired: true; token: string }
+  | { acquired: false; retryAfterMs: number };
+
+/**
+ * Takes the group's add-lock for this device, or reports that someone else holds it - and until
+ * when.
  *
  * `SET NX EX` in one command: the acquisition and the expiry are the same write, so a crash cannot
  * leave a lock with no lifetime.
- *
- * @returns `true` if this device now holds the lock.
  */
 export async function acquireAddLock(
   redis: Redis,
   logger: Logger,
   holder: AddLockHolder,
   door: AddLockDoor
-): Promise<boolean> {
+): Promise<AddLockAcquisition> {
   const owner = addLockOwner(holder.userId, holder.deviceId);
-  const result = await redis.set(addLockKey(holder.groupId), owner, 'EX', ADD_LOCK_TTL_SEC, 'NX');
-  const acquired = result === 'OK';
+  const token = randomUUID();
+  const key = addLockKey(holder.groupId);
+  const result = await redis.set(key, addLockValue(owner, token), 'EX', ADD_LOCK_TTL_SEC, 'NX');
+  if (result === 'OK') {
+    logger.log(
+      `[ADD_LOCK] group=${holder.groupId} owner=${owner} acquired=true ttl=${ADD_LOCK_TTL_SEC}s via=${door}`
+    );
+    return { acquired: true, token };
+  }
+  const pttl = await redis.pttl(key);
+  const retryAfterMs = pttl > 0 ? pttl : 0;
   logger.log(
-    `[ADD_LOCK] group=${holder.groupId} owner=${owner} acquired=${acquired} ` +
-      `ttl=${ADD_LOCK_TTL_SEC}s via=${door}`
+    `[ADD_LOCK] group=${holder.groupId} owner=${owner} acquired=false retryAfterMs=${retryAfterMs} via=${door}`
   );
-  return acquired;
+  return { acquired: false, retryAfterMs };
 }
 
 /**
- * Releases the group's add-lock if this device still holds it.
+ * Releases the group's add-lock if it is still the acquisition `token` names - or, with no token
+ * (a client that predates it), if this device holds it at all (the legacy path).
  *
- * `released=false` is not an error: the lock may have expired, or the caller may never have held
- * it. It is logged because it is the only trace an expiry-under-its-holder leaves.
+ * `released=false` is not an error: the lock may have expired, been retaken, or never been held. It
+ * is logged because it is the only trace an expiry-under-its-holder leaves.
+ *
+ * `owed` is the client's own statement that this release was OWED - sent by a page that found the
+ * marker of an acquisition it never saw released (a reload, a lost answer) before acquiring again.
+ * Only that case and a slow Add whose TTL ran out under it print `released=false by=token`, and only
+ * the client knows which one it is: the line ends ` owed=true` for exactly a JSON `true`, and is
+ * otherwise unchanged.
  *
  * @returns `true` if this call is what deleted the key.
  */
@@ -90,13 +141,18 @@ export async function releaseAddLock(
   redis: Redis,
   logger: Logger,
   holder: AddLockHolder,
-  door: AddLockDoor
+  door: AddLockDoor,
+  token?: string,
+  owed?: unknown
 ): Promise<boolean> {
   const owner = addLockOwner(holder.userId, holder.deviceId);
-  const deleted = await redis.eval(RELEASE_IF_OWNER, 1, addLockKey(holder.groupId), owner);
+  const key = addLockKey(holder.groupId);
+  const deleted = token
+    ? await redis.eval(RELEASE_IF_TOKEN, 1, key, addLockValue(owner, token))
+    : await redis.eval(RELEASE_IF_OWNER_LEGACY, 1, key, owner, `${owner}#`);
   const released = deleted === 1;
   logger.log(
-    `[RELEASE_LOCK] group=${holder.groupId} owner=${owner} released=${released} via=${door}`
+    `[RELEASE_LOCK] group=${holder.groupId} owner=${owner} released=${released} by=${token ? 'token' : 'owner-legacy'} via=${door}${owed === true ? ' owed=true' : ''}`
   );
   return released;
 }

@@ -39,7 +39,8 @@ describe('GET /users/batch', () => {
       blocks,
       {} as ProfileEditService,
       {} as ProfileCorrectionService,
-      {} as AccountErasureService
+      {} as AccountErasureService,
+      {} as never // AuthSessionsService: no admin flag route here
     );
     return { controller, find };
   }

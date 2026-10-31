@@ -15,6 +15,7 @@
  *   bun logs.mjs --device A1 --logcat --since 300000
  *   bun logs.mjs --server                     every service, the last 10 minutes
  *   bun logs.mjs --server --since 45m
+ *   bun logs.mjs --server --since 45m --row DUP-1   the 1.4.1 lines judged as DUP-1's window
  *   bun logs.mjs --device W1 --grep ROSTER    only lines matching, in any of the three
  *   bun logs.mjs --device W1 --raw            every line, unclassified
  *
@@ -104,9 +105,14 @@ if (wantServer) {
   // not. A top-level import would make `--device W1` fail on a checkout with no estate configured,
   // for a reason that has nothing to do with the client being asked about.
   const { srvReport, srvSummary } = await import('./srvlog.mjs');
+  // THE READER IS AN ARGUMENT. This called `srvReport(since, { raw })` - the window as the reader -
+  // so every service came back UNREACHABLE (a string is not a function) and `--server` could only
+  // ever print NOT CLEAN. The estate's own reader is the one `srvlog.mjs`'s CLI uses.
+  const { srvLines } = await import('./estate.mjs');
   const since = String(opt('since', '10m'));
-  console.log(`[logs] estate, last ${since}`);
-  const rep = srvReport(since, { raw });
+  const row = opt('row', null);
+  console.log(`[logs] estate, last ${since}${row ? `, as ${row}'s window` : ''}`);
+  const rep = srvReport(srvLines, since, { raw, row: row === null ? null : String(row) });
   console.log(srvSummary(rep).join('\n'));
   if (!rep.clean) {
     for (const [service, v] of Object.entries(rep)) {

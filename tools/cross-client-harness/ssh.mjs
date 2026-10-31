@@ -1,5 +1,8 @@
 /**
- * THE ONE WAY THIS HARNESS REACHES PRODUCTION.
+ * THE ONE WAY THIS HARNESS REACHES A REMOTE HOST - and its one caller is `estate.mjs`, for DEV.
+ *
+ * It used to be the way the rig reached production's containers. Since 2026-10-24 no rig path does:
+ * `estate-target.mjs` accepts the local estate and dev only, and builds every remote command itself.
  *
  * WHY IT IS NOT JUST `execFileSync('ssh', ...)`. Two `ssh` binaries are on this machine and they do
  * not behave the same. Git ships one at `/usr/bin/ssh`, and it MANGLES the `ProxyCommand` in
@@ -28,7 +31,7 @@ export const SSH = (() => {
 })();
 
 /**
- * Runs one command on a prod host and returns its trimmed stdout.
+ * Runs one command on a remote host and returns its trimmed stdout.
  *
  * Throws on a non-zero exit rather than returning what came back, so no caller can mistake an
  * unreachable server for an empty answer - the distinction `presence.mjs` exists to preserve.
@@ -39,7 +42,7 @@ export const SSH = (() => {
  * so the BUSIEST service on the platform was the one whose logs could never be read, and the reason
  * looked like a broken tunnel. The busiest service is exactly the one a run most needs to see.
  *
- * @param host one of the aliases in `~/.ssh/config`: `canari`, `mitv`, `cercle`.
+ * @param host an alias in `~/.ssh/config`, named by machine-local configuration (`DEV_SSH_HOST`).
  */
 export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 * 1024 } = {}) {
   // A TRANSPORT FAILURE IS NOT AN ANSWER, AND ONLY ONE EXIT CODE SAYS WHICH IT IS. `ssh` reserves
@@ -51,6 +54,11 @@ export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 
   // Bounded, and it SAYS SO. A cloudflared blip cost a whole FWD pass on 2026-08-15 - one failed
   // presence read blocked the two scripts behind it - and a silent retry would replace that with a
   // tunnel degrading unnoticed. The line is the only warning either way.
+  //
+  // AND A HANG IS A TRANSPORT FAILURE TOO. `timeout` kills an `ssh` that never answered, and the
+  // kill carries NO exit status (`ETIMEDOUT`, status null) - so it was never retried, and one stalled
+  // connection made TOK-3's whole invariant unreadable on 2026-10-27 (the same 75-minute window read
+  // in 2.6 s and 5.8 s minutes later: not volume, a stall).
   for (let attempt = 0; ; attempt++) {
     try {
       return execFileSync(SSH, [host, command], {
@@ -59,8 +67,23 @@ export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 
         maxBuffer,
       }).trim();
     } catch (e) {
-      if (e?.status !== 255 || attempt >= 2) throw e;
-      console.log(`  [ssh] ${host}: transport failure (255), retry ${attempt + 1}/2`);
+      const why = transportFailure(e);
+      if (!why || attempt >= 2) throw e;
+      console.log(`  [ssh] ${host}: transport failure (${why}), retry ${attempt + 1}/2`);
     }
   }
+}
+
+/**
+ * Why a failed `ssh` call is the TRANSPORT's failure rather than the remote command's answer, or
+ * null when it is an answer: `255` is ssh's own status, `ETIMEDOUT` is a call killed for never
+ * answering. Every other status came from the remote command and must reach the caller unretried.
+ *
+ * @param {any} e what `execFileSync` threw
+ * @returns {'255'|'ETIMEDOUT'|null}
+ */
+export function transportFailure(e) {
+  if (e?.status === 255) return '255';
+  if (e?.code === 'ETIMEDOUT') return 'ETIMEDOUT';
+  return null;
 }

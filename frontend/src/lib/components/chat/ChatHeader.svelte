@@ -22,6 +22,7 @@
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     /** Raw contact/user ID used for presence lookup and avatar resolution. */
@@ -185,10 +186,20 @@
     !isGroupConversation && !isChannel ? resolvedContactDisplayName : displayName
   );
 
+  /**
+   * A DM watches its peer's presence. The teardown names the peer through `watched`, captured here,
+   * and NEVER through the prop: a derived read in a teardown is re-run with the stale values and
+   * keeps that run's dependencies. Reading `contactName` there walked the parent's props back to
+   * `currentConvo`, re-ran it with the conversation being LEFT, and the pane of the conversation
+   * opened next stopped receiving its messages (TOK-3 / OFF-2, 2026-10-27; frontend/architecture,
+   * "A teardown sees the values its effect saw").
+   */
   $effect(() => {
     if (contactName && !isGroupConversation && !isChannel) {
-      watchUsers([contactName]);
-      return () => unwatchUsers([contactName]);
+      const watched = contactName;
+      Log.d(`chatHeader.presence watch ${watched}`);
+      watchUsers([watched]);
+      return () => unwatchUsers([watched]);
     }
   });
 
@@ -255,13 +266,7 @@
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
-            <GroupAvatar
-              {imageMediaId}
-              name={displayName}
-              variant="group"
-              size="md"
-              shape="circle"
-            />
+            <GroupAvatar id={groupId} {imageMediaId} name={displayName} size="md" shape="circle" />
           </span>
         {:else}
           <span
@@ -328,7 +333,7 @@
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" fill />
+      <GroupAvatar id={groupId} {imageMediaId} name={displayName} fill />
     </div>
   {:else}
     <div class="relative flex h-10 w-10 shrink-0 items-center justify-center">

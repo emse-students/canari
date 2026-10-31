@@ -13,8 +13,12 @@ import {
   noPinOpensState,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  isMlsManagerAbsent,
+  MlsSessionVacantError,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -38,8 +42,13 @@ import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
+import {
+  GatewayOpenAbandonedError,
+  type GatewaySocketOpen,
+} from '$lib/mls-client/gatewaySocketOpen';
 import { getToken } from '$lib/stores/auth';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
@@ -50,6 +59,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
+import { nextGatewaySocketHolder, reportPageGatewaySocket } from './pageGatewaySocket';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -89,7 +99,24 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
  */
 export class TauriMlsService extends BaseMlsService {
-  private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The gateway socket - read and written through {@link ws} only, whose setter reports it. */
+  private _ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** This instance's name in the native ring's holder set (`page_ring.rs`). */
+  private readonly socketHolder = nextGatewaySocketHolder();
+  private get ws(): Awaited<ReturnType<typeof NativeWebSocket.connect>> | null {
+    return this._ws;
+  }
+  /**
+   * THE ONE SEAM THAT HOLDS THE SOCKET, so the one place that says so. Holding it is what makes this
+   * page ring an incoming call (the caller's invite is a transport frame, delivered over an open
+   * socket only), and the native ring stands back for an app in front only while it is held
+   * ({@link reportPageGatewaySocket}). A change is reported; a repeat is not.
+   */
+  private set ws(next: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null) {
+    const before = this._ws !== null;
+    this._ws = next;
+    if (before !== (next !== null)) reportPageGatewaySocket(this.socketHolder, next !== null);
+  }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
   /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
@@ -204,6 +231,9 @@ export class TauriMlsService extends BaseMlsService {
     this._cacheStamp.set(groupId, stamp);
     if (epoch !== null) {
       this._epochByGroupId.set(groupId, epoch);
+      // An epoch the manager answered proves it holds the group: a listing this read overtook skips
+      // it (touched since), so the read adds it itself (see `syncGroupCachesFromNative`).
+      this._knownGroups.add(groupId);
       logMlsMetric({ kind: 'epoch_cache', platform: 'tauri', groupId, epoch });
       return;
     }
@@ -273,19 +303,37 @@ export class TauriMlsService extends BaseMlsService {
     return this.ws !== null;
   }
 
-  /** Tauri-native `invoke` wrapper - opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
-  async connect(token?: string): Promise<void> {
+  /**
+   * Opens a NativeWebSocket to the chat gateway under `open.deviceId`, passing the Bearer token in
+   * the URL query string for mobile compatibility. Reached through `connect` only.
+   *
+   * FENCED AFTER EACH AWAIT: the release of the previous socket and the native connect both yield,
+   * and a pause landing in either must leave no socket - so `open.isCurrent()` is read after each,
+   * and a native socket that arrives for an abandoned open is released rather than assigned.
+   */
+  protected override async openGatewaySocket(open: GatewaySocketOpen): Promise<void> {
+    const { deviceId, token } = open;
     // Unlisten + disconnect before reconnecting so the Close event doesn't trigger disconnectCallback.
+    // EVERY SHARED FIELD IS LET GO BEFORE THE AWAIT, never after it: once this open yields, a pause
+    // and a resume may have handed `ws` and `wsUnlisten` to a LATER open, and a write here would
+    // clobber that one's live socket. After each await this open touches only its own locals until
+    // the fence says it is still current.
     this.clearHeartbeat();
-    if (this.ws) {
-      try {
-        this.wsUnlisten?.();
-        this.wsUnlisten = null;
-        await this.ws.disconnect();
-      } catch {
-        /* ignore */
-      }
+    const previous = this.ws;
+    if (previous) {
+      this.wsUnlisten?.();
+      this.wsUnlisten = null;
       this.ws = null;
+      try {
+        await previous.disconnect();
+      } catch (e) {
+        console.log(
+          `[WS] the previous native socket was already gone: ${sanitizeForLog(String(e))}`
+        );
+      }
+    }
+    if (!open.isCurrent()) {
+      throw new GatewayOpenAbandonedError('paused while the previous socket was released');
     }
 
     if (!this._visibilityHandler && typeof document !== 'undefined') {
@@ -337,26 +385,25 @@ export class TauriMlsService extends BaseMlsService {
 
     // On Tauri mobile the cookie is not sent cross-origin, so we pass the
     // Bearer token explicitly in the URL query string.
-    let resolvedToken = token;
-    if (!resolvedToken) {
-      try {
-        resolvedToken = await getToken();
-      } catch {
-        // Proceed without token; gateway will reject with 401 if required.
-      }
-    }
-
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const { url: wsUrl, redacted } = gatewaySocketUrl(
-      wsBase,
-      this.deviceId,
-      resolvedToken || undefined
-    );
+    const { url: wsUrl, redacted } = gatewaySocketUrl(wsBase, deviceId, token);
     console.log(`[WS] Opening connection → ${redacted}`);
 
-    this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
-    console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
+    const socket = await connectNativeSocket(
+      NativeWebSocket.connect(wsUrl),
+      NATIVE_CONNECT_TIMEOUT_MS
+    );
+    if (!open.isCurrent()) {
+      // The pause already settled this open; the socket the plugin handed back is nobody's.
+      console.log('[WS] a native socket arrived for an open a pause abandoned - released');
+      socket.disconnect().catch((e: unknown) => {
+        console.warn(`[WS] releasing the abandoned native socket failed: ${String(e)}`);
+      });
+      throw new GatewayOpenAbandonedError('paused during the native connect');
+    }
+    this.ws = socket;
+    console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
       // Any incoming frame proves the server is alive - reset heartbeat miss counter (parity WebMlsService).
@@ -365,6 +412,11 @@ export class TauriMlsService extends BaseMlsService {
       }
 
       if (msg.type === 'Close') {
+        // Only THIS socket's close releases the shared fields: a later open may own them now.
+        if (this.ws !== socket) {
+          console.log('[WS] a close arrived for a native socket already replaced - ignored');
+          return;
+        }
         this.ws = null;
         this.clearHeartbeat();
         const closeData = msg.data as { code: number; reason: string } | null;
@@ -551,7 +603,7 @@ export class TauriMlsService extends BaseMlsService {
    * see {@link IMlsService.pauseSocket}. The listener goes first, so the `Close` the plugin may
    * still deliver cannot report a disconnection either.
    */
-  pauseSocket(): void {
+  protected override pausePlatformSocket(): void {
     this.clearHeartbeat();
     const ws = this.ws;
     if (!ws) return;
@@ -586,19 +638,6 @@ export class TauriMlsService extends BaseMlsService {
         .catch(() => {
           // Best-effort - typing is non-critical
         });
-    }
-  }
-
-  /** Releases Tauri-specific resources: closes the native WebSocket and its listener. */
-  protected override destroyPlatformResources(): void {
-    this.clearHeartbeat();
-    if (this.wsUnlisten) {
-      this.wsUnlisten();
-      this.wsUnlisten = null;
-    }
-    if (this.ws) {
-      this.ws.disconnect().catch(() => {});
-      this.ws = null;
     }
   }
 
@@ -638,7 +677,7 @@ export class TauriMlsService extends BaseMlsService {
    *
    * THE NATIVE TWIN OF `WebMlsService.logKeyPackageCensus`, and the reason it exists is that it used
    * to have no twin at all: native printed the census from inside `load_or_create`, which is on the
-   * awaited path of `initialiser_mls` - in front of the first screen. Measured on OXYGEN
+   * awaited path of `initialiser_mls` - in front of the first screen. Measured on the workstation
    * 2026-09-17, 5 groups, 1000-package pool: a cold load costs 24.5 ms with the diagnostic and
    * 12.9 ms without it. The web call site's own docblock already said a thousand deserialised
    * bundles do not belong in front of the connected badge; native was doing exactly that.
@@ -1043,6 +1082,15 @@ export class TauriMlsService extends BaseMlsService {
         console.log(`[MLS][Tauri] Resume reload not applied (${outcome}) - live state kept.`);
       }
     } catch (e) {
+      if (isMlsManagerAbsent(e)) {
+        // NO NATIVE SESSION UNDER A RESUMING ONE: a teardown ran (a sign-out, a failed install or
+        // rotation) and a resume reload never installs a manager. Carrying on would leave a session
+        // on screen whose every MLS command fails, so it is reported - the shell ends it on this
+        // device and reopens it at the PIN gate (`mlsSessionLoss.ts` says why that and not a re-init
+        // or a sign-out) - and the resume sequence is told to stop.
+        reportMlsSessionLost('resume found no native session');
+        throw new MlsSessionVacantError(e);
+      }
       // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
       // advance, so this must be loud even though it does not abort the resume.
       console.error('[MLS][Tauri] reloadStateFromDisk failed:', e);
@@ -1118,18 +1166,32 @@ export class TauriMlsService extends BaseMlsService {
     // is the two callers that genuinely hold bytes the native side could not have read - the
     // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
-      userId: this.userId,
-      deviceId: this.deviceId,
-      deviceKeyB64,
-      encryptedState,
-      opts: {
-        legacyPin: legacyPin ?? null,
-        biometricPrompt: keystoreUnlockPrompt(),
-        stateOnDisk: stateOnDisk === true,
-        unattendedKeyRead: unattendedKeyRead === true,
-      },
-    });
+    try {
+      await invoke('initialiser_mls', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64,
+        encryptedState,
+        opts: {
+          legacyPin: legacyPin ?? null,
+          biometricPrompt: keystoreUnlockPrompt(),
+          stateOnDisk: stateOnDisk === true,
+          unattendedKeyRead: unattendedKeyRead === true,
+        },
+      });
+    } catch (e) {
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
+      // (by construction, on every exit that did not install); this is the same end through the one
+      // helper every path uses, so the previous account's manager and key cannot be left installed
+      // whatever the native side did. The install's own error is the one that propagates.
+      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
+        (teardown: unknown) =>
+          console.error(
+            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
+          )
+      );
+      throw e;
+    }
   }
 
   /**
@@ -1431,6 +1493,12 @@ export class TauriMlsService extends BaseMlsService {
     return (await invoke<number | null>('date_feuille', { groupId })) ?? null;
   }
 
+  /** Tauri-native `invoke` wrapper - this device's leaf key as hex, `null` with no own leaf. */
+  protected async ownLeafKey(groupId: string): Promise<string | null> {
+    const key = await invoke<number[] | null>('cle_feuille', { groupId });
+    return key ? toHex(new Uint8Array(key)) : null;
+  }
+
   /** Tauri-native `invoke` wrapper - whether this device's context is the one the served base describes. */
   protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
     return invoke<boolean>('contexte_correspond_base', {
@@ -1491,8 +1559,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.welcomeDelivered}. */
-  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
-    await invoke('welcome_remis', { groupId, recipient });
+  protected async welcomeDelivered(
+    groupId: string,
+    recipient: string,
+    welcome: Uint8Array
+  ): Promise<void> {
+    await invoke('welcome_remis', { groupId, recipient, welcome: Array.from(welcome) });
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
@@ -1525,6 +1597,8 @@ export class TauriMlsService extends BaseMlsService {
       if (this.cacheWriteAllowed(groupId, stamp)) {
         this._cacheStamp.set(groupId, stamp);
         this._epochByGroupId.set(groupId, epoch);
+        // Held, as the manager just said - see `readEpochIntoCache`.
+        this._knownGroups.add(groupId);
       }
       return epoch;
     } catch (e) {
@@ -1542,6 +1616,13 @@ export class TauriMlsService extends BaseMlsService {
   protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
     const gi = await invoke<number[]>('exporter_group_info', { groupId });
     return new Uint8Array(gi);
+  }
+
+  /** Tauri-native `invoke` wrapper - `mls_external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('mls_external_join_is_a_further_device', {
+      groupInfoBytes: Array.from(groupInfoBytes),
+    });
   }
 
   /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.
@@ -1712,6 +1793,11 @@ export class TauriMlsService extends BaseMlsService {
   /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
   async graineRun(groupId: string): Promise<GraineRunReading> {
     return invoke<GraineRunReading>('graine_run', { groupId });
+  }
+
+  /** This device's own credential signature key (`mls_own_signature_key`). */
+  async ownSignatureKey(): Promise<Uint8Array> {
+    return new Uint8Array(await invoke<number[]>('mls_own_signature_key'));
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */

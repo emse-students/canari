@@ -124,10 +124,55 @@ export function refusedBacklogMark(): number {
 /**
  * A pull that started at `upTo` listed the whole mailbox, and the queue has handled what it listed:
  * every refusal marked at or before `upTo` has been delivered again. Later marks are kept.
+ *
+ * THE WORK-LIST ENTRY GOES WITH THE MARK. Two pulls can overlap, and the one that dies half-way
+ * re-arms its groups ({@link rearmRefusedBacklog}) while the other has already listed them whole: an
+ * entry left behind would make the next notify pull for a group with no refusal, report it "left
+ * behind as absent-conversation", and - for a key group - fire the accusing `[GRAINE]` warn about a
+ * registry that did not name it. A frame refused again during this pull carries a later mark, so it
+ * keeps both.
  */
 export function dischargeRefusedBacklog(upTo: number): void {
+  const waiting = awaiting.get('absent-conversation');
   for (const [groupId, seq] of refusedBacklog) {
-    if (seq <= upTo) refusedBacklog.delete(groupId);
+    if (seq > upTo) continue;
+    refusedBacklog.delete(groupId);
+    waiting?.delete(groupId);
+  }
+  if (waiting?.size === 0) awaiting.delete('absent-conversation');
+}
+
+/**
+ * A pull that started at `upTo` DIED HALF-WAY: every group it was meant to re-fetch for the refused
+ * backlog is owed a pull again, so each one still marked at or before `upTo` goes back on the work
+ * list as `absent-conversation`.
+ *
+ * WHY THE WORK LIST AND THE MARK CAN DISAGREE: the event that starts a pull TAKES its groups off the
+ * work list ({@link takeGroupAwaiting}), and only a pull that lists the whole mailbox discharges the
+ * mark ({@link dischargeRefusedBacklog}). A pull that dies between the two left the mark standing
+ * with nothing on the list - and the next event asking for this group's backlog (a held replay, a
+ * held live frame) then took nothing and started no pull, so the hold lasted until a reconnect.
+ * Re-armed by the failure itself, the next such event pulls again - no timer here, and none
+ * anywhere behind it: WHAT starts that pull is whichever event next asks for this group's backlog -
+ * a held live frame, a row-creation event, a held replay (a gesture confirming its tree, a refused
+ * commit's catch-up), or the reconnect pull. For a refused commit, that means the pull rides whatever
+ * re-attempts the commit, and nothing re-attempts one on a clock: no outbox backoff retries a commit
+ * (the outbox sends application frames), a member's gesture waits for the member, the stale-leaf
+ * refresh asks again only after the epoch moves - which the held backlog is what would move - and the
+ * pending sweep and the stray-leaf collector run on connection. So a QUIET group whose pull died
+ * half-way waits for its next event or reconnect.
+ * Rows the dead pull did list and that were refused again are already back on the list; re-adding
+ * them is idempotent (a set), and the tally is left alone - nothing new was refused.
+ */
+export function rearmRefusedBacklog(upTo: number): void {
+  for (const [groupId, seq] of refusedBacklog) {
+    if (seq > upTo) continue;
+    let waiting = awaiting.get('absent-conversation');
+    if (!waiting) {
+      waiting = new Set();
+      awaiting.set('absent-conversation', waiting);
+    }
+    waiting.add(groupId);
   }
 }
 

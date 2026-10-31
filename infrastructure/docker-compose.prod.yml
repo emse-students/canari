@@ -303,7 +303,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
@@ -354,7 +354,7 @@ services:
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -495,8 +495,12 @@ services:
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
+      # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
+      # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
+      # production until the amount format Lydia signs is measured.
+      LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-false}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
@@ -547,10 +551,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
-      # This read `${ALLOW_ORIGIN}` until 2026-08-30 and was measured holding all five entries of
-      # it, comma-separated, as a single origin.
-      ORIGIN: ${FRONTEND_URL:-https://canari.emse.fr}
+      # adapter-node 6 has no `ORIGIN`: the origin is derived per request (scheme https by default,
+      # host from `Host`, which nginx @ssr forwards). No PROTOCOL_HEADER: it would trust a value a
+      # client can send. Nothing guards a form action today; see architecture.md.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012

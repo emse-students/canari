@@ -7,6 +7,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$app/navigation', () => ({ preloadCode: vi.fn(() => Promise.resolve()) }));
+vi.mock('$app/paths', () => ({
+  match: vi.fn((path: string) => Promise.resolve({ id: path })),
+}));
 
 import { preloadRouteCodeOnce, resetRouteCodePreloadsForTests } from './routeCodePreload';
 

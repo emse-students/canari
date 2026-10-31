@@ -12,6 +12,8 @@ import {
   SWEEP_INTERVAL_MS,
 } from './auth-sessions.service';
 import { AuthSession } from './entities/auth-session.entity';
+import { DeviceRevokedSession } from './entities/device-revoked-session.entity';
+import { CREDENTIAL_SKEW_SECONDS } from './token-lifetimes';
 
 /**
  * In-memory stand-in for the TypeORM repository.
@@ -45,8 +47,38 @@ function matchesWhere(row: AuthSession, clause: SessionWhere): boolean {
   return true;
 }
 
+/**
+ * The device-revocation records (migration 017): written by `endDeviceSessions` inside its
+ * transaction, read by a refused refresh, swept once unreachable. Only those three shapes.
+ */
+class FakeRevokedRepo {
+  rows: DeviceRevokedSession[] = [];
+
+  insert(rows: Array<Omit<DeviceRevokedSession, 'endedAt'>>): Promise<void> {
+    for (const row of rows) {
+      if (this.rows.some((r) => r.sessionId === row.sessionId)) {
+        return Promise.reject(new Error('duplicate key value violates unique constraint'));
+      }
+      this.rows.push({ ...row, endedAt: new Date() });
+    }
+    return Promise.resolve();
+  }
+
+  findOne(options: { where: { sessionId: string } }): Promise<DeviceRevokedSession | null> {
+    return Promise.resolve(this.rows.find((r) => r.sessionId === options.where.sessionId) ?? null);
+  }
+
+  delete(criteria: { endedAt: { value?: Date } }): Promise<{ affected: number }> {
+    const cutoff = criteria.endedAt.value as Date;
+    const before = this.rows.length;
+    this.rows = this.rows.filter((r) => r.endedAt.getTime() >= cutoff.getTime());
+    return Promise.resolve({ affected: before - this.rows.length });
+  }
+}
+
 class FakeRepo {
   rows: AuthSession[] = [];
+  revoked = new FakeRevokedRepo();
 
   create(partial: Partial<AuthSession>): AuthSession {
     return { ...partial } as AuthSession;
@@ -125,10 +157,15 @@ class FakeRepo {
     return {
       transaction: async <T>(cb: (m: unknown) => Promise<T>): Promise<T> => {
         const snapshot = [...this.rows];
+        const revokedSnapshot = [...this.revoked.rows];
         try {
-          return await cb({ getRepository: () => this });
+          return await cb({
+            getRepository: (entity: unknown) =>
+              entity === DeviceRevokedSession ? this.revoked : this,
+          });
         } catch (e) {
           this.rows = snapshot;
+          this.revoked.rows = revokedSnapshot;
           throw e;
         }
       },
@@ -138,7 +175,9 @@ class FakeRepo {
 
 const UPDATE_WHERE = 'id = :id AND "tokenId" = :presented AND "expiresAt" > :now';
 const DELETE_WHERE = '"userId" = :userId';
+const DELETE_DEVICE_WHERE = '"userId" = :userId AND "deviceId" = :deviceId';
 const DELETE_AND_WHERE = 'id != :keep';
+const DELETE_DEVICE_AND_WHERE = 'id != :except';
 
 class FakeQueryBuilder {
   private mode: 'update' | 'delete' | null = null;
@@ -168,7 +207,7 @@ class FakeQueryBuilder {
   }
 
   where(sql: string, params: Record<string, unknown>): this {
-    if (sql !== UPDATE_WHERE && sql !== DELETE_WHERE) {
+    if (sql !== UPDATE_WHERE && sql !== DELETE_WHERE && sql !== DELETE_DEVICE_WHERE) {
       throw new Error(`FakeRepo does not know this WHERE clause: ${sql}`);
     }
     Object.assign(this.params, params);
@@ -176,7 +215,7 @@ class FakeQueryBuilder {
   }
 
   andWhere(sql: string, params: Record<string, unknown>): this {
-    if (sql !== DELETE_AND_WHERE) {
+    if (sql !== DELETE_AND_WHERE && sql !== DELETE_DEVICE_AND_WHERE) {
       throw new Error(`FakeRepo does not know this AND clause: ${sql}`);
     }
     Object.assign(this.params, params);
@@ -203,9 +242,17 @@ class FakeQueryBuilder {
       return Promise.resolve({ affected: 1 });
     }
 
-    const { userId, keep } = this.params as { userId: string; keep?: string };
+    const { userId, keep, deviceId, except } = this.params as {
+      userId: string;
+      keep?: string;
+      deviceId?: string;
+      except?: string;
+    };
     const deleted = (r: AuthSession) =>
-      r.userId === userId && (keep === undefined || r.id !== keep);
+      r.userId === userId &&
+      (keep === undefined || r.id !== keep) &&
+      (deviceId === undefined || r.deviceId === deviceId) &&
+      (except === undefined || r.id !== except);
     // RETURNING: the deleted rows, reduced to the columns asked for, as the driver hands them back.
     const raw = this.repo.rows
       .filter(deleted)
@@ -232,7 +279,11 @@ function makeService(): {
     Promise.resolve(ended.length)
   );
   const drain = jest.fn(() => Promise.resolve());
-  const service = new AuthSessionsService(repo as never, { enqueue, drain } as never);
+  const service = new AuthSessionsService(
+    repo as never,
+    { enqueue, drain } as never,
+    repo.revoked as never
+  );
   const queued = () =>
     enqueue.mock.calls.flatMap(([, ended, cause]) =>
       (ended as Array<{ id: string; userId: string; deviceId?: string | null }>).map(
@@ -362,6 +413,42 @@ describe('AuthSessionsService', () => {
       expect(result.status).toBe('unknown');
     });
 
+    // THE ONE REFUSAL THE DEVICE ANSWERS DIFFERENTLY: a full reset, not a sign-out that keeps its
+    // stores. It can learn it nowhere else - its revocation check is asked with an access token that
+    // died with this very session (DEV-2, 2026-10-25).
+    it('refuses a session its owner ended by revoking the device as device-revoked, and says so', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+      await service.bindDevice('user-1', opened.sessionId, 'phone-1');
+      await service.endDeviceSessions('user-1', 'phone-1', null);
+
+      await expect(service.rotate(opened.sessionId, opened.tokenId)).resolves.toEqual({
+        status: 'device-revoked',
+        userId: 'user-1',
+        deviceId: 'phone-1',
+      });
+      expect(
+        warn.mock.calls.some(([l]) => String(l).includes('owner revoking device phone-1'))
+      ).toBe(true);
+      warn.mockRestore();
+    });
+
+    it('a session ended any other way stays unknown - the record is the revocation only', async () => {
+      const { service } = makeService();
+      const loggedOut = await service.create('user-1');
+      const ownerEnded = await service.create('user-1');
+      await service.bindDevice('user-1', ownerEnded.sessionId, 'phone-1');
+      await service.revoke(loggedOut.sessionId);
+      // The panel's own session revocation names a SESSION, not a device: not a device revocation.
+      await service.revokeOwned('user-1', ownerEnded.sessionId);
+
+      expect((await service.rotate(loggedOut.sessionId, loggedOut.tokenId)).status).toBe('unknown');
+      expect((await service.rotate(ownerEnded.sessionId, ownerEnded.tokenId)).status).toBe(
+        'unknown'
+      );
+    });
+
     it('refuses an expired session without destroying anything else', async () => {
       const { service, repo } = makeService();
       const opened = await service.create('user-1');
@@ -448,6 +535,25 @@ describe('AuthSessionsService', () => {
       await expect(service.revokeOthers('user-1', null)).resolves.toBe(2);
       expect(repo.rows).toHaveLength(0);
     });
+    it('reads a session live for its owner until the owner revokes it', async () => {
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+
+      await expect(service.isLive(opened.sessionId, 'user-1')).resolves.toBe(true);
+      // Another account naming the id is not its owner.
+      await expect(service.isLive(opened.sessionId, 'user-2')).resolves.toBe(false);
+
+      await service.revokeOwned('user-1', opened.sessionId);
+      await expect(service.isLive(opened.sessionId, 'user-1')).resolves.toBe(false);
+    });
+
+    it('reads an idle-expired row as ended even before the sweep removes it', async () => {
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+      const later = new Date(opened.expiresAt.getTime() + 1);
+
+      await expect(service.isLive(opened.sessionId, 'user-1', later)).resolves.toBe(false);
+    });
   });
 
   describe('a session that ends records its push ending in the same transaction', () => {
@@ -506,6 +612,58 @@ describe('AuthSessionsService', () => {
           `user-1/unnamed/${tab.sessionId}/revoked-others`,
         ].sort()
       );
+    });
+
+    /**
+     * An owner revoking a DEVICE ends the sessions bound to it, server-side: never the caller's own,
+     * never a session bound to another device or to none, never another account's. Idempotent.
+     */
+    it("ending a device's sessions takes only the ones bound to it, and records each", async () => {
+      const { service, queued, repo } = makeService();
+      const caller = await boundSession(service, 'user-1', 'laptop-1');
+      const revoked = await boundSession(service, 'user-1', 'phone-1');
+      const unbound = await service.create('user-1');
+      const stranger = await boundSession(service, 'user-2', 'phone-1');
+
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(1);
+
+      expect(queued()).toEqual([`user-1/phone-1/${revoked}/revoked-by-owner`]);
+      expect(repo.rows.map((r) => r.id).sort()).toEqual(
+        [caller, unbound.sessionId, stranger].sort()
+      );
+      // ...and records each one as ended BY THE REVOCATION, for the device's next refresh.
+      expect(repo.revoked.rows.map(({ endedAt: _e, ...r }) => r)).toEqual([
+        { sessionId: revoked, userId: 'user-1', deviceId: 'phone-1' },
+      ]);
+      // A retry ends nothing more, and records nothing more.
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+      expect(repo.revoked.rows).toHaveLength(1);
+    });
+
+    it('a revocation record that cannot be written rolls the session delete back', async () => {
+      const { service, repo, drain } = makeService();
+      const sid = await boundSession(service, 'user-1', 'phone-1');
+      jest
+        .spyOn(repo.revoked, 'insert')
+        .mockRejectedValueOnce(new Error('relation "device_revoked_sessions" does not exist'));
+
+      await expect(service.endDeviceSessions('user-1', 'phone-1', null)).rejects.toThrow(
+        'device_revoked_sessions'
+      );
+
+      expect(repo.rows.map((r) => r.id)).toEqual([sid]);
+      expect(repo.revoked.rows).toEqual([]);
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it("never ends the caller's own session, even when it is bound to the revoked device", async () => {
+      const { service, repo } = makeService();
+      const caller = await boundSession(service, 'user-1', 'phone-1');
+
+      await expect(service.endDeviceSessions('user-1', 'phone-1', caller)).resolves.toBe(0);
+      expect(repo.rows.map((r) => r.id)).toEqual([caller]);
+      await expect(service.endDeviceSessions('user-1', 'phone-1', null)).resolves.toBe(1);
+      expect(repo.rows).toHaveLength(0);
     });
 
     it('a replayed refresh token, which revokes the session, records its ending', async () => {
@@ -764,6 +922,23 @@ describe('AuthSessionsService', () => {
 
       await expect(service.deleteExpired()).resolves.toBe(1);
       expect(repo.rows).toHaveLength(1);
+    });
+
+    // Bounded by a PROOF: a refresh token naming the session expires at most one session TTL after
+    // its last rotation, which came before the revocation - past that (plus skew) it cannot verify,
+    // so the record can never be read again.
+    it('drops a revocation record exactly when no refresh token naming its session can verify', async () => {
+      const { service, repo } = makeService();
+      const bound = (SESSION_TTL_SECONDS + CREDENTIAL_SKEW_SECONDS) * 1000;
+      const at = (offset: number) => new Date(Date.now() - bound + offset);
+      repo.revoked.rows = [
+        { sessionId: 's-old', userId: 'u', deviceId: 'd', endedAt: at(-60_000) },
+        { sessionId: 's-young', userId: 'u', deviceId: 'd', endedAt: at(60_000) },
+      ];
+
+      await service.deleteExpired();
+
+      expect(repo.revoked.rows.map((r) => r.sessionId)).toEqual(['s-young']);
     });
   });
 });

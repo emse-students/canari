@@ -19,14 +19,38 @@
  * the first bug turned on.
  */
 import {
+  consoleDump,
+  forgivingFirstRoutePreloads,
+  CONTACT_DEVICE_NOTICE_NARRATION,
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
+  FRESH_CLIENT_NARRATION,
+  FRESH_DEVICE_RESTORE_NARRATION,
+  FRESH_DEVICE_SESSION_NARRATION,
+  GROUP_CREATION_NARRATION,
+  REVOKED_REFUSALS,
+  REMOVE_NARRATION,
   ignoringExpectedLog,
+  OWNER_DEVICE_NOTICE_NARRATION,
+  PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+  mintedKeyPackageVettedNarration,
+  admissionJoinerNarration,
+  admissionMemberNarration,
+  atLevels,
+  bigRowNarration,
+  REVOKED_SIGN_OUT_NARRATION,
+  revokedLogoutOnce,
+  signOutCount,
   PAGE_BOOT_NARRATION,
+  REFUSED_FOR_LACK_OF_ROW_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
   report,
+  cspBlockedHashOf,
+  DEV_EDGE_CSP_EXCEPTION,
+  devEdgeCspDecision,
+  gate,
 } from '../watch.mjs';
 
 /** A fake CDP buffer: one `Runtime.consoleAPICalled` per line, dated so the timeline is orderable. */
@@ -42,10 +66,18 @@ function cxOf(entries) {
 const CASES = [
   // [level, line, expected bucket]
   ['log', '[14:24:25] [OUTBOX] 1 entry still queued', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… is applied while the commit of b1ecb448… awaits its answer', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] a frame of 92c16968… waits for the commit of 92c16968… - put back, applied after it', 'notable'],
+  ['log', '[14:59:42] [MLS_LOCK] refused to lend the MLS mutex for 92c16968: not the holder - only the commit holding it may lend it', 'unexplained'],
+  ['log', '[14:59:42] [QUEUE] the commit of 59333a90... released the MLS lock - draining the 1 frame(s) it held back', 'notable'],
   ['log', '[14:24:25] [OUTBOX] 12 entries still queued', 'notable'],
+  ['log', '[14:24:25] [OUTBOX] ef8eca5e… skipped, backing off for 4452ms (attempt 2)', 'notable'],
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (the revocation answer of an unchanged tree reused)', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (2 still to remove)', 'unexplained'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
   // A group exit settling its queue (GRP-6): clean only when nothing was lost.
@@ -106,6 +138,17 @@ const CASES = [
     'notable',
   ],
   ['log', '[14:24:09] [HISTORY_REQ] 642f389a... same state as d82cd226… (7e5952f8…) - nothing to do', 'notable'],
+  // The admission gate's not-drained decision (DUP-1, 2026-10-25), and a line that does not finish.
+  ['debug', '[03:29:47] [QUEUE] group b8ea5710 not known drained: pulled=false pulling=true socket=true idle=true', 'notable'],
+  ['debug', '[03:29:47] [QUEUE] group b8ea5710 not known drained: pulled=false pulling=true', 'unexplained'],
+  // An addressed history answer filtered on the reader's windows: what a newcomer was withheld, worth
+  // reading on every pass (CC-4, 2026-10-25) and not dirt. A line that does not finish is not it.
+  [
+    'log',
+    "[01:41:12] [HISTORY_ENTITLEMENT] b8226a10… - answer addressed to c71e1a5b, filtered on the reader's 1 window(s): withheld 0, 1 undated within 60 min of one, 0 undatable; kept 0",
+    'notable',
+  ],
+  ['log', "[01:41:12] [HISTORY_ENTITLEMENT] b8226a10… - answer addressed to c71e1a5b, filtered on the reader's 1 window(s): withheld 0", 'unexplained'],
   ['log', '[14:26:02] [SYNC] WASM purge skipped - server list unreliable (fetchOk=false, 9 group(s))', 'notable'],
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=false).', 'notable'],
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=true).', 'benign'],
@@ -331,6 +374,34 @@ const CASES = [
     '[01:40:12] [MLS] Message for absent conversation b6a425af… - retry after restore',
     'notable',
   ],
+  // A commit race lost and answered (#2416, #2414), verbatim from the two pull requests, and the
+  // controls: a reason outside the enum, and the same sentence saying something WAS committed.
+  ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (tree-unconfirmed) - nothing committed', 'notable'],
+  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - nobody added', 'notable'],
+  ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
+  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - half of them added', 'unexplained'],
+  // FRAMES REFUSED FOR LACK OF A ROW (#2414/#2416 round 4): normal only where a row provokes them, so
+  // UNEXPLAINED by default - the generic `/epoch|GAP/` rule must NOT claim them (REFUSED_FOR_LACK_OF_ROW_NARRATION).
+  ['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [REMOVE_MEMBER] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [PENDING] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
+  ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked", 'unexplained'],
+  ['log', "[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on", 'unexplained'],
+  // ... and the control: the same tags saying something ELSE stay with the generic rule.
+  ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - replaying anyway", 'notable'],
+  ["log", "[04:00:00] [PENDING] Tree of 46163138... not confirmed at the server's epoch, cannot say whether c71e1a5b is a member - nothing added", 'notable'],
+  ['log', '[04:00:00] [COMMIT_RACE] 46163138... the Add of 1 device(s) was refused (epoch-moved, now epoch 3) - rebuilding on the tree that won', 'notable'],
+  ['log', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: read the commit log, 1 commit(s) applied, now epoch 3', 'notable'],
+  ['warn', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: the commit log is ahead (4) and could not be applied (now 2) - left to the sync watchdog: x', 'notable'],
+  ['warn', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 2: the commit log could not be read - nothing to rebuild on: TypeError: fetch failed', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… 223bc34e holds no leaf at epoch 3 - nothing to commit', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… 223bc34e removed from the tree, now epoch 3', 'notable'],
+  ['log', '[04:00:00] [REMOVE_MEMBER] 46163138… the Remove of 223bc34e was refused (epoch-moved, now epoch 3) - re-reading the tree', 'notable'],
+  // The boot re-fetch #2408 added (GAP-1, 2026-10-25), a keyed site with two reasons joined, and a
+  // trigger nobody wrote, which stays dirt.
+  ['log', '[04:15:13] [QUEUE] conversation rows seeded: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] conversation 13c295e1… now exists: re-fetching for 1 group(s) left behind as absent-conversation + behind-refused-backlog [13c295e1]', 'notable'],
+  ['log', '[04:15:13] [QUEUE] something else happened: re-fetching for 1 group(s) left behind as absent-conversation [13c295e1]', 'unexplained'],
   // Both trigger/reason pairs, which are the whole of `UnackedReason` and its only two call sites.
   [
     'log',
@@ -998,6 +1069,16 @@ const CASES = [
   // `errors` is the bucket that DECIDES - it also lands in `notable`, and the matcher above asserts
   // membership rather than exclusivity for exactly that reason.
   ['error', '[RESET] 2 store(s) SURVIVED the wipe: canari-mls, keyval-store', 'errors'],
+  // A BULK ADD OF THREE, as FLOOR-2 prints it (2026-10-25): the member list is comma-separated.
+  ['log', 'Inviting 3 member(s): c71e1a5b…, 223bc34e…, 43319a65…...', 'benign'],
+  ['log', '[OK] Added: c71e1a5b…, 223bc34e…, 43319a65… (3 device(s)). (3 user(s) delivered)', 'benign'],
+  ['log', '[SYNC] Members added: c71e1a5b…, 223bc34e…, 43319a65… (3/3 delivered)', 'benign'],
+  ['log', '[SYNC] Members added: c71e1a5b…, 223bc34e… (1/2 delivered) and more', 'unexplained'],
+  // The admitted device's two 1.4.x decision lines, and their controls.
+  ['log', "[HISTORY_ADDRESSED] 7722a9f1… admitted - the inviter's push is solicited", 'benign'],
+  ['log', '[LEAF_REFRESH] 7722a9f1... first sight of this leaf (admitted, no refresh of ours on record) - observed now, its first refresh is owed from 5.2 d after this or seven days after its admission, whichever is later', 'benign'],
+  ['log', '[LEAF_REFRESH] 7722a9f1... first sight of this leaf (commit-sourced, no refresh of ours on record) - observed now, its first refresh is owed from 5.2 d after this', 'unexplained'],
+  ['log', '[HISTORY_ADDRESSED] REFUSED an addressed message in 7722a9f1… from c71e1a5b - only a history answer may be addressed in a conversation', 'unexplained'],
 ];
 
 let failures = 0;
@@ -1254,7 +1335,22 @@ const benignFirst = await report({
  * cases below are the ones that would go quiet - a needle over-matching a NEIGHBOURING sentence, and
  * dirt of another kind sitting beside a forgiven line.
  */
+/** The admission cases' group: its prefix is what the lines print. */
+const ADM_G = '21a3145f-088e-4214-9692-63455cc27ac9';
+const MINTED_DEV = 'web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg';
 const FORGIVE_CASES = [
+  [
+    'frames refused for lack of a row: forgiven where a row names the narration',
+    [['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed"], ['log', "[04:00:00] [GAP] 46163138 not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked"], ['log', "[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on"]],
+    REFUSED_FOR_LACK_OF_ROW_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: in a row that does not name that narration (a CC row with no refused frame queued) they stay dirt',
+    [['log', '[04:00:00] [COMMIT] 46163138... refused concurrent_commit at epoch 3: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on']],
+    [/^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log/],
+    { clean: false, unmatched: 1 },
+  ],
   [
     'the DEL-2 sentence, forgiven by its own needle',
     [['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, group-deleted - permanent failure']],
@@ -1320,7 +1416,7 @@ const FORGIVE_CASES = [
       ['log', '[DevicePanel] 2 live session(s)'],
       ['log', '[DevicePanel] Found 4 device(s)'],
       ['log', '[DevicePanel] Deleting device f0a3bb2c…'],
-      ['log', '[DevicePanel] Deleted device f0a3bb2c… (groups cleaned: 9, keyPackages: 3)'],
+      ['log', '[DevicePanel] Deleted device web-f0a3…'],
     ],
     DEVICE_PANEL_NARRATION,
     // TWO NEEDLES GO DRY HERE AND THAT IS THE MEASUREMENT, not a slack expectation: `Loading devices
@@ -1352,14 +1448,32 @@ const FORGIVE_CASES = [
       ['debug', '[2026-10-22T02:13:21.939Z] [CHAT_VIEW] channel_ messages 3 (hasNewMessage=true, response=repin-entry)'],
     ],
     PAGE_BOOT_NARRATION,
-    { clean: true, unmatched: 5 },
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    // Read on the first live FLOOR draw on dev (2026-10-25), after the invariant's reload.
+    'the device notices, the trust consumer and the legacy seal format are boot narration',
+    [
+      ['log', '[02:42:30.317] [DEVICE_NOTICE] 2 unseen new-device alert(s) restored'],
+      ['debug', '[02:42:30.317] [TRUST] device-event consumer registered'],
+      ['log', '[02:42:30.637] [MLS] web checkpoint seal format: legacy (WASM ChaCha20)'],
+    ],
+    PAGE_BOOT_NARRATION,
+    { clean: true, unmatched: 14 },
+  ],
+  [
+    // CONTROL: a seal format other than the one this build writes is a reading, not narration.
+    'another checkpoint seal format is not forgiven',
+    [['log', '[02:42:30.637] [MLS] web checkpoint seal format: v2 (WebCrypto AES-GCM)']],
+    PAGE_BOOT_NARRATION,
+    { clean: false, unmatched: 17 },
   ],
   [
     // CONTROL: the same stray-tree sweep with a refusal in it is a finding, not the boot narrating.
     'a stray-tree sweep that was refused is not forgiven',
     [['log', '[04:13:20.877] [STRAY] compared 1 tree(s): 1 roster(s) in one read, 1 refused, 0 not answered (nobody removed in them)']],
     PAGE_BOOT_NARRATION,
-    { clean: false, unmatched: 14 },
+    { clean: false, unmatched: 17 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',
@@ -1370,14 +1484,516 @@ const FORGIVE_CASES = [
     [/group-deleted - permanent failure$/],
     { clean: false, unmatched: 0 },
   ],
+  // THE DEV ROWS' NARRATION (read on DEV-1 and DEV-2, `1.4.1-alpha.3`, 2026-10-25). Every needle there
+  // is `atLevels`, so each list gets three cases: forgiven at its own level, NOT forgiven as an error
+  // or a warning carrying the same words, and NOT forgiven in its odd variant - the one a needle that
+  // merely matched the prefix would have swallowed.
+  [
+    "the owner's device notice, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 1 device event(s) to sort (+0 undecided)'],
+      ['log', '[10:01:02] [DEVICE_NOTICE] a new device was added to this account (first-sight)'],
+    ],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "the owner's device notice as an ERROR and a WARNING is not forgiven",
+    [
+      ['error', '[10:01:02] [DEVICE_NOTICE] a new device was added to this account (first-sight)'],
+      ['warning', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+    ],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    'an event the notices could not decide is not forgiven',
+    [['debug', '[10:01:02] [DEVICE_NOTICE] 2 device event(s) to sort (+1 undecided)']],
+    OWNER_DEVICE_NOTICE_NARRATION,
+    { clean: false, unmatched: 3 },
+  ],
+  // A BUDGETED NEEDLE forgives as many lines as the decisions it stands for, and the next one is dirt:
+  // a sentence said in a loop is a finding even when each copy reads as narration.
+  [
+    'a budgeted needle forgives up to its budget',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 2)],
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'a budgeted needle said once more than its budget leaves that line dirt',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1)],
+    { clean: false, unmatched: 0 },
+  ],
+  [
+    "a contact's device notice, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] 1 device event(s) handed to the notices (drain end)'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 1 device event(s) to sort (+0 undecided)'],
+      ['log', '[10:01:02] [DEVICE_NOTICE] contact line written in 46163138...'],
+      ['debug', '[10:01:02] [DEVICE_NOTICE] 472df672... has no stored row - no line owed'],
+    ],
+    CONTACT_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    // A warning never breaks `clean` on its own, so what is asserted is that both STAY in the bucket.
+    'a contact line as a WARNING, and a line left owed, are not forgiven',
+    [
+      ['warning', '[10:01:02] [DEVICE_NOTICE] contact line written in 46163138...'],
+      ['warning', '[10:01:02] [DEVICE_NOTICE] tree of 46163138... unreadable, its line stays owed'],
+    ],
+    CONTACT_DEVICE_NOTICE_NARRATION,
+    { clean: true, unmatched: 4, warnings: 2 },
+  ],
+  [
+    "a fresh device's first session, forgiven at its levels",
+    [
+      ['log', '[10:01:02] [A] ws-'],
+      ['log', '[10:01:02] [A] callback pkce=verifier challenged=yes'],
+      ['debug', '[10:01:02] [POSTS] first page not stored - the device key is not in hand for this account'],
+      ['log', '[10:01:02] [PIN] Keypad shown (open) - the unlock is owed to the member'],
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 46163138… created.'],
+      [
+        'debug',
+        "[10:01:02] [GRAINE] absorbed 3/3 seed(s) (0 already held; endorsements verified: 3 from the tree, 0 from the server's published keys) from 46163138… in community 472df672 - salon(s) a721e695, 495b56cb",
+      ],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: true, unmatched: 14 },
+  ],
+  [
+    'a callback that was not challenged, and a seed lost on the way, are not forgiven',
+    [
+      ['log', '[10:01:02] [A] callback pkce=verifier challenged=no'],
+      [
+        'debug',
+        "[10:01:02] [GRAINE] absorbed 2/3 seed(s) (0 already held; endorsements verified: 2 from the tree, 0 from the server's published keys) from 46163138… in community 472df672 - salon(s) a721e695",
+      ],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'a fresh-session line as an ERROR is not forgiven',
+    [['error', '[10:01:02] [PIN] Keypad shown (open) - the unlock is owed to the member']],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'a login that skipped PKCE is not forgiven by the fresh-client needle',
+    [['log', '[10:01:02] [A] login returnTo=/ uri=https://dev.example/callback flow=code pkce=none (server has no oidcPkce)']],
+    FRESH_CLIENT_NARRATION,
+    { clean: false, unmatched: 6 },
+  ],
+  [
+    "a revoked device's sign-out, forgiven at its levels",
+    [
+      ['debug', '[10:01:02] [TRUST] device-event consumer removed'],
+      ['info', '[10:01:02] [RESTORE] generation 4 retired (running=false, queued asks=0)'],
+      ['log', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 12 },
+  ],
+  [
+    "a revoked device's MLS client torn down, forgiven (alpha.5 DEV-2)",
+    [
+      ['info', '[14:59:07.993] [WS] MLS client destroyed - its socket is released and no open may follow'],
+      ['info', '[14:59:08.014] [WS] Paused - disconnect sent, socket released until the next foreground.'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 13 },
+  ],
+  [
+    "a revoked device's requests refused once its session ended, forgiven (alpha.5 DEV-3)",
+    [
+      ['info', '[15:46:38.652] [AUTH] 401 on GET /api/mls/messages - renewing the token and sending the same request once more'],
+      ['info', '[15:46:38.788] [A] refresh✗latched (cookie already proven dead by this device revocation - not asking again)'],
+      ['info', '[15:46:39.091] [SYNC] WASM purge skipped - the server list could not be fetched'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 12 },
+  ],
+  [
+    "control: a revoked device's undrained backlog at ERROR is not narration",
+    [['error', '[15:46:38.785] [PENDING] Pending fetch failed after 0 message(s) - the backlog for x is UNDRAINED and stays queued until the next reconnect: SessionEndedByDeviceRevocationError']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
+  ],
+  [
+    'control: the same teardown on a device nobody revoked stays dirt',
+    [['info', '[14:59:07.993] [WS] MLS client destroyed - its socket is released and no open may follow']],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'control: the revoked device signing out TWICE is not narrated (the known P3)',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
+  ],
+  [
+    "a revoked device's pending fetch ended by its own revocation, and the redirect that signs out no more, forgiven",
+    [
+      ['info', '[14:59:07.900] [PENDING] Pending fetch ended after 0 message(s): this device was revoked by its owner, nothing remains to drain'],
+      ['log', '[14:59:08.100] [AUTH] Session expired - the revoked-device reset already signed out; redirecting to /login.'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'control: the same two lines on a device nobody revoked stay dirt, and the pending fetch at error is never forgiven',
+    [
+      ['info', '[14:59:07.900] [PENDING] Pending fetch ended after 0 message(s): this device was revoked by its owner, nothing remains to drain'],
+      ['log', '[14:59:08.100] [AUTH] Session expired - the revoked-device reset already signed out; redirecting to /login.'],
+      ['error', '[14:59:07.900] [PENDING] Pending fetch failed after 0 message(s) - the backlog for u:d is UNDRAINED and stays queued until the next reconnect:'],
+    ],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'a revoked device that signed out ONCE: its one logout line is forgiven where it was counted',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms'])],
+    { clean: true, unmatched: 15 },
+  ],
+  [
+    'control: a SECOND logout that arrives later is counted at classification time - neither line is forgiven',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    [...REVOKED_SIGN_OUT_NARRATION, revokedLogoutOnce(() => ['[14:59:08.216] [A] logout✓200 79ms', '[14:59:09.001] [A] logout✗ 12ms: TypeError - signed out locally'])],
+    { clean: false, unmatched: 16 },
+  ],
+  [
+    'control: the counted-once needle is not part of the revoked narration, so the row must earn it',
+    [['info', '[14:59:08.216] [A] logout✓200 79ms']],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
+  ],
+  [
+    "a fresh device's restore of unproven messages, forgiven on the minted seat",
+    [['info', '[14:58:45.518] [AUTHORSHIP] 25 restored message(s) in b86896fc… relayed by 223bc34e carry no author proof - kept, marked unverified']],
+    FRESH_DEVICE_RESTORE_NARRATION,
+    { clean: true, unmatched: 1 },
+  ],
+  [
+    "a minted device's hidden batch of rows that are not arrivals, forgiven",
+    [['info', '[15:40:02.017] [NOTIF] Batch into "c0ef269d…" added 1 while hidden, none of them an inbound message - nothing to raise.']],
+    FRESH_DEVICE_RESTORE_NARRATION,
+    { clean: true, unmatched: 1 },
+  ],
+  [
+    'control: the same restore on a seat that was not minted stays dirt',
+    [['info', '[14:58:45.518] [AUTHORSHIP] 25 restored message(s) in b86896fc… relayed by 223bc34e carry no author proof - kept, marked unverified']],
+    FRESH_DEVICE_SESSION_NARRATION,
+    { clean: false, unmatched: 20 },
+  ],
+  [
+    'control: a restore that REFUSED a forged message is never narration',
+    [['error', '[14:58:45.518] [AUTHORSHIP] REFUSED a replayed message 1a2b3c4d relayed by 223bc34e in b86896fc…: signed by x']],
+    FRESH_DEVICE_RESTORE_NARRATION,
+    { clean: false, unmatched: 2 },
+  ],
+  [
+    'a restore retired with asks still queued, and a sign-out as an ERROR, are not forgiven',
+    [
+      ['info', '[10:01:02] [RESTORE] generation 4 retired (running=true, queued asks=2)'],
+      ['error', '[10:01:02] [WORKSPACE-SNAPSHOT] signed out: 2 community(ies) forgotten'],
+    ],
+    REVOKED_SIGN_OUT_NARRATION,
+    { clean: false, unmatched: 15 },
+  ],
+  [
+    "the adder's own memberAdded notice is forgiven at debug (#2412)",
+    [['debug', "[15:22:58.206] [NOTICE] memberAdded written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"]],
+    GROUP_CREATION_NARRATION,
+    { clean: true, unmatched: 2 },
+  ],
+  [
+    'control: the same notice at log, or for another event, is not forgiven',
+    [
+      ['log', "[15:22:58.206] [NOTICE] memberAdded written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"],
+      ['debug', "[15:22:58.206] [NOTICE] memberRemoved written on the acting device in b5c78665… as 8107e57d - the id every member's device writes"],
+    ],
+    GROUP_CREATION_NARRATION,
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    "the remover's own lines are forgiven: committed, already-out, and its memberRemoved notice at debug",
+    [
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (committed)'],
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (already-out)'],
+      ['debug', "[15:47:38.471] [NOTICE] memberRemoved written on the acting device in 997f2c05… as 28647c70 - the id every member's device writes"],
+    ],
+    REMOVE_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: an unconfirmed or failed Remove, and the notice at log, stay dirt',
+    [
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e removed from the group (unconfirmed)'],
+      ['log', '[15:47:38.470] [REMOVE_MEMBER] 223bc34e not fully removed: Error: boom'],
+      ['log', "[15:47:38.471] [NOTICE] memberRemoved written on the acting device in 997f2c05… as 28647c70 - the id every member's device writes"],
+    ],
+    REMOVE_NARRATION,
+    { clean: false, unmatched: 2 },
+  ],
+  // ── the BIG rows' narration (2026-10-26): every seat the bulk-ingest line, A1 its own lines ──
+  [
+    "a BIG row's A1: the bulk-ingest landing, its edge exclusions and all share targets, at debug",
+    [
+      ['debug', '[18:15:07.722] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+      ['debug', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['debug', '[18:15:06.772] [2026-10-26T17:15:06.772Z] [GESTURE] left-edge exclusion cleared'],
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 5 of 5 present (conversations changed)'],
+    ],
+    bigRowNarration('A1'),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "a BIG row's browser seat: the bulk-ingest landing is forgiven",
+    [['debug', '[18:19:07.905] [MLS] Bulk ingest checkpoint landed - committing its progress markers.']],
+    bigRowNarration('W2'),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "control: the phone's lines on ANOTHER seat stay dirt",
+    [
+      ['debug', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 5 of 5 present (conversations changed)'],
+    ],
+    bigRowNarration('W2'),
+    { clean: false, unmatched: 1 },
+  ],
+  [
+    'control: a share target missing, and the same words at warn or error, stay dirt on A1',
+    [
+      ['debug', '[18:14:39.930] [2026-10-26T17:14:39.930Z] [ShareTargets] 4 of 5 present (conversations changed)'],
+      ['warning', '[18:15:06.769] [2026-10-26T17:15:06.769Z] [GESTURE] right-edge exclusion over 643..2152 px'],
+      ['error', '[18:15:07.722] [MLS] Bulk ingest checkpoint landed - committing its progress markers.'],
+    ],
+    bigRowNarration('A1'),
+    { clean: false, unmatched: 3, warnings: 1 },
+  ],
+  // ── the admission narrations (#2500): scoped to the row's group and to the endings it plays ──
+  [
+    "a member's ask, admitted and declined in the row's group, forgiven at its levels",
+    [
+      ['log', "[10:01:02] [JOIN_ASK] 223bc34e… has no leaf in 21a3145f... - a new person is not added automatically, a member's approval is asked"],
+      ['log', "[10:01:02] [JOIN_REQUEST] 223bc34e… asks to join 21a3145f... - a member's answer is awaited"],
+      ['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… admitted in 21a3145f... - the ask leaves this screen'],
+      ['info', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined in 21a3145f…'],
+      ['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined - their seat is withdrawn'],
+    ],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true }),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same ask at warn, and an ask about ANOTHER group, stay dirt',
+    [
+      ['warning', "[10:01:02] [JOIN_REQUEST] 223bc34e… asks to join 21a3145f... - a member's answer is awaited"],
+      ['log', "[10:01:02] [JOIN_ASK] 223bc34e… has no leaf in 098bfb7f... - a new person is not added automatically, a member's approval is asked"],
+    ],
+    admissionMemberNarration(ADM_G),
+    { clean: false, unmatched: 2, warnings: 1 },
+  ],
+  [
+    'control: a Decline in a row that plays none (ADM-1) stays dirt',
+    [['log', '[10:01:02] [JOIN_REQUEST] 223bc34e… declined in 21a3145f... - the ask leaves this screen']],
+    admissionMemberNarration(ADM_G, { admitted: true }),
+    { clean: false, unmatched: 3 },
+  ],
+  // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by its approver: ADM-3 when the Decline wins, ADM-10.
+  [
+    "an Add refused whole in the row's group, in a row that plays it (ADM-3), forgiven",
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
+    { clean: true, unmatched: 7 },
+  ],
+  [
+    'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    // The SYNC line names no group (as the Decline's "their seat is withdrawn" does): it is kept to the
+    // two rows that play a refusal, and the two lines that DO name a group stay dirt for another one.
+    'control: the two group-naming lines about ANOTHER group stay dirt, even in ADM-10',
+    [
+      ['log', '[14:29:37.561] [COMMIT_RACE] 098bfb7f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
+      ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 8 },
+  ],
+  [
+    "a Decline that won the race, narrated by the approver at info with the group named, in a row that plays it (ADM-3), forgiven",
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…']],
+    admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
+    { clean: true, unmatched: 9 },
+  ],
+  [
+    'control: that line in a row that plays no refusal (ADM-2), for another group, or at warn, stays dirt',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    'an ask settled before the Add, narrated at info with the group named, in a row that plays it (ADM-10), forgiven',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: true, unmatched: 8 },
+  ],
+  [
+    'control: that line in a row that plays no refusal stays dirt',
+    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    admissionMemberNarration(ADM_G, { declined: true }),
+    { clean: false, unmatched: 4 },
+  ],
+  [
+    'control: the settled-ask line naming ANOTHER group, or at warn, stays dirt in ADM-10',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
+  ],
+  [
+    'control: the same line naming ANOTHER group, or logged at warn (a read failure), stays dirt in ADM-10',
+    [
+      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
+  ],
+  [
+    'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
+    [
+      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (lost) - nobody added'],
+      ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
+    ],
+    admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
+    { clean: false, unmatched: 9, warnings: 1 },
+  ],
+  [
+    "the joiner's wait and both endings in the row's group, forgiven",
+    [
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 21a3145f… created.'],
+      ['log', '[10:01:02] [DISCOVERY] "21a3145f…" awaits a member admission'],
+      ['log', '[10:01:02] [DISCOVERY] "21a3145f…" no longer awaits a member'],
+      ['log', '[10:01:02] [DISCOVERY] never-admitted "21a3145f…" is no longer listed - the ask was declined or expired - removing'],
+    ],
+    admissionJoinerNarration(ADM_G, { admitted: true, declined: true }),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    "control: the joiner's lines about another group, an ending the row does not play, or at error, stay dirt",
+    [
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 098bfb7f… created.'],
+      ['log', '[10:01:02] [DISCOVERY] Placeholder 21a3145fabc created.'],
+      ['log', '[10:01:02] [DISCOVERY] never-admitted "21a3145f…" is no longer listed - the ask was declined or expired - removing'],
+      ['error', '[10:01:02] [DISCOVERY] "21a3145f…" awaits a member admission'],
+    ],
+    admissionJoinerNarration(ADM_G, { admitted: true }),
+    { clean: false, unmatched: 3 },
+  ],
+  [
+    "the owner's (or a sibling's) vetting of the minted device, at debug, forgiven - redacted or whole",
+    [
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: pinned'],
+      ['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpp81eo-ioeg vetted: pinned'],
+    ],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same vetting at warn is not forgiven - it stays a counted warning',
+    [['warning', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: true, unmatched: 1, warnings: 1 },
+  ],
+  [
+    'control: another outcome stays dirt',
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvpp81eo-ioeg vetted: mismatch']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
+  ],
+  [
+    'control: another device of the owner stays dirt',
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 472df672:web-472df672…-mvzz00aa-bbbb vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
+  ],
+  [
+    "control: another user's device stays dirt",
+    [['debug', '[10:01:02] [TRUST] KeyPackage for 9a8b7c6d:web-9a8b7c6d…-mvpp81eo-ioeg vetted: pinned']],
+    mintedKeyPackageVettedNarration([MINTED_DEV]),
+    { clean: false, unmatched: 1, warnings: 0 },
+  ],
+  [
+    "RM-6's refused privacy flip, by its code at debug, forgiven",
+    [['debug', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"REMOVAL_EXCEEDS_ACTOR","message":"x"}']],
+    PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same refusal at warn, or another code, stays dirt',
+    [
+      ['warning', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"REMOVAL_EXCEEDS_ACTOR","message":"x"}'],
+      ['error', '[10:01:02] [channelSettings.handleTogglePrivacy failed] ChannelApiError: {"code":"FORBIDDEN","message":"x"}'],
+    ],
+    PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+    { clean: false, unmatched: 1, warnings: 1 },
+  ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {
   const rep = ignoringExpectedLog(await report({ cx: cxOf(lines), label: 'selftest' }), needles);
-  const got = { clean: rep.clean, unmatched: rep.ignoredAsExpectedLog.unmatched.length };
-  const ok = got.clean === want.clean && got.unmatched === want.unmatched;
+  // `warnings` is asserted only where a case names it: a warning never breaks `clean`, so a needle
+  // forgiving one is visible ONLY as the bucket shrinking.
+  const got = { clean: rep.clean, unmatched: rep.ignoredAsExpectedLog.unmatched.length, ...('warnings' in want ? { warnings: rep.warnings.length } : {}) };
+  const ok = got.clean === want.clean && got.unmatched === want.unmatched && got.warnings === want.warnings;
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
+}
+// ONE CALL SURFACED TWICE (the same millisecond - `timelineOf`'s own rule) is one decision against a
+// budget of one; the same sentence a second later is two.
+{
+  const line = '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device';
+  const needle = atLevels(['debug'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1);
+  const ev = (at) => ({ method: 'Runtime.consoleAPICalled', params: { type: 'debug', timestamp: at, args: [{ value: line }] } });
+  const t0 = 1_786_710_000_000;
+  const once = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0)] }, label: 'selftest' }), [needle]);
+  const twice = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0 + 1000)] }, label: 'selftest' }), [needle]);
+  for (const [what, ok] of [
+    ['a budget counts the double surfacing of one call once', once.clean],
+    ['a budget counts the same sentence a second later twice', !twice.clean && twice.unexplained.some((l) => l.includes('[said 2 times, budget 1]'))],
+  ]) {
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
+  }
 }
 /**
  * A PATH RULE MUST FORGIVE THE SAME REQUEST WHATEVER ESTATE IT WAS MADE AGAINST.
@@ -1398,6 +2014,12 @@ const REFUSAL_CASES = [
   ['a refresh 401 with a query string is forgiven', 'http://localhost:8081/api/auth/refresh?clientVersion=0.16.3', 401, [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }], true],
   // NARROW IN BOTH DIRECTIONS, which is the whole safety of a pair rule.
   ['the same path with another status is NOT forgiven', 'http://localhost:8081/api/users/' + 'a'.repeat(64), 500, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
+  // A REVOKED DEVICE'S REFUSALS (alpha.5 DEV-2/3/6), given to the revoked seat only.
+  ['a revoked device asking for its own KeyPackage: 404, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 404, REVOKED_REFUSALS, true],
+  ['its revocation check answered 401, forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/revoked', 401, REVOKED_REFUSALS, true],
+  ['its pending fetch answered 401, forgiven', 'https://dev.example/api/mls/messages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6?limit=500&caps=addressed-history-1', 401, REVOKED_REFUSALS, true],
+  ['control: a 500 on its KeyPackage is NOT forgiven', 'https://dev.example/api/mls/devices/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/web-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-mvpd61xf-pvv6/key-package', 500, REVOKED_REFUSALS, false],
+  ['control: a 401 on a send is NOT forgiven', 'https://dev.example/api/mls/send', 401, REVOKED_REFUSALS, false],
   ['the same status on another path is NOT forgiven', 'http://localhost:8081/api/mls/send', 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
 ];
 for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
@@ -1422,6 +2044,101 @@ const CUT_LINE =
   const ok = plain.unexplained.length === 1 && underCut.unexplained.length === 0;
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'cut'.padEnd(12)} the gateway line is forgiven under a cut and only there`);
+}
+
+/**
+ * THE ONE NAMED ENVIRONMENT EXCEPTION (`DEV_EDGE_CSP_EXCEPTION`, 2026-10-25): the Cloudflare inline
+ * script the dev edge injects is forgiven, one per document, on dev only - and every control beside
+ * it stays dirt. A report taken with it must read clean, so a verdict reads PASS, never PASS-DIRTY.
+ */
+{
+  const CF = 'sha256-CFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFCFC=';
+  const APP = 'sha256-APPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPAPPA=';
+  const line = (hash, url = 'https://dev.canari-emse.fr/chat', directive = 'script-src') => ({
+    level: 'error',
+    source: 'security',
+    url,
+    text: `Executing inline script violates the following Content Security Policy directive '${directive} 'self''. Either the 'unsafe-inline' keyword, a hash ('${hash}'), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked.`,
+  });
+  const withHash = (l) => ({ ...l, ...cspBlockedHashOf(l) });
+  const page = { injected: 1, appHashes: [APP] };
+  const cases = [
+    ['forgiven', 'the injected script, on dev, one document', [line(CF)], 0, page, 1],
+    ['forgiven', 'one per document across a reload', [line(CF), line(CF.replace('CFC', 'CFD'))], 1, page, 2],
+    ['control', 'an APP inline script refused stays dirt', [line(APP)], 0, page, 0],
+    ['control', 'a refusal on another origin stays dirt', [line(CF, 'http://localhost:5173/chat')], 0, page, 0],
+    ['control', 'another directive stays dirt', [line(CF, undefined, 'style-src')], 0, page, 0],
+    ['control', 'more refusals than documents forgives none', [line(CF), line(CF.replace('CFC', 'CFD'))], 0, page, 0],
+    ['control', 'a page without the injection forgives none', [line(CF)], 0, { injected: 0, appHashes: [APP] }, 0],
+    ['control', 'an unreadable page forgives none', [line(CF)], 0, null, 0],
+  ];
+  for (const [kind, label, errs, docs, pg, want] of cases) {
+    const d = devEdgeCspDecision(errs.map(withHash), docs, pg);
+    const ok = d.forgiven.length === want && d.kept.length === errs.length - want;
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${kind.padEnd(12)} ${label}`);
+  }
+  // A non-security console error carrying the same words is never a candidate.
+  const fake = { ...line(CF), source: 'console-api' };
+  const okFake = devEdgeCspDecision([{ ...fake, ...cspBlockedHashOf(fake) }], 0, page).forgiven.length === 0;
+  if (!okFake) failures++;
+  console.log(`${okFake ? 'ok  ' : 'FAIL'} ${'control'.padEnd(12)} an app console line echoing the sentence stays dirt`);
+
+  // END TO END: a report whose only error is the injected refusal reads clean, records the exception,
+  // and `gate` keeps a PASS a PASS while listing the exception in the detail.
+  const cx = cxOf([]);
+  cx.events.push({ method: 'Log.entryAdded', params: { entry: { ...line(CF), timestamp: Date.now() } } });
+  cx.send = async (method) => (method === 'Runtime.evaluate' ? { result: { value: JSON.stringify(page) } } : {});
+  const rep = await report({ cx, label: 'W1' });
+  const g = gate('PASS', { W1: rep });
+  const okE2E = rep.clean && rep.environmentException?.forgiven === 1 && g.verdict === 'PASS' && g.detail.environmentException?.W1?.name === DEV_EDGE_CSP_EXCEPTION.name;
+  if (!okE2E) failures++;
+  console.log(`${okE2E ? 'ok  ' : 'FAIL'} ${'forgiven'.padEnd(12)} a verdict taken with the exception reads PASS and names it (got ${g.verdict})`);
+}
+
+// A ROW THAT DID NOT PASS KEEPS EVERY CLIENT'S WHOLE CONSOLE (DUP-6, alpha.4), routine lines included.
+{
+  const ev = (text, type = 'log') => ({ method: 'Runtime.consoleAPICalled', params: { type, args: [{ value: text }] } });
+  const d = consoleDump({ W1: { cx: { events: [ev('[WS RCV] routine'), ev('boom', 'error')] } }, W2: null });
+  const ok = Object.keys(d).join() === 'W1' && d.W1 === 'info [WS RCV] routine\nerror boom';
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'consoles'.padEnd(12)} a non-PASS row keeps each client's whole console, routine lines included`);
+  if (!ok) failures++;
+}
+
+// THE SIGN-OUT COUNTER reads zero, one and two - the row asserts exactly one.
+{
+  const okCount =
+    signOutCount(['[A] logout✓200 61ms', '[A] other']) === 1 &&
+    signOutCount(['[A] logout✓200 61ms', '[A] logout✗ 12ms: lost']) === 2 &&
+    signOutCount(['[A] logout✓200 61ms', '[A] logout✓200 59ms']) === 2 &&
+    signOutCount([]) === 0;
+  console.log(`${okCount ? 'ok  ' : 'FAIL'} ${'logouts'.padEnd(12)} the sign-out counter reads zero, one and two`);
+  if (!okCount) failures++;
+}
+
+// A ROUTE'S FIRST PRELOAD, ONCE PER PATHNAME (`forgivingFirstRoutePreloads`, LIST-RACE-1 on 1.5.0-alpha.1).
+{
+  const pre = (p, first = true, level = 'debug') => `${level}: [00:45:33.543] [2026-10-26T23:45:33.543Z] [RoutePreload] {"pathname":"${p}","first":${first}}`;
+  const rep = (lines) => ({ errors: [], warnings: [], unexplained: lines, badHttp: [], exceptions: [], severe: [], wsEvents: [] });
+  const left = (lines) => forgivingFirstRoutePreloads(rep(lines)).unexplained;
+  const cases = [
+    ['two routes preloaded once each are forgiven', left([pre('/chat'), pre('/posts')]).length === 0],
+    ['the same route preloaded twice keeps both', left([pre('/chat'), pre('/chat')]).length === 2],
+    ['... and does not stop another route being forgiven', left([pre('/chat'), pre('/chat'), pre('/posts')]).length === 2],
+    ['"first":false stays dirt', left([pre('/chat', false)]).length === 1],
+    ['the line at log level stays dirt', left([pre('/chat', true, 'log')]).length === 1],
+    ['an unrelated line stays', left([pre('/chat'), 'debug: [00:00:00.000] [OTHER] x']).length === 1],
+    ['a clean window is clean after it', forgivingFirstRoutePreloads(rep([pre('/chat')])).clean === true],
+    ['a report with no unexplained list passes through', forgivingFirstRoutePreloads({ clean: true }).clean === true],
+    // Applied by `gate` for every runner (COMM calls it directly): a lone preload keeps a PASS a PASS,
+    // a doubled one demotes it.
+    ['gate forgives a lone first preload', gate('PASS', { W1: { ...rep([pre('/chat')]), clean: false } }).verdict === 'PASS'],
+    ['gate keeps a doubled preload as dirt', gate('PASS', { W1: { ...rep([pre('/chat'), pre('/chat')]), clean: false } }).verdict === 'PASS-DIRTY'],
+  ];
+  for (const [name, ok] of cases) {
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'preload'.padEnd(12)} first route preload: ${name}`);
+    if (!ok) failures++;
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');

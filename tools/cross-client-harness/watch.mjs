@@ -18,7 +18,13 @@ import {
   originOfConsoleEvent,
   originOfUrl,
 } from './consoleorigin.mjs';
-import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
+import {
+  configuredEstate,
+  describe as describeDeploy,
+  estateWindow,
+  readEstateBuild,
+} from './deploy.mjs';
+import { DEV_SITE } from './estate-target.mjs';
 import { fromWebKit, isWebKitAgent } from './webkit-console.mjs';
 
 /**
@@ -79,7 +85,9 @@ const BENIGN = [
   // single loudest signal Graine emits was landing in `unexplained`. A rule that claims another rule
   // covers something has to be checked against the text, not against the intent - the sibling now
   // has its own entry in NOTABLE, named.
-  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove$/,
+  // `(the revocation answer of an unchanged tree reused)`: the same answer, not recomputed for a tree
+  // that has not moved (`rosterReconcile.ts`) - still nothing to remove, and the only suffix allowed.
+  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove(?: \(the revocation answer of an unchanged tree reused\))?$/,
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
   /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
@@ -284,7 +292,17 @@ const BENIGN = [
   // spared instead of deleting them in silence. It is EXPECTED here specifically - COMM-12 builds
   // two communities back to back, which is the race - and its absence proves nothing either way,
   // since a run where no listing happened to be in flight is a run with nothing to spare.
-  /^\[WORKSPACE-LOAD\] kept \d+ (community\(ies\)|salon\(s\)) created after this listing was requested/,
+  // Since 2026-10-26 it is one session-log line per salon or community (naming the stores that held
+  // it), and it covers one HEARD OF live during the listing too. Its two siblings are the same ledger
+  // reading a removal made live in that window: the listing declining to draw it back, and the prune
+  // finishing a removal whose purge was still running. The PRUNE of what nothing heard is said at
+  // `warn`, once per salon, and stays dirt: it is the visible end of a removal this client missed.
+  // One more line of the same fix: a community first drawn from an event under a slug the server
+  // does not use, folded into the listed one.
+  /^\[WORKSPACE-LOAD\] kept (salon|community) \S+ \([a-z ,]+\): not listed by the server, but created or heard of on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ not restored: listed by the server, but removed on this device after the listing was asked \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] (salon|community) \S+ \([a-z ,]+\) removed on this device after the listing was asked - its removal is finished here \(tick \d+\)$/,
+  /^\[WORKSPACE-LOAD\] community \S+, drawn from an event, is \S+ on the server - one entry, under the server's id$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
@@ -463,11 +481,13 @@ const BENIGN = [
   // own creation (2026-10-22).
   /^\[GROUP\] Group created successfully \(id=[0-9a-f]{8}…\)$/,
   /^\[OK\] Group [0-9a-f]{8}… created\.$/,
-  /^Inviting \d+ member\(s\): \S+$/,
+  // A BULK ADD NAMES EVERY MEMBER, comma-separated - the single-\S+ rules matched only a one-member
+  // Add, so FLOOR-2's three-member Add came back PASS-DIRTY on its own subject (2026-10-25).
+  /^Inviting \d+ member\(s\): \S+(?:, \S+)*$/,
   /^\[SYNC\] bulk\.addedDeviceIds: \S+$/,
   /^\[SYNC\] Welcome -> \S+ OK$/,
-  /^\[OK\] Added: \S+ \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
-  /^\[SYNC\] Members added: \S+ \(\d+\/\d+ delivered\)$/,
+  /^\[OK\] Added: \S+(?:, \S+)* \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
+  /^\[SYNC\] Members added: \S+(?:, \S+)* \(\d+\/\d+ delivered\)$/,
   /^\S+ retire du groupe\.$/,
   // The rename, on the renamer (`useConversations`) and on the other member (`systemMessageHandler`),
   // spelt as the app spells it since the name left the log line - the old rules matched nothing.
@@ -482,6 +502,12 @@ const BENIGN = [
   /^\[WELCOME\] Group \S+ ready$/,
   /^\[WELCOME\] \S+ already held - redelivered Welcome ignored \(idempotent\)$/,
   /^\[SYNC\] Welcome processed for \S+, refreshing\.\.\.$/,
+  // THE 1.4.x ADMITTED DEVICE'S TWO DECISION LINES, read on FLOOR-2 (2026-10-25): it solicits the
+  // inviter's addressed history push, and it records the first sight of its admitted leaf for the
+  // refresh schedule. Only the ADMITTED spellings - a commit-sourced first sight, or a REFUSED
+  // addressed frame, stays dirt.
+  /^\[HISTORY_ADDRESSED\] [0-9a-f]{8}\u2026 admitted - the inviter's push is solicited$/,
+  /^\[LEAF_REFRESH\] [0-9a-f]{8}\.\.\. first sight of this leaf \(admitted, no refresh of ours on record\) - observed now, its first refresh is owed from \d+\.\d d after this or seven days after its admission, whichever is later$/,
   // A group the OWNER deleted, seen by the other side. `del1.mjs` and the GRP teardowns both produce
   // it, and it is the discovery pass reporting a tombstone it handled correctly.
   /^\[DISCOVERY\] UI group ".*" deleted \(tombstone\) server-side - marked removed$/,
@@ -800,6 +826,23 @@ const DECRYPT_CLASSIFIED = [
  */
 const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 
+/**
+ * NORMAL ONLY WHERE A ROW PROVOKES IT, so these lines are NARRATION (a row names them) and never a
+ * rule. Their group holds frames the delivery queue refused for lack of a conversation row, still
+ * queued: those frames bring the missing epochs, so a member that lost a commit race, a Remove, a
+ * pending Add or a gap replay does not replay past them and waits for their pull (#2414/#2416).
+ *
+ * TESTED BEFORE `NOTABLE`, because they all name an epoch and the generic `/epoch|GAP|.../` rule
+ * would otherwise claim them in every row. A CC row with no refused frame queued must show them
+ * UNEXPLAINED (`classify-selftest.mjs` pins it). The `…` after the id is optional: one spelling
+ * names none.
+ */
+export const REFUSED_FOR_LACK_OF_ROW_NARRATION = [
+  /^\[(?:REMOVE_MEMBER|COMMIT_RACE|PENDING)\] [0-9a-f]{8}(?:…|\.\.\.)? not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed$/,
+  /^\[GAP\] [0-9a-f]{8}(?:…|\.\.\.)? not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked$/,
+  /^\[COMMIT\] [0-9a-f]{8}(?:…|\.\.\.)? refused concurrent_commit at epoch \d+: frames refused for lack of a row are still queued - no replay past them, nothing to rebuild on$/,
+];
+
 /** Console text that must be reported even though it is not an error - it means something happened. */
 const NOTABLE = [
   /SecretReuse|out of bounds|Duplicate|silent ACK|ACK silencieux/i,
@@ -944,6 +987,17 @@ const NOTABLE = [
   // same claim and must never share its rule. Never `clean`-breaking, because a join or a departure
   // legitimately produces one - but in a check that moved nobody, its presence IS the finding.
   /^\[QUEUE\] Processing Commit group=/,
+  // THE FRAMES A COMMIT HELD BACK, DRAINED once it releases the MLS lock (#2471, new in 1.4.1-alpha.5,
+  // `BaseMlsService.resumeFramesHeldByCommit`). A commit's own tail: reported for the reason a commit
+  // is, never routine. It is printed only when work is runnable, so a count of 0 is not its shape.
+  /^\[QUEUE\] the commit of [0-9a-f]{8}\.\.\. released the MLS lock - draining the [1-9]\d* frame\(s\) it held back$/,
+  // ...and the loan itself (`mlsPerGroupScheduler.ts`, #2471): another group's frame applied under a
+  // commit's pending answer, or its own group's put back until the commit is answered. The two
+  // designed branches only - `refused to lend` and `released while its loan was still open` are faults.
+  // `the commit of X has its answer - waiting for the frame applied under its loan` is NOT here: it
+  // is the open backlog P3 (DEV-6) whose cause is unread, so it stays dirt until it is read.
+  /^\[MLS_LOCK\] a frame of \S+ is applied while the commit of \S+ awaits its answer$/,
+  /^\[MLS_LOCK\] a frame of \S+ waits for the commit of \S+ - put back, applied after it$/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -951,6 +1005,10 @@ const NOTABLE = [
   // expected - so it is reported and does not break `clean`. It must never be filed as routine: an
   // outbox that stays non-empty is exactly how a message is lost without anything else complaining.
   /^\[OUTBOX\] \d+ entr(y|ies) still queued/,
+  // AN ENTRY WAITING OUT ITS BACKOFF after a failed attempt (`outbox.ts`): the sibling of the
+  // `transient failure` before it, and the same claim - an entry that did not leave. Reported, never
+  // routine, for the reason above. Met on DUP-5's alpha.4 run, an Add's unknown outcome holding a send.
+  /^\[OUTBOX\] [0-9a-f]{8}… skipped, backing off for -?\d+ms \(attempt \d+\)$/,
   // THE DELETE THAT ARRIVED ONE INSTANT TOO LATE - the sibling of the `BENIGN` withdrawal line. The
   // entry was already in flight, so the peers will have the text and the delete has to travel as a
   // `delete_message` event instead. NOTABLE rather than benign because it is the race MUT-19 exists
@@ -990,6 +1048,16 @@ const NOTABLE = [
   // deciding it is out of sync (WP-FALSELOSS-2). It never breaks `clean` - a real diff is the
   // mechanism doing its job - but it is never routine either.
   /^\[HISTORY_REQ\] \S+\.\.\. diff with \S+: \d+ to send, \d+ to pull( \(identical stores\))?$/,
+  // THE 2b DECISION, PER ADDRESSED ANSWER (`historyEntitlement.ts`, 1.4.x): what an answer to one
+  // reader withheld and kept. Read on CC-2..4 (2026-10-25), every member answering a newcomer writes
+  // it. NOTABLE, not benign: `kept 0` to a long-standing member would be the finding, and the counts
+  // travel with any dirty row that needs them. The other spellings of the tag stay unclassified.
+  /^\[HISTORY_ENTITLEMENT\] [0-9a-f]{8}… - answer addressed to [0-9a-f]{8}, filtered on .+: withheld \d+, \d+ undated within \d+ min of one, \d+ undatable; kept \d+$/,
+  // THE ADMISSION GATE WAITING FOR A GROUP TO DRAIN (`BaseMlsService.isGroupDrained`, a `debug`
+  // decision line): the evidence it stands on, printed when it does NOT hold - a pull still in
+  // flight right after a reload, typically. `observeWhenDrained` resolves it; DUP-1 met it on the
+  // invariant's reload (2026-10-25). Notable, never dirt: it names why an observation waited.
+  /^\[QUEUE\] group [0-9a-f]{8} not known drained: pulled=(?:true|false) pulling=(?:true|false) socket=(?:true|false) idle=(?:true|false)$/,
   // THE FOUR WAYS THE ANSWER ENDS WITHOUT SENDING ANYTHING, classified from the SITE and all at once.
   // `actions.ts` writes eight `[HISTORY_REQ]` spellings and exactly two of them had a rule - the two
   // above - so the campaign was meeting the other six one run at a time and paying a triage for each.
@@ -1135,6 +1203,27 @@ const NOTABLE = [
   // THE SWEEP'S TALLY, guarded on `totalWelcomes > 0`, so it prints only when Welcomes really went
   // out. `notable` for that reason: it is never routine.
   /^\[PENDING\] \d+ Welcome\(s\) sent\.$/,
+  // -- A COMMIT RACE LOST AND ANSWERED (#2416 Add, #2414 Remove; CC and SETTLE, 2026-10-25) --------
+  //
+  // The expected, necessary outcomes of a race, taken VERBATIM from the two pull requests and
+  // anchored end to end: an Add abandoned before its stage (the reasons are the whole of
+  // `AddAbortReason`), a refused commit rebuilt on the tree that won (`rebuildableRefusal` returns
+  // only `epoch-moved` or `seat-claim-overtaken`), the commit log read after a `concurrent_commit`,
+  // and a Remove that found its target already gone. NOTABLE: nothing failed, and a reader following
+  // a race wants each step. The `epoch`-carrying ones reached `notable` already through the generic
+  // rule, by accident of a word - these say it on purpose. The two `concurrent_commit` WARNINGS (the
+  // log could not be applied, or not read) are pinned too: the sync watchdog owns what they leave,
+  // and the line is the evidence of handing it over.
+  /^\[PENDING\] Add of \S+ to [0-9a-f]{8}\.\.\. abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nothing committed$/,
+  /^\[SYNC\] the Add was abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nobody added$/,
+  /^\[\w+\] Tree of [0-9a-f]{8}\.\.\. not confirmed at the server's epoch, cannot say whether \S+ is a member - nothing added$/,
+  /^\[COMMIT_RACE\] [0-9a-f]{8}\.\.\. .+ was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - rebuilding on the tree that won$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log, \d+ commit\(s\) applied, now epoch \d+$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: the commit log is ahead \(\d+\) and could not be applied \(now \d+\) - left to the sync watchdog: .+$/,
+  /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: the commit log could not be read - nothing to rebuild on: .+$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… [0-9a-f]{8} holds no leaf at epoch \d+ - nothing to commit$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… [0-9a-f]{8} removed from the tree, now epoch \d+$/,
+  /^\[REMOVE_MEMBER\] [0-9a-f]{8}… the Remove of [0-9a-f]{8} was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - re-reading the tree$/,
   // -- THE `[QUEUE]` WELCOME BUFFER AND THE FRAMES LEFT BEHIND, read whole (2026-08-25) ----------
   //
   // Read the same way `[PENDING]` above was: every line of the site placed in one pass, because a
@@ -1181,15 +1270,17 @@ const NOTABLE = [
   /^\[MLS\] Message for absent conversation \S+ - retry after restore$/,
   /^\[BUFFER\] recovery started for unknown group \S+$/,
   // THE FRAMES EARLIER DRAINS LEFT UNACKNOWLEDGED, asked for again now that the reason they could
-  // not be read is gone. Both trigger/reason pairs are enumerated rather than left to `\S+`: the
-  // reasons are the whole of `UnackedReason` (`unknown-group`, `absent-conversation`) and the
-  // triggers are its only two call sites. A third pair appearing must land in `unexplained`.
-  /^\[QUEUE\] (?:conversations restored|welcome processed): re-fetching for \d+ group\(s\) left behind as (?:unknown-group|absent-conversation) \[[^\]]*\]$/,
+  // not be read is gone. Triggers and reasons are enumerated rather than left to `\S+`: the reasons
+  // are the whole of `UnackedReason` (`unackedFrames.ts`), joined by ` + ` when one pull serves
+  // several, and the triggers are the five call sites of `refetchFramesLeftBehind`. A new one
+  // appearing must land in `unexplained` - it did on 2026-10-25 (GAP-1, alpha.3): `conversation rows
+  // seeded`, the boot re-fetch #2408 added, plus two keyed sites the list had never named.
+  /^\[QUEUE\] (?:conversations restored|welcome processed|conversation rows seeded|conversation [0-9a-f]{8}… now exists|key group [0-9a-f]{8}\.\.\. identified): re-fetching for \d+ group\(s\) left behind as (?:unknown-group|absent-conversation|behind-refused-backlog|unscoped-distribution-group)(?: \+ (?:unknown-group|absent-conversation|behind-refused-backlog|unscoped-distribution-group))* \[[^\]]*\]$/,
   // THE SAME RE-FETCH DECLINING TO RUN, because the socket is closed and the reconnect pull covers
   // it. `notable` deliberately: the fetch that was owed did NOT happen, and the thing that makes
   // that safe is a pull in another mechanism entirely. It already reached `stateChanges` through
   // the generic reconnect rule, which is an accident of the word - the rule here is the intent.
-  /^\[QUEUE\] (?:conversations restored|welcome processed): socket closed, the reconnect pull covers it$/,
+  /^\[QUEUE\] (?:conversations restored|welcome processed|conversation rows seeded|conversation [0-9a-f]{8}… now exists|key group [0-9a-f]{8}\.\.\. identified): socket closed, the reconnect pull covers it$/,
   // THE POST-WELCOME COOLDOWN DECLINING TO DO HARM. A `welcome_request` arrived for a device we
   // served seconds ago; it is still decrypting the Welcome and its history bundle, and kicking now
   // would evict a freshly-added leaf into `UseAfterEviction` on its first send. So it skips.
@@ -1275,7 +1366,9 @@ export async function watch(cx, label) {
   // `Console.messageAdded`, translated at the read by `fromWebKit`. Asked of the PAGE, not of a port
   // or a device name, because the page is what knows which engine it runs on.
   const ua = await evaluate(cx, 'navigator.userAgent').catch((err) => {
-    console.log(`[watch] ${label}: user agent unreadable (${String(err?.message ?? err).slice(0, 120)}) - attaching as Chromium`);
+    console.log(
+      `[watch] ${label}: user agent unreadable (${String(err?.message ?? err).slice(0, 120)}) - attaching as Chromium`
+    );
     return '';
   });
   await cx.send(isWebKitAgent(ua) ? 'Console.enable' : 'Log.enable');
@@ -1294,7 +1387,16 @@ export async function watch(cx, label) {
   const here = await evaluate(cx, 'location.origin').catch(() => null);
   const own = originOfUrl(typeof here === 'string' ? here : '');
   const home = new Set(own ? [own, ...TAURI_ORIGINS] : []);
-  return { cx, label, since: Date.now(), home };
+  const since = Date.now();
+  // ON DEV EVERY WINDOW RECORDS THE BUILD IT OPENED ON (R4, 2026-10-24): a pre-release redeploys
+  // dev under a running row, and `gate()` compares this with the build at the end - see
+  // `estateWindow` in `deploy.mjs`. Read from Node, not the page, so it adds nothing to the
+  // network events the report classifies. DECIDED BY THE CONFIGURED ESTATE, NOT THE PAGE'S ORIGIN
+  // (R4 review): a native client's page is a Tauri scheme, and it stands on dev all the same.
+  // The local estate is asked about restarts instead.
+  const estateBuild =
+    configuredEstate()?.estate === 'dev' ? await readEstateBuild(DEV_SITE) : undefined;
+  return { cx, label, since, home, estateBuild };
 }
 
 /**
@@ -1311,14 +1413,57 @@ export async function watch(cx, label) {
  * be computed over a projection of its own evidence.
  */
 export function consoleLines(cx) {
-  return (cx.consumed ?? []).concat(cx.events)
+  return consoleEntries(cx).map((e) => e.text);
+}
+
+/**
+ * EVERY OBSERVED CLIENT'S WHOLE CONSOLE, one text per label, for a row that did not PASS.
+ *
+ * `gate` records only what a classifier picked out (`dirtOf`), and a CLEAN client records nothing at
+ * all - so a FAIL whose cause sits in routine lines could not show where it failed. DUP-6 on alpha.4
+ * was exactly that: a side message never shown on W1 during a held commit, and W1's record empty.
+ * `recordObserved` writes these to files beside the ledger and names them in the row.
+ *
+ * @param {Record<string, {cx?: object} | null | undefined>} observers label -> watcher
+ * @returns {Record<string, string>} label -> `level text` lines, one per console entry
+ */
+export function consoleDump(observers) {
+  const out = {};
+  for (const [label, o] of Object.entries(observers ?? {}))
+    if (o?.cx)
+      out[label] = consoleEntries(o.cx)
+        .map((e) => `${e.level} ${e.text}`)
+        .join('\n');
+  return out;
+}
+
+/**
+ * {@link consoleLines} WITH THE LEVEL each line was printed at: `error`, `warning`, `info`, ... A
+ * rule like "`[ADMISSION]` at ERROR" (`invariantverdict.mjs`) is about the level, and a client's
+ * `console.error` carries no `ERROR` word in its text, so the text alone cannot answer it.
+ *
+ * @returns {{text: string, level: string}[]}
+ */
+export function consoleEntries(cx) {
+  return (cx.consumed ?? [])
+    .concat(cx.events)
     .map(fromWebKit)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
-      (e.method === 'Log.entryAdded'
-        ? e.params.entry.text
-        : e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')
-      ).slice(0, 260)
+      e.method === 'Log.entryAdded'
+        ? { text: String(e.params.entry.text ?? '').slice(0, 260), level: e.params.entry.level }
+        : {
+            text: e.params.args
+              .map((a) => a.value ?? a.description ?? '')
+              .join(' ')
+              .slice(0, 260),
+            level:
+              e.params.type === 'warning'
+                ? 'warning'
+                : e.params.type === 'error'
+                  ? 'error'
+                  : 'info',
+          }
     );
 }
 
@@ -1334,21 +1479,136 @@ export function consoleLines(cx) {
  * The bound is the point. An ABSENCE is only a finding against a window a reader can argue with,
  * which is the same rule the campaign applies to a message that did not arrive.
  *
+ * @param {((line: string) => boolean)|null} [alsoMatch] a second answer that ends the wait too - for a
+ *   question two layers may answer, one of which writes a line `needle` cannot name (GAP-2)
  * @returns the first matching line, or null once the window closes - both are assertable
  */
-export async function awaitLine(cx, needle, timeoutMs = 15000) {
+export async function awaitLine(cx, needle, timeoutMs = 15000, alsoMatch = null) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const hit = consoleLines(cx).find((l) => l.includes(needle));
+    const hit = consoleLines(cx).find(
+      (l) => l.includes(needle) || (alsoMatch !== null && alsoMatch(l))
+    );
     if (hit) return hit;
     if (Date.now() > deadline) return null;
     await new Promise((r) => setTimeout(r, 500));
   }
 }
 
+/**
+ * THE ONE NAMED ENVIRONMENT EXCEPTION OF THE 1.4.1 CAMPAIGN (2026-10-25): Cloudflare's JavaScript
+ * detections inject an inline `/cdn-cgi/challenge-platform/` script (`__CF$cv$params`) at the end of
+ * every HTML document of the DEV zone. The enforced `script-src` refuses it - correctly, it is not
+ * ours - and Chrome logs one `Executing inline script violates ... 'script-src ...'` error per
+ * document. That is a property of the dev edge, not of the build: the zone toggle is the owner's
+ * one-off, and until it is flipped every row on dev would read `PASS-DIRTY` for it alone.
+ *
+ * NARROW BY CONSTRUCTION, because an exception wider than its cause hides the next defect:
+ * - the dev estate only - the line's document must be on {@link DEV_SITE};
+ * - that sentence only (`script-src`, blocked inline), with the blocked script's hash present;
+ * - never a hash of one of the APP's own inline scripts in the current document (the build's inline
+ *   scripts are the same on every load, so a refused app script is caught by its hash);
+ * - only while the current document really carries the injected script (probed, never assumed);
+ * - at most ONE per document the window saw (`documentsReplaced + 1`) - beyond that, none at all.
+ * Any other console error or CSP refusal stays dirt. Every forgiveness is RECORDED on the report
+ * (`environmentException`) and listed by `gate` in the verdict detail.
+ */
+export const DEV_EDGE_CSP_EXCEPTION = {
+  name: 'dev-edge-cloudflare-challenge-inline-script',
+  reason:
+    "Cloudflare's JS detections inject an inline /cdn-cgi/challenge-platform/ script on the dev zone; " +
+    'the enforced script-src refuses it, once per document (owner toggle pending)',
+  sentence:
+    /^Executing inline script violates the following Content Security Policy directive 'script-src /,
+  marker: '/cdn-cgi/challenge-platform/',
+};
+
+/** The hash Chrome names for a refused inline script - read off the FULL text, before it is cut. */
+export function cspBlockedHashOf(entry) {
+  if (entry?.source !== 'security') return {};
+  const m = /a hash \('(sha256-[A-Za-z0-9+/=]+)'\)/.exec(entry.text ?? '');
+  return m ? { cspBlockedHash: m[1] } : {};
+}
+
+/**
+ * Which error lines {@link DEV_EDGE_CSP_EXCEPTION} forgives - pure, so the selftest pins it.
+ *
+ * @param {object[]} errors the report's error lines (`{text, url, source, cspBlockedHash}`)
+ * @param {number} documentsReplaced main-frame navigations the window saw
+ * @param {{injected: number, appHashes: string[]}|null} page the current document's inline scripts:
+ *   how many carry the marker, and the hashes of the others; null when it could not be read
+ * @returns {{kept: object[], forgiven: object[], refused: string|null}}
+ */
+export function devEdgeCspDecision(errors, documentsReplaced, page) {
+  const devOrigin = new URL(DEV_SITE).origin;
+  const onDev = (u) => {
+    try {
+      return new URL(u).origin === devOrigin;
+    } catch {
+      return false;
+    }
+  };
+  const candidates = errors.filter(
+    (l) =>
+      l.source === 'security' &&
+      DEV_EDGE_CSP_EXCEPTION.sentence.test(l.text) &&
+      l.cspBlockedHash &&
+      onDev(l.url)
+  );
+  if (candidates.length === 0) return { kept: errors, forgiven: [], refused: null };
+  const none = (why) => ({ kept: errors, forgiven: [], refused: why });
+  if (!page) return none('the current document could not be read');
+  if (page.injected !== 1)
+    return none(`the current document carries ${page.injected} injected scripts, not 1`);
+  const forgiven = candidates.filter((l) => !page.appHashes.includes(l.cspBlockedHash));
+  if (new Set(forgiven.map((l) => l.cspBlockedHash)).size !== forgiven.length)
+    return none('one blocked hash refused twice');
+  if (forgiven.length > documentsReplaced + 1)
+    return none(`${forgiven.length} refusals for ${documentsReplaced + 1} documents`);
+  return { kept: errors.filter((l) => !forgiven.includes(l)), forgiven, refused: null };
+}
+
+/** The current document's inline scripts, as {@link devEdgeCspDecision} reads them. */
+const INLINE_SCRIPTS = `(async () => {
+  const b64 = async (t) => btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))));
+  let injected = 0;
+  const appHashes = [];
+  for (const s of document.querySelectorAll('script:not([src])')) {
+    if (s.textContent.includes(${JSON.stringify(DEV_EDGE_CSP_EXCEPTION.marker)})) injected++;
+    else appHashes.push('sha256-' + (await b64(s.textContent)));
+  }
+  return JSON.stringify({ injected, appHashes });
+})()`;
+
+/** Applies {@link DEV_EDGE_CSP_EXCEPTION} to a window's error lines, probing the page only when owed. */
+async function devEdgeCspException(cx, errors, documentsReplaced) {
+  if (!errors.some((l) => l.cspBlockedHash)) return { kept: errors, record: null };
+  let page = null;
+  try {
+    page = JSON.parse(await evaluate(cx, INLINE_SCRIPTS));
+  } catch (e) {
+    // A blind probe forgives NOTHING: the refusals stay dirt, and this line says why.
+    console.log(
+      `[watch] ${DEV_EDGE_CSP_EXCEPTION.name}: the page could not be read - ${String(e?.message ?? e)}`
+    );
+  }
+  const d = devEdgeCspDecision(errors, documentsReplaced, page);
+  if (d.refused) console.log(`[watch] ${DEV_EDGE_CSP_EXCEPTION.name} NOT applied: ${d.refused}`);
+  return {
+    kept: d.kept,
+    record: d.forgiven.length
+      ? {
+          name: DEV_EDGE_CSP_EXCEPTION.name,
+          reason: DEV_EDGE_CSP_EXCEPTION.reason,
+          forgiven: d.forgiven.length,
+        }
+      : null,
+  };
+}
+
 /** Drains what was observed and classifies it. */
 export async function report(w) {
-  const { cx, label, since, home = new Set() } = w;
+  const { cx, label, since, home = new Set(), estateBuild } = w;
   // Contexts created in an EARLIER drained window are still where their lines' origins come from.
   const ctxOrigins = contextOrigins((cx.consumed ?? []).concat(cx.events));
   const reqs = new Map();
@@ -1356,6 +1616,18 @@ export async function report(w) {
   let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
+  // WHICH SOCKET CLOSED, by its PATH: `webSocketClosed` carries only a requestId, so a call's own
+  // signalling socket ending with the call and the gateway dropping read the same. The created event
+  // names the URL; only its pathname is kept - the call socket carries its token in the query.
+  const wsPaths = new Map();
+  for (const ev of (cx.consumed ?? []).concat(cx.events)) {
+    if (ev?.method !== 'Network.webSocketCreated') continue;
+    try {
+      wsPaths.set(ev.params.requestId, new URL(ev.params.url).pathname);
+    } catch {
+      wsPaths.set(ev.params.requestId, '?');
+    }
+  }
   /** Socket handshakes that completed in the window - informational, never gating. */
   const wsOpen = [];
   const exceptions = [];
@@ -1411,7 +1683,10 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
+        ws.push({
+          mono: p.timestamp,
+          text: `${e.method} ${JSON.stringify(p).slice(0, 140)}${wsPaths.has(p.requestId) ? ` path=${wsPaths.get(p.requestId)}` : ''}`,
+        });
         break;
       // A SOCKET THAT (RE)OPENED, recorded OUTSIDE the gate. A close with no open after it and a
       // close followed by a reconnection are different findings, and before this the second half was
@@ -1420,7 +1695,10 @@ export async function report(w) {
       // an undated open cannot be placed against the close it answers. Never part of `clean`: a
       // socket opening is the healthy half, and the gate already judges the close.
       case 'Network.webSocketHandshakeResponseReceived':
-        wsOpen.push({ mono: p.timestamp, text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}` });
+        wsOpen.push({
+          mono: p.timestamp,
+          text: `${e.method} status=${p.response?.status ?? '?'} ${p.requestId}`,
+        });
         break;
       case 'Runtime.exceptionThrown': {
         // WHERE IT WAS THROWN IS PART OF THE REPORT. `description` carries a stack only when the
@@ -1436,13 +1714,19 @@ export async function report(w) {
           : d.url
             ? `${d.url}:${(d.lineNumber ?? 0) + 1}:${(d.columnNumber ?? 0) + 1}`
             : 'no script frame - evaluated into the page from outside it';
-        exceptions.push(
-          `${String(d.exception?.description || d.text).slice(0, 300)} [${where}]`
-        );
+        exceptions.push(`${String(d.exception?.description || d.text).slice(0, 300)} [${where}]`);
         break;
       }
       case 'Runtime.consoleAPICalled':
-        console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300), origin: originOfConsoleEvent(e, ctxOrigins) });
+        console_.push({
+          at: p.timestamp,
+          level: p.type,
+          text: p.args
+            .map((a) => a.value ?? a.description ?? '')
+            .join(' ')
+            .slice(0, 300),
+          origin: originOfConsoleEvent(e, ctxOrigins),
+        });
         break;
       case 'Log.entryAdded':
         // Keep `url`: a browser "Failed to load resource" line names the status but not the
@@ -1457,7 +1741,16 @@ export async function report(w) {
         // four `[RUST::WARN] Past-epoch application frame` lines came back wearing
         // `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`; the `???` was the tell, because
         // there was no request to name. Only `source === 'network'` is about a resource.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source, origin: originOfConsoleEvent(e, ctxOrigins) });
+        console_.push({
+          at: p.entry.timestamp,
+          level: p.entry.level,
+          text: p.entry.text.slice(0, 300),
+          url: p.entry.url,
+          requestId: p.entry.networkRequestId,
+          source: p.entry.source,
+          origin: originOfConsoleEvent(e, ctxOrigins),
+          ...cspBlockedHashOf(p.entry),
+        });
         break;
     }
   }
@@ -1567,7 +1860,7 @@ export async function report(w) {
     const r = l.requestId ? reqs.get(l.requestId) : null;
     return `${l.text} <- ${r?.method ?? '???'} ${l.url}`;
   };
-  const errors = lines.filter(
+  let errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
   );
   /**
@@ -1583,7 +1876,11 @@ export async function report(w) {
    */
   const t = (l) => strip(l.text);
   const warnings = lines.filter((l) => l.level === 'warning' || l.level === 'warn');
-  const notable = lines.filter((l) => NOTABLE.some((r) => r.test(t(l))));
+  const notable = lines.filter(
+    (l) =>
+      !REFUSED_FOR_LACK_OF_ROW_NARRATION.some((r) => r.test(t(l))) &&
+      NOTABLE.some((r) => r.test(t(l)))
+  );
   const classified = lines.filter(
     (l) => DECRYPT_CLASSIFIED.some((r) => r.test(t(l))) && !SEVERE_BUT_EXPECTED.test(t(l))
   );
@@ -1595,7 +1892,9 @@ export async function report(w) {
         // classifier is shown to be running, or the gate would go quiet on the one case it is for.
         (classified.length === 0 && RAW_DECRYPT_FAILURE.test(t(l))))
   );
-  const stateChanges = lines.filter((l) => STATE_CHANGE.some((r) => r.test(t(l))) && !notable.includes(l));
+  const stateChanges = lines.filter(
+    (l) => STATE_CHANGE.some((r) => r.test(t(l))) && !notable.includes(l)
+  );
   const unexplained = lines.filter(
     (l) =>
       !BENIGN.some((r) => r.test(t(l))) &&
@@ -1606,7 +1905,17 @@ export async function report(w) {
       !stateChanges.includes(l)
   );
 
-  const http = [...reqs.values()].filter((r) => !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) && !r.url.startsWith('data:') && !r.url.startsWith('blob:'));
+  // THE ONE NAMED ENVIRONMENT EXCEPTION ({@link DEV_EDGE_CSP_EXCEPTION}), applied to `errors` alone
+  // and recorded on the report whenever it forgave anything, so `gate` can list it in the verdict.
+  const devEdge = await devEdgeCspException(cx, errors, documentsReplaced);
+  errors = devEdge.kept;
+
+  const http = [...reqs.values()].filter(
+    (r) =>
+      !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) &&
+      !r.url.startsWith('data:') &&
+      !r.url.startsWith('blob:')
+  );
   // A STATUS IS AN ANSWER, AND A REQUEST THAT GOT ONE IS JUDGED ON IT - which is what the comment
   // below has always claimed and what this line did not do: `r.failed ||` short-circuited before the
   // status was ever consulted, so a response that ARRIVED and whose body load was then cancelled was
@@ -1617,9 +1926,7 @@ export async function report(w) {
   // A transport failure (`r.failed`, no status) on a benign path is Chrome's ORB refusing the 404
   // body it was handed; anything carrying a status is judged on that status, so a 502 from the same
   // endpoint goes to `badHttp` where a path-only rule used to swallow it.
-  const badHttp = failing.filter(
-    (r) => !isBenignFailure(new URL(r.url).pathname, r.status ?? 404)
-  );
+  const badHttp = failing.filter((r) => !isBenignFailure(new URL(r.url).pathname, r.status ?? 404));
   const knownBadHttp = failing.filter((r) => !badHttp.includes(r));
 
   // A NAVIGATION'S OWN SOCKET TEARDOWN IS FORGIVEN HERE, NOT AT THE CALL SITE. See
@@ -1647,6 +1954,9 @@ export async function report(w) {
     // already in `watch()`'s handle, and a correction derivable from the evidence should not depend
     // on the caller asking for it - the same argument as the navigation forgiveness below.
     since,
+    // The build a DEV window opened on (`watch()`), for the same question asked of a deployed estate.
+    estateBuild,
+    ...(devEdge.record ? { environmentException: devEdge.record } : {}),
     // `unexplained` BREAKS CLEAN, and that is the campaign's actual bar rather than a stricter one:
     // "tout doit etre explique, limite tu devrais savoir exactement avant de le voir". A line nobody
     // has classified is by definition a line whose meaning nobody knows, so a verdict formed over it
@@ -1679,7 +1989,9 @@ export async function report(w) {
     httpCount: http.length,
     consoleCount: lines.length,
     // OUT OF THE GATE, NOT OUT OF THE RECORD: foreign-origin lines, counted per origin.
-    ...(foreignLines.length ? { foreignConsole: { count: foreignLines.length, origins: foreignOrigins } } : {}),
+    ...(foreignLines.length
+      ? { foreignConsole: { count: foreignLines.length, origins: foreignOrigins } }
+      : {}),
     // EVERY line and every socket event, in one sequence, each DATED. See {@link timelineOf}.
     //
     // BUILT FROM `console_`, NOT FROM `lines` - the de-duplicated copy. The dedup exists so a line
@@ -1689,7 +2001,10 @@ export async function report(w) {
     // offline` fired a second time ten seconds after the first, and the classifier had thrown the
     // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
     // finding.
-    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), [...ws, ...wsOpen]),
+    timeline: timelineOf(
+      console_.map((l) => ({ ...l, text: renderLine(l) })),
+      [...ws, ...wsOpen]
+    ),
   });
 }
 
@@ -2035,13 +2350,418 @@ export const BROWSER_PASSWORD_FORM_HINT =
 export const MLS_CLIENT_INITIALISING = /^Initialising MLS\.\.\.$/;
 
 export const FRESH_CLIENT_NARRATION = [
-  /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
+  // ` pkce=<method>` is `auth.ts`'s own spelling since the login took PKCE (`startOidcLogin`);
+  // without it the needle matched nothing on DEV-1, 2026-10-25. Only S256: `pkce=none (server has no
+  // oidcPkce)` is a login that skipped PKCE, and it stays dirt.
+  /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+(?: pkce=S256)?$/,
   BROWSER_PASSWORD_FORM_HINT,
   MLS_CLIENT_INITIALISING,
   /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
   /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,
   /^\[PIPELINE\] Recovery attempt finished for [0-9a-f]{8}.$/,
 ];
+
+/**
+ * WHAT A MEMBER'S DEVICE SAYS ABOUT AN INVITATION-LINK ASK - the ADM rows' subject, on every member
+ * (#2358, decided 2026-10-23: a new person is admitted only by a member). Read on ADM-1..4 of
+ * `1.4.1-alpha.4` (2026-10-25), where every one of them was `unexplained` on W1 and W2.
+ *
+ * The ask arrives (`[JOIN_ASK]`, `[JOIN_REQUEST] asks to join`, and the forwarded `[WELCOME_REQ]`),
+ * then leaves the screen when it is answered here or elsewhere (`admitted` / `declined`, with or
+ * without "the ask leaves this screen"), and a Decline given HERE says the seat is withdrawn. A list
+ * the ADM rows name, never a classifier rule: on a device of a conversation nobody asked to join,
+ * these lines are the finding. `atLevels` throughout, so the same words at `warn` stay dirt.
+ *
+ * SCOPED TO THE ROW'S GROUP AND TO THE ENDINGS IT PLAYS (coordinator review, 2026-10-26). An ask
+ * about another group, or a Decline in a row that never declines, stays dirt.
+ *
+ * @param {string} group the row's group id
+ * @param {{admitted?: boolean, declined?: boolean}} [ends] the endings the row plays
+ */
+export function admissionMemberNarration(
+  group,
+  { admitted = false, declined = false, addRefused = false } = {}
+) {
+  const g = groupPrefixRe(group);
+  return [
+    atLevels(
+      ['log', 'info'],
+      new RegExp(
+        String.raw`^\[(JOIN_ASK|WELCOME_REQ)\] \S+ has no leaf in ${g} - a new person is not added automatically, a member's approval is asked$`
+      )
+    ),
+    atLevels(
+      ['log', 'info'],
+      new RegExp(
+        String.raw`^\[JOIN_REQUEST\] \S+ asks to join ${g} - a member's answer is awaited$`
+      )
+    ),
+    ...(admitted
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] \S+ admitted in ${g}( - the ask leaves this screen)?$`
+            )
+          ),
+        ]
+      : []),
+    ...(declined
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] \S+ declined in ${g}( - the ask leaves this screen)?$`
+            )
+          ),
+          // The one line that names no group: the Decline given on THIS screen. Kept to the declining rows.
+          atLevels(['log', 'info'], /^\[JOIN_REQUEST\] \S+ declined - their seat is withdrawn$/),
+        ]
+      : []),
+    // AN ADD THE GATE REFUSED WHOLE (#2505), narrated by the member who approved it: the refusal, the
+    // Add abandoned before its stage, and the answer that did not happen because the ask was settled.
+    // Read on alpha.5 ADM-3 (2026-10-26), where the Decline won. Only the `not-admitted` /
+    // `removed-meanwhile` reasons: any other reason is a different outcome and stays dirt.
+    ...(addRefused
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`
+            )
+          ),
+          atLevels(
+            ['log', 'info'],
+            /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/
+          ),
+          // The same refusal as the member's console line (a Decline won the race and a seat generation was
+          // carried): per group, at info only - at warn it is the client-side read failure and stays dirt.
+          atLevels(
+            ['info'],
+            new RegExp(
+              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`
+            )
+          ),
+          // ...and the approver's Add stopped because the ask was settled first (another member declined, or the asker withdrew).
+          atLevels(
+            ['info'],
+            new RegExp(
+              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`
+            )
+          ),
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[JOIN_REQUEST\] approve of \S+ in ${g} did not happen - the server settled the ask meanwhile \(the Add did not happen \(removed-meanwhile\)\)$`
+            )
+          ),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * WHAT THE JOINER'S DEVICE SAYS WHILE IT WAITS for `group`: the placeholder the waiting conversation
+ * is drawn from, and how it ends. `admitted` adds "no longer awaits a member", `declined` adds
+ * "never-admitted ... removing". Read on ADM-1..4 of `1.4.1-alpha.4` (2026-10-25). Only the row's
+ * joiner is given it.
+ *
+ * @param {string} group the row's group id
+ * @param {{admitted?: boolean, declined?: boolean}} [ends] the endings the row plays
+ */
+export function admissionJoinerNarration(group, { admitted = false, declined = false } = {}) {
+  const g = groupPrefixRe(group);
+  return [
+    atLevels(['log', 'info'], new RegExp(String.raw`^\[DISCOVERY\] Placeholder ${g} created\.$`)),
+    atLevels(
+      ['log', 'info'],
+      new RegExp(String.raw`^\[DISCOVERY\] "${g}" awaits a member admission$`)
+    ),
+    ...(admitted
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(String.raw`^\[DISCOVERY\] "${g}" no longer awaits a member$`)
+          ),
+        ]
+      : []),
+    ...(declined
+      ? [
+          atLevels(
+            ['log', 'info'],
+            new RegExp(
+              String.raw`^\[DISCOVERY\] never-admitted "${g}" is no longer listed - the ask was declined or expired - removing$`
+            )
+          ),
+        ]
+      : []),
+  ];
+}
+
+/** A group as the admission lines print it: its first eight hex, then an ellipsis (one or three dots). */
+const groupPrefixRe = (group) => String.raw`${String(group).slice(0, 8)}(?:\u2026|\.\.\.)`;
+
+/**
+ * RM-6's manager panel narrating its own refused privacy flip: the server's `REMOVAL_EXCEEDS_ACTOR`,
+ * by that code and at `debug` only. Any other code, or the same words at `warn`, stays dirt (alpha.4
+ * rerun, 2026-10-25). Only RM-6's manager is given it (`archive/salon.mjs`).
+ */
+export const PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION = [
+  atLevels(
+    ['debug'],
+    /\[channelSettings\.handleTogglePrivacy failed\] ChannelApiError: \{"code":"REMOVAL_EXCEEDS_ACTOR",/
+  ),
+];
+
+/**
+ * WHAT ONE OF THE OWNER'S DEVICES SAYS WHEN IT VETS A DEVICE THE ROW MINTED: `[TRUST] KeyPackage for
+ * <owner>:<device> vetted: pinned`, at `debug`, for exactly the `deviceIds` given.
+ *
+ * Two readers, one line. The OWNER (W1) vets every device a DEV row mints for it - read on DEV-2 of
+ * `1.4.1-alpha.6` (2026-10-26) - and a MINTED seat vets its sibling when a row mints two (DEV-4 of
+ * `1.4.1-alpha.4`, on W6). The caller passes the minted ids the seat may vet: its own id never, and
+ * nothing else.
+ *
+ * SCOPED TO THE DEVICE, NOT THE TAG (coordinator, 2026-10-26). The client prints the user id's first
+ * eight characters and the device id as the log redactor leaves it (`web-<8 hex>…-<tail>`), so the
+ * needle is built from the minted id itself: a vetting of another device, of another user's device,
+ * or any outcome but `pinned` stays dirt. Throws on an id of another shape rather than forgive by tag.
+ *
+ * @param {string[]} deviceIds the minted device ids this seat may vet, as `mintdevice.mjs` printed them
+ */
+export function mintedKeyPackageVettedNarration(deviceIds) {
+  return deviceIds.map((id) => {
+    // `<kind>-<user id>-<two-part tail>`; the user id is the account's hex id, whatever its length.
+    const m = /^(web|tauri)-([0-9a-f]{8})([0-9a-f-]+)-([0-9a-z]+-[0-9a-z]+)$/.exec(String(id));
+    if (!m)
+      throw new Error(
+        `mintedKeyPackageVettedNarration: a minted device id of an unexpected shape (${String(id).slice(0, 14)}...)`
+      );
+    const [, kind, user8, rest, tail] = m;
+    return atLevels(
+      ['debug'],
+      new RegExp(
+        String.raw`^\[TRUST\] KeyPackage for ${user8}:${kind}-${user8}(?:…|\.\.\.|${rest})-${tail} vetted: pinned$`
+      )
+    );
+  });
+}
+
+/**
+ * WHAT THE OWNER'S OTHER DEVICES SAY WHEN ONE MORE OF THEIRS ENROLS - the DEV rows' subject, on W1.
+ *
+ * `deviceEventAudience` (`deviceTrust.ts`) sends the owner's own new device to `owner-alert`: the
+ * trust consumer hands the signed commit's device event to the notices, the notices sort it, and the
+ * owner is told once, at first sight. All three are the mechanism DEV-1 asserts on screen, logged as
+ * the coding standard requires; on a device whose owner enrolled NOTHING they are the finding, which
+ * is why they are a list the DEV rows name and never a classifier rule.
+ *
+ * EVERY NEEDLE IS `atLevels`: the same words at `warn` or `error` stay dirt. `+0 undecided` is pinned:
+ * an event the notices could not decide is the odd case and stays unexplained.
+ */
+export const OWNER_DEVICE_NOTICE_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] \d+ device event\(s\) handed to the notices \(drain end\)$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] \d+ device event\(s\) to sort \(\+0 undecided\)$/),
+  atLevels(['log'], /^\[DEVICE_NOTICE\] a new device was added to this account \(first-sight\)$/),
+];
+
+/**
+ * WHAT A CONTACT'S DEVICE SAYS WHEN THE OWNER ENROLS ONE MORE - the DEV rows' subject, on W2.
+ *
+ * `contact-line`: the line is written in EVERY 1:1 and group the contact shares with the owner
+ * (`writeContactLines`), once per conversation, and a held group with no stored row owes none. Those
+ * are the lines DEV-1 counts in the pane. The trust handoff and the sort are the same two as the
+ * owner's. `atLevels` throughout; `[DEVICE_NOTICE] tree of ... unreadable, its line stays owed` is a
+ * `warn` in the product and in no list, so a contact line left owed still breaks `clean`.
+ */
+export const CONTACT_DEVICE_NOTICE_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] \d+ device event\(s\) handed to the notices \(drain end\)$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] \d+ device event\(s\) to sort \(\+0 undecided\)$/),
+  atLevels(['log'], /^\[DEVICE_NOTICE\] contact line written in [0-9a-f]{8}\.\.\.$/),
+  atLevels(['debug'], /^\[DEVICE_NOTICE\] [0-9a-f]{8}\.\.\. has no stored row - no line owed$/),
+];
+
+/**
+ * A FRESHLY MINTED DEVICE'S FIRST SESSION, from the wipe to its first join - read on DEV-1 and DEV-2
+ * (`1.4.1-alpha.3`, 2026-10-25), where every line below was `unexplained` on the minted W3.
+ *
+ * Each is EXPECTED (the mint caused it) and NECESSARY (the coding standard's entry or decision log):
+ * - the wipe's reload: the origin was cleared (`newdevice.mjs`), so the old socket ends (`[A] ws-`), the
+ *   refresh cookie is gone and the PIN prompt is declined for it, and the login is attempted;
+ * - the PKCE callback, verifier present and challenged - `challenged=no` or `pkce=none` stays dirt;
+ * - the first page read before the PIN: the home feed's lives and progressive mount, and the posts
+ *   page left unstored because the device key is not in hand yet;
+ * - the PIN unlock a new device owes its member: the keypad, the salt asked ahead, the call view held
+ *   under the lock and released, the vault already non-persistent;
+ * - the external join WAITING for this device's own KeyPackage and woken when the round settles - the
+ *   commit gate refuses an activation without one, so the wait is the design (its 404 read is NOT
+ *   here: it is the backlog's P3 and stays dirt until the read answers 200);
+ * - discovery: a device with no state renders each of the account's groups as a placeholder;
+ * - the first community drain absorbing every seed offered (`N/N`, nothing already held), and an
+ *   empty salon page drawn as nothing;
+ * - the account's pending invitations already fulfilled by its other devices, closed with a vouch.
+ */
+export const FRESH_DEVICE_SESSION_NARRATION = [
+  atLevels(['log'], /^\[A\] ws-$/),
+  atLevels(
+    ['log'],
+    /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/
+  ),
+  atLevels(['debug'], /^\[LOGIN\] Attempt starting, checking client version\.$/),
+  atLevels(['log'], /^\[A\] callback pkce=verifier challenged=yes$/),
+  atLevels(['debug'], /^\[LIVE\] list$/),
+  atLevels(['debug'], /^\[LIVE\] feed card: \d+ open live\(s\)$/),
+  atLevels(['debug'], /^\[progressive-mount\] all \d+ mounted$/),
+  atLevels(
+    ['debug'],
+    /^\[POSTS\] first page not stored - the device key is not in hand for this account$/
+  ),
+  atLevels(['log'], /^\[PIN\] Asking the salt while the keypad is up\.$/),
+  atLevels(['log'], /^\[PIN\] Keypad shown \(open\) - the unlock is owed to the member$/),
+  atLevels(['log'], /^\[PIN\] Salt asked while the keypad was up\.$/),
+  atLevels(['debug'], /^\[CallView\] held under the PIN lock$/),
+  atLevels(['debug'], /^\[CallView\] PIN lock gone$/),
+  atLevels(['debug'], /^\[VAULT\] persistence already off - every slot kept$/),
+  atLevels(
+    ['log'],
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \(absent, a round is running\): the commit gate refuses an activation without one$/
+  ),
+  atLevels(
+    ['log'],
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. woken by a settled key package round - reading the fact again$/
+  ),
+  atLevels(['log'], /^\[DISCOVERY\] Placeholder [0-9a-f]{8}… created\.$/),
+  // EVERY SEED OFFERED, ABSORBED, by the backreference: `2/3` is a loss in the same sentence.
+  atLevels(
+    ['debug'],
+    /^\[GRAINE\] absorbed (\d+)\/\1 seed\(s\) \(0 already held; endorsements verified: \d+ from the tree, \d+ from the server's published keys\) from [0-9a-f]{8}… in community [0-9a-f]{8} - salon\(s\) (?:none|[0-9a-f]{8}(?:, [0-9a-f]{8})*)$/
+  ),
+  atLevels(
+    ['debug'],
+    /^\[GRAINE\] drain over - re-reading \d+ salon\(s\) once for the seeds it brought$/
+  ),
+  atLevels(
+    ['log'],
+    /^\[PENDING\] (?:web|tauri)-[0-9a-f]{8}…-[0-9a-z]+-[0-9a-z]+ already in tree for [0-9a-f]{8}… - invitation fulfilled, vouching$/
+  ),
+];
+
+/**
+ * A FRESHLY MINTED DEVICE RESTORING ITS HISTORY, and saying how much of it no author proof covers -
+ * read on alpha.5's DEV-2 (2026-10-26), fifteen lines on the minted W3, one per conversation restored.
+ * Given to the MINTED seat of a fresh-device row only: on a device that was not just minted, a
+ * restore of unproven messages is not this row's story and stays dirt. The product follow-up (one
+ * summary per restore, and whether these messages should carry proofs) is the lead's, after the stable.
+ */
+export const FRESH_DEVICE_RESTORE_NARRATION = [
+  // A hidden page's batch of rows that are not arrivals (the mint's own tab is in the background).
+  atLevels(
+    ['log', 'info'],
+    /^\[NOTIF\] Batch into "[0-9a-f]{8}…" added \d+ while hidden, none of them an inbound message - nothing to raise\.$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTHORSHIP\] \d+ restored message\(s\) in [0-9a-f]{8}… relayed by [0-9a-f]{8} carry no author proof - kept, marked unverified$/
+  ),
+];
+
+/**
+ * A REVOKED DEVICE SIGNING ITSELF OUT - DEV-2 and DEV-3's subject on the revoked W3, read on DEV-2
+ * (`1.4.1-alpha.3`, 2026-10-25). `clearAuthUnderway` ends every per-account store in turn and each one
+ * says what it forgot; on any device that was NOT revoked these lines are a sign-out nobody asked for.
+ *
+ * NOT HERE, DELIBERATELY: `[A] logout✓<status>`. A revoked device signs out ONCE (the wipe's `clearAuth`; the
+ * session-expired redirect is told `alreadySignedOut`) and a needle cannot count, so the line is forgiven by
+ * {@link revokedLogoutOnce} ONLY while the live console holds exactly one (`devrows.mjs`); a
+ * second one stays dirt AND fails the row's counting assertion.
+ */
+export const REVOKED_SIGN_OUT_NARRATION = [
+  atLevels(['debug'], /^\[TRUST\] device-event consumer removed$/),
+  atLevels(['debug'], /^\[outboxBlob\.clear\]$/),
+  atLevels(
+    ['info'],
+    /^\[Push\] endPushRegistration noop \(no push registration on this platform\)$/
+  ),
+  atLevels(['info'], /^\[RESTORE\] generation \d+ retired \(running=false, queued asks=0\)$/),
+  atLevels(
+    ['log'],
+    /^\[MEDIA\] signed out: staging of \d+ and replies of \d+ conversation\(s\) forgotten$/
+  ),
+  atLevels(['log'], /^\[OUTBOX\] signed out: \d+ control refusal\(s\) unbound from memory$/),
+  atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] \d+ saved community list\(s\) erased$/),
+  atLevels(['log'], /^\[WORKSPACE-SNAPSHOT\] signed out: \d+ community\(ies\) forgotten$/),
+  // The MLS client torn down and its socket released (alpha.5 DEV-2): the revocation's own teardown.
+  atLevels(
+    ['log', 'info'],
+    /^\[WS\] MLS client destroyed - its socket is released and no open may follow$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[WS\] Paused - disconnect sent, socket released until the next foreground\.$/
+  ),
+  // The pending fetch ended by this device's own revocation (the server deleted the backlog): a designed end.
+  atLevels(
+    ['info'],
+    /^\[PENDING\] Pending fetch ended after \d+ message\(s\): this device was revoked by its owner, nothing remains to drain$/
+  ),
+  // The session-expired handler was told the reset already signed out: it redirects and signs out no more.
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTH\] Session expired - the revoked-device reset already signed out; redirecting to \S+\.$/
+  ),
+  // Its requests refused once the session ended, the renewal latched dead, the purge that needs the
+  // server's list skipped (alpha.5 DEV-2/3/6).
+  atLevels(
+    ['log', 'info'],
+    /^\[AUTH\] 401 on GET \/api\/\S+ - renewing the token and sending the same request once more$/
+  ),
+  atLevels(
+    ['log', 'info'],
+    /^\[A\] refresh\u2717latched \(cookie already proven dead by this device revocation - not asking again\)$/
+  ),
+  atLevels(['log', 'info'], /^\[SYNC\] WASM purge skipped - the server list could not be fetched$/),
+];
+
+/**
+ * THE REQUESTS A REVOKED DEVICE HAS REFUSED, read on alpha.5's DEV-2, DEV-3 and DEV-6: its own
+ * KeyPackage gone (404), the revocation check and its last reads answered 401 once its session ended.
+ * Given to the revoked seat only, beside `MINT_REFUSALS`.
+ */
+export const REVOKED_REFUSALS = [
+  {
+    path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/key-package$/,
+    status: [404],
+  },
+  {
+    path: /^\/api\/mls\/devices\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+\/revoked$/,
+    status: [401],
+  },
+  {
+    path: /^\/api\/mls\/messages\/[0-9a-f]{64}\/web-[0-9a-f]{64}-[0-9a-z]+-[0-9a-z]+(\?|$)/,
+    status: [401],
+  },
+  { path: /^\/api\/channels\/unread-counts$/, status: [401] },
+];
+
+/**
+ * The ONE sign-out line of a revoked device, forgiven only where it is COUNTED as one - and counted
+ * when the classifier ASKS, not from a snapshot: `readLines` is read at each match, so a second logout
+ * arriving after the row's own verdict is still counted and the first is no longer forgiven.
+ *
+ * @param {() => string[]} readLines the seat's console lines, read live
+ */
+export function revokedLogoutOnce(readLines) {
+  const re = /^\[A\] logout✓\d+ \d+ms$/;
+  return atLevels(['log', 'info'], {
+    test: (s) => re.test(s) && signOutCount(readLines()) === 1,
+    toString: () => String(re) + ' (counted once)',
+  });
+}
+
+/** How many sign-outs a console holds: `[A] logout✓<status>` AND `[A] logout✗` (refused or lost), the sign-outs the app sent. */
+export function signOutCount(lines) {
+  return lines.filter((l) => /\[A\] logout[✓✗]/.test(l)).length;
+}
 
 /**
  * WHAT THE AUTH STORE SAYS WHILE A DEVICE ERASES ITSELF - two lines, and only for a revoked device.
@@ -2101,6 +2821,13 @@ export const PAGE_BOOT_NARRATION = [
   /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
   /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
   /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
+  // THREE MORE, read on the first live FLOOR draw on dev (1.4.1-alpha.3, 2026-10-25): the device
+  // notices kept across the reload, the trust consumer taking over device events, and the at-rest
+  // format the session's first checkpoint is sealed in (`legacy` until the blob-header writer may
+  // follow its reader - the format is the reading, so it is pinned by name and any other is dirt).
+  /^\[DEVICE_NOTICE\] \d+ unseen new-device alert\(s\) restored$/,
+  /^\[TRUST\] device-event consumer registered$/,
+  /^\[MLS\] web checkpoint seal format: legacy \(WASM ChaCha20\)$/,
 ];
 
 /**
@@ -2118,13 +2845,87 @@ export const PAGE_BOOT_NARRATION = [
  * campaign spends the most time on, and a rule that counted it as dirt would be asking the code to
  * stop saying the thing worth saying.
  *
+ * `[NOTICE] memberAdded written on the acting device ...` (#2412, `visibleNotices.ts`) is the adder
+ * writing its own "X was added" line under the frame's id, so no member reads it as relayed. A
+ * `debug` line, and only at `debug`: met on FLOOR-2's first alpha.4 PASS (2026-10-25).
+ *
+ * The block question is also exported alone (`ADD_BLOCK_QUESTION_NARRATION`): an Add refused at the
+ * add lock asks it and then builds nothing, so the lock loser of a race is forgiven that line only.
+ *
  * IT IS NOT A WIDER CLASSIFIER. Every check that forgives these is a check that CREATED A GROUP, so
  * it provoked them; a check that did not create one and sees them has found something, and gets no
  * forgiveness from here.
  */
+export const ADD_BLOCK_QUESTION_NARRATION = /^\[blocks\.isBlockedWith\]/;
+
 export const GROUP_CREATION_NARRATION = [
-  /^\[blocks\.isBlockedWith\]/,
+  ADD_BLOCK_QUESTION_NARRATION,
   /^\[SYNC\] bulk\.addedDeviceIds: /,
+  atLevels(
+    ['debug'],
+    /^\[NOTICE\] memberAdded written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/
+  ),
+];
+
+/**
+ * WHAT A REMOVE SAYS ABOUT ITSELF ON THE DEVICE THAT MADE IT - forgiven only to a seat whose gesture
+ * WAS a Remove (`raceForgiveness`), met on CC-2's first alpha.4 PASS (2026-10-25).
+ *
+ * `[REMOVE_MEMBER] <id> removed from the group (<outcome>)` (`useConversations.svelte.ts`) ends the
+ * gesture, and only two outcomes are a removal that happened: `committed`, and `already-out` - the
+ * other racer's commit took the leaves first, which is what CC-3 asks for. `unconfirmed` and
+ * `not fully removed` stay dirt. `[NOTICE] memberRemoved written on the acting device ...` is the
+ * remover's own line (#2412), at `debug` only, like its Add twin above.
+ */
+export const REMOVE_NARRATION = [
+  atLevels(
+    ['log'],
+    /^\[REMOVE_MEMBER\] [0-9a-f]{8} removed from the group \((?:committed|already-out)\)$/
+  ),
+  atLevels(
+    ['debug'],
+    /^\[NOTICE\] memberRemoved written on the acting device in [0-9a-f]{8}… as [0-9a-f]{8} - the id every member's device writes$/
+  ),
+];
+
+/**
+ * WHAT A LARGE-GROUP ROW (`archive/big.mjs`) MAKES ITS SEATS SAY - forgiven to the BIG rows only,
+ * at `debug` only, read on the alpha.5 BIG-1/BIG-2 runs (2026-10-26, coordinator's list).
+ *
+ * ANY SEAT: a bulk Add lands as one batch, and the drain that ingests it commits its progress
+ * markers once its checkpoint is sealed. `PAGE_BOOT_NARRATION` forgives the same words to a seat
+ * that reloaded; a BIG row produces them on seats that did not.
+ *
+ * A1 ONLY (`bigRowNarration`): the phone opening the row's conversation sets its edge-swipe
+ * exclusions and clears them on leaving, and its share targets follow the conversation list when a
+ * new group arrives - ALL of them present (`N of N`); one missing stays dirt. A browser seat draws
+ * none of these, so on one they are a finding. The same words at warn or error are never forgiven.
+ */
+export const BIG_ANY_SEAT_NARRATION = [
+  atLevels(
+    ['debug'],
+    /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/
+  ),
+];
+
+/** The phone's own lines in a BIG row - see `BIG_ANY_SEAT_NARRATION`. */
+export const BIG_A1_NARRATION = [
+  atLevels(['debug'], /^\[GESTURE\] (?:left|right)-edge exclusion (?:over \d+\.\.\d+ px|cleared)$/),
+  atLevels(['debug'], /^\[ShareTargets\] (\d+) of \1 present \(conversations changed\)$/),
+];
+
+/** The BIG-row narration a seat is given: every seat the bulk-ingest line, A1 its own lines too. */
+export const bigRowNarration = (device) =>
+  device === 'A1' ? [...BIG_ANY_SEAT_NARRATION, ...BIG_A1_NARRATION] : [...BIG_ANY_SEAT_NARRATION];
+
+/**
+ * AN ADD CANCELLED BECAUSE ANOTHER DEVICE HOLDS THE GROUP'S ADD LOCK (`groupCreation.ts`,
+ * `notAdded('add-lock-busy')`) - forgiven per row, on the seat that lost CC-1's lock race and
+ * nowhere else. Anywhere else an Add the lock cancelled is a lost gesture and stays dirt.
+ */
+export const ADD_LOCK_REFUSED_NARRATION = [
+  /^\[WARN\] Add-lock busy for \S+ - invite cancelled \(another device is in progress\)\.$/,
+  /^\[SYNC\] Add-lock busy for \S+, aborting to avoid concurrent commits$/,
 ];
 
 /**
@@ -2169,7 +2970,6 @@ export const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked
 export const DELIVERY_CROSSING_NARRATION = [
   /^\[QUEUE\] delivery .* arrived twice - (?!THE SERVER PUBLISHED)/,
 ];
-
 
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
@@ -2291,7 +3091,9 @@ export const OIDC_LOGIN_NARRATION = [
   /^\[auth\] redirectUri: \S+ coreUrl: \S+$/,
   /^\[auth\] POSTing to core-service \/api\/auth\/oidc\/callback/,
   /^\[auth\] core-service response status: 200$/,
-  /^\[auth\] got access_token, saving user: \S+$/,
+  // `(miconnect)` names the provider the token came from, the product's spelling on 1.4.1 (DEV-1,
+  // 2026-10-25); the bare form is the older client's.
+  /^\[auth\] got access_token(?: \(miconnect\))?, saving user: \S+$/,
   /^\[auth\] handleOidcCallback complete$/,
   /^\[callback\] starting handleOidcCallback, code length: \d+$/,
   /^\[callback\] handleOidcCallback resolved, user: \S+$/,
@@ -2316,7 +3118,9 @@ export const DEVICE_PANEL_NARRATION = [
   /^\[DevicePanel\] \d+ live session\(s\)$/,
   /^\[DevicePanel\] Found \d+ device\(s\)$/,
   /^\[DevicePanel\] Deleting device \S+$/,
-  /^\[DevicePanel\] Deleted device \S+ \(groups cleaned: \d+, keyPackages: \d+\)$/,
+  // `deviceRowRemoval.ts` (#2450) says the eight first characters and nothing else: the old
+  // `(groups cleaned: N, keyPackages: N)` tail is gone, and its needle forgave nothing on alpha.5.
+  /^\[DevicePanel\] Deleted device \S+$/,
 ];
 
 /**
@@ -2448,7 +3252,10 @@ export function logcatReport(lines, label = 'A1') {
     // `decryptProtoWithCommits` is the same success reached AFTER the catch-up applied the commits
     // the phone missed - NOTIF-2 was the first row to print it (2026-09-27), as its two siblings
     // below already spell both names.
-    ['fcm-decrypt', /^(tryDecrypt|decryptProto|decryptProtoWithCommits): (MLS state loaded|success)/],
+    [
+      'fcm-decrypt',
+      /^(tryDecrypt|decryptProto|decryptProtoWithCommits): (MLS state loaded|success)/,
+    ],
     // ── the channel-push path, which had no rule at all until 2026-09-21 ────────────────────────
     // Seven lines of it were NOTIF-18's whole native dirt, and not one of them belongs to that row:
     // any push for a salon message raises them, so they are named here rather than forgiven per-row.
@@ -2462,40 +3269,70 @@ export function logcatReport(lines, label = 'A1') {
     // site, so the old rule stopped matching in exactly the case worth catching. `missing=` is
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
-    ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    [
+      'fcm-channel-generic',
+      /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/,
+    ],
     // What that generic banner leaves out: the author and the mention the server named, which only an
     // open proves. Explained, because the blind banner it rides on is already `notable` on its own.
-    ['fcm-channel-blind-no-author', /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/],
+    [
+      'fcm-channel-blind-no-author',
+      /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/,
+    ],
     // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
-    ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
-    ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
+    [
+      'fcm-channel-blind-reported',
+      /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/,
+    ],
+    [
+      'fcm-channel-redraw',
+      /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/,
+    ],
     // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
-    ['fcm-channel-notify', /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/],
+    [
+      'fcm-channel-notify',
+      /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/,
+    ],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
     // alternation, which would let a failed message decrypt pass as a seed.
     // BOTH READERS, since the catch-up keeps key material too (channel-encryption section 18): the
     // prefix names which one - the direct decrypt, or the one run after applying missing commits.
-    ['fcm-graine-material', /^(decryptProto|decryptProtoWithCommits): graine key material, \d+ seed\(s\)$/],
+    [
+      'fcm-graine-material',
+      /^(decryptProto|decryptProtoWithCommits): graine key material, \d+ seed\(s\)$/,
+    ],
     // A COMMIT APPLIED, NOTHING TO DRAW - `parseNativeDecrypt` on `control-frame`, which Rust returns
     // only AFTER the frame was processed. Every roster change pushes one to each device, and NOTIF-19
     // makes one on purpose. The frame that could NOT be decrypted is another line and stays out.
-    ['fcm-control-frame', /^(decryptProto|decryptProtoWithCommits): control frame applied - state advanced, nothing to render$/],
+    [
+      'fcm-control-frame',
+      /^(decryptProto|decryptProtoWithCommits): control frame applied - state advanced, nothing to render$/,
+    ],
     ['fcm-silent-nothing', /^Silent push group=[0-9a-f]+ shows nothing - nothing to render in it$/],
     // THE PROMISED REDRAW KEPT: the seed a held banner waited on landed, and the banner is redrawn.
-    ['fcm-channel-drain', /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/],
+    [
+      'fcm-channel-drain',
+      /^drainPendingChannelFrames: \d+ banner\(s\) waiting on this key material -> redrawing$/,
+    ],
     ['fcm-graine-absorb', /^absorbGraineSeeds: stored \d+ seed\(s\) group=[0-9a-f]+$/],
     // WHERE THE SEED CAME FROM (channel-encryption section 19): the mirror, or the frame the message
     // carried. Both are the primary path now. What is NOT here, deliberately: `openSeedFrame: no
     // frame on this push` (a sender older than section 19 - on this rig every client is current, so
     // it is a regression), the ABSENT and UNKNOWN localities, a frame that yielded no key material,
     // and a frame holding no seed for its own message. Each is a defect upstream on a current rig.
-    ['fcm-seed-source', /^handleChannelMessage: seed source=(mirror|frame) channel=\S+ session=\S+ index=\d+$/],
+    [
+      'fcm-seed-source',
+      /^handleChannelMessage: seed source=(mirror|frame) channel=\S+ session=\S+ index=\d+$/,
+    ],
     // The frame sealed one commit ahead of a key group this phone holds - the join that rotated the
     // session happened while it was shut, which is NOTIF-20's own shape. The catch-up is the answer.
-    ['fcm-seed-frame-catchup', /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/],
+    [
+      'fcm-seed-frame-catchup',
+      /^openSeedFrame: seed frame refused group=[0-9a-f]+ locality=LOCAL -> commit catch-up$/,
+    ],
     // THE BACKGROUND WELCOME (channel-encryption section 20, NOTIF-21 2026-09-28): a killed phone
     // added to a group joins it from the push - the route, the join, and the seat promoted. Plus
     // the two re-queues that put a frame behind its own group's Welcome on the one push lane
@@ -2504,12 +3341,21 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-welcome-route', /^isWelcome=true -> groupId=\S+ qId=\S+ - background join$/],
     ['fcm-welcome-joined', /^processReceivedWelcomeBackground: \S+ group joined group=\S+$/],
     ['fcm-membership-active', /^markMembershipActive: HTTP 20[01] group=\S+$/],
-    ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
-    ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
+    [
+      'fcm-requeue-behind-welcome',
+      /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/,
+    ],
+    [
+      'fcm-channel-requeue-behind-welcome',
+      /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/,
+    ],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
     // A re-draw of an announced message that is a new post (a held salon mention moving channel once
     // its seed lands, or a blind banner swiped away first) is reposted silent - see `RepostAlert`.
-    ['fcm-repost-silent', /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/],
+    [
+      'fcm-repost-silent',
+      /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/,
+    ],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
     // FROM SELF means another device of this account read the conversation, so this device's
@@ -2539,7 +3385,10 @@ export function logcatReport(lines, label = 'A1') {
     ],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
     // The Kotlin half of the handoff named above, at the moment it accepts the work.
-    ['ws-notif-accept', /^notifyMessageFromWebSocket: queued groupId=[0-9a-f]+ mentionsMe=(true|false) sentAt=\d+$/],
+    [
+      'ws-notif-accept',
+      /^notifyMessageFromWebSocket: queued groupId=[0-9a-f]+ mentionsMe=(true|false) sentAt=\d+$/,
+    ],
     // THE REACTION ARM, WHICH LEFT NOTIF-15 `PASS-DIRTY` OVER ITS OWN SUCCESS PATH - the same way
     // NOTIF-4 landed there in 2026-08-22 for the cancelling half of the line above. This is the
     // handler stating, at DEBUG, that it recognised a reaction push and is about to draw it; the
@@ -2559,7 +3408,10 @@ export function logcatReport(lines, label = 'A1') {
     // fetch that failed, an empty token, an unwritable `fcm_token.txt` and an absent
     // `push_context.json` each name a real loss and must keep surfacing.
     ['boot-receiver', /^onReceive: android\.intent\.action\.[A-Z_]+ -> push token re-registration/],
-    ['boot-token', /^reRegisterToken: (token (unchanged|ROTATED)|context\/secret absent -> backend refresh deferred)/],
+    [
+      'boot-token',
+      /^reRegisterToken: (token (unchanged|ROTATED)|context\/secret absent -> backend refresh deferred)/,
+    ],
     ['boot-outbox', /^drainPendingOutbox: (outbox empty|done, \d+ message\(s\) still queued)/],
     // 2xx ONLY. The site logs whatever the backend answered, so a rule over `HTTP \d+` would explain
     // away a 500 as readily as a 201 - and this is the call that keeps the push token addressable.
@@ -2569,7 +3421,10 @@ export function logcatReport(lines, label = 'A1') {
     // sees it, because a dozing phone is exactly what defers work to it. The failure branches of
     // the same file - max retries, missing `push_context.json`, absent `mls.bin`, a lock never
     // acquired - are `W`/`E` and stay unexplained.
-    ['worker-run', /^doWork: (starting \(attempt \d+\)|app in foreground -> MLS handled by the foreground|MLS state=\d+ bytes|background cleanup completed)/],
+    [
+      'worker-run',
+      /^doWork: (starting \(attempt \d+\)|app in foreground -> MLS handled by the foreground|MLS state=\d+ bytes|background cleanup completed)/,
+    ],
     ['worker-wrapper', /^(Starting work for fr\.emse\.canari\.|Worker result SUCCESS for Work \[)/],
     ['worker-done', /^\[mines_app_lib\] Background Worker completed successfully$/],
     // ── the background decrypt's DIAGNOSTIC LADDER, named so it is reported rather than silent ───
@@ -2581,7 +3436,10 @@ export function logcatReport(lines, label = 'A1') {
     // worker, message delivered exactly once.
     ['fcm-decrypt-refused', /^tryDecrypt refused group=[0-9a-f]+ locality=[A-Z]+$/],
     ['fcm-locality', /^groupLocality: epoch=-?\d+ group=[0-9a-f]+$/],
-    ['fcm-catchup', /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/],
+    [
+      'fcm-catchup',
+      /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/,
+    ],
     // THE BACKGROUND PUSH FETCHING ITS OWN PROTO, the successful half of a wake: the GET and the
     // answer's size, twice per push on the Mi 9T (the second after the catch-up). It left NOTIF-2, 19
     // and 20 `PASS-DIRTY` on 2026-10-05 with nothing else - the failure spelling (`proto received=
@@ -2603,13 +3461,19 @@ export function logcatReport(lines, label = 'A1') {
     // lines are the thing it asserts happening - the same reason `fcm-reaction` below is named.
     // The REFUSAL is deliberately not covered: `native builder refused` means the builder declined
     // the work and the reader may get nothing, which must keep surfacing.
-    ['ws-notif-queued', /^\[mines_app_lib::commands::notifications\] \[NOTIF\] native builder queued for /],
+    [
+      'ws-notif-queued',
+      /^\[mines_app_lib::commands::notifications\] \[NOTIF\] native builder queued for /,
+    ],
     ['storage-commands', /^\[mines_app_lib::commands::(storage|cookies)\] /],
     ['background-send', /^\[mines_app_lib::mobile::background\] /],
     // openmls at DEBUG is the key schedule narrating itself - one line per derivation, several per
     // frame. It is loud and it is not a signal; an ERROR from the same module is not covered here
     // and cannot be, because the `E` branch above returns before any rule is consulted.
-    ['openmls-debug', /^\[openmls::(schedule|tree::secret_tree|tree::sender_ratchet|framing::private_message)/],
+    [
+      'openmls-debug',
+      /^\[openmls::(schedule|tree::secret_tree|tree::sender_ratchet|framing::private_message)/,
+    ],
     ['sql', /^\[sqlx::query\] /],
     ['http-pool', /^\[(hyper_util|reqwest)::/],
     ['websocket', /^\[(tokio_tungstenite|tungstenite)(::[a-z_:]+)?\]/],
@@ -2640,7 +3504,9 @@ export function logcatReport(lines, label = 'A1') {
     // threadtime branch is the one `logcatSince` actually produces, so the fix would have been inert
     // in the field and green on the bench. `logcatclassify-selftest.mjs` is what found it.
     const tt = /^(\d{2}-\d{2} [\d:.]+)\s+(\d+)\s+\d+\s+([VDIWEF])\s+(\S+?):\s(.*)$/.exec(raw);
-    const br = tt ? null : /^(\d{2}-\d{2} [\d:.]+)\s+([VDIWEF])\/(.+?)\(\s*(\d+)\):\s?(.*)$/.exec(raw);
+    const br = tt
+      ? null
+      : /^(\d{2}-\d{2} [\d:.]+)\s+([VDIWEF])\/(.+?)\(\s*(\d+)\):\s?(.*)$/.exec(raw);
     if (!tt && !br) {
       // `LOGCAT UNAVAILABLE: ...` is `logcatSince` reporting it could not read the device at all,
       // and an unreadable surface is NOT a clean one - it goes straight to `errors`.
@@ -2726,7 +3592,11 @@ export function logcatReport(lines, label = 'A1') {
       // halves are surfaced together: a run where the first appears without the second has a
       // permanently generic banner, and that must not be silent in a row which, unlike NOTIF-18,
       // does not assert the redraw itself. Explained, reported, and not gating.
-      if (/epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback|generic notification|redrawing/i.test(l.msg))
+      if (
+        /epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback|generic notification|redrawing/i.test(
+          l.msg
+        )
+      )
         notable.push(text);
       continue;
     }
@@ -2829,7 +3699,16 @@ export function logcatReport(lines, label = 'A1') {
  */
 export function dirtOf(rep) {
   const out = {};
-  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained'])
+  // `outOfRow` is the server's alone (`srvlog.mjs` `ROW_RULES`): a 1.4.1 line another row expects.
+  for (const bucket of [
+    'severe',
+    'errors',
+    'exceptions',
+    'badHttp',
+    'wsEvents',
+    'unexplained',
+    'outOfRow',
+  ])
     if (rep?.[bucket]?.length) out[bucket] = rep[bucket];
   // THE EXPLANATION TRAVELS WITH THE FINDING, and only when there IS one.
   //
@@ -2898,15 +3777,27 @@ export function dirtOf(rep) {
  * @param {Record<string, object>} reports label -> the `report()` of that client
  * @param {{bundles?: {stale?: Record<string, object>, blind?: Record<string, string>}}} [observations]
  *   what was learnt about the clients themselves, as opposed to what they printed - see
- *   `observedBundles` in `bundle.mjs`, the only producer.
+ *   `observedBundles` in `bundle.mjs`, the only producer. `estateIo` replaces the estate window's
+ *   readers (`estateWindow` in `deploy.mjs`) and exists for the self-test alone.
  * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
  */
 export function gate(verdict, reports, observations = {}) {
-  const entries = Object.entries(reports).filter(([, r]) => r);
+  // A ROUTE'S FIRST PRELOAD is forgiven HERE, once, for every row and every seat - not per runner:
+  // COMM's runners call `gate` directly and carried it as dirt while the MLS rows did not.
+  const entries = Object.entries(reports)
+    .filter(([, r]) => r)
+    .map(([label, r]) => [label, forgivingFirstRoutePreloads(r)]);
   const dirty = entries.filter(([, r]) => !r.clean);
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
   for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
+  // THE NAMED ENVIRONMENT EXCEPTION IS LISTED WHEREVER IT WAS USED, clean or not - a PASS taken
+  // with it must say so in its own record (`DEV_EDGE_CSP_EXCEPTION`).
+  const excepted = entries.filter(([, r]) => r.environmentException);
+  if (excepted.length)
+    detail.environmentException = Object.fromEntries(
+      excepted.map(([label, r]) => [label, r.environmentException])
+    );
 
   // A RUN THE SERVER RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
   // for the measurement that put this here. It was written when a push to `main` redeployed the
@@ -2922,12 +3813,23 @@ export function gate(verdict, reports, observations = {}) {
   const since = Math.min(...entries.map(([, r]) => r.since ?? Number.POSITIVE_INFINITY));
   let out = verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict;
   if (Number.isFinite(since)) {
-    const window = overlappingDeploys(since);
+    // ON DEV THE QUESTION IS DEV'S OWN BUILD, start against end, and the pre-release runs - a
+    // `gh release create *-alpha.*` redeploys it under the row (R4). Locally it is the restarts.
+    const window = estateWindow(
+      entries.map(([, r]) => r),
+      since,
+      observations.estateIo
+    );
+    if (window.asked && window.builds) detail.estateBuild = window.builds;
     if (window.asked === false) {
       // A BLIND SPOT IS RECORDED, NEVER GUESSED AWAY. `gh` can be absent, logged out or rate-limited,
       // and a gate that read that as "no deploy" would be silently weaker exactly when the network is
-      // already misbehaving. The verdict stands and the reader is told what could not be asked.
+      // already misbehaving. Locally the verdict stands and the reader is told what could not be
+      // asked. ON DEV (or with no estate known) IT IS VACUOUS (R4 review): dev is redeployed and
+      // reset by gestures nobody at this machine makes, so a window nobody could read is not a
+      // window anybody may vouch for.
       detail.deployWindow = `unknown - ${window.why}`;
+      if (window.estate !== 'local') out = 'VACUOUS';
     } else if (window.overlapped.length) {
       detail.redeployedMidRun = window.overlapped.map(describeDeploy);
       out = 'VACUOUS';
@@ -3095,7 +3997,9 @@ export const PHONE_COLD_BOOT = [
   // now WAITS for the election instead of delegating to a leader that may not exist. Seeing both
   // lines is seeing that fix work; seeing either in a steady run would be a client that restarted.
   '[OUTBOX] Flush deferred - tab leadership undecided',
-  new RegExp('^' + '\\' + '[OUTBOX' + '\\' + '] Leadership decided as (leader|follower) after \\d+ ms'),
+  new RegExp(
+    '^' + '\\' + '[OUTBOX' + '\\' + '] Leadership decided as (leader|follower) after \\d+ ms'
+  ),
   // A REPEAT THE APPLICATION ITSELF CALLS HARMLESS, in its own words. `BaseMlsService`'s
   // `REPEAT_MEANS` carries four combinations of channel and prior state, two of which set
   // `accuse: true`; this needle is the closing clause of the ONE that sets `accuse: false`, so the
@@ -3104,6 +4008,123 @@ export const PHONE_COLD_BOOT = [
   'tryDecrypt: foreground took over while this push waited',
   'push yielded to the foreground, which holds this frame',
 ];
+
+/**
+ * A NEEDLE THAT FORGIVES ONE SENTENCE AT THE LEVELS IT IS WRITTEN AT, AND NEVER ITS LOOK-ALIKE.
+ *
+ * A bare needle compares the sentence with its level stripped, so it forgives the same words logged
+ * as `console.error` or `console.warn` - the spelling a product uses when the same step FAILED or ran
+ * late. A narration list written on 2026-10-25 for the DEV rows' bootstrap and device notices is made
+ * of these instead: it claims only an `unexplained` line whose level is one of `levels`, never an
+ * entry of `errors` or `warnings`, so a look-alike that accuses still breaks `clean`.
+ *
+ * A BUDGET, when given, bounds how many lines the needle forgives in one `ignoringExpectedLog` call:
+ * the number of decisions the row makes that say the sentence. The line past it stays dirt, so a
+ * forgiven sentence said in a loop is still a finding (removal rows, review of 2026-10-29).
+ *
+ * @param {string[]} levels the console levels the product writes the sentence at (`log`, `debug`, `info`)
+ * @param {RegExp} re the sentence, stamp and level stripped
+ * @param {number} [max] at most this many lines forgiven; unbounded when omitted
+ */
+export function atLevels(levels, re, max = Infinity) {
+  return {
+    levels,
+    re,
+    max,
+    toString: () => `${levels.join('|')}${max === Infinity ? '' : ` x${max}`}: ${re}`,
+  };
+}
+
+/** The console level an `unexplained` entry was rendered with (`level: text`), or null. */
+const levelOfEntry = (line) =>
+  /^(log|info|debug|verbose|warning|warn|error|assert):/.exec(line)?.[1] ?? null;
+
+/** A route's first preload in a document: `pathname` is the route preloaded. */
+const FIRST_ROUTE_PRELOAD = /\[RoutePreload\] \{"pathname":"(\/[a-z]*)","first":true\}$/;
+
+/**
+ * A ROUTE IS PRELOADED ONCE PER DOCUMENT, on the first in-app navigation that reaches it, and says so
+ * at debug (`[RoutePreload] {"pathname":"/chat","first":true}`). `PAGE_BOOT_NARRATION` forgives it
+ * only in a window whose document was replaced. A seat the preflight reloaded JUST BEFORE the row
+ * makes its first navigations inside the row's window instead: read on LIST-RACE-1 on
+ * `1.5.0-alpha.1` (2026-10-27), on W1, W8 and A1.
+ *
+ * So each pathname is forgiven when it appears EXACTLY ONCE in the seat's window, at debug - applied
+ * by `gate` to every seat of every row, the one place every runner passes through. A
+ * pathname preloaded twice in one window is a document that booted twice, or a preload that is not
+ * the first, and both copies stay dirt. So does `"first":false`, or the line at another level.
+ */
+export function forgivingFirstRoutePreloads(rep) {
+  if (!Array.isArray(rep?.unexplained)) return rep;
+  const seen = new Map();
+  for (const line of rep.unexplained) {
+    const m = FIRST_ROUTE_PRELOAD.exec(line);
+    if (m && levelOfEntry(line) === 'debug') seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  const once = [...seen].filter(([, n]) => n === 1).map(([p]) => p);
+  if (!once.length) return rep;
+  const esc = (s) => s.replace(/[/]/g, '\\/');
+  return ignoringExpectedLog(
+    rep,
+    once.map((p) =>
+      atLevels(
+        ['debug'],
+        new RegExp(`^\\[RoutePreload\\] \\{"pathname":"${esc(p)}","first":true\\}$`)
+      )
+    )
+  );
+}
+
+/** A console level as `atLevels` names it: CDP's `verbose` is a `console.debug`, `warning` a `warn`. */
+const levelName = (level) => ({ verbose: 'debug', warning: 'warn' })[level] ?? level;
+
+/**
+ * THE BUDGET OF EVERY BOUNDED `atLevels` NEEDLE, COUNTED WHERE A REPEAT IS STILL VISIBLE: the
+ * timeline. `unexplained` cannot count - `report` de-duplicates it on the text with the clock
+ * stripped, so a sentence said in a loop is ONE line there. The timeline keeps a repeat and collapses
+ * only the double surfacing of one call (within `SAME_EVENT_MS`, compared here on the sentence alone,
+ * since the two copies of a `console.debug` arrive as `debug` and `verbose`).
+ *
+ * Each needle said more often than its `max` gives back ONE dirt line naming both counts and the
+ * first copy past the budget - so `clean` breaks and the reader sees which sentence looped. A report
+ * with no timeline (a hand-built one) is counted on `unexplained`.
+ *
+ * @returns {string[]} lines for the `unexplained` bucket, `level: [said N times, budget M] sentence`
+ */
+function overBudget(rep, needles) {
+  const bounded = needles.filter(
+    (n) => n && typeof n === 'object' && !(n instanceof RegExp) && Number.isFinite(n.max)
+  );
+  if (!bounded.length) return [];
+  const said = Array.isArray(rep.timeline)
+    ? (() => {
+        const last = new Map();
+        const out = [];
+        for (const t of rep.timeline) {
+          const m = /^(\d\d:\d\d:\d\d\.\d+|\?+|\S+) \[([a-z]+)\] ([\s\S]*)$/.exec(t);
+          if (!m || m[2] === 'ws') continue;
+          const s = stripStamp(m[3]);
+          const at = Date.parse(`1970-01-01T${m[1]}Z`);
+          const prev = last.get(s);
+          if (Number.isFinite(at)) last.set(s, at);
+          if (prev !== undefined && Number.isFinite(at) && at - prev < 250) continue;
+          out.push({ level: levelName(m[2]), s });
+        }
+        return out;
+      })()
+    : rep.unexplained.map((l) => ({
+        level: levelName(levelOfEntry(l)),
+        s: stripStamp(l.replace(/^[a-z]+:\s*/, '')),
+      }));
+  return bounded.flatMap((n) => {
+    const copies = said.filter((x) => n.levels.includes(x.level) && n.re.test(x.s));
+    return copies.length > n.max
+      ? [
+          `${copies[n.max].level}: [said ${copies.length} times, budget ${n.max}] ${copies[n.max].s}`,
+        ]
+      : [];
+  });
+}
 
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
@@ -3115,16 +4136,21 @@ export function ignoringExpectedLog(rep, needles) {
     stripStamp(line.replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):\s*/, ''));
   const matched = new Set();
   /** True to KEEP the line - and records, on the way past, which needles claimed it. */
-  const keep = (line) => {
+  const keep = (bucket) => (line) => {
     const s = sentence(line);
-    const hits = needles.filter((n) => (typeof n === 'string' ? s.includes(n) : n.test(s)));
+    const hits = needles.filter((n) => {
+      if (typeof n === 'string') return s.includes(n);
+      if (n instanceof RegExp) return n.test(s);
+      // `atLevels`: the unexplained bucket only, and only at the levels it names.
+      return bucket === 'unexplained' && n.levels.includes(levelOfEntry(line)) && n.re.test(s);
+    });
     hits.forEach((n) => matched.add(n));
     return hits.length === 0;
   };
 
-  const errors = rep.errors.filter(keep);
-  const warnings = rep.warnings.filter(keep);
-  const unexplained = rep.unexplained.filter(keep);
+  const errors = rep.errors.filter(keep('errors'));
+  const warnings = rep.warnings.filter(keep('warnings'));
+  const unexplained = [...rep.unexplained.filter(keep('unexplained')), ...overBudget(rep, needles)];
   return {
     ...rep,
     errors,
@@ -3148,6 +4174,37 @@ export function ignoringExpectedLog(rep, needles) {
       // going back to a stdout dump the run has long scrolled past.
       unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
+  };
+}
+
+/**
+ * The same report with the closes of NAMED sockets forgiven, and `clean` recomputed.
+ *
+ * A call's signalling socket (`/api/call`) opens with the call and closes when it ends: one close
+ * per call on each seat that was in it, and the close IS the hang-up. That close is expected and
+ * necessary, and nothing else's is. Matched on the socket's PATH (tagged by `report` from its
+ * `webSocketCreated`), exactly - so the chat gateway dropping during a call stays a finding, and so
+ * does a close whose socket the window never saw open (no `path=` at all).
+ *
+ * FORGIVEN, NOT DELETED: kept as `wsEventsForgiven`, out of the gate.
+ *
+ * @param {object} rep a `report` result
+ * @param {string[]} paths socket pathnames whose closes are this row's own, e.g. `['/api/call']`
+ */
+export function forgivingSocketCloses(rep, paths) {
+  const own = (t) => paths.some((p) => t.endsWith(` path=${p}`));
+  const wsEvents = rep.wsEvents.filter((t) => !own(t));
+  return {
+    ...rep,
+    wsEvents,
+    wsEventsForgiven: rep.wsEvents.filter(own),
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      wsEvents.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
   };
 }
 
@@ -3290,7 +4347,7 @@ export async function sanity(cx) {
         locked: document.body.innerText.indexOf('PIN de chiffrement') !== -1,
         offlineBanner: document.body.innerText.indexOf('Hors-ligne') !== -1,
         url: location.pathname
-      })`,
-    ),
+      })`
+    )
   );
 }

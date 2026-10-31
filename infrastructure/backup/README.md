@@ -35,8 +35,10 @@ terminer en annoncant une restauration complete qui aurait saute 87 % des donnee
 
 ## Stockage et retention
 
-- Local : `/home/canari/backups`, retention `BACKUP_RETENTION_DAYS` jours (14 par defaut).
-- Offsite : `<utilisateur-backup>@<hote-offsite>:<dossier-offsite>`, meme retention.
+- Local : `/home/canari/backups`, retention `LOCAL_RETENTION_DAYS` jours (7 par defaut).
+- Offsite : `<utilisateur-backup>@<hote-offsite>:<dossier-offsite>`, retention
+  `BACKUP_RETENTION_DAYS` jours (14 par defaut). Separees le 2026-10-24 : le disque local est
+  partage ([backup](../../docs/wiki/infrastructure/backup.md#retention)).
 
 L acces offsite utilise la cle SSH de `canari` (`~/.ssh/id_ed25519`), autorisee
 pour l utilisateur dedie, non privilegie, du serveur offsite.
@@ -48,6 +50,8 @@ root), declenchee chaque jour a 03:30 :
 
 ```cron
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Obligatoire : sans valeur par defaut dans le depot. Vide = pas de copie offsite.
+BACKUP_SSH_HOST=<utilisateur-backup>@<hote-offsite>
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
 ```
 
@@ -78,8 +82,9 @@ journalctl -u canari-backup.service -f
 | Variable | Defaut | Role |
 | --- | --- | --- |
 | `BACKUP_DIR` | `/home/canari/backups` | dossier local des archives |
-| `BACKUP_RETENTION_DAYS` | `14` | retention locale et offsite |
-| `BACKUP_SSH_HOST` | `<utilisateur-backup>@<hote-offsite>` | cible offsite (vide = desactive) |
+| `BACKUP_RETENTION_DAYS` | `14` | retention offsite |
+| `LOCAL_RETENTION_DAYS` | `7` | retention locale |
+| `BACKUP_SSH_HOST` | aucune (obligatoire) | cible offsite `<utilisateur-backup>@<hote-offsite>` ; vide = desactive ; absente = la sauvegarde s'arrete |
 | `BACKUP_SSH_PATH` | `<dossier-offsite>` | dossier offsite |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
 | `MICONNECT_SSH_HOST` | vide | machine qui porte Authentik (vide = conteneur local, le cas depuis le 2026-09-24) |
@@ -325,10 +330,10 @@ un mecanisme de securite non attaque n est qu une intention :
 
 | Tentative | Resultat |
 | --- | --- |
-| `ssh authentik-target whoami` | octets gzip d un dump - la commande demandee est ignoree |
+| `ssh <alias> whoami` | octets gzip d un dump - la commande demandee est ignoree |
 | Session interactive (`ssh -T`) | idem, le dump |
 | Redirection de port `-L` vers `127.0.0.1:9000`, sollicitee pendant la session | rien ne passe, 25 tentatives |
-| **Temoin** : meme client, meme mecanisme, cle SANS commande forcee | `SSH-2.0-OpenSSH_9.2p` traverse |
+| **Temoin** : meme client, meme mecanisme, cle SANS commande forcee | la banniere `SSH-2.0-OpenSSH_<version>` traverse |
 
 Le temoin est ce qui rend le "rien ne passe" lisible : sans lui, il aurait aussi
 bien pu decrire un tunnel jamais ouvert - la forme exacte d une mesure de

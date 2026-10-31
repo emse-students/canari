@@ -22,6 +22,11 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import {
+  OPENMLS_BASE,
+  OPENMLS_FOREIGN_REMOVE,
+  OPENMLS_RESYNC,
+} from '../testing/openmlsExternalRemoveFixture';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -36,7 +41,22 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   // The group row read under lock before a carried Welcome is written: live unless a test says not.
   const txGroupFind = jest.fn();
   // `update`: the link seat a commit's admits answer (`awaitingAdmission`), lifted in the advance.
-  const txSeatRepo = { findOne: jest.fn(), update: jest.fn().mockResolvedValue({ affected: 0 }) };
+  /** The link seats still awaiting a member, as the lift reads them. */
+  let txAsks: Array<{ id: string; userId: string }> = [];
+  const txSeatRepo = {
+    findOne: jest.fn(),
+    update: jest.fn().mockResolvedValue({ affected: 0 }),
+    // The roster read of the people a commit admits (`enrolAdmittedPeople`): everyone asked about is
+    // already enrolled here, so no seat is written. The enrolment itself is judged against a real
+    // database (`add-enrolment.integration.spec.ts`).
+    // The lift's read of who still awaits (`awaitingAdmission: true`) answers `txAsks`.
+    find: jest.fn(
+      async ({ where }: { where: { userId: { value: string[] }; awaitingAdmission?: boolean } }) =>
+        where.awaitingAdmission === true
+          ? txAsks.filter((a) => where.userId.value.includes(a.userId))
+          : where.userId.value.map((userId) => ({ userId }))
+    ),
+  };
   const txQueuedRepo = {
     create: jest.fn((row: Record<string, unknown>) => ({ ...row })),
     save: jest.fn(async (row: Record<string, unknown>) => ({ ...row, id: 'queued-welcome-1' })),
@@ -199,6 +219,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   });
 
   beforeEach(async () => {
+    txAsks = [];
     jest.clearAllMocks();
     // Default: the committer is already an active member, so the promotion path stays inert
     // unless a test explicitly makes the row absent.
@@ -274,7 +295,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).toHaveBeenCalledTimes(1);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
       // Commit stored keyed by the epoch it advances FROM.
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
@@ -335,7 +356,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).toHaveBeenCalledTimes(1);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
     });
 
@@ -363,7 +384,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(res.accepted).toBe(true);
       expect(groupUpdate).toHaveBeenCalledWith(
         { id: 'group-1', activeEpoch: 5 },
-        { activeEpoch: 6 }
+        { activeEpoch: 6, epochSeatGeneration: 0 }
       );
       expect(txInsertBuilder.values).not.toHaveBeenCalled();
       expect(txUpdateBuilder.set).not.toHaveBeenCalled();
@@ -1098,7 +1119,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             kickedAt: IsNull(),
           },
         ],
-        select: { deviceId: true },
+        select: { deviceId: true, status: true },
       });
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
@@ -1136,6 +1157,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         where: { groupId: 'group-1', userId: 'user-1' },
         select: { id: true, awaitingAdmission: true },
       });
+    });
+
+    /**
+     * AN EXTERNAL JOIN'S LEAF ENTERS THE TREE WITH THE ADVANCE, so its seat is written there or the
+     * join is refused whole: a device whose key package an erasure took while the commit waited on
+     * the seat lock adds no leaf no seat holds (`writeClaimedSeat`, whose every refusal is one).
+     */
+    it('refuses an EXTERNAL commit whose seat cannot be written under the lock, nothing fanned out', async () => {
+      tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-1' }] });
+      txErasedDevices.add('user-1:device-1');
+      const sent = fanOut();
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+      });
+      expect(sent).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts a pending member commit whose seat cannot be written, its leaf already in the tree', async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: null }],
+      });
+      txErasedDevices.add('user-1:device-1');
+      fanOut();
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
     });
 
     it('refuses an external commit from a person who is not on the roster', async () => {
@@ -1696,7 +1746,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             await service.evictSeats('group-1', 'user-2', { settles: 1 });
             fetchSpy.mockResolvedValueOnce(entitled(false));
 
-            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            await expect(admitUser2()).resolves.toMatchObject({
+              accepted: true,
+              refusedAdmits: [{ userId: 'user-2', deviceId: 'device-2', reason: 'not_entitled' }],
+            });
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
@@ -1704,7 +1757,12 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             await service.evictSeats('group-1', 'user-2', 'begin');
             fetchSpy.mockResolvedValueOnce(entitled(true));
 
-            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            await expect(admitUser2()).resolves.toMatchObject({
+              accepted: true,
+              refusedAdmits: [
+                { userId: 'user-2', deviceId: 'device-2', reason: 'departure_in_progress' },
+              ],
+            });
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
@@ -1892,13 +1950,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       const sent = fanOut();
 
-      await commit(
+      const answer = await commit(
         {
           admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
           excludeDeviceIds: ['user-1:device-1', 'user-2:phone-2', 'user-3:laptop-3'],
         },
         'user-1'
       );
+
+      // Every admit recorded: the answer names no refusal at all.
+      expect(answer).not.toHaveProperty('refusedAdmits');
 
       // user-3 is a member this commit does not admit: it must receive the commit.
       expect(sent).toHaveBeenCalledWith(
@@ -1921,13 +1982,18 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
       const sent = fanOut();
 
-      await commit(
-        {
-          admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
-          excludeDeviceIds: ['user-2:phone-2'],
-        },
-        'user-1'
-      );
+      await expect(
+        commit(
+          {
+            admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
+            excludeDeviceIds: ['user-2:phone-2'],
+          },
+          'user-1'
+        )
+      ).resolves.toMatchObject({
+        accepted: true,
+        refusedAdmits: [{ userId: 'user-2', deviceId: 'phone-2', reason: 'already_active' }],
+      });
 
       expect(deviceGroupRepo.find).toHaveBeenCalledWith({
         where: [{ userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'active' }],
@@ -1938,6 +2004,38 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect.objectContaining({ excludeDeviceIds: [] }),
         undefined,
         []
+      );
+    });
+
+    it('answers an admit of a device with no key package - revoked mid-Add - as refused, and admits the rest (DEV-3)', async () => {
+      tables({
+        keyPackages: [ownKey, { userId: 'user-2', deviceId: 'phone-2' }],
+        devices: [ownDevice],
+      });
+      fanOut();
+
+      // The committer's next step is a Welcome to each admitted device; the one it is told about
+      // here would be refused `WELCOME_TARGET_UNKNOWN`, so it must not have to send it to find out.
+      await expect(
+        commit(
+          {
+            admits: [
+              { userId: 'user-2', deviceId: 'phone-2' },
+              { userId: 'user-2', deviceId: 'revoked-2' },
+            ],
+          },
+          'user-1'
+        )
+      ).resolves.toEqual({
+        accepted: true,
+        newEpoch: expect.any(Number),
+        refusedAdmits: [{ userId: 'user-2', deviceId: 'revoked-2', reason: 'no_key_package' }],
+      });
+      expect(membershipInsertBuilder.values).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-2', deviceId: 'phone-2' })
+      );
+      expect(membershipInsertBuilder.values).not.toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'revoked-2' })
       );
     });
 
@@ -1984,6 +2082,93 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect(sent).not.toHaveBeenCalled();
       }
     );
+
+    /**
+     * RFC 9420 12.4.3.2: an external commit removes only the joiner's own prior leaf. The commit
+     * names the leaf by index; the gate reads whose it is from the tree of the stored base.
+     */
+    describe('an external commit carrying a Remove', () => {
+      const storedBase = (row: Record<string, unknown> | null) =>
+        (
+          service as unknown as { groupInfoRepo: { findOne: jest.Mock } }
+        ).groupInfoRepo.findOne.mockResolvedValue(row);
+      const roster = { groupId: 'group-1', userId: 'user-1' };
+      const atEpoch1 = (proto: string) => commit({ proto, baseEpoch: 1 }, 'user-1');
+
+      it("accepts the resync that removes the joiner's own prior leaf", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).resolves.toMatchObject({ accepted: true });
+      });
+
+      it("refuses one that removes another member's leaf, before the membership gate", async () => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 1 } });
+        storedBase({ groupId: 'group-1', baseEpoch: 1, groupInfo: OPENMLS_BASE });
+        const sent = fanOut();
+
+        await expect(atEpoch1(OPENMLS_FOREIGN_REMOVE)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['no stored base', null, 1],
+        ['a base behind the commit', { groupId: 'group-1', baseEpoch: 0 }, 1],
+        ['a base ahead of a group still at the commit', { groupId: 'group-1', baseEpoch: 2 }, 1],
+      ])('refuses one whose removed leaf cannot be named: %s', async (_name, row, activeEpoch) => {
+        tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch } });
+        storedBase(row && { ...row, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(atEpoch1(OPENMLS_RESYNC)).rejects.toMatchObject({
+          response: { error: 'commit_identity_mismatch' },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+
+      /**
+       * THE RACE A LEGITIMATE RESYNC LOSES: built on base 1, submitted after another commit moved
+       * the group and its base to 2. It is the epoch gate's to answer - `epoch_mismatch`, which the
+       * joiner retries on a fresh base - never a 403 that would end its retry.
+       */
+      it.each([
+        ['the resync', OPENMLS_RESYNC],
+        ['a Remove of another leaf', OPENMLS_FOREIGN_REMOVE],
+      ])(
+        'leaves %s built on a superseded base to the epoch gate, and nothing moves',
+        async (_name, proto) => {
+          tables({ keyPackages: [ownKey], roster: [roster], group: { activeEpoch: 2 } });
+          storedBase({ groupId: 'group-1', baseEpoch: 2, groupInfo: OPENMLS_BASE });
+          const sent = fanOut();
+
+          await expect(atEpoch1(proto)).resolves.toMatchObject({
+            accepted: false,
+            reason: 'epoch_mismatch',
+            currentEpoch: 2,
+          });
+          expect(sent).not.toHaveBeenCalled();
+        }
+      );
+
+      it('refuses one carrying more than one Remove', async () => {
+        tables({ keyPackages: [ownKey], roster: [roster] });
+        storedBase({ groupId: 'group-1', baseEpoch: 5, groupInfo: OPENMLS_BASE });
+        fanOut();
+
+        await expect(
+          commit(
+            { proto: externalCommitFrame('group-1', 5n, 'user-1:device-1', 1, [1, 1]) },
+            'user-1'
+          )
+        ).rejects.toMatchObject({ response: { error: 'commit_identity_mismatch' } });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+    });
 
     it("holds a key group's external commit to the same header: its own group and epoch", async () => {
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
@@ -2067,7 +2252,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         );
         expect(groupUpdate).toHaveBeenCalledWith(
           { id: 'group-1', activeEpoch: 5 },
-          { activeEpoch: 6 }
+          { activeEpoch: 6, epochSeatGeneration: 0 }
         );
         // Delivered FROM the stored row - its id is what lets the device ACK it - as a silent,
         // pushable Welcome, after the members have the commit.
@@ -2232,7 +2417,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           roster: [{ groupId: 'group-1', userId: 'user-2' }],
         });
         fanOut();
-        txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+        txAsks = [{ id: 'seat-2', userId: 'user-2' }];
 
         await expect(commit({ welcome }, 'user-1')).resolves.toEqual({
           accepted: true,
@@ -2240,11 +2425,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         });
         expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
         const [where, set] = txSeatRepo.update.mock.calls[0] as [
-          { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+          { groupId: string; id: FindOperator<string[]>; awaitingAdmission: boolean },
           unknown,
         ];
         expect(where.awaitingAdmission).toBe(true);
-        expect(where.userId.value).toEqual(['user-2']);
+        expect(where.id.value).toEqual(['seat-2']);
         expect(set).toEqual({ awaitingAdmission: false });
       });
 
@@ -2405,7 +2590,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { userId: 'user-2', deviceId: 'phone-2' },
         { userId: 'user-2', deviceId: 'web-2' },
       ]);
-      txSeatRepo.update.mockResolvedValueOnce({ affected: 1 });
+      txAsks = [{ id: 'seat-2', userId: 'user-2' }];
 
       const res = await accept([
         { userId: 'user-2', deviceId: 'phone-2' },
@@ -2413,15 +2598,15 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       ]);
 
       expect(res.accepted).toBe(true);
-      // One update per commit, by person - guarded on the flag, so a seat no link wrote is untouched.
+      // One update per commit, by the asks' seats - guarded on the flag, so a seat no link wrote is untouched.
       expect(txSeatRepo.update).toHaveBeenCalledTimes(1);
       const [where, set] = txSeatRepo.update.mock.calls[0] as [
-        { groupId: string; userId: FindOperator<string[]>; awaitingAdmission: boolean },
+        { groupId: string; id: FindOperator<string[]>; awaitingAdmission: boolean },
         unknown,
       ];
       expect(where.groupId).toBe('group-1');
       expect(where.awaitingAdmission).toBe(true);
-      expect(where.userId.value).toEqual(['user-2']);
+      expect(where.id.value).toEqual(['seat-2']);
       expect(set).toEqual({ awaitingAdmission: false });
     });
 

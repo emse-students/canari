@@ -89,15 +89,17 @@ The same trade `shared-ts` was deleted over applies here, and it is the same par
 
 ### `presence-audience.cases.json`
 
-The presence-audience question (WP-PRESENCE, 2026-10-18): `GET /api/presence` asks chat-delivery and
+The presence-audience question (WP-PRESENCE, 2026-10-18): `POST /api/presence` asks chat-delivery and
 social-service `{ viewerId, userIds }` and takes the union of the answers
 ([chat-gateway](services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)). Same
 two mechanisms as above: the two services validate it with ONE byte-identical module,
 `src/utils/presence-audience.ts` (declared in `declared-duplicates.mjs`, ONE spec in chat-delivery
 proving both copies - [test-suite-reform](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)),
 and this file pins what that module answers plus `maxUserIds`, the cap the gateway's
-`MAX_PRESENCE_USERS` must equal. Read by chat-delivery's `presence-audience.spec.ts` and by a test in
-`apps/chat-gateway/src/presence.rs`, which is why CI's gateway filter names `libs/contracts/` too.
+`MAX_PRESENCE_USERS` must equal - and the client's `PRESENCE_IDS_PER_REQUEST`, the size it splits a
+watchlist at. Read by chat-delivery's `presence-audience.spec.ts`, by a test in
+`apps/chat-gateway/src/presence.rs` (which is why CI's gateway filter names `libs/contracts/` too)
+and by the frontend's `presenceStore.contract.test.ts`.
 `expected: null` is a refusal: a malformed question is a 400, never an empty audience.
 
 ### `payment-amount-range.json`

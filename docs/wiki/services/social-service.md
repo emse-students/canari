@@ -101,6 +101,8 @@ its migrations are already recorded, so the query succeeds there whatever the co
   failure costs more than a retry.
 - Tests: `post-media-retention.reels.spec.ts` (both passes failing, only one failing, a healthy schema).
 
+**UPDATE 2026-10-30 - THE ORDER ABOVE IS NO LONGER THE DEPLOY'S (checked while reviewing #2707, which adds `post_notifications.meta`, migration 117).** `deploy-environment.sh` now brings up ONLY postgres, runs `apply_migrations`, and only then replaces the services one by one (`rolling.sh`, #1563), so new code never reads a column before its migration on a deploy: a new column the whole API selects (`meta` on every notification read and insert) has NO few-seconds window of 500s. The two exposures that remain are narrower - a ROLLBACK across a migration (old code on a newer schema: harmless for an additive nullable column the old entity never names, as here) and a migration that fails (the script stops before any service is replaced). The 2026-10-02 incident above (069, and 090's deploy-window text) predates that order; no other column has been found exposed since it, so no backlog entry is opened for a general gap that the script no longer has.
+
 **A column every request would read (migration 090, 2026-10-17; the deploy-window reasoning below is HISTORICAL - since #1563 the deploy applies the migrations BEFORE it replaces any service, so only a rollback across a migration meets old code on a newer schema).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration. **Every INSERT does**: TypeORM lists each insertable column in its INSERT (`DEFAULT` for an absent value), so on a schema without 090 EVERY salon INSERT fails - a send with or without a client id, an edit, a reaction, a system notice - whole, storing nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole on such a schema. The delete locks the message ROW before the client id's advisory lock (`deleteChannelMessage`), so a delete racing an account erasure waits for it and writes no tombstone of the erased author. A tombstone is kept **30 days** (decision 2026-10-18): `ChannelRetentionScheduler.purgeExpiredClientTombstones`, daily at 03:50, deletes the ones whose `deletedAt` is older, at the instant it is handed. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
 
 **A salon row's broadcast and push come from an outbox (migration 093, 2026-10-18).** `sendMessage` inserts the row AND a `channel_message_fanout` entry (`messageId`, a `payload` holding the cleartext mentions and the seed frame the push carries) in ONE transaction, answers, then publishes `channel.message.created` and rings the phones off the request path; the entry is deleted only when BOTH were handed off (each failure is logged by branch). The entry cascades with its message. **What it covers: PROCESS DEATH and DATABASE failures (an audience, member or workspace read that throws) - NOT a Redis outage**: `RedisService.publish` swallows its own errors, so the frame counts as handed off and the entry is deleted.
@@ -184,7 +186,8 @@ added later without the pipe fails there.
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
 | DELETE | `/api/channels/:channelId` | Delete a salon outright - its row, its `channel_messages` and its distribution group. MANAGE_CHANNEL **or** MANAGE_WORKSPACE, and no confirmation argument - see "Deleting a channel" |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
-| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
+| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS). Optional `?actorDevice=`: the actor's committing device, echoed as `actorDeviceId` in `channel.member.kicked` |
+| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; `?actorDevice=` (the releasing device) required, same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced, throttled per user (60/min). Publishes `channel.member.removal-released` with `releasedBy` and `releasedByDevice` ([channel-encryption](../protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`). The whole-list PUT is gone since `minClientVersion` 1.2.7. MANAGE_WORKSPACE / MANAGE_ROLES |
@@ -782,8 +785,10 @@ all eight routes that answer a row, so a column added later is private until som
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
-**The Lydia Business private token is write-only (2026-10-16, migration 100).** `PUT :id/lydia-business-key`
-(`canManagePayoutAccount`) stores it encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
+**The Lydia Business private token is write-only (2026-10-16, migration 100).** Since enrolment lot 1 it is
+written ONLY by the internal `POST :id/lydia-account` at `business/create` (`setLydiaAccountId`); the old
+`PUT :id/lydia-business-key` is a shim answering `410 LYDIA_KEY_PASTE_RETIRED` and writing nothing
+([legacy-compatibility](../legacy-compatibility.md)). It is stored encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
 bound to the association and its vendor token) in `"lydiaBusinessKeyCiphertext"`, a column the entity
 maps `select`/`insert`/`update: false` and only raw SQL touches; `GET` on the same path answers `{ set }`.
 The one route that answers it decrypted is the internal `POST /api/internal/associations/lydia-callback-key`
@@ -906,7 +911,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -982,6 +987,112 @@ still applies first, in chat-delivery.
 old container).** Association post, recipients: follower, muted follower, non-follower member. The
 new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
 pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
+
+### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
+
+Every personal account is private (Q1 of the
+[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+`POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
+only the followed person's answer makes it `accepted`. An association, a list or an institution
+(`association_follows`) is followed at once and has no status.
+
+**Only an ACCEPTED row is a follow, and every reader says so through ONE fragment**,
+`acceptedFollowSql` in `follows/follow-status.ts`: the Suivis feed
+(`FollowsService.getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`),
+the personal republication's newly-reached rule (whose follower exclusion must match the sweep's,
+or a pending follower is told by neither) and the live push (`liveAudienceSql`). The erasure and
+the block severing delete rows whatever their status. A pending row in each of the three
+PostgreSQL specs fails its assertion when the fragment is replaced by `TRUE` (control, 2026-10-27).
+
+**The two defaults of migration 114 are deliberate.** The column is added with `DEFAULT 'accepted'`,
+which records every existing follow as accepted (decision 3); the default is then set to
+`'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
+seconds of a deploy, writes requests rather than follows.
+
+**114 also adds `acceptedAt`** (when the person said yes; existing follows backfilled from
+`createdAt`, a CHECK keeps every accepted row dated) **and `user_follow_notices`**, the durable
+"already told" of WP-F2: one row per (asker, person, kind), so a request deleted and asked again
+never notifies twice. The account erasure deletes both sides of it.
+
+**The schema on dev and production comes from this migration alone**: `synchronize` runs only
+when `NODE_ENV` is not `production`, and both estates pin `NODE_ENV: production` on
+social-service (`docker-compose.dev.yml`, `docker-compose.prod.yml`), so the entity's `pending`
+default never reaches an existing table there. A LOCAL database built by `synchronize` does get it,
+and its existing follows become requests - local only, and the dev seed writes `accepted`.
+
+**A request is ONE `INSERT ... ON CONFLICT DO NOTHING`** (`FollowsService.recordFollowRequest`),
+never a read then a write: a double tap used to read "no row" twice and 500 on the unique key. A
+conflict leaves an accepted follow accepted; `created` is true for the one call that wrote, so the
+request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
+
+`GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
+too, the meaning a client older than the request screens gives it
+([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
+WP-F3 (below).
+
+**Answering a request (WP-F2), `follows/follow-requests.service.ts`.** The follow routes moved out
+of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
+notifies through `PostsModule` - which already imports `FollowsModule`.
+
+- **Ask**: ONE `INSERT ... SELECT ... ON CONFLICT DO NOTHING` whose SELECT carries both conditions,
+  so neither is a check-then-insert: the target is a PERSON (a `users` row; an association's id or
+  an unknown one is 404 `FOLLOW_TARGET_NOT_FOUND`) and no block stands, either direction (403
+  `FOLLOW_BLOCKED` - core-service's block status already tells either side, so refusing hides
+  nothing). A MUTED account may not ask (403): a request is a push to a person. The route is
+  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together), and the same SELECT caps
+  the asker: `FOLLOW_PENDING_MAX` (100) unanswered requests at once (409 `FOLLOW_PENDING_LIMIT`)
+  and `FOLLOW_ASKS_PER_DAY` (50) NEW people told per rolling day, counted from the notice rows
+  (429 `FOLLOW_DAILY_LIMIT`; re-asking someone already told costs no push and is not counted). One
+  account cannot push its name to the whole directory (review 2026-10-27). **Both caps are counts,
+  so they hold only serialised**: under READ COMMITTED two statements counting at once see the same
+  total and both insert. Each ask is ONE transaction that first takes a transaction-scoped advisory
+  lock keyed by the asker, then inserts the request AND claims its `request` notice row, so the
+  next ask of the same account counts both - the daily cap reads the claims exactly, never a push
+  still on its way. Asks by different accounts never wait on each other. A request across a block
+  is not counted against the pending cap, as it is not in the asker's sent list either. Proof: the
+  PostgreSQL spec runs 24 asks at once at 99 pending and at 49 told, and exactly one is written.
+- **The block race**: an ask whose statement began before a block committed, and committed after
+  the severing ran, re-reads the block once its insert committed - the block committed BEFORE the
+  severing was called, so the read sees it - and deletes the row it wrote, refusing 403. The
+  notification path re-reads the block too, just before it writes anything, so an acceptance racing
+  a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
+- **Told once per pair, from durable state**: the first `follow_request` (and the first
+  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies (a
+  request's claim is made in the ask's transaction, above; a claim whose notice is never sent - the
+  ask retracted, a block landing before the push, a notification that throws - is released, so the
+  pair never reads as told when nobody was), so
+  ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
+  row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
+  again; a claim whose notification then failed is logged and not retried.
+- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which dates
+  `acceptedAt` and takes the row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
+  block term is in the statement because the block severing is a best-effort cross-service call.
+  The asker gets `follow_accepted`.
+- **Refuse**: the row is deleted, nobody is told, the asker may ask again. The request's bell row
+  goes with it, as it does on a withdraw; an acceptance keeps its history.
+- **Withdraw / unfollow**: ONE `DELETE ... RETURNING status`, so a withdrawn REQUEST's bell row is
+  dropped on the status the delete itself returned, never a read a racing accept could outdate.
+- **Pushes**: `social_follow_request` / `social_follow_accepted`, mapped by
+  `PostNotificationsService.pushContent` (pinned through the REAL mapping in
+  `follow-requests.integration.spec.ts`), with their native strings in both languages on both
+  platforms. A request carries the `follow-requests` target (`fr.emse.canari://follow-requests`,
+  the inbox), an acceptance the `notifications` one (its bell row opens the accepter's profile).
+  Both file under the `follows` category in chat-delivery, which the settings screen switches
+  (WP-F4).
+- **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
+  pending or accepted, both directions, and the `follow_request` bell rows between them (an
+  acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.
+
+**The caller's own lists (WP-F3).** `GET me/followers` (accepted, the most recently ACCEPTED first,
+each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
+told; the removed person may ask again, which is a new request that lands in the inbox without a
+second push - the notice is once per pair; a pending request is refused, not removed; the announce
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs,
+and the feed cache is dropped as on a block, so the removed person's Suivis does not keep serving
+this account's posts for its 30-second TTL) and `GET me/follow-requests/sent`
+(the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
+lists exist as routes: no rule says who may read another person's followers, so none is open. A
+pair a block stands between is left out of every list, as of every reader.
 
 ### Who may touch a calendar event
 
@@ -1138,6 +1249,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.joined` | **channel creation**, join, invite accept, admin join, member added |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
+| `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
@@ -1253,11 +1365,65 @@ this is what the code does.
 
 | Operation | What it checks now | Refusal |
 |---|---|---|
-| `leaveWorkspace` | the leaver is not the sole admin while others remain | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
-| `acceptWorkspaceInvite` | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
+| `leaveWorkspace` | the leaver is not the sole admin while others remain | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `400` early, `409` under the lock: `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `setRoleBasePermission` (revoking `workspace.manage`) | someone still holds a role carrying it, or the community has no members | `409 WORKSPACE_WOULD_HAVE_NO_ADMIN` (asked under the lock only) |
+| `acceptWorkspaceInvite`, `inviteToChannel` (a new member) | the community still has at least one member | `404 WORKSPACE_HAS_NO_MEMBERS` |
 | `internal DELETE users/:id` | cannot refuse - repairs instead, see below | - |
+
+**The check is asked twice: early, then under the lock where the write happens (2026-10-26).** The
+early answer (`400`) comes before anything is asked of another service, and it cannot see a write
+that commits after it. So every write that can shrink the admin set runs inside the community
+removal lock (`withCommunityRemovalLock`, or the departure's roster write) and decides again there,
+from what holds then; the one that would break the invariant is refused `409
+WORKSPACE_WOULD_HAVE_NO_ADMIN` and writes nothing. The client names the code whichever status
+carries it (`describeCommunityRefusal`), the role-permission grid and the member role picker
+included. What holds, exactly:
+
+- **A leave and a kick** ask `assertExitKeepsAnAdminLocked` in their roster write.
+- **Every role change** (`updateWorkspaceMemberRole`) writes under the lock, whatever its early
+  reads said. There it reads again the target's row, the actor's row and the roles of both and of
+  the new role - the role rows share-locked, so no permission edit lands before the commit - and
+  decides from them: the actor's bound (`actorMayGrantRole`, and `role.manage` itself), whether the
+  change now DEMOTES (a role that lost `workspace.manage` since the early read makes a promotion a
+  demotion), and, if it does, the last-admin postcondition. A target re-roled since the early read
+  is refused `409 MEMBER_CHANGED_MEANWHILE`.
+- **Every edit of what a role grants** (`setRoleBasePermission`) and **every role creation**
+  (`createRole`) write under the lock, taken before the role row. There the actor's row and roles
+  are read again, and the actor's right to manage roles and its bound (`actorMayGrantRole`) are
+  asked of them. A revoke of `workspace.manage` also recomputes the admin set with the role's new
+  permissions, and is refused when it would be empty while the community has members.
+- **An account erasure** decides under the lock too, see below.
+- **An admission** (an invite link accepted, a salon invitation that creates a membership) asks
+  under the lock that the community still has members, and a salon invitation also asks there that
+  the inviter still holds a right to invite. **An invite link is written under the lock too**
+  (`createWorkspaceInvite`), after the actor's right to invite is asked again there; an erasure that
+  closed a community emptied its account's roles under the same lock, which is what refuses a link
+  then (the members check that follows is redundant defence). A community with no members therefore admits nobody, and stays empty until it
+  is deleted.
+- **A community's deletion** (`hardDeleteWorkspace`) asks its premise under the lock BEFORE its
+  first call to another service (the key groups): an administrator's deletion, that the deleter
+  holds `workspace.manage`; the last member's departure or an erasure, who is still a member. The
+  membership premise is asked again in the transaction that deletes the rows, which opens with the
+  lock; the deleter's right is not, since the key groups are gone by then and the rows must follow: an admission, a departure or a role change
+  commits before it (and is deleted with the community) or waits and finds it gone.
+
+**One lock order: the removal lock, then salon rows, then member and role rows.** A departure locks
+its community's private salons (`ORDER BY id`) BEFORE its guard reads member and role rows; a salon
+grant (`grantPrivateChannelAccess`) locks the salon before the grantee's row; a role change
+share-locks the role rows it decides on before its member `UPDATE`; a deletion deletes salons
+before members. So no two of them can each hold what the other waits on. The member rows read under
+the lock take no row lock of their own: every departure, every role change (an erasure's promotion
+included) and every admission holds the removal lock, and under READ COMMITTED a statement run after
+taking it sees the previous holder's commit. Other member-row writes (a voucher, a sort order, a
+read mark) take no removal lock; none deletes a row or touches `roleIds`, so none changes the
+answer asked here. Proven on PostgreSQL by `last-admin.integration.spec.ts`: each race commits (or
+starts) the second operation from a hook inside the first - after one of its reads, or inside its
+first call to chat-delivery - and, where the second must be waiting on a lock before the first goes
+on, waits for PostgreSQL to report it waiting, never for a clock. Every race case there fails on the
+code before 2026-10-26 (two with `40P01 deadlock detected`); the revoke case is a plain refusal, not
+a race.
 
 `listWorkspaceAdminIds` is the single definition of "admin": a member holding a role whose
 permissions include `workspace.manage`. It is the permission that can grant every other one back,
@@ -1271,19 +1437,32 @@ six tables in dependency order - `channel_messages`, `channel_members`, `channel
 Those six are the complete set: no other table in the database carries a `workspaceId` or a
 `channelId` (checked against `information_schema` on prod, 2026-08-18). `channel_key_distributions`
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
-sweep, which collects them once nothing accesses them again.
+sweep, which collects them once nothing accesses them again. Each caller names who may still be a
+member when the rows go (`anyone` for an admin's deletion, `nobody` after the last departure, the
+erased account alone for an erasure), asked under the lock; anyone else there refuses the deletion
+and is logged at error.
 
 **Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
 the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
-in turn: cut off its private channels, repair it as if the account were already gone - a community
-left with nobody is hard-deleted, one left with members but no admin promotes the survivor with the
-highest priority, then whose roles grant the most distinct permissions, then the lowest user id
-(custom roles all rank just above the base role, so among them what they grant decides) - and only
-THEN delete the membership row. A failed
-repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+in turn (`removeAccountFromOneWorkspace`), and the account's membership row is always the LAST thing
+to go, so a failure at any step leaves it and the erasure queue's retry finds the community again
 ([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
-community for ever. Logged at `warn` because an automatic promotion is something a human should be
-able to find afterwards.
+community for ever.
+
+- **The account is the last member** (`closeCommunityOfLastMember`, under the lock): the community's
+  invite links are deleted and the account's roles emptied, so neither door admits anyone, then the
+  community is hard-deleted, the account's row with it.
+- **Otherwise the account departs**, with `promoteSuccessorAdmin` as the departure's guard: under the
+  lock, in the transaction that deletes the account's row, a community left with members but no
+  admin promotes the survivor with the highest priority, then whose roles grant the most distinct
+  permissions, then the lowest user id (custom roles all rank just above the base role, so among
+  them what they grant decides). Logged at `warn`, because an automatic promotion is something a
+  human should be able to find afterwards. When everyone else left meanwhile, the guard refuses the
+  departure (the row stays) and the community is taken again as the last member's, up to three
+  times before the queue retries.
+- **No role carries `workspace.manage` at all**: the community was ungoverned before the erasure,
+  and the erased account was no admin of it, so its departure changes nothing about who governs.
+  The departure goes on, and the fault is logged at error - this path cannot repair it.
 
 ### One invite link, bounded (2026-08-18)
 
@@ -1364,11 +1543,98 @@ live").
 
 **The salon row is re-read `FOR UPDATE` in that transaction.** A roster write (`stripFromChannels`)
 removes the user from the locked row, never from the copy read before the lock, so an add granted in
-between is kept. An access-list rewrite compares the locked row with the copy its removals and first
-evictions were computed from; if the visibility or the allowlist changed, it is refused whole with
-`409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the allowlist and the
-write policy are left as the other edit wrote them, and a departure the first evictions began is
-settled `cancelled` like any abandoned one. A public salon made private gets its distribution group
+between is kept. An access-list rewrite compares the locked row's `accessRevision` with the one its
+removals and first evictions were computed from; if any access write landed since, it is refused
+whole with `409 CHANNEL_ACCESS_CHANGED`, which the settings panel names: the visibility, the
+allowlist and the write policy are left as the other edit wrote them, and a departure the first
+evictions began is settled `cancelled` like any abandoned one.
+
+### A member write updates columns, never saves the row it read (2026-10-25)
+
+**A member write must never insert a row.** A TypeORM `save` of a stale entity inserts it again,
+every column included, when the row was deleted in between - and also reverts every column a
+concurrent writer changed since the read. So a write to an existing row (`channel_members`,
+`association_members`, `channel_workspaces`) is ONE column-scoped `UPDATE` keyed by the row's `id`,
+and `affected !== 1` refuses the call with nothing written:
+
+- `setNotificationLevel` merges its one key in SQL (`notifLevels || jsonb_build_object`), so two
+  devices setting two salons keep both; 0 rows is `403`.
+- `updateWorkspaceMemberRole` and the association `updateMemberRole` are CONDITIONED on what their
+  bound was judged against (`AND "roleIds" = :judged`, `AND permissions = :judged`): 0 rows - the
+  member was re-roled or removed since - is `409 MEMBER_CHANGED_MEANWHILE`, which the client names.
+- `updateWorkspaceImage` and `updateWorkspaceHistoryVisibility` write their one column; 0 rows is `404`.
+- The successor an account erasure promotes is chosen under the community removal lock, in the
+  departure that deletes the account's row; every departure and every role change holds that lock,
+  so the rows it reads are current for that choice without a row lock (see
+  [the last-admin section](#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18)).
+
+Proven on PostgreSQL by `member-write-gone.integration.spec.ts` and
+`association-member-write-gone.integration.spec.ts`, each committing the other write between the read
+and the update. `save` stays for a row the call itself creates.
+
+**The same holds for a user's moderation record, a report and a role history entry:**
+
+- `muteUser` is ONE `INSERT ... ON CONFLICT ("userId") DO UPDATE` (the column's unique index), with
+  no read first, so two first mutes leave one record; `unmuteUser` is one `UPDATE` by user, `404` on
+  0 rows.
+- `reviewReport` writes its three review columns by id with no read first, and re-reads the row for
+  its answer: a party rewritten since stays as written, and 0 rows is `404`.
+- `updateRoleHistory` is CONDITIONED on the year its range check judged: an edit setting one year
+  only bounds its `UPDATE` with the OTHER year as read (`IS NULL` for none); a title-only edit, or
+  one setting both years, judged no stored year and is bounded by id and owner only. 0 rows answers
+  `404` when the entry is gone or no longer the caller's, and `409` when the judged year changed
+  meanwhile.
+- A tag's grant or renewal is one statement as well
+  ([cotisations](../cotisations.md#a-grant-or-renewal-is-one-statement-never-a-save-of-the-tag-it-read-2026-10-25)).
+
+Proven by `users/user-grant-write-gone.integration.spec.ts`, with the concurrent write committed
+from inside the service's own repository call.
+
+### An access rewrite names the revision it edited (2026-10-25)
+
+**The lock only protected the server's own read, never the client's.** The settings panel reads a
+salon's access once, when its tab opens, and every gesture there (a grant, the visibility toggle, the
+write policy) PATCHes the WHOLE list it holds. With no base in the request, `updateChannelAccess`
+diffed that list against its own fresh read, so anyone granted after the panel loaded fell in
+`dropped`: cut from the salon's key distribution and its list, answered 200, nothing on either
+screen. Reproduced on `1.4.1-alpha.3`: panel A showed two allowed, B granted W4, A granted W5 - W4 was
+cut (`reason=access_updated`, a `departed` row). The `FOR UPDATE` comparison could not see it: the
+grant had committed before the rewrite's read.
+
+**`channels."accessRevision"`** (migration 111, `int NOT NULL DEFAULT 0`) is raised by one on every
+write of `isPrivate`, `allowedUsers` or `writePolicy`, by EVERY writer: the rewrite itself, a grant
+(`grantPrivateChannelAccess` - an admin's join, an invitation into a private salon), a roster strip
+(`stripFromChannels` - a per-member removal, leaving a salon, a community departure or kick), and the
+account erasure's name drop. A writer that changes nothing (a strip of a user not listed) leaves it.
+
+- `GET /:channelId/access`, a successful `PATCH` and the per-member `DELETE /:channelId/members/:userId`
+  all answer the same shape, `channelAccessState`: `isPrivate`, `allowedUsers`, `writePolicy`,
+  `accessRevision`.
+- `PATCH /:channelId/access` takes `baseAccessRevision`. A base other than the row's is refused
+  `409 CHANNEL_ACCESS_CHANGED` BEFORE anything is minted or evicted, and again under the row lock;
+  the body carries `current`, the access as it stands. Two rewrites at the same base: exactly one
+  saves, the other is refused (pinned against PostgreSQL in `removal-bound.integration.spec.ts`,
+  together with the reproduced sequence above).
+- **The panel follows the revision.** Every gesture sends the one it holds. After a success it adopts
+  the answer when the answer is exactly `base + 1` (its own edit and nothing else), and reads the
+  access again otherwise; on `CHANNEL_ACCESS_CHANGED` it reads the access again and THEN names the
+  refusal, so the admin decides on the real list. Consecutive gestures need no reload.
+- **A request with no base (a client older than the revision) is read as the one gesture it can
+  be** (`baselessAllowList`). Every client the `1.0.3` floor admits runs the panel of `v0.18.29`:
+  Add sends the list it read plus its pick LAST, no write policy; the toggle sends the list and the
+  other visibility, empty when going private; the write policy sends the list, the visibility it
+  read and the policy. So a salon that stays private gains at most that last name (none on a policy
+  save) and loses nobody - an absence is not a removal, and a name present may have been revoked
+  since; and a request flipping the visibility WITH a write policy, or going private WITH a list,
+  is a panel that read the other visibility and is refused `409`. The shim and its removal are in
+  [legacy-compatibility](../legacy-compatibility.md).
+- **The per-member `DELETE` answers the row it locked, whole**: `stripFromChannels` copies the
+  visibility and write policy with the list and revision, so a panel adopting it at `base + 1` never
+  pairs that revision with a visibility read before the lock.
+- **The panel makes one access write at a time**: two of its own in flight would share a base, and
+  the second would be refused by the first.
+- **Rollback:** an image older than migration 111 writes no revision, so after rolling back and
+  forward a panel opened before the rollback can save over a write the old image made. A public salon made private gets its distribution group
 before the lock; when the change is then refused, the group is left, not retired: its id stays on the
 row, inert while the salon is public, reused by the next flip (the mint is idempotent), and possibly
 the group of a concurrent flip that did commit.
@@ -1392,8 +1658,43 @@ An invitation into a salon deleted meanwhile also takes back the membership it c
 with reason `invite_withdrawn`), so the `404` leaves nothing half-made.
 
 **Lock order.** Salon rows are locked before membership rows everywhere: the grant (salon, then the
-grantee's membership), a departure (all the community's private salons, `ORDER BY id`, then the
-membership delete), and `hardDeleteWorkspace` (salons deleted before memberships).
+grantee's membership), a departure (the removal lock, all the community's private salons, `ORDER BY
+id`, then its guard's member and role reads and the membership delete), and `hardDeleteWorkspace`
+(the removal lock, then salons deleted before memberships). An access-list rewrite takes the removal
+lock, then its salon, then the community's membership rows, share-locked.
+
+### Every writer that ADDS to an allowlist asks membership under a lock a kick also takes (2026-10-25)
+
+**The lesson: a check re-asked under a lock must cover what the save ADDS, not only what it
+removes.** An access-list rewrite re-checked its stale revision and the members it dropped under the
+community removal lock, and never asked whether the people it granted were still members. A kick
+that strips no salon does not move the revision, so a kick committed while the rewrite waited on the
+lock was invisible to it - and the kick's own re-read sees only a grant committed BEFORE it. Found by
+cross-client row RM-5.
+
+**The rewrite asks it, twice, in the order every removal check already uses.** Early, before the
+salon's group is minted or any eviction begins, an unlocked preview (`assertGranteesAreMembers`
+beside the early `assertActorMayRemoveMembers`) refuses a grant of a non-member outright. Under the
+lock, the community's membership rows are read ONCE, share-locked, and handed to both checks: the
+actor's first (a kicked actor is answered `403`), then the grantees. Anyone absent refuses the whole
+save `409 CHANNEL_GRANTEE_NOT_MEMBER` with `current`, nothing written; the locked answer is the
+authority. Matched case-blind (an allowlist entry is lowercased, a membership row keeps its id as
+written). Only the names the save adds are judged - every name, when the salon becomes private.
+The panel reads the access again on that code, clears its pending pick, refreshes the member list it
+offers, then names the refusal (`chat_channel_grantee_not_member_error`); an older client shows its
+generic line. Not retryable as sent.
+
+**The other writers, audited - each already asked membership under a lock the kick serialises
+with:** `grantPrivateChannelAccess` (an admin's join, an invitation into a private salon) re-reads
+the salon `FOR UPDATE` and the grantee's membership `FOR SHARE`, and the kick locks salons before
+deleting the membership; a private `createChannel` names only its creator, who is the actor
+`assertActorMayRemoveMembers` re-reads under the removal lock. Strips, the per-member `DELETE`,
+leaving a salon and the erasure only remove; nothing outside social-service writes `allowedUsers`.
+A kick already strips every private salon naming its target from a row-locked re-read under the
+same lock, so no separate sweep is added: with every adder checked there, it would heal a state
+nothing produces. Pinned by `removal-bound.integration.spec.ts` (the kick committed while the
+rewrite is parked on the removal lock, the reverse order, a mixed-case membership id, and a flip
+whose actor was kicked while it waited).
 
 Pinned by `removal-bound.integration.spec.ts` (PostgreSQL: the gate parked on an uncommitted role
 change through `pg_blocking_pids`, the removal lock, a rewrite raced by another, a flip computed

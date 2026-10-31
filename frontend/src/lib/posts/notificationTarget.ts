@@ -1,4 +1,5 @@
 import type { PostNotification } from './api';
+import { BOOKINGS_HREF } from '$lib/bookings/routes';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
@@ -6,6 +7,12 @@ import { formResponsesRoute } from '$lib/forms/responsesLink';
  * notification and its push (`fr.emse.canari://republication-requests`) both land.
  */
 export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
+
+/**
+ * The reader's inbox of follow requests (WP-F4) - where a `follow_request` notification and its push
+ * (`fr.emse.canari://follow-requests`) both land.
+ */
+export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests';
 
 /**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
@@ -52,11 +59,20 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     // look up: `resolveNotificationHref` owns these two.
     case 'repost_proposed':
     case 'coorganise_proposed':
+    case 'lydia_payments_active':
+    case 'lydia_payments_paused':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
     case 'repost_personal_requested':
       return REPUBLICATION_REQUESTS_ROUTE;
+    // A person asks to follow the reader (WP-F4): the inbox where it is answered. `postId` is the
+    // ASKER's id, never a post.
+    case 'follow_request':
+      return FOLLOW_REQUESTS_ROUTE;
+    // The person the reader asked accepted: their profile. `postId` is that person's id.
+    case 'follow_accepted':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -76,6 +92,13 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'live_suspended':
     case 'live_withdrawn':
       return null;
+    // The bookings' notices (WP-N): `postId` is the BOOKING, which has no page of its own - the
+    // reader's bookings are listed on Reservations (a cancelled one there too, marked).
+    case 'booking_cancelled':
+    case 'booking_withdrawn':
+    case 'booking_added':
+    case 'booking_reminder':
+      return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -113,6 +136,14 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_cut',
   'live_suspended',
   'live_withdrawn',
+  'follow_request',
+  'follow_accepted',
+  'booking_cancelled',
+  'booking_withdrawn',
+  'booking_added',
+  'booking_reminder',
+  'lydia_payments_active',
+  'lydia_payments_paused',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -143,6 +174,9 @@ export function reportUnknownNotificationType(type: string): void {
 const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   repost_proposed: 'republications',
   coorganise_proposed: 'republications',
+  // An association's Lydia payments became active / were paused: its payments section.
+  lydia_payments_active: 'payments',
+  lydia_payments_paused: 'payments',
 };
 
 /**

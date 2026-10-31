@@ -33,9 +33,22 @@ describe('fetchJsonUnderProgressDeadline', () => {
       },
     });
 
-  /** Only `ok`, `status` and `body` are read, so a real `Response` would add nothing but a mock. */
-  const responding = (init: { ok?: boolean; status?: number; body: ReadableStream | null }) =>
-    ({ ok: init.ok ?? true, status: init.status ?? 200, body: init.body }) as unknown as Response;
+  /**
+   * Only `ok`, `status`, `headers` and `body` are read, so a real `Response` would add nothing but a
+   * mock. The content type is the API's unless a case says otherwise: who answered is read from it.
+   */
+  const responding = (init: {
+    ok?: boolean;
+    status?: number;
+    body: ReadableStream | null;
+    contentType?: string;
+  }) =>
+    ({
+      ok: init.ok ?? true,
+      status: init.status ?? 200,
+      headers: new Headers({ 'content-type': init.contentType ?? 'application/json' }),
+      body: init.body,
+    }) as unknown as Response;
 
   const run = <T>(fetchImpl: unknown, stallMs: number) =>
     fetchJsonUnderProgressDeadline<T>(
@@ -118,10 +131,28 @@ describe('fetchJsonUnderProgressDeadline', () => {
         responding({ ok: false, status: 503, body: { cancel } as unknown as ReadableStream })
       );
 
-    await expect(run(fetchFn, 1_000)).resolves.toEqual({ ok: false, status: 503 });
+    await expect(run(fetchFn, 1_000)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      origin: 'gateway',
+    });
     // An unread body holds the connection open, and a status is an ANSWER - there is nothing here
     // to wait for and nothing to parse.
     expect(cancel).toHaveBeenCalled();
+  });
+
+  // WHO ANSWERED travels with the status: a portal's 511 is not the server's refusal.
+  it('says a non-2xx without the API content type was the edge', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      responding({
+        ok: false,
+        status: 511,
+        body: { cancel: vi.fn().mockResolvedValue(undefined) } as unknown as ReadableStream,
+        contentType: 'text/html',
+      })
+    );
+
+    await expect(run(fetchFn, 1_000)).resolves.toEqual({ ok: false, status: 511, origin: 'edge' });
   });
 
   it('lets a transport failure through as itself, never as a stall', async () => {

@@ -24,14 +24,63 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))
     }
 
+    /// Whether an external commit built on this served GroupInfo would bring THIS device in as a
+    /// FURTHER DEVICE OF A MEMBER: its tree holds a leaf of this device's user, and none of this
+    /// device's own (2026-10-27).
+    ///
+    /// THE SAME FACT A MEMBER'S `observe_merged_commit` READS, from the same tree: such a self-entry
+    /// is said there (`DeviceEvent::enters_as_unvouched_device`), so an honest device never makes
+    /// one - its recovery asks a member instead. A device whose own leaf is in the tree replaces it
+    /// (the observer sees the identity in `before`), and a user with no leaf there enters as a
+    /// person, which is the link's ask. Read off the unverified tree: the commit built on it is
+    /// verified by OpenMLS, and a tree that lies would only make this device ask instead of join.
+    ///
+    /// Decided again on every attempt, since every retry fetches a fresh GroupInfo.
+    pub fn external_join_is_a_further_device(
+        &self,
+        group_info_bytes: &[u8],
+    ) -> Result<bool, MlsError> {
+        let info = match MlsMessageIn::tls_deserialize(&mut &group_info_bytes[..]) {
+            Ok(msg_in) => match msg_in.extract() {
+                MlsMessageBodyIn::GroupInfo(gi) => gi,
+                _ => return Err(MlsError::InvalidData),
+            },
+            Err(_) => return Err(MlsError::InvalidData),
+        };
+        let Some(tree) = info.extensions().ratchet_tree() else {
+            log::warn!(
+                "[EXTERNAL_JOIN] the served GroupInfo carries no ratchet tree - nothing to read"
+            );
+            return Err(MlsError::InvalidData);
+        };
+        let own = String::from_utf8_lossy(self.credential.identity()).to_string();
+        let mut sibling = false;
+        for leaf in tree.ratchet_tree().leaves() {
+            let Ok(identity) = crate::members::credential_identity(leaf.credential()) else {
+                continue;
+            };
+            if crate::device_trust::same_identity(&identity, &own) {
+                return Ok(false);
+            }
+            sibling |= crate::device_trust::same_user(&identity, &own);
+        }
+        Ok(sibling)
+    }
+
     /// Join a group via an external commit, using a GroupInfo served by the delivery service. Builds
     /// the external commit (which adds THIS device's own leaf) and inserts the resulting group
-    /// locally with the commit STAGED. Mirrors the staged-commit regime: the caller submits the
-    /// returned commit for server epoch validation, then calls `merge_pending_commit_for` on accept.
-    /// An external commit CANNOT be cleared, so on reject the caller must `forget_group` and rebuild
-    /// from a fresher GroupInfo (self-service retry - this is what replaces the CAS/successor dance).
-    /// Returns `(group_id, commit_bytes)`. Refuses to clobber a group already held locally (a
-    /// concurrent Welcome may have landed first); rung-2 callers `forget_group` before calling.
+    /// locally. openmls 0.9 MERGES the commit inside `ExternalCommitBuilder::finalize`, so the group
+    /// is already at the epoch its commit creates and holds no openmls pending commit; "not yet
+    /// merged" is this crate's `pending_external_joins` marker, persisted in the sealed state. The
+    /// caller submits the returned commit for server epoch validation, then calls
+    /// `merge_pending_commit_for` on accept, which ends the marker and pins the tree. There is no
+    /// prior epoch to fall back to, so on reject the group is dropped whole
+    /// (`clear_pending_commit_for` forgets it) and the join is rebuilt from a fresher GroupInfo
+    /// (self-service retry - this is what replaces the CAS/successor dance). Pinned by
+    /// `external_join_pending_tests.rs`.
+    /// Returns `(group_id, commit_bytes)`. Refuses a group already held locally (a concurrent
+    /// Welcome may have landed first) with [`MlsError::GroupAlreadyHeld`], BEFORE anything is built;
+    /// rung-2 callers `forget_group` before calling.
     pub fn join_by_external_commit(
         &mut self,
         group_info_bytes: &[u8],
@@ -45,6 +94,21 @@ impl MlsManager {
             },
             Err(_) => return Err(MlsError::InvalidData),
         };
+
+        // A GROUP ALREADY HELD IS REFUSED BEFORE ANYTHING IS BUILT, and the order is the whole fix.
+        // `ExternalCommitBuilder::finalize` writes the joined group into the provider's storage
+        // under the group id - the SAME rows the live group is persisted in - so a guard placed
+        // after it (where this one used to sit) left the in-memory group intact and its durable
+        // rows overwritten: the next save carried the external join's group, and the next load
+        // resurrected it in place of the live one. Reached when a Welcome installs the group while
+        // a recovery for it is already on its way to this call (review of #2466). The id is read
+        // off the GroupInfo, unverified - which is enough to REFUSE: a wrong id refuses a join
+        // that would have failed verification anyway, and touches nothing.
+        let target_id =
+            String::from_utf8_lossy(verifiable_group_info.group_id().as_slice()).to_string();
+        if self.groups.contains_key(&target_id) {
+            return Err(MlsError::GroupAlreadyHeld(target_id));
+        }
 
         let group_config = MlsGroupJoinConfig::builder()
             .use_ratchet_tree_extension(true)
@@ -106,14 +170,6 @@ impl MlsManager {
         let (commit_msg_out, _welcome, _group_info) = commit_message_bundle.into_contents();
 
         let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
-
-        // Guard: never overwrite a live group we already hold (concurrent Welcome).
-        if self.groups.contains_key(&group_id) {
-            return Err(MlsError::OpenMls(format!(
-                "join_by_external_commit: group {} already present locally",
-                group_id
-            )));
-        }
 
         let commit = commit_msg_out
             .tls_serialize_detached()

@@ -68,9 +68,10 @@ describe('TauriMlsService.pauseSocket', () => {
     };
     NativeWebSocket.connect.mockResolvedValue(ws);
     const svc = new TauriMlsService() as unknown as Internals & {
-      connect(token?: string): Promise<void>;
+      connect(token: string, fence: number): Promise<void>;
+      socketFence(): number;
     };
-    await svc.connect('tok');
+    await svc.connect('tok', svc.socketFence());
     expect(svc.ws).toBe(ws);
 
     window.dispatchEvent(new Event('pagehide'));
@@ -91,13 +92,14 @@ describe('TauriMlsService.pauseSocket', () => {
       addListener: vi.fn().mockReturnValue(vi.fn()),
     });
     const svc = new TauriMlsService() as unknown as Internals & {
-      connect(token?: string): Promise<void>;
+      connect(token: string, fence: number): Promise<void>;
+      socketFence(): number;
       disconnectCallback: (() => void) | null;
       destroy(): void;
     };
     const cb = vi.fn();
     svc.disconnectCallback = cb;
-    await svc.connect('tok');
+    await svc.connect('tok', svc.socketFence());
 
     window.dispatchEvent(new Event('pageshow'));
     expect(cb).not.toHaveBeenCalled(); // socket still held: nothing to restore

@@ -30,7 +30,9 @@ import {
   realClick,
   until,
 } from './chat.mjs';
-import { answeringDialogs, RESOLVE } from './cdp.mjs';
+import { RESOLVE } from './cdp.mjs';
+import { closeOverlays } from './groupnav.mjs';
+import { GRANT_ADD_MARK, awaitGrantAdd, markGrantAddJs } from './grantpanel.mjs';
 import {
   currentLabelOf,
   decidePickerChoice,
@@ -54,6 +56,7 @@ export {
   wordingsOf,
 } from './messages.mjs';
 import { caption, captionWith, control, pluralPattern } from './messages.mjs';
+import { assertCampaignOwned, recordCreated } from './campaign.mjs';
 
 
 /**
@@ -128,9 +131,20 @@ export async function openCommunity(cx, name) {
   // WAITED FOR BY THE SELECTOR THE CLICK WILL USE. It used to wait on a text match, which any
   // element mentioning the community satisfies - the line the app logs on creation among them -
   // so the wait could pass while the rail button the next line needs was not on the page at all.
-  const listed = `[aria-label=${JSON.stringify(name)}]`;
+  //
+  // EXACT, OR THE NAME FOLLOWED BY THE UNREAD SUFFIX. Since #1452 a rail button with unread salons
+  // is labelled `<name>, <sidebar_community_unread_label>`, so an exact match found nothing on a
+  // member whose community already held messages - COMM-12's peer, every arm, on 1.5.0-alpha.1
+  // (2026-10-27). The `, ` keeps a prefix from matching a longer name.
+  const listed = `[aria-label=${JSON.stringify(name)}], [aria-label^=${JSON.stringify(`${name}, `)}]`;
   await awaitListed(cx, `!!${RESOLVE}(${JSON.stringify(listed)})`, 20000, 'the community', cx.port);
   await awaitAppSettled(cx);
+  // A SIDE PANEL LEFT UP COVERS THE RAIL. Below the `xl` breakpoint (the seats run 958-984 px wide)
+  // a `SidePanel` is an overlay with a full-screen scrim, so a settings or members panel a previous
+  // step opened takes the click meant for the community's rail button: COMM-7, -11, -14 and -21 all
+  // died on `whatIsOnTop: BUTTON ... z-side-panel-scrim` on the 1.5.0-alpha.1 replay (2026-10-27).
+  // The rail is what this gesture needs, so whatever covers it is closed by its own control first.
+  await closeOverlays(cx);
   const point = await realClick(cx, listed);
   await provesOpen(cx, name, 10000);
   return point.received ?? null;
@@ -222,6 +236,7 @@ export async function createCommunity(cx, name) {
   // CREATING SELECTS IT, so this leaves the client ready for the settings gestures - but that is
   // the app's behaviour and not this function's promise, so it is READ rather than assumed.
   await provesOpen(cx, name, 10000);
+  recordCreated({ kind: 'community', name, by: 'createCommunity' });
   return name;
 }
 
@@ -315,6 +330,7 @@ export async function createChannel(cx, name, { visibility = 'public' } = {}) {
   );
   await realClick(cx, `text=${submit}`);
   await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) >= 0`, 20000);
+  recordCreated({ kind: 'salon', name, parent: String(await openCommunityName(cx)), by: 'createChannel' });
   return name;
 }
 
@@ -337,21 +353,48 @@ export async function openCommunitySettings(cx) {
       `openCommunitySettings: the panel now names ${JSON.stringify(shown)}, not ${JSON.stringify(expected)}`
     );
   }
+  // AND THE COMMUNITY MUST BE THE CAMPAIGN'S (R5). This panel is where a community is deleted, left,
+  // re-roled, purged of members and re-permissioned, so it is the one place that can refuse all of
+  // them on a tester's community of the shared dev estate.
+  assertCampaignOwned({ kind: 'community', name: expected }, 'openCommunitySettings');
   // IDEMPOTENT, because the gear is COVERED once the modal is up: clicking it a second time lands
   // on the overlay and the wait then times out on a modal that was already open. Detected by
   // "Quitter la communaute", which only this modal draws - the three tab captions are ordinary
   // words that appear elsewhere in the page, which is the whole subject of `communityTab` below.
-  const marker = JSON.stringify(caption('chat_community_leave_button'));
-  const alreadyOpen = await evaluate(cx, `document.body.innerText.indexOf(${marker}) >= 0`);
-  if (alreadyOpen !== 'true' && alreadyOpen !== true) {
+  //
+  // AND A MODAL THAT IS CLOSING IS NOT OPEN (2026-10-26). `setHistoryVisibility` ends in
+  // `clearOverlays`, which returns once the overlay count drops - while the panel is still in the
+  // DOM, animating out. Read by text, that panel was "already open", the gear was skipped, the panel
+  // finished closing, and BIG-3-noI1's `inviteLink` then clicked "Membres" on whatever was left: the
+  // CHANNEL member list, and twenty seconds waiting for an invite field it never has. Measured live:
+  // `moving` at 0 ms after the history save, `absent` from 55 ms. So the state is read as
+  // open / moving / absent (`SETTINGS_MODAL_STATE`), and a moving panel is waited out - on the FACT
+  // that it stopped moving, never a duration - before deciding.
+  await until(cx, `${SETTINGS_MODAL_STATE()} !== 'moving'`, 5000);
+  if ((await evaluate(cx, SETTINGS_MODAL_STATE())) !== 'open') {
     await realClick(cx, `[aria-label=${JSON.stringify(caption('sidebar_community_settings_title'))}]`);
   }
-  await until(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_community_overview_tab'))}) >= 0`,
-    10000
-  );
+  // OPEN AND SETTLED, which the overview caption alone could not say: that caption also stays in the
+  // page after the panel is gone (measured the same day), so it proved nothing about the panel.
+  await until(cx, `${SETTINGS_MODAL_STATE()} === 'open'`, 10000);
 }
+
+/**
+ * The community-settings panel as `open`, `moving` (opening or closing) or `absent`, read from the
+ * one control only this panel draws ("Quitter la communauté") and the animations on it or above it.
+ * Browser-side source, built here so the caption is never spelt in this file.
+ */
+export const SETTINGS_MODAL_STATE = () => `(function () {
+  var want = ${JSON.stringify(caption('chat_community_leave_button'))};
+  var el = [].slice.call(document.querySelectorAll('body *')).filter(function (b) {
+    return [].some.call(b.childNodes, function (n) { return n.nodeType === 3 && n.nodeValue.indexOf(want) >= 0; });
+  })[0];
+  if (!el) return 'absent';
+  for (var n = el; n && n !== document.body; n = n.parentElement) {
+    if (typeof n.getAnimations === 'function' && n.getAnimations().some(function (a) { return a.playState === 'running' || a.playState === 'pending'; })) return 'moving';
+  }
+  return 'open';
+})()`;
 
 /**
  * Switches the community-settings modal to one of its three tabs, OPENING IT FIRST.
@@ -414,16 +457,16 @@ export async function inviteLink(cx) {
  *
  * THE PANEL'S LIFETIME BELONGS TO WHOEVER OPENED IT, and nothing used to force the close. The
  * gestures that act inside a panel - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` -
- * deliberately leave it up, because their callers usually have more to do in there; only `Save`
- * genuinely ends the interaction, which is why `saveChannelAccess` is the one that clears. So the
+ * deliberately leave it up, because their callers usually have more to do in there; since #1171 no
+ * gesture of the access panel ends the interaction (every control writes on its own). So the
  * obligation lands on the check, and five checks out of twelve had quietly dropped it.
  *
  * What that costs is not a warning. The panel is a `position: fixed` backdrop over the whole page,
  * so the NEXT gesture - a click on the composer, a click on a sidebar row - finds its element
  * present, visible, correctly sized and NOT ON TOP, and dies with `no stable element`. COMM-9/10 and
  * COMM-1 both failed that way on 2026-08-20, several steps downstream of the panel that was covering
- * them, and the same aftermath had already been paid for once at `saveChannelAccess` - where the fix
- * was applied to the single gesture that failed instead of to the class.
+ * them, and the same aftermath had already been paid for once at the panel's old Save gesture -
+ * where the fix was applied to the single gesture that failed instead of to the class.
  *
  * `finally`, so a body that throws still hands the screen back. A check that fails inside a panel is
  * a check whose own verdict is safe; leaving the panel up would take the rest of the RUN down with
@@ -454,6 +497,10 @@ export async function inPanel(cx, open, body) {
  */
 export async function openChannelSettings(cx) {
   await awaitAppSettled(cx);
+  // THE SALON'S PANEL IS WHERE IT IS DELETED AND ITS ACCESS REVOKED, so it is guarded like the
+  // community's (R5): the salon open now, in the community open now, must be the campaign's.
+  const salon = await selectedChannel(cx);
+  assertCampaignOwned({ kind: 'salon', name: salon, parent: String(await openCommunityName(cx)) }, 'openChannelSettings');
   await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
   await until(
     cx,
@@ -563,7 +610,7 @@ export async function openChannelAccess(cx) {
  * panel renders `<UserName>` and never shows an id. A check that needs ids reads them from the
  * database - which is where COMM-8 reads them anyway, since what it asks is what a device was sent.
  *
- * IT REFUSES OFF A CLOSED PANEL, for the reason {@link saveChannelAccess} does and one worse:
+ * IT REFUSES OFF A CLOSED PANEL, because a read off a closed panel is worse than no read:
  * `{isPrivate: null, allowed: [], writePolicy: null}` is EXACTLY what a private salon whose panel
  * has been closed reports, and it is also a perfectly plausible reading, so it travels all the way
  * into a verdict. COMM-23/24 recorded it on every run and failed a switch that had worked - the
@@ -607,25 +654,39 @@ export async function channelAccessState(cx) {
 }
 
 /**
- * Sets the open channel's visibility toggle to `wanted` and returns whether it had to move it.
+ * Flips the open channel's visibility toward `wanted` and reports what the SERVER made of it:
+ * `{ moved, landed }` - whether the toggle had to be pressed, and whether it now reads `wanted`.
  *
  * IDEMPOTENT BY READING FIRST, because the control is a toggle and not a pair of radio buttons: a
  * check that clicks it unconditionally sets the state it wanted exactly when the state was already
  * wrong, which is the one case it was not testing.
+ *
+ * THE TOGGLE IS THE SAVE, BEHIND A CONFIRMATION (#1171, 2026-09-28). The panel has no "Enregistrer"
+ * any more: pressing the switch asks `showConfirm`, and only the answer sends the PATCH, which the
+ * switch shows as `aria-busy` until it is answered. The panel flips `aria-checked` only on an
+ * accepted write, so a refusal (RM-6's `REMOVAL_EXCEEDS_ACTOR`) is `landed: false`, not a timeout.
+ * Until 2026-10-25 this waited for the flip with no confirmation answered, and timed out.
  */
 export async function setChannelPrivate(cx, wanted) {
   const before = await channelAccessState(cx);
-  if (before.isPrivate === wanted) return false;
+  if (before.isPrivate === wanted) return { moved: false, landed: true };
   await realClick(cx, 'button[role=switch][aria-checked]');
+  await confirmDialog(cx, 'common_confirm_button');
+  // SETTLED: the dialog gone and the switch not busy. The answer sets `privacySaving` in the same
+  // task as the confirm resolves, before any CDP round trip can look, so "not busy" after the
+  // dialog closed is the write answered - accepted or refused - never the write not yet begun.
+  const confirm = JSON.stringify(caption('common_confirm_button'));
   await until(
     cx,
     `(function () {
+       var open = [].slice.call(document.querySelectorAll('button')).some(function (b) { return (b.innerText || '').trim() === ${confirm}; });
        var sw = document.querySelector('button[role=switch][aria-checked]');
-       return !!sw && sw.getAttribute('aria-checked') === ${JSON.stringify(String(wanted))};
+       return !open && !!sw && sw.getAttribute('aria-busy') !== 'true';
      })()`,
-    5000
+    30_000
   );
-  return true;
+  const after = await channelAccessState(cx);
+  return { moved: true, landed: after.isPrivate === wanted };
 }
 
 /**
@@ -635,10 +696,12 @@ export async function setChannelPrivate(cx, wanted) {
  * value unconditionally is silent about the one case it was written for, which is the control
  * already holding something else.
  *
- * IT DOES NOT SAVE. `writePolicy` shares the access panel's one Save with the visibility toggle and
- * the allowlist, so a gesture that saved here would make a caller unable to change two things in
- * one round trip - and would hide which of them the server refused. {@link saveChannelAccess} stays
- * the caller's to invoke, once, deliberately.
+ * THE PICK IS THE WRITE since #1171 (2026-09-28): the panel has no Save any more, and the app sets
+ * the new label OPTIMISTICALLY, holds the trigger disabled while the request is in flight, and puts
+ * the old label back if the server refuses. So the label alone proves nothing: the helper returns
+ * only once the trigger is enabled again AND still names the wanted policy, which is the write
+ * having landed. The app flips the label and the disabled state in the same tick, so there is no
+ * window where the label matches before the request has started.
  *
  * @param cx the client with the access panel open (see {@link openChannelAccess})
  * @param policy `everyone` | `admins_moderators` | `admins` - the option VALUES, not their labels
@@ -653,11 +716,11 @@ export async function setChannelWritePolicy(cx, policy) {
     cx,
     `(function () {
        var trig = document.querySelector(${JSON.stringify(WRITE_POLICY_TRIGGER())});
-       return !!trig && trig.getAttribute('aria-label') === ${JSON.stringify(
+       return !!trig && !trig.disabled && trig.getAttribute('aria-label') === ${JSON.stringify(
          `${caption('chat_channel_who_can_write')} - ${wanted}`
        )};
      })()`,
-    5000
+    15000
   );
   return true;
 }
@@ -682,18 +745,14 @@ export async function grantChannelAccess(cx, displayName) {
   await until(cx, `!!${RESOLVE}('text=${displayName}')`, 8000);
   await realClick(cx, `text=${displayName}`);
 
-  const add = caption('common_add_button');
-  await until(
-    cx,
-    `(function () {
-       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-         return (x.innerText || '').indexOf(${JSON.stringify(add)}) >= 0;
-       })[0];
-       return !!b && !b.disabled;
-     })()`,
-    8000
-  );
-  await realClick(cx, `text=${add}`);
+  // THE PANEL'S OWN ADD BUTTON, never the first "Ajouter" on the page: see `grantpanel.mjs`.
+  const markAdd = markGrantAddJs({
+    placeholder,
+    add: caption('common_add_button'),
+    section: caption('chat_channel_add_user_label'),
+  });
+  await awaitGrantAdd(() => evaluate(cx, markAdd), 8000);
+  await realClick(cx, `[${GRANT_ADD_MARK}]`);
   await until(
     cx,
     `(function () {
@@ -796,46 +855,6 @@ export async function confirmDialog(cx, confirmKey, { typeText = null } = {}) {
   }
 
   await realClick(cx, `text=${label}`);
-}
-
-/**
- * Saves the access panel and waits for the app's own confirmation that it landed.
- *
- * `common_saved_label` IS THE WITNESS, not the click: the save is a request, and a check that
- * returns as soon as the button was pressed is timing the harness rather than the app. The label is
- * transient, so it is waited for rather than asserted afterwards.
- */
-export async function saveChannelAccess(cx) {
-  // IT REFUSES OFF A CLOSED PANEL, BY NAME. This save is the LAST gesture inside an
-  // `openChannelAccess` - it commits and then clears the modal itself - so wrapping the grant it
-  // follows in `inPanel` closes the panel first and the click below finds nothing. What that used
-  // to produce was `no stable element for selector: text=Enregistrer`, which reads as a caption
-  // that moved or a button the app failed to render, and sends the next hour into the frontend.
-  // COMM-22 lost six cycles to it. The panel's lifetime belongs to whoever opened it (methodology
-  // rule 26) and a rule the harness writes only in prose is one the harness will break (rule 21),
-  // so the seam says so instead.
-  const up = await evaluate(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) >= 0`
-  );
-  if (!up) {
-    throw new Error(
-      'saveChannelAccess: the access panel is not open - a grant is saved INSIDE openChannelAccess, ' +
-        'never through inPanel (which closes it) and never after one'
-    );
-  }
-  await realClick(cx, control('common_save_button'));
-  await until(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('common_saved_label'))}) >= 0`,
-    15000
-  );
-  // THE GESTURE ENDS WITH THE SCREEN CLEAR, and that is not tidiness. The settings modal stays up
-  // after a save, so the composer underneath it is covered: COMM-9/10 saved the roster, tried to
-  // post, and died on `no stable element` for a composer that was plainly in the DOM - which is the
-  // exact aftermath `clearOverlays` was written for. A gesture that leaves a modal behind is a fault
-  // in the gesture, not in the check that comes next.
-  return clearOverlays(cx);
 }
 
 /** Who may write in a salon: option value -> the label the app draws, from its own messages. */
@@ -950,8 +969,22 @@ export async function chooseOption(cx, trigger, optionLabel) {
  * It MARKS rather than returns a handle, for the same reason `revokeChannelAccess` does: the click
  * that follows goes through `realClick`, which hit-tests, and a hit-test needs a selector.
  */
-async function markMemberRow(cx, displayName) {
-  const marked = await evaluate(
+async function markMemberRow(cx, displayName, timeoutMs = 20_000) {
+  // POLLED UNTIL THE ROW IS THERE, because a row is drawn only once its member's profile lookup has
+  // settled (`membersByFamilyName`), so a roster can show one member before another. The roster wait
+  // in `openCommunityMembers` cannot stand in for it: it counts role controls, and the invite form's
+  // own control is one of them - two controls were "a roster" with only the creator listed (RM-4..6,
+  // 2026-10-25: no row for a member the panel drew a moment later).
+  const t0 = Date.now();
+  let marked = 'no-row';
+  while ((marked = await markMemberRowOnce(cx, displayName)) !== 'marked' && Date.now() - t0 < timeoutMs) await new Promise((r) => setTimeout(r, 250));
+  if (marked !== 'marked') throw new Error(`markMemberRow: ${marked} for "${displayName}" after ${timeoutMs} ms`);
+  return '[data-harness-member]';
+}
+
+/** One read of {@link markMemberRow}: 'marked' when the row was found and marked, else 'no-row'. */
+async function markMemberRowOnce(cx, displayName) {
+  return evaluate(
     cx,
     `(function () {
        var name = ${JSON.stringify(displayName)};
@@ -972,8 +1005,6 @@ async function markMemberRow(cx, displayName) {
        return 'marked';
      })()`
   );
-  if (marked !== 'marked') throw new Error(`markMemberRow: ${marked} for "${displayName}"`);
-  return '[data-harness-member]';
 }
 
 /**
@@ -1088,7 +1119,7 @@ export async function openCommunityMembers(cx) {
        return document.querySelectorAll(${JSON.stringify(ROLE_TRIGGER())}).length > 1;
      })()`,
     20000
-  ).catch(() => {});
+  ).catch((e) => console.log(`[openCommunityMembers] the roster shows at most one member after 20 s - read as it is: ${e.message}`));
   return communityMembers(cx);
 }
 
@@ -1572,7 +1603,12 @@ export async function pollCard(cx, question) {
          if (!card) return { present: true, cards: heads.length, options: [], ended: null, closable: null };
          var buttons = [].slice.call(card.querySelectorAll('button[aria-pressed]'));
          var options = buttons.map(function (b) {
-           var label = b.querySelector('span.truncate');
+           // STRUCTURAL, not by class: the label was \`span.truncate\` until it learnt to wrap
+           // (2026-09-23), and a class selector then read every label as '' (COMM-15, 2026-10-27).
+           // button > [progress bar] > content row > [selection icon, label].
+           var content = b.lastElementChild;
+           var row = content ? content.firstElementChild : null;
+           var label = row ? row.lastElementChild : null;
            var badge = b.querySelector('[role="button"]');
            return {
              label: label ? (label.innerText || '').trim() : '',
@@ -1625,99 +1661,130 @@ export async function submitPollVote(cx) {
 }
 
 /**
- * Closes a poll early, ANSWERING THE NATIVE CONFIRMATION and returning what it said.
+ * Closes a poll early, ANSWERING THE APP'S CONFIRMATION and returning what it asked.
  *
- * This is the one confirmation in the product that is a `window.confirm` rather than the styled
- * dialog every other destructive action uses - so it blocks the renderer, and every gesture in this
- * module would hang behind it. `answeringDialogs` accepts the real dialog rather than replacing it;
- * the returned message is the evidence that the app asked before closing, which is the whole
- * difference between a confirmed close and a click that closed a poll silently.
+ * IT WAS A `window.confirm` UNTIL #1798, which moved it into the app's own `showConfirm` dialog
+ * (the WebView drew the system one in English on Android). This answered the native one and saw
+ * none, so COMM-15 left the styled dialog open over the whole screen (`z-(--z-critical)`) and read
+ * "it never asked" (1.5.0-alpha.1, 2026-10-27).
+ *
+ * `ConfirmDialog` is an `alertdialog`, not a `dialog`. The confirming button carries the SAME caption
+ * as the card's close button, so it is clicked INSIDE that modal, never by caption across the page. The return keeps its shape -
+ * `[{ type: 'confirm', message }]` - so "the app asked before closing" stays one assertion.
  */
 export async function closePollCard(cx) {
-  const { dialogs } = await answeringDialogs(cx, () =>
-    realClick(cx, control('channel_poll_close_button'))
+  await realClick(cx, control('channel_poll_close_button'));
+  const question = caption('channel_poll_close_confirm');
+  const confirmLabel = caption('channel_poll_close_button');
+  const TAG = 'data-harness-poll-confirm';
+  await until(
+    cx,
+    `(function () {
+       var d = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true], [role=alertdialog][aria-modal=true]')).filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(question)}) >= 0;
+       }).pop();
+       if (!d) return false;
+       var b = [].slice.call(d.querySelectorAll('button')).filter(function (x) {
+         return (x.innerText || '').trim() === ${JSON.stringify(confirmLabel)} && !x.disabled;
+       })[0];
+       if (!b) return false;
+       b.setAttribute('${TAG}', '1');
+       return true;
+     })()`,
+    10000
   );
-  return dialogs;
+  try {
+    await realClick(cx, `[${TAG}]`);
+  } finally {
+    await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'ok'; })()`);
+  }
+  return [{ type: 'confirm', message: question }];
 }
 
 /*
- * THE PERMISSION GRID - two gestures, shared because two checks now drive it.
+ * THE PERMISSION GRID - two gestures, shared because three checks now drive it (COMM-6, COMM-20,
+ * RM-6). Copying them would have been the fourth time a gesture in this phase drifted between its
+ * callers.
  *
- * They were COMM-6's until COMM-20 needed the same table for a different question (what two
- * administrators editing one role at the same moment leave behind). Copying them would have been the
- * fourth time a gesture in this phase drifted between its callers.
+ * ONE CARD PER ROLE SINCE #1158 (2026-09-28), NOT A TABLE. The panel draws a `section` per role -
+ * a header pill `@<role>`, then a `li` per permission with its label and ONE cycling button; the
+ * locked administrator is a single line with no button. Until 2026-10-25 both gestures still read a
+ * `<table>` that had not existed for a month, so every grid row ended in "no moderator column" or a
+ * timeout waiting for `thead th` (RM-6 on alpha.3 and alpha.4).
  */
+
+/** The grid's sections, as a page-side expression: every `section` whose header pill names a role. */
+const ROLE_SECTIONS = `[].slice.call(document.querySelectorAll('section')).filter(function (s) {
+  var pill = s.querySelector('header span');
+  return !!pill && /^@/.test((pill.innerText || '').trim());
+})`;
+
+/** True once the grid has drawn at least one editable role (a section with buttons) - what a gesture waits on. */
+export const PERMISSION_GRID_DRAWN = `${ROLE_SECTIONS}.some(function (s) { return !!s.querySelector('li button'); })`;
+
 /**
- * The grid as the panel draws it: `{ permissions, roles, adminLocked }`.
+ * The grid as the panel draws it: `{ permissions, roles, adminLocked, cells }`.
  *
- * READ AS A TABLE, WHICH IS WHAT IT IS. Each `tbody` row is one permission and its first cell is
- * the label; each header cell after the first is a role. Nothing here depends on a class name -
- * the structure IS the meaning, and a restyling that changed the colours would not move a cell.
- *
- * `adminLocked` is the top role's column being disabled, which is the panel's own statement that
- * the administrator cannot be stripped of anything. Read from `disabled` rather than from opacity.
+ * `roles` are the section pills without their `@`, in the panel's order (priority descending, the
+ * administrator first). `permissions` are the labels of the first editable section - every editable
+ * section lists the same ones. `adminLocked` is the first section offering no button, the panel's
+ * own statement that the administrator cannot be stripped of anything. `cells[row][col]` is aligned
+ * with `permissions[row]` and `roles[col]`, read from each button's lucide glyph (the colour is a
+ * class and the wording a parameterised hint, neither of which a check may depend on); a locked
+ * section's cells are `allow`, which is what its single line says.
  */
 export async function permissionGrid(cx) {
   return JSON.parse(
     await evaluate(
       cx,
       `JSON.stringify((function () {
-         var table = document.querySelector('table');
-         if (!table) return { permissions: null, roles: null, adminLocked: null };
-         var head = [].slice.call(table.querySelectorAll('thead th'));
-         var roles = head.slice(1).map(function (th) { return (th.innerText || '').trim(); });
-         var body = [].slice.call(table.querySelectorAll('tbody tr'));
-         var permissions = body.map(function (tr) {
-           var cells = [].slice.call(tr.children);
-           return (cells[0] ? cells[0].innerText || '' : '').trim();
-         });
-         // The administrator is the FIRST column: the grid sorts roles by descending priority.
-         var lockedColumn = body.every(function (tr) {
-           var cell = tr.children[1];
-           var button = cell ? cell.querySelector('button') : null;
-           return !!button && button.disabled === true;
-         });
-         // EACH CELL'S STATE, READ FROM ITS ICON. The grid draws allow / deny / neutral as three
-         // lucide glyphs, and the icon is the only structural carrier: the colour lives in a class
-         // and the wording in a parameterised tooltip, neither of which a check may depend on.
-         // cells[row][col] is aligned with permissions[row] and roles[col].
-         var cells = body.map(function (tr) {
-           return [].slice.call(tr.children).slice(1).map(function (td) {
-             var svg = td.querySelector('button svg');
-             var cls = svg ? String(svg.getAttribute('class') || '') : '';
-             if (cls.indexOf('lucide-check') !== -1) return 'allow';
-             if (cls.indexOf('lucide-x') !== -1) return 'deny';
-             if (cls.indexOf('lucide-minus') !== -1) return 'neutral';
-             return null;
+         var sections = ${ROLE_SECTIONS};
+         if (!sections.length) return { permissions: null, roles: null, adminLocked: null, cells: null };
+         var roles = sections.map(function (s) { return (s.querySelector('header span').innerText || '').trim().replace(/^@/, ''); });
+         var editable = sections.filter(function (s) { return !!s.querySelector('li button'); });
+         var labelOf = function (li) { var p = li.querySelector('p'); return p ? (p.innerText || '').trim() : ''; };
+         var permissions = editable.length ? [].slice.call(editable[0].querySelectorAll('li')).map(labelOf) : [];
+         var adminLocked = !sections[0].querySelector('li button');
+         var stateOf = function (button) {
+           var svg = button ? button.querySelector('svg') : null;
+           var cls = svg ? String(svg.getAttribute('class') || '') : '';
+           if (cls.indexOf('lucide-check') !== -1) return 'allow';
+           if (cls.indexOf('lucide-x') !== -1) return 'deny';
+           if (cls.indexOf('lucide-minus') !== -1) return 'neutral';
+           return null;
+         };
+         var cells = permissions.map(function (label) {
+           return sections.map(function (s) {
+             if (!s.querySelector('li button')) return 'allow';
+             var li = [].slice.call(s.querySelectorAll('li')).filter(function (x) { return labelOf(x) === label; })[0];
+             return li ? stateOf(li.querySelector('button')) : null;
            });
          });
-         return { permissions: permissions, roles: roles, adminLocked: lockedColumn, cells: cells };
+         return { permissions: permissions, roles: roles, adminLocked: adminLocked, cells: cells };
        })())`
     )
   );
 }
 
 /**
- * Clicks the cell at (permission label, role column index), which CYCLES it.
+ * Clicks the cell at (permission label, role `column`), which CYCLES it. `column` keeps the
+ * numbering the table had - 1 is the first role - so a caller's index into `roles` plus one.
  *
- * The grid has no per-cell hook, so the cell is reached the same way it is read: by the row whose
- * first cell carries the label, then by column. The button is marked and clicked through the DOM
- * rather than hit-tested, because a table cell inside a horizontally scrolling container can sit
- * outside the viewport - and a `realClick` that scrolls the container first is a gesture about
- * scrolling.
+ * Marked and clicked through the DOM rather than hit-tested: the panel scrolls, and a `realClick`
+ * that scrolls it first is a gesture about scrolling.
  */
 export async function cyclePermissionCell(cx, label, column) {
   const outcome = await evaluate(
     cx,
     `(function () {
-       var body = [].slice.call(document.querySelectorAll('table tbody tr'));
-       var row = body.filter(function (tr) {
-         var first = tr.children[0];
-         return first && (first.innerText || '').trim() === ${JSON.stringify(label)};
+       var section = ${ROLE_SECTIONS}[${column} - 1];
+       if (!section) return 'no-role';
+       var li = [].slice.call(section.querySelectorAll('li')).filter(function (x) {
+         var p = x.querySelector('p');
+         return p && (p.innerText || '').trim() === ${JSON.stringify(label)};
        })[0];
-       if (!row) return 'no-row';
-       var cell = row.children[${column}];
-       var button = cell ? cell.querySelector('button') : null;
+       if (!li) return section.querySelector('li') ? 'no-row' : 'locked';
+       var button = li.querySelector('button');
        if (!button) return 'no-button';
        if (button.disabled) return 'disabled';
        button.click();

@@ -2,7 +2,6 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import '../app.css';
-  import { DEFAULT_PUBLIC_APP_ORIGIN } from '$lib/utils/publicAppUrl';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
@@ -19,6 +18,7 @@
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -45,8 +45,6 @@
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
-  import NewDeviceBanner from '$lib/components/shared/NewDeviceBanner.svelte';
-  import JoinRequestBanner from '$lib/components/shared/JoinRequestBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -127,7 +125,10 @@
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
-  beforeNavigate(({ from, to }) => {
+  beforeNavigate(({ from, to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
@@ -145,6 +146,8 @@
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
     if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    // Its iOS twin: the proximity sensor a reloaded page may have left armed.
+    if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -178,7 +181,7 @@
       endSession: async (userId) => {
         await clearAuthLocally();
         await globalSession.releaseDeletedAccount(userId);
-        await goto(resolve('/login'), { replaceState: true });
+        await goto(resolve('/login'), { replace: true });
       },
     });
 
@@ -226,7 +229,11 @@
       // Small delay lets the Android Activity bind to the UI before the native permission prompt.
       const timer = setTimeout(() => {
         startPushService(
-          globalSession.historyBaseUrl || DEFAULT_PUBLIC_APP_ORIGIN,
+          // The delivery service's own base URL, the one every other caller passes. It is never empty
+          // (`deliveryUrl()`: the page's origin in a browser, the baked `VITE_DELIVERY_URL` in Tauri),
+          // so the production origin that used to stand behind it here was a fallback that could
+          // only ever have sent a dev or local build's push registration to production.
+          globalSession.historyBaseUrl,
           globalSession.authToken,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));
@@ -510,6 +517,7 @@
    * loses is the slide - `afterNavigate` still plays the entrance the app had before.
    */
   onNavigate((navigation) => {
+    if (navigation.shallow && navigation.type === 'goto') return;
     const slide = swipeNavSlide;
     swipeNavSlide = null;
     if (!slide) return;
@@ -599,7 +607,10 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;
@@ -683,10 +694,6 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
-    <!-- A device joined this account: a security fact the owner must see, until seen. -->
-    <NewDeviceBanner />
-    <!-- A new person asking to join a group: only a member's own Add lets them in, so it waits here. -->
-    <JoinRequestBanner />
     <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
@@ -742,25 +749,10 @@
           bind:this={pageScrollWrap}
           class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
-          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
-               where no URL bar does, and carries no member's id. -->
-          <svelte:boundary
-            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
-          >
-            {@render children?.()}
-            {#snippet failed(_error, reset)}
-              <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-                <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
-                <button
-                  type="button"
-                  onclick={reset}
-                  class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
-                >
-                  {m.common_retry_button()}
-                </button>
-              </div>
-            {/snippet}
-          </svelte:boundary>
+          <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
+               armed with `+error.svelte` and reported through `handleClientError` - one held here
+               could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
+          {@render children?.()}
         </div>
       </main>
 

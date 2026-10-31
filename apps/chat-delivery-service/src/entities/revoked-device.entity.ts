@@ -37,4 +37,18 @@ export class RevokedDevice {
    */
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   revokedAt: Date;
+
+  /**
+   * WHO banned the id, and therefore what the device holding it may do (migration 040):
+   * `'owner'` - revoked by its owner from another device, the holder must wipe and sign out;
+   * `'retired'` - abandoned by its own install's identity rotation, a holder may enrol again under a
+   * fresh id. NULL on a row written before the column: nothing recorded who, so it is READ AS
+   * `'owner'` (`revocationReasonOf`) - the reading that destroys a local state rather than letting a
+   * possibly-revoked device back in.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  reason: RevocationReason | null;
 }
+
+/** The recorded causes of a ban: see {@link RevokedDevice.reason}. */
+export type RevocationReason = 'owner' | 'retired';

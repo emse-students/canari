@@ -16,12 +16,13 @@
  *        bun login.mjs --device W1 --flow cas
  */
 import { accountFor } from './accounts.mjs';
-import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
+import { connect, evaluate, judgedTarget, listTargets, noTargetsOnTransportFailure, realClick, untrustedBrowserPages } from './cdp.mjs';
 import { forwardIdpBrowser } from './phone.mjs';
 import { WEBVIEW_MATCH as IOS_WEBVIEW, signInThroughSheet } from './phone-ios.mjs';
 import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
-import { PORTS, SITE } from './names.mjs';
+import { PORTS } from './names.mjs';
+import { SITE } from './site.mjs';
 import { DEEP, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
 
 const argv = process.argv.slice(2);
@@ -107,8 +108,11 @@ const atAnIdP = (url) => IDP_HOSTS.some((h) => url.includes(h));
  * otherwise read as "no form at all".
  */
 const idpTargetOn = async (p) => {
-  const seen = await listTargets(p).catch(() => []);
-  const idp = seen.filter((t) => atAnIdP(t.url));
+  // ON THE PHONE'S OWN CHROME ONLY THE TAB WE ATTACH TO IS JUDGED (R1 low finding): that browser
+  // carries whatever its user left open, and none of it is driven here. Every candidate is an IdP
+  // page and is judged before a socket opens; the web path keeps judging every page it lists.
+  const seen = isPhone && p === TAB_PORT ? await untrustedBrowserPages(p).catch(noTargetsOnTransportFailure) : await listTargets(p).catch(noTargetsOnTransportFailure);
+  const idp = seen.filter((t) => atAnIdP(t.url)).map(judgedTarget);
   if (idp.length <= 1) return idp[0] ?? null;
   for (const t of idp) {
     const c = connect(t.webSocketDebuggerUrl);
@@ -586,7 +590,7 @@ for (let n = 0; n <= MAX_STAGES; n++) {
 let probe = tabTarget ? null : await appCx();
 const appProbe = async () => {
   if (probe) return probe;
-  const seen = await listTargets(port).catch(() => []);
+  const seen = await listTargets(port).catch(noTargetsOnTransportFailure);
   const app = seen.find((t) => onTheApp(t.url));
   if (!app) return null;
   const next = connect(app.webSocketDebuggerUrl);

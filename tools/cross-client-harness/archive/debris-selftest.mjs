@@ -24,8 +24,10 @@
  * runners mint, never by relaxing a shape.
  */
 import { readdirSync, readFileSync } from 'node:fs';
-import { isGroupDebris } from '../debris.mjs';
+import { isCommunityDebris, isGroupDebris } from '../debris.mjs';
 import { mark } from '../marker.mjs';
+import { REMOVAL_ROWS } from '../removalrows.mjs';
+import { ROW_GROUPS, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 
 const problems = [];
 const swept = (name, why) => {
@@ -62,6 +64,13 @@ swept(`N17B-${mark('G').split('-')[1]}`, 'notif17b.mjs:137');
 // throwaway has that a sweep may delete.
 swept(`SBXORD-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox ORD');
 swept(`SBX7-${mark('G').split('-')[1]}`, 'newgroup.mjs --sandbox 7');
+// mlsrow.mjs `mintRowGroup` -> `rowGroupName(rowId)` (rowkit.mjs), one per 1.4.1 row group, built by
+// the minting expression itself. The row's MESSAGE markers must stay out (a preview is not a group).
+for (const g of ROW_GROUPS) swept(rowGroupName(`${g}-1`), `mlsrow.mjs mintRowGroup for ${g}-1`);
+swept(rowGroupName('FLOOR-12'), 'a two-digit row number');
+spared(rowMessageMark('FLOOR-1', 'A'), 'a 1.4.1 row MESSAGE marker, never a group name');
+spared(rowMessageMark('CC-3', 'B'), 'idem');
+spared(`FLOOR-${Date.now().toString(36)}`, 'the row id with its dash is not a minted group');
 
 // ------------------------------------------------- and the blind spot that let N17B in, closed
 //
@@ -84,6 +93,8 @@ const MINTERS = new Set([
   'archive/notif17b.mjs', // N17B-<mark tail>         -> /^N17B-.../
   'archive/read.mjs', // READ10-<base36>          -> /^READ10-.../
   'newgroup.mjs', // HEALW2-<base36>, or --name (a person's, deliberately unswept)
+  'campaign-fixtures.mjs', // campaign-g2/-g4/-big: EQUIPMENT, deliberately unswept (spared below)
+  'mlsrow.mjs', // rowGroupName(rowId) = FLOOR2-<tail> -> /^(FLOOR|CC|...)\d+-.../
 ]);
 // `groupnav.mjs` DEFINES it and `atoms.mjs` re-exports it; neither names a group. This file quotes
 // the call in its own message.
@@ -120,6 +131,8 @@ for (const f of MINTERS)
 // ---------------------------------------------------------------- what must survive a sweep
 
 spared('Projet Canari', 'a group a person made');
+// THE CAMPAIGN'S FIXTURE GROUPS (R5) are equipment every row stands on, never debris.
+for (const g of ['campaign-g2', 'campaign-g4', 'campaign-big']) spared(g, 'campaign-fixtures.mjs fixture');
 spared('Famille', 'a group a person made');
 spared('canari', 'a lowercase word, not a stamp');
 spared('GRP', 'the bare prefix names no run');
@@ -148,6 +161,30 @@ spared('ORE0185', 'idem');
 spared('SBXORD', 'the sandbox prefix without a run mark names no run');
 spared('sbxord-k7p2a', 'lower case is not a stamp');
 spared(`SBXORD-${Date.now().toString(36)}-X`, 'no runner mints a trailing segment');
+
+// ---------------------------------------------------------------- communities (`isCommunityDebris`)
+const communitySwept = (name, why) => {
+  if (!isCommunityDebris(name)) problems.push(`community NOT swept but must be: ${name} - ${why}`);
+};
+const communitySpared = (name, why) => {
+  if (isCommunityDebris(name)) problems.push(`community SWEPT but must not be: ${name} - ${why}`);
+};
+// The salon runner (`archive/salon.mjs`) mints its community as `rowGroupName(id)`, one per run.
+for (const row of ['RM-4', 'RM-4b', 'RM-5', 'RM-6', 'RM-8']) communitySwept(rowGroupName(row), `salon.mjs rowGroupName('${row}')`);
+// The removal rows (`archive/removals.mjs`): `RM <row id without hyphens, ten letters>-<tail>`.
+for (const row of Object.keys(REMOVAL_ROWS)) communitySwept(`RM ${mark(row.replace(/-/g, '').slice(0, 10))}`, `removals.mjs for ${row}`);
+communitySpared(`RM ${mark('SOMETHINGE')}`, 'a stem no removal row mints');
+communitySpared('RM SALONREVOK', 'the stem without a run tail names no run');
+// The COMM checks' venues, one with its arm.
+communitySwept(`C8 ${mark('COMM8')}`, 'the COMM venue shape');
+communitySwept(`C12 shared ${mark('COMM12')}`, "COMM-12's arm between the two");
+// CONTROLS: the shared venue, a person's community, and a row prefix that mints no community.
+communitySpared('Canari Test Venue', 'the shared venue is never deleted');
+communitySpared('Le réseau des Marteaux', "a person's community");
+communitySpared('RM4', 'the prefix without a run tail names no run');
+communitySpared(rowGroupName('ADM-1'), 'ADM mints groups, never communities');
+communitySpared(`rm4-${Date.now().toString(36)}`, 'lower case is not a stamp');
+communitySpared(`RM4bb-${Date.now().toString(36)}`, 'one sibling letter, never two');
 
 if (problems.length) {
   for (const p of problems) console.error(`  FAIL ${p}`);

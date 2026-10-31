@@ -157,6 +157,106 @@ to `routeFrame` on each platform so that a held frame and a live one take litera
 Behaviour is in `BaseMlsService.inboundGate.test.ts` and `startGatewayHandshake.test.ts`; the boot
 ORDER, which no behavioural test can see, is in six source guards in `offlineUnlock.test.ts`.
 
+#### The device id is not final when the handshake starts (fixed 2026-10-25)
+
+The paragraph above said the socket "reads nothing" the state load produces. **That was wrong for one
+fact: the device id.** `init()` can ROTATE it (`reenrolLostState` for a kept id whose state is
+provably gone, a credential that names another device), and the gateway routes by the `device_id` in
+the socket URL. Reproduced on a web pre-release after a lost-state re-enrolment: the socket opened
+under the abandoned id about a second after the new one was minted, presence listed only the old id,
+the new id got its frames by queue and push only until the next reconnect, and the retirement of the
+old id signalled `device_revoked` to that same live socket (`gatewaySubscribers=1`). That frame did
+no damage - the handler asks the server about the CURRENT id, which is not revoked, and ignores it -
+but the socket was deaf to the device it belonged to.
+
+**The fix is at the rotation, one implementation for web and Tauri (`BaseMlsService`):**
+
+- `connect` is concrete on the base class and QUEUES every open. The platform half is
+  `openGatewaySocket(open)`, handed the id recorded for that socket and the token its caller
+  fetched, so the web open has no await before `new WebSocket` and a refused refresh is the
+  caller's `SessionExpiredError`, never an unauthenticated open. Two opens in flight together used
+  to let the first one's 15 s deadline close the second socket.
+- `rotateDeviceIdentity`, once the new id is on disk, queues a reopen: behind any open in flight,
+  and it replaces the socket only if one is open under another id - re-read after the reopen's own
+  token fetch - sending `disconnect` on the old one first, as a pause does. Without a socket it
+  opens nothing; the next open reads the new id.
+- **A pause FENCES the queue.** `pauseSocket` (backgrounding, a sign-out releasing a login) moves a
+  generation. Every caller of `connect` reads it (`socketFence()`) BEFORE its token fetch - the
+  await a backgrounded phone parks a reconnect in - and `connect` refuses a fence a pause has
+  passed. Every queued step and platform open re-reads it after each await (the token fetch, the
+  release of the previous native socket, the native connect) and touches no shared field once it
+  is stale; the native open lets go of the previous socket's fields BEFORE its await, never after,
+  so a late open cannot clobber a later one. An open still CONNECTING is settled at once as
+  `GatewayOpenAbandonedError` through a kept handle, so the queue never waits on the 15 s deadline.
+- `openGatewayConnection` reads that error as no failure: it logs no error and schedules nothing
+  itself. On the reconnect path the ladder's own retry is then refused by the pause flag, with its
+  line (`scheduleReconnectImpl`); the resume opens the next socket.
+- `openGatewayConnection` waits for `gatewaySocketSettled()` before the post-connect half, so the
+  pending fetch and the KeyPackage round run on the socket that will carry this device. A failed
+  reopen fails the connection like any open. On the login path, which has no ladder and whose
+  disconnect handler is registered only after the settle, the reconnect is scheduled there and
+  then; a reopen failing after the session is up is reported on the disconnect seam.
+- The revoked-KeyPackage round waits for the reopen before it republishes - the publication is
+  what makes the new id addressable - and then reads the new id's pending queue once.
+- An abandoned id is deleted only once no socket of this document carries it
+  (`deleteAbandonedDevice`); otherwise it stays recorded for the next published round, in one line.
+- A login stopped by a sign-out releases its socket after the queued reopen too, not at the
+  handshake.
+
+**The overlap is kept.** A login that does not rotate pays nothing; one that rotates pays a second
+handshake. Behaviour is in `BaseMlsService.socketRotation.test.ts`,
+`TauriMlsService.socketRotation.test.ts`, `startGatewayHandshake.test.ts` and
+`signOutDuringLogin.test.ts`.
+
+#### A destroyed client keeps no socket, and none lands on it later (2026-10-25)
+
+**The overlap opens the socket BEFORE the login knows it will succeed.** On the PIN path the server
+has accepted the PIN by then; on the unattended paths (biometric, vault, hardware-held "stay signed
+in") nothing has proved the key yet - the keystore read is inside `init`. That is on purpose (the
+measured 182 ms above), and it makes one more thing owed: **a login that fails releases the socket it
+opened.** It goes through `resetMls`, which destroys the client it built.
+
+What the code did, certain from reading it:
+
+- `destroy` did not FENCE the socket queue. A handshake still in its token fetch or its native
+  connect when the login failed (a fast failure: an empty keystore, a refused vault) landed AFTER
+  the destroy, assigned its socket to the destroyed client and started its heartbeat.
+- On the web, `destroy` did not close the socket at all, open or opening.
+- Nothing held that client any more. A pause, a reconnect and a sign-out all act on the CURRENT
+  client (`ensureMls()`), and a sign-out at the PIN gate has no session and no login in flight to
+  stop - so no path could ever reach the socket.
+- The socket stays alive by itself: the plugin's Rust reader (or the browser) answers the gateway's
+  protocol pings with no JS involved, and the gateway refreshes `user:online:{user}:{device}` on
+  every pong. Dropping a JS handle releases nothing; only a `Close` does.
+
+**The fix is the destroy.** It now runs the pause (the fence moves, an open in flight is settled as
+abandoned at once and releases whatever socket it later receives, `disconnect` is sent so the
+presence goes immediately) and marks the client retired: a `connect` on a destroyed client opens
+nothing and accuses its caller at `error`, because its fence can only match if it was taken after the
+destroy. Tests: `TauriMlsService.destroyFence.test.ts`, `WebMlsService.destroyFence.test.ts`.
+
+**The same failure catch also lowers what the login raised.** A login can fail AFTER
+`setIsLoggedIn(true)`, and its handshake's failed reopen may have armed the reconnect ladder by then.
+The catch reset the client but left the flag up and the rung armed, so the rung would have built a
+fresh, uninitialised client from the holder and connected it. The catch now clears that rung and
+lowers the flag - only when this login raised it, never another session's
+(`signOutDuringLogin.test.ts`).
+
+**The gateway's rule for a second socket of one device is to ADD it** (the comment at the
+registration in `apps/chat-gateway/src/handlers.rs`): sibling tabs, a reconnect overlapping its
+predecessor's close and a deploy overlap are all legitimate, and a sibling may sit on another
+process. So the gateway cannot tell a forgotten socket from a sibling, and releasing every socket it
+opened is the client's job - which is why the fix is here.
+
+**Owed, on an iPhone (TestFlight, server side only so far):** the reading that showed two sockets of
+one device at the PIN gate, both alive after a sign-out, fits this class but the app's own log was not
+read. To close it: on the build carrying this fix, reproduce (stay at the PIN gate after a failed
+unattended unlock, then sign out) and read in the app log `[INIT] Login did not complete (...)`
+(or `Login failed`) followed by `[WS] MLS client destroyed` and NO later `[WS] Connected to Chat Gateway`; on the gateway,
+one `Explicit disconnect` (or a close) per socket opened and no presence refresh for the device after
+the sign-out. A second socket that appears WITHOUT a failed login between the two is a different
+cause, and this fix does not claim it.
+
 The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
 an order between two statements inside a function that takes a live MLS client, a storage backend, a
 device key and a gateway, so there is no seam to observe it through short of running a whole
@@ -1266,9 +1366,14 @@ exhaustive case fails the day a code is added to the union and nobody decides wh
 ### Erasing a revoked device, and the 1.25 s that undid it
 
 `wipeRevokedDevice` (`session/sessionAuth.ts`) is the one consequence of one fact - this device is
-revoked - reached from the three places that can learn it: the PIN check at login, the
-`device_revoked` frame on a live session, and a vault or biometric login asking the server. Its
-steps are ORDERED, and the order is the whole mechanism:
+revoked - reached from the four places that can learn it: the PIN check at login, the
+`device_revoked` frame on a live session (`answerDeviceRevokedFrame`), a vault or biometric login
+asking the server, and the session-expired reaction when the refresh refusal says the session died
+BY this revocation (`settleSessionEndByRevocationImpl`, since 2026-10-25 -
+[sessions](../../sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)).
+It runs once per device: a discoverer arriving while it runs joins it, and one arriving after it
+completed finds the device in the page's completed-reset record and erases nothing again. Its steps are ORDERED, and the
+order is the whole mechanism:
 
 1. `tearDownLiveSession(ctx, cb, 'revoked')` - stop everything that is running.
 2. `resetMls()` - destroy the MLS client.
@@ -1363,7 +1468,7 @@ What the wipe reaches, per platform, is therefore:
 
 | Store | Web | Tauri |
 | --- | --- | --- |
-| MLS state | `CanariDBMls_<userId>` (IndexedDB) | `mls.bin`, via `delete_mls_state` |
+| MLS state | `CanariDBMls_<userId>` (IndexedDB) | `mls.bin`, via `terminer_session_mls` (`sweepState`) |
 | Messages and conversations | `CanariDB_<userId>` (IndexedDB) | `*.db` in the app data dir, via `clear_app_data` |
 | WebView stores | deleted | deleted - and this is the half that was missing |
 | Response cache, `localStorage`, `sessionStorage` | deleted | deleted |
@@ -1454,9 +1559,10 @@ WebView has measured the smaller half - which is how this survived two fixes.
 
 **A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
 `isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
-transport failure is not - so the wipe happens at the first login WITH a network and never on a dead
-link. One residue follows from the same fact: nobody is there to receive `notifyDeviceRevoked`, so
-the device's `auth_sessions` row lives to its 7-day expiry.
+transport failure is not - so the wipe happens at the first exchange WITH a network and never on a
+dead link. Since 2026-10-25 that first exchange is usually the refresh itself: the revocation ended
+the device's session server-side (`endDeviceSessions`), and the refusal says so
+(`DEVICE_REVOKED_BY_OWNER`), which the session-expired reaction answers with this wipe (DEV-3).
 
 
 #### The wipe's first step is what started the login that undid it
@@ -1552,7 +1658,9 @@ minutes. Only a relaunch recovered.
 SessionExpiredError`, `[AUTH] Session expired - redirecting to /login.` - 1 s BEFORE the callback's
 `got access_token`. It is NOT #1843's `connectivity.onReconnect` (that path is gated on
 `isLoggedIn` and never names the gateway), and nothing on this path changed between `v1.2.6` and
-`1.2.7-alpha.2`.
+`1.2.7-alpha.2`. (The gateway line of that timeline no longer exists: a session end logs `Gateway
+connection stopped - the session has ended`, and since 2026-10-30 a socket that could not open logs
+`[WS] Gateway connection failed`, once, by class - [offline-and-weak-network](../offline-and-weak-network.md#20-a-catch-up-that-gets-no-answer-stops-and-the-mailbox-is-owed-to-the-reconnect-2026-10-30).)
 
 **Two things outlived the sign-out, and only together do they lock the next sign-in out.**
 
@@ -1934,7 +2042,7 @@ no network still gets the honest `auth_server_unreachable`. `offlineUnlock.test.
 
 | Signal | Meaning | Offline unlock |
 |---|---|---|
-| `SessionExpiredError` (HTTP 401/403) | The server was reached **and refused us** | Never. Logs out. |
+| `SessionExpiredError` (HTTP 401/403 in core-service's Nest error envelope; an edge's 403, HTML or JSON, is transient, [chat](chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) | The server was reached **and refused us** | Never. Logs out. |
 | Any other `getToken()` rejection | Transport failure - the server said nothing | Proceeds on the two capable paths |
 
 That distinction is the rule the whole feature rests on: **a status code is an answer, a transport
@@ -2008,7 +2116,7 @@ about the network, the token or the server was wrong. Only the flag.
 | Terminator | Why it is a proof |
 |---|---|
 | `!ctx.isLoggedIn()` | There is no session to carry. |
-| `SessionExpiredError` (401/403 on the refresh cookie) | The server was reached **and refused us** - an answer. Logs out, redirects to `/login`. |
+| `SessionExpiredError` (401/403 on the refresh cookie, in core-service's JSON) | The server was reached **and refused us** - an answer. Logs out, redirects to `/login`. |
 
 A repeated transport failure is not an answer and may never end the loop. The cost that makes this
 safe rather than merely correct: the backoff caps at 30 s, so a stuck tab settles at **two connect

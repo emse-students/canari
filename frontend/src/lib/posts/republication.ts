@@ -7,11 +7,15 @@ import { AssociationPermissionFlag, type Association } from '$lib/associations/a
 import type { PostEntity } from './api';
 import { m } from '$lib/paraglide/messages';
 
-/** How many republishers the card names before it counts the rest ("+N"). */
-export const REPUBLISHED_BY_SHOWN = 3;
+/**
+ * How many republishers the card names before it counts the rest ("+N"). ONE since the line shares
+ * the time's row (user, 2026-10-24): "2 h . Republie par BDE +2" stays short on a phone, and the
+ * names are what truncates first.
+ */
+export const REPUBLISHED_BY_SHOWN = 1;
 
 /**
- * The "Republie par X, Y" line: the first `REPUBLISHED_BY_SHOWN` names, and how many more there
+ * The "Republie par X +N" line: the first `REPUBLISHED_BY_SHOWN` names, and how many more there
  * are. `null` when nobody republished the post, so the card draws no line at all.
  */
 export function republishedByLine(
@@ -22,6 +26,19 @@ export function republishedByLine(
     names: republishedBy.slice(0, REPUBLISHED_BY_SHOWN).map((a) => a.name),
     extra: Math.max(0, republishedBy.length - REPUBLISHED_BY_SHOWN),
   };
+}
+
+/**
+ * The words of that line - "Republie par BDE, BDS +2" - or `null` when nobody republished the post.
+ * The post header and the reel overlay both put it beside the time, so they read it from here.
+ */
+export function republishedByText(republishedBy: PostEntity['republishedBy']): string | null {
+  const line = republishedByLine(republishedBy);
+  if (!line) return null;
+  const names = line.names.join(', ');
+  return line.extra > 0
+    ? m.post_republished_by_more({ names, count: line.extra })
+    : m.post_republished_by({ names });
 }
 
 /**

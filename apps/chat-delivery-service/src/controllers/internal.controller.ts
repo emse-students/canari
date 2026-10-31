@@ -23,6 +23,7 @@ import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { Group } from '../entities/group.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
@@ -34,13 +35,34 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { ADMITTED_SEAT } from '../utils/group-membership';
-import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import {
+  sanitizeAccountUserId,
+  sanitizeIdentityValue,
+  sanitizeOptionalQueryValue,
+  sanitizeQueryValue,
+} from '../utils/sanitize';
 import { parseSessionId } from '../utils/session-id';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import {
+  eraseUserRedisTraces,
+  findRoutesOfUser,
+  markErasedDms,
+  purgeErasedDmKeys,
+} from '../utils/erasure-redis';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
+
+/**
+ * The asking device's seat in a key group, served WITH the base (`getDistributionGroup`): `none`
+ * (no row), `active`, or `pending` with `welcomeQueued` and - when the add lock was read -
+ * `addInFlight`.
+ */
+export type DistributionSeat =
+  | { status: 'none' | 'active' }
+  | { status: 'pending'; welcomeQueued: boolean; addInFlight?: boolean };
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -295,7 +317,7 @@ export class InternalController {
 
   /**
    * Which of `userIds` share at least one live conversation (DM or group) with `viewerId` - half of
-   * the presence audience the gateway enforces on `GET /api/presence` (WP-PRESENCE, decided by the
+   * the presence audience the gateway enforces on `POST /api/presence` (WP-PRESENCE, decided by the
    * user 2026-10-18). The other half, the communities, is social-service's
    * `POST /internal/presence/shared-communities`; each service answers about the tables it owns.
    *
@@ -431,13 +453,15 @@ export class InternalController {
     @Param('scope') scope: string,
     @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string,
-    @Query('userId') userId?: string
+    @Query('userId') userId?: string,
+    @Query('deviceId') deviceId?: string
   ): Promise<{
     groupId: string;
     groupInfo: string | null;
     baseEpoch: number | null;
     activeEpoch: number;
     memberDevices?: string[];
+    seat?: DistributionSeat;
   } | null> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
@@ -458,14 +482,24 @@ export class InternalController {
     const asked = String(userId ?? '')
       .trim()
       .toLowerCase();
-    const memberDevices = asked
-      ? (
-          await this.deviceGroupRepo.find({
-            where: { groupId: group.id, userId: asked },
-            select: { deviceId: true },
-          })
-        ).map((row) => row.deviceId)
+    const rows = asked
+      ? await this.deviceGroupRepo.find({
+          where: { groupId: group.id, userId: asked },
+          select: { deviceId: true, status: true },
+        })
       : undefined;
+    const memberDevices = rows?.map((row) => row.deviceId);
+
+    // THE ASKING DEVICE'S OWN SEAT, READ AFTER THE BASE ABOVE - the order is the guarantee. An Add
+    // writes its newcomers' `pending` seats and stores the base for the epoch it creates in one
+    // transaction, and holds the add lock until its Welcomes are queued; so a base that already
+    // carries an Add is answered with that Add's seat (`welcomeQueued` or `addInFlight`), and a
+    // joiner never builds on it as if nobody owed it a Welcome (channel-encryption section 20).
+    const askingDevice = sanitizeOptionalQueryValue(deviceId, 'deviceId');
+    const seat =
+      asked && askingDevice && rows
+        ? await this.distributionSeatOf(group.id, askingDevice, rows)
+        : undefined;
 
     // `published` ALONE WAS A LIE THE CLIENT ACTED ON. It answered "is there a base", never "is
     // that base usable", and a base behind `activeEpoch` is refused by the commit gate every time
@@ -474,7 +508,10 @@ export class InternalController {
     this.logger.log(
       `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}` +
         ` base=${info?.baseEpoch ?? 'none'} active=${group.activeEpoch}` +
-        (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '')
+        (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '') +
+        (seat
+          ? ` seat=${seat.status}${seat.status === 'pending' ? `(welcome=${seat.welcomeQueued},adding=${seat.addInFlight ?? 'unknown'})` : ''}`
+          : '')
     );
     return {
       groupId: group.id,
@@ -482,6 +519,35 @@ export class InternalController {
       baseEpoch: info?.baseEpoch ?? null,
       activeEpoch: group.activeEpoch,
       ...(memberDevices ? { memberDevices } : {}),
+      ...(seat ? { seat } : {}),
+    };
+  }
+
+  /**
+   * One device's seat in a key group, in the terms the client's one-door reading takes
+   * (`readWelcomeOwedFromRow`): `none`, `active`, or `pending` with the two facts. `addInFlight` is
+   * left out when the add lock could not be read - unknown, never `false`.
+   */
+  private async distributionSeatOf(
+    groupId: string,
+    deviceId: string,
+    rows: Array<{ deviceId: string; status: 'pending' | 'active' }>
+  ): Promise<DistributionSeat> {
+    const row = rows.find((r) => r.deviceId === deviceId);
+    if (!row) return { status: 'none' };
+    if (row.status !== 'pending') return { status: row.status };
+    const facts = await readPendingMembershipFacts(
+      this.queuedMessageRepo,
+      this.redis,
+      deviceId,
+      [groupId],
+      this.logger
+    );
+    const addInFlight = addInFlightOf(facts, groupId);
+    return {
+      status: 'pending',
+      welcomeQueued: facts.welcomed.has(groupId),
+      ...(addInFlight === undefined ? {} : { addInFlight }),
     };
   }
 
@@ -810,10 +876,21 @@ export class InternalController {
    */
   @Delete('users/:userId')
   async deleteUserData(
-    @Param('userId') userId: string,
+    @Param('userId') rawUserId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
     this.assertInternalSecret(headerSecret);
+    // Every Redis step below matches on `<userId>:`, so an id outside the mint rule (a ':' above
+    // all) would match another account's keys: refused before anything is read.
+    let userId: string;
+    try {
+      userId = sanitizeAccountUserId(rawUserId, 'userId');
+    } catch (e) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] REFUSED - the user id breaks the mint rule (length=${String(rawUserId ?? '').length})`
+      );
+      throw e;
+    }
 
     const who = userId.slice(0, 8);
     this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
@@ -822,11 +899,8 @@ export class InternalController {
     // THE KEY PACKAGES GO FIRST, AND ALONE. Every writer that admits a device into a group reads its
     // key package `FOR SHARE` under the group's seat lock (`heldKeyPackages`), so this delete waits
     // for every such writer holding one, and a writer after it finds none and writes nothing: the
-    // discovery below reads every row they wrote. TWO KNOWN EXCEPTIONS (`heldKeyPackages` names
-    // them): the demotion, and `MembersController.addGroupMember`, which reads the key packages
-    // outside any lock and writes the roster row and `pending` seats with no seat lock - so a peer
-    // holding a valid token can re-enrol an erased account by its id even after the final pass
-    // (backlog, P2 "addGroupMember can enrol an erased account"). What this does NOT stop is the account itself
+    // discovery below reads every row they wrote. ONE KNOWN EXCEPTION (`heldKeyPackages` names it):
+    // the demotion, which only updates a row that exists. What this does NOT stop is the account itself
     // bringing a key package back - every (re)connection republishes it (`register-device`), and
     // nothing refuses a token issued before the deletion for up to an hour. That is why the run
     // ends with a sweep (below), and why termination is the FINAL PASS's, never this ordering's:
@@ -867,6 +941,10 @@ export class InternalController {
       // deletion rather than infer it, and that party's dismissal markers are their own fact.
       if (dmGroups.length > 0) {
         const dmIds = dmGroups.map((g) => g.id);
+        // NAMED FIRST, in the account's erasure marker: the tombstone deletes every row that names
+        // these DMs for the account and commits before their Redis keys go, so a run that dies in
+        // between leaves keys only the marker still names ({@link purgeErasedDmKeys}, below).
+        await markErasedDms(this.redis, userId, dmIds);
         const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, dmIds);
         this.logger.log(
           `[INTERNAL_DELETE] ${dmIds.length} DM(s) deleted, ` +
@@ -928,12 +1006,56 @@ export class InternalController {
       );
     }
 
+    // ── Every route of the account no seat stands behind, wherever it still is ──
+    // FOUND off the routing sets themselves, not off a row: a run that died after a 1:1 DM's
+    // tombstone committed and before its Redis keys went left a route no row names, which this
+    // retry's discovery cannot reach. DECIDED under each group's seat lock against the account's
+    // active rows ({@link MessagingService.removeUnseatedRoutes}): a seat admitted after the sweep's
+    // read keeps its route beside its row, both cut by the final pass - a route removed alone would
+    // be written back by the next send's reconciliation, which would accuse a writer that did no
+    // wrong.
+    const found = await findRoutesOfUser(this.redis, userId);
+    let strayRoutes = 0;
+    let keptRoutes = 0;
+    for (const [groupId, routes] of found) {
+      const r = await this.messagingService.removeUnseatedRoutes(groupId, userId, routes);
+      strayRoutes += r.removed;
+      keptRoutes += r.kept;
+    }
+    if (strayRoutes > 0) {
+      this.logger.warn(
+        `[INTERNAL_DELETE] user=${who} ${strayRoutes} route(s) no seat stands behind outlived the ` +
+          `cuts above and were removed - left either by a run interrupted after a tombstone or by a ` +
+          `demotion whose route removal failed, which this line cannot tell apart; ${keptRoutes} kept beside their seat`
+      );
+    } else {
+      this.logger.log(
+        `[INTERNAL_DELETE] user=${who} no unseated route left; ${keptRoutes} kept beside their seat`
+      );
+    }
+
+    // ── Every other Redis fact naming the account's devices ──
+    // Stored welcome requests, removals waiting for their commit, pending notifications (its own,
+    // and frames naming it in another member's list), presence and sessions ({@link eraseUserRedisTraces}).
+    const traces = await eraseUserRedisTraces(this.redis, userId);
+    this.logger.log(
+      `[INTERNAL_DELETE] user=${who} Redis traces removed: pendingWelcome=${traces.pendingWelcome} ` +
+        `parting=${traces.parting} notifyFrames=${traces.notifyFrames} ownKeys=${traces.ownKeys}`
+    );
+
+    // ── Every Redis key of the DMs this erasure tombstoned, this run's or an interrupted one's ──
+    // Named by the account's erasure marker, never by a row: on a retry after a run died between a
+    // DM's tombstone and its keys, no row names that DM any more. The marker goes last.
+    const markedDms = await purgeErasedDmKeys(this.redis, userId);
+    this.logger.log(
+      `[INTERNAL_DELETE] user=${who} Redis keys of ${markedDms} tombstoned DM(s) deleted, marker cleared`
+    );
+
     // ── User's own records ────────────────────────────────────────────────
     // Everything still queued FOR the account, a frame with no group included. NO DEVICE ROW IS
-    // DELETED HERE: a row is what names its group's route, and only `eraseSeats` removes both under
-    // the seat lock - deleting a row here would leave the route of a seat admitted after the sweep's
-    // read with nothing left to name it, and the gateway would keep routing to it. Such a row is
-    // left standing for the final pass's discovery, which cuts it with its route. The one row that
+    // DELETED HERE: only `eraseSeats` deletes one, under the seat lock, with its queue and its route.
+    // A row of a seat admitted after the sweep's read is left standing, beside its route, for the
+    // final pass's discovery, which cuts both. The one row that
     // can follow THAT pass is the demotion's (`deactivateDeviceMembership`, the stale-device cron
     // among its callers, the one writer that inserts without reading the key package): `pending`,
     // its route removed by the demotion itself, and naming a device with no key package, which
@@ -964,8 +1086,13 @@ export class InternalController {
       // The account's eviction records: what refuses a claim it took before this erasure is the
       // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).
       manager.query(`DELETE FROM dm_seat_evictions WHERE "userId" = $1`, [userId]),
+      // The key groups its revoked devices held: a binding for a person nothing will answer for.
+      manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
+      // The groups it created live on for their members; the creator id only ever let it enrol
+      // itself into an empty roster, and `[deleted]` matches no caller.
+      this.groupRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
     this.logger.log(

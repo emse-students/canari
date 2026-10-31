@@ -33,11 +33,12 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { PHASES, devicesFor } from '../checks.mjs';
-import { awaitQuiet } from '../deploy.mjs';
+import { PHASES, devicesFor, fileRefusal } from '../checks.mjs';
+import { awaitQuiet, readEstateBuild } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
-import { srvLines } from '../estate.mjs';
-import { srvReport, srvSummary } from '../srvlog.mjs';
+import { ESTATE, srvLines, verifyTarget } from '../estate.mjs';
+import { SITE } from '../site.mjs';
+import { srvReport, srvSummary, windowRow } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
@@ -211,6 +212,20 @@ const SUBJECTS = new Set();
  *
  * @returns a sentence for the preflight to print, or '' when there was nothing to do
  */
+/**
+ * Whether the app holds POST_NOTIFICATIONS on the bound phone: true, false, or null when `dumpsys`
+ * does not say (an Android before 13 has no such runtime permission and answers nothing).
+ */
+function notificationGrant() {
+  try {
+    const m = /android\.permission\.POST_NOTIFICATIONS: granted=(true|false)/.exec(phone.sh(`dumpsys package ${phone.PKG}`));
+    return m ? m[1] === 'true' : null;
+  } catch (e) {
+    console.log(`  ??   A1  dumpsys package failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
 async function reviveThePhone() {
   const notes = [];
   try {
@@ -273,9 +288,9 @@ function sharedVenue() {
     return {
       ok: false,
       said:
-        `the shared venue "${VENUE.community}" IS NOT ON PRODUCTION - every runner that builds its ` +
-        'salon inside it will report an unlisted community. Recreate it with its ' +
-        `"${VENUE.channel}" channel and both accounts in it before running anything`,
+        `the shared venue "${VENUE.community}" IS NOT ON THE ESTATE - every runner that builds its ` +
+        'salon inside it will report an unlisted community. Build it with `bun campaign-fixtures.mjs --build` ' +
+        `(its "${VENUE.channel}" channel and the campaign accounts in it) before running anything`,
     };
   }
   const channelId = channelIdOf(workspaceId, VENUE.channel);
@@ -315,6 +330,17 @@ async function preflight(devices, { quiet = false } = {}) {
   // nothing (venue rename, 2026-09-04). The resolved path on line one is what makes that visible.
   console.log(`  ..   rig state: ${STATE_DIR}`);
 
+  // WHICH ESTATE, VERIFIED BEFORE EVERY RUN (R1, 2026-10-24). `site.mjs` has already refused
+  // anything but the local estate and dev at import; this RESOLVES the containers the run's reads
+  // will reach - on dev by compose label on its host - and names them, so the first line of every
+  // run says which database and which Redis it is about. A target that does not resolve is a
+  // problem, not a warning: a row whose reads fail mid-run records the rig's fault as the app's.
+  try {
+    console.log(`  ok   estate: ${ESTATE} (${SITE}) - ${verifyTarget().join(', ')}`);
+  } catch (e) {
+    problems.push(`the ${ESTATE} estate's containers could not be resolved: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // PRODUCTION MUST BE STILL BEFORE A CHECK TOUCHES IT. Prod IS the test server, and a push to
   // `main` restarts every container under whatever is running: on 2026-08-21 a commit touching only
   // `tools/` took out COMM-22's last two cycles, which reported `the salon never appeared in the
@@ -328,6 +354,16 @@ async function preflight(devices, { quiet = false } = {}) {
   if (quietProd.unknown) console.log(`  ??   production deploy state unknown - ${quietProd.unknown}`);
   else if (quietProd.waitedFor.length)
     console.log(`  ok   production is quiet again after ${Math.round(quietProd.waitedMs / 1000)} s`);
+
+  // ON DEV, THE BUILD THIS SESSION STARTS ON, named on its first lines (R4, 2026-10-24). Every row
+  // records its own start and end build through `watch()` and `gate()`, which voids a row a
+  // pre-release redeployed; this line is what a reader compares the rows against. A dev that cannot
+  // say which build it serves is a problem, not a warning: every row would record a blind window.
+  if (ESTATE === 'dev') {
+    const b = await readEstateBuild(SITE);
+    if (b.build) console.log(`  ok   dev serves ${b.build} (${b.version}) - a row whose window sees it change is VACUOUS`);
+    else problems.push(`dev's build could not be read: ${b.error}`);
+  }
 
   // WHICH BUNDLE THE WEB CLIENTS ARE RUNNING, asked ONCE and repaired per device below.
   //
@@ -398,6 +434,14 @@ async function preflight(devices, { quiet = false } = {}) {
       const locked = phone.deviceLocked();
       if (locked) problems.push('A1 is behind the DEVICE lock screen - every fetch inside the WebView hangs and the gateway drops it, whatever the probes below say. A human must unlock the phone; `wm dismiss-keyguard` will not.');
       else if (locked === null) console.log('  ??   A1  dumpsys trust would not say whether the device is locked - treating that as unknown, not as unlocked');
+      // THE NOTIFICATION PERMISSION, UNANSWERED, PUTS A SHEET OVER EVERY CONTROL. An install resets
+      // POST_NOTIFICATIONS, and the app then asks with a `z-(--z-critical)` rationale sheet once per
+      // process (`PushNotificationService` `push_permission_rationale`). OFF-5 on 2026-10-25 died in
+      // `createGroup` behind it, after a fresh alpha APK. Granting is a deliberate act on the bench
+      // phone (`pm grant`), so it is SAID here, not done.
+      const notif = notificationGrant();
+      if (notif === false) problems.push(`A1 has not been granted POST_NOTIFICATIONS (a fresh install resets it): the app's rationale sheet will cover the UI. Grant it once: adb shell pm grant ${phone.PKG} android.permission.POST_NOTIFICATIONS`);
+      else if (notif === null) console.log('  ??   A1  dumpsys package would not say whether POST_NOTIFICATIONS is granted');
     }
 
     // ONTO THE DEPLOYED BUNDLE BEFORE ANYTHING IS READ, and before the repair loop below - a reload
@@ -668,6 +712,12 @@ if (!named.length && !flag('all') && !flag('file')) {
 let jobs = [];
 let devices = new Set();
 
+/** `env` without the phone binding `phone.useDevice` set - for a child that drives no phone. */
+const withoutPhoneBinding = (env) => {
+  const { ANDROID_SERIAL: _bound, ...rest } = env;
+  return rest;
+};
+
 /**
  * Devices this run must do WITHOUT - `--without A1`, repeatable - and the rows that costs.
  *
@@ -727,14 +777,11 @@ if (flag('file')) {
         `--file ${f.split(' ')[0]} ${f.split(' ').slice(1).join(' ')}`
     );
   }
-  const chosen = devicesFor(f, forwarded);
-  // A NAME BELONGING TO NO PHASE SAYS SO. Falling back to the pair is the honest answer, but a silent
-  // fallback is indistinguishable from a phase that really does need only two browsers - which is why
-  // `devicesFor` returns the phase it resolved rather than only the devices.
-  if (chosen.phase === null) {
-    console.log(`  note ${f} belongs to no phase in checks.mjs - preflighting W1 W2 by default`);
-  }
-  for (const d of chosen.devices) devices.add(d);
+  // A NAME BELONGING TO NO PHASE IS REFUSED, AND SO IS A PATH. Both used to print a note and preflight
+  // W1 and W2; the note went unread while fourteen rows ran that way (`fileRefusal`, 2026-10-25).
+  const refusal = fileRefusal(f, forwarded);
+  if (refusal) throw new Error(refusal);
+  for (const d of devicesFor(f, forwarded).devices) devices.add(d);
 } else {
   const wanted = flag('all') ? Object.keys(PHASES).filter((p) => PHASES[p].scripts.length) : named;
   for (const name of wanted) {
@@ -1065,6 +1112,12 @@ for (const job of jobs) {
     const child = spawn(process.execPath, [requireScript(file), ...args], {
       cwd: HERE,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // THE PHONE BINDING IS INHERITED ONLY BY A RUN THAT DRIVES THE PHONE. This file binds A1 at
+      // load (`phone.useDevice` above) for its own preflight, and `ANDROID_SERIAL` in a child is what
+      // `results.mjs` reads as "this row drove a device" - so every WEB row it spawned printed "bound a
+      // phone and carries no a1Build" (OFF-3, NET-*, 2026-10-25), a line its reader learns to skip.
+      // Per JOB, not per run: a phase mixing phone and web rows must not lend the binding to the web ones.
+      env: devicesFor(file, args).devices.includes('A1') ? process.env : withoutPhoneBinding(process.env),
     });
     let tail = '';
     // Kept, not discarded: a script that dies says why on stderr, and that sentence is the whole
@@ -1224,7 +1277,8 @@ serverWindowFrom = new Date().toISOString();
 try {
   // The reader is passed in rather than reached for: `srvlog.mjs` is pure so a CI self-test can take
   // its rule lists, and WHICH ESTATE to read is a fact only `estate.mjs` holds (it follows `SITE`).
-  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS] });
+  // A ONE-ROW PASS IS JUDGED AS THAT ROW (`windowRow`): its own expected lines are not out of row.
+  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS], row: windowRow(rows) });
   console.log(`SERVER (since ${windowFrom})\n`);
   for (const line of srvSummary(server)) console.log(line);
   console.log(`\n  ${server.clean ? 'server clean' : 'SERVER NOT CLEAN - run srvlog.mjs --since ' + windowFrom + ' for the lines'}`);

@@ -85,7 +85,7 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
     getIsTabLeader: () => true,
     // What the real one does on a leader tab, minus the token import: the socket opens beside the load.
     startGatewayHandshake: (deps: { mlsService: IMlsService }) =>
-      deps.mlsService.connect('access-token').then(
+      deps.mlsService.connect('access-token', deps.mlsService.socketFence()).then(
         () => null,
         (e: unknown) => e as Error
       ),
@@ -99,7 +99,10 @@ vi.mock('$lib/utils/chat/connection', async (importOriginal) => {
 });
 
 const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
-const { loginImpl, endSessionImpl } = await import('./sessionAuth');
+const { loginImpl, endSessionImpl, endLostSessionImpl, recoverPinImpl } =
+  await import('./sessionAuth');
+const { loadMlsState } = await import('$lib/utils/hex');
+const { LoginStoppedBySignOutError } = await import('./loginErrors');
 const { createMlsHolder } = await import('./mlsHolder');
 
 type Held = { promise: Promise<void> } | null;
@@ -117,6 +120,8 @@ function fakeClient(held: { init?: Held; resolveDeviceId?: Held } = {}) {
     connect: vi.fn(async () => {
       state.socketOpen = true;
     }),
+    gatewaySocketSettled: vi.fn(async () => {}),
+    socketFence: () => 0,
     pauseSocket: vi.fn(() => {
       state.socketOpen = false;
     }),
@@ -149,7 +154,9 @@ function session(clients: IMlsService[], pin = '') {
   let userId = 'alice';
   let held: IStorage | null = null;
   let built = 0;
-  const holder = createMlsHolder(() => clients[built++]);
+  // The one helper that ends the native MLS session (`endNativeMlsSession`), as the app wires it.
+  const endNative = vi.fn(async (_reason: string) => {});
+  const holder = createMlsHolder(() => clients[built++], endNative);
   const known: Partial<SessionContext> = {
     getUserId: () => userId,
     setUserId: (v) => (userId = v),
@@ -166,7 +173,7 @@ function session(clients: IMlsService[], pin = '') {
     whenMlsRetired: () => holder.whenRetired(),
     ensureMls: () => holder.ensure(),
     resetMls: (only) => holder.reset(only),
-    retireMls: (w) => holder.retire(w),
+    retireMls: (w, why) => holder.retire(w, why),
     getStorage: () => held,
     setStorage: (v) => (held = v),
     getHistoryBaseUrl: () => '',
@@ -198,6 +205,7 @@ function session(clients: IMlsService[], pin = '') {
     ctx,
     cb,
     holder,
+    endNative,
     restore,
     wentLive: () => known.setIsLoggedIn as ReturnType<typeof vi.fn>,
     shownErrors: () =>
@@ -291,9 +299,39 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.isLoggedIn()).toBe(false);
     expect(a.state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
     expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    // The stopped login's native MLS session ends too, before the next sign-in is released.
+    expect(s.endNative).toHaveBeenCalled();
     expect(s.ctx.getIsLoginInProgress()).toBe(false);
     expectQuietStop(s);
     expect(logs(s.cb)).toContain('after mls-init-and-storage');
+  });
+
+  it('releases the socket again once a reopen queued by a rotation during init has settled', async () => {
+    // The init rotated the device id and queued a reopen; the sign-out lands while it is in flight.
+    // Released at the handshake alone, the socket that reopen opens would outlive the login.
+    const initHeld = deferred();
+    const a = fakeClient({ init: initHeld });
+    const reopen = deferred();
+    a.known.gatewaySocketSettled.mockImplementation(() => reopen.promise);
+    const s = session([a.client]);
+
+    const login = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
+    await clearAuth();
+    initHeld.resolve();
+    await login;
+    await s.holder.whenRetired();
+    expect(a.state.socketOpen).toBe(false);
+
+    // The reopen lands after the release, its socket open on the stopped login's client...
+    a.state.socketOpen = true;
+    const pausesBefore = a.known.pauseSocket.mock.calls.length;
+    reopen.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // ...and is released by the wait on the settle, not left open.
+    expect(a.known.pauseSocket.mock.calls.length).toBeGreaterThan(pausesBefore);
+    expect(a.state.socketOpen, 'a reopen outlived the stopped login').toBe(false);
   });
 
   it('after the session went live: the sign-out ends it and the login opens nothing further', async () => {
@@ -414,6 +452,31 @@ describe('a sign-out during a login in progress', () => {
     expect(s.wentLive()).toHaveBeenCalledTimes(1);
     expectQuietStop(s);
   });
+  it('a login that FAILS after it went live leaves no session flag and no armed reconnect behind', async () => {
+    // The login's handshake reopen failed and armed the ladder (`openGatewayConnection`); then a
+    // later step of the same login threw. Left armed over `isLoggedIn` true, the rung would build a
+    // fresh, uninitialised client from the holder and connect it.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const a = fakeClient();
+    const s = session([a.client]);
+    const rung = vi.fn();
+    (s.cb.loadAndRestoreConversations as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // Zero delay: cleared, it never runs; left armed, the flush below runs it.
+      s.ctx.timers.reconnect = setTimeout(rung, 0) as unknown as typeof s.ctx.timers.reconnect;
+      throw new Error('restore failed');
+    });
+
+    await loginImpl(s.ctx, s.cb);
+
+    expect(s.wentLive()).toHaveBeenCalledWith(true);
+    expect(s.cb.onLoginFailed).toHaveBeenCalled();
+    expect(s.ctx.isLoggedIn(), 'a failed login left the session flag up').toBe(false);
+    expect(s.ctx.timers.reconnect, 'a failed login left a reconnect rung armed').toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rung, 'the rung armed by the failed login still ran').not.toHaveBeenCalled();
+    // Nor a native MLS session: the failed login's manager and key do not wait for the next one.
+    expect(s.endNative).toHaveBeenCalledWith('client reset');
+  });
   it('a revocation wipe that fails after its own sign-out is accused, not filed as a stopped login', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     wipeDeviceToFactory.mockRejectedValueOnce(new Error('IndexedDB delete blocked'));
@@ -440,5 +503,75 @@ describe('a sign-out during a login in progress', () => {
     expect(logs(s.cb)).not.toContain('[INIT] Login stopped');
     expect(logs(s.cb)).not.toContain('wipe FAILED');
     expect(errors.mock.calls.flat().join(' ')).not.toContain('wipe failed');
+  });
+});
+
+/**
+ * A SIGN-OUT DURING THE PIN GATE'S RECOVERY STOPS IT. The recovery opens the state and installs a
+ * native manager while no session is live, and it was not tracked as a flow in flight: a sign-out
+ * found "nothing to stop", the native session ended at once, and the recovery then went on to open
+ * the state - installing a manager nothing would end.
+ */
+describe('a sign-out during the PIN recovery', () => {
+  it('stops it before it touches the state, and retires on its end', async () => {
+    pinCheckHangs = true;
+    vi.mocked(loadMlsState).mockResolvedValueOnce(new Uint8Array([1]));
+    const a = fakeClient();
+    const s = session([a.client]);
+
+    const recovery = recoverPinImpl(s.ctx, s.cb, '1111', '2222').then(
+      () => null,
+      (e: unknown) => e
+    );
+    await pinCheckReached.promise;
+
+    // The gate's exit, during the new PIN's check.
+    await clearAuth();
+    const stopped = await recovery;
+    await s.holder.whenRetired();
+
+    expect(stopped).toBeInstanceOf(LoginStoppedBySignOutError);
+    // No client was built for the stopped recovery, so nothing opened the state.
+    expect(a.known.init).not.toHaveBeenCalled();
+    expect(Object.keys(a.known)).not.toContain('openLocalStateWithKey');
+    expect(logs(s.cb)).toContain('[LOGOUT] Signed out during a login');
+    expect(logs(s.cb)).toContain('[PIN_RECOVER] Stopped (sign-out) before the new PIN check');
+    expect(s.endNative).toHaveBeenCalledWith('sign-out');
+  });
+});
+
+/**
+ * A LOST MLS SESSION DURING A LOGIN STOPS THAT LOGIN. A rotation failing in the connection sync
+ * reports the loss with `isLoggedIn` already raised; no sign-out runs, so the sign-out generation does
+ * not move. Left running, the login went on to group discovery and built a stray client in the holder
+ * the loss had retired, beside the PIN gate's next unlock.
+ */
+describe('a lost MLS session during a login', () => {
+  it('stops it after the connection sync: no stray client, retired on its end, the native session ended', async () => {
+    const a = fakeClient();
+    const b = fakeClient();
+    const untouched = Object.keys(b.known);
+    const s = session([a.client, b.client]);
+    // The shell's reaction to the loss reported inside the sync (`reopenAtPinGate`).
+    syncConnectionAfterWsOpen.mockImplementationOnce(async () => {
+      endLostSessionImpl(s.ctx, s.cb);
+      return undefined;
+    });
+
+    await loginImpl(s.ctx, s.cb);
+    await s.holder.whenRetired();
+
+    expect(syncConnectionAfterWsOpen).toHaveBeenCalledTimes(1);
+    expect(logs(s.cb)).toContain(
+      '[INIT] Login stopped - its MLS session was lost during it (after connection-sync)'
+    );
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    // Nothing built a second client: the stopped login never reached group discovery.
+    expect(Object.keys(b.known)).toEqual(untouched);
+    expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    expect(s.endNative).toHaveBeenCalledWith('lost session');
+    // Nothing of a sign-out: no error shown, no expired session.
+    expect(s.cb.onSessionExpired).not.toHaveBeenCalled();
+    expect(s.shownErrors()).toEqual([]);
   });
 });

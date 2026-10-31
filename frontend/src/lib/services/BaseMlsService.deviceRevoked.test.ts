@@ -10,9 +10,10 @@ import {
   REFUSED_ROTATION_RELOADS_KEY,
 } from '$lib/mls-client/refusedRotationReloads';
 import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
+import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
-import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
+import { DeviceRevokedByOwnerError, DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsStateWriteRefusedError, type MlsStateWriteLatch } from '$lib/utils/hex';
 import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -42,6 +43,13 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
+    // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
+    reopenGatewaySocketAfterRotation: vi.fn(),
+    retireAbandonedIds: BaseMlsService.prototype['retireAbandonedIds'],
+    deleteAbandonedDevice: BaseMlsService.prototype['deleteAbandonedDevice'],
+    gatewaySocketSettled: BaseMlsService.prototype['gatewaySocketSettled'],
+    isWsOpen: () => false,
+    socketStepsPending: 0,
     ...keyPackageWaitFields(),
     ...overrides,
   };
@@ -56,6 +64,57 @@ const generateKeyPackage = (ctx: unknown): Promise<Uint8Array> =>
 
 describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
   beforeEach(() => localStorage.clear());
+
+  /**
+   * AN OWNER'S REVOCATION IS NEVER A RE-ENROLMENT, whether the device learns it from the frame or
+   * from this refusal. It goes to the revocation handler (confirm with the server, then sign out and
+   * wipe) and the round fails - no id is minted, nothing moves, nothing is deleted.
+   */
+  it.each([
+    ['stated by the server', true],
+    ['not stated - an older server, read as the owner', false],
+  ])(
+    'an owner revocation (%s) never rotates, and hands the device to the wipe',
+    async (_l, stated) => {
+      const impl = vi.fn().mockRejectedValue(new DeviceRevokedByOwnerError('d-revoked', stated));
+      const onRevoked = vi.fn();
+      const ctx = makeCtx({
+        generateKeyPackageImpl: impl,
+        rotateDeviceIdentity: vi.fn(),
+        deviceRevokedCallback: onRevoked,
+        reportRevokedByOwner: BaseMlsService.prototype['reportRevokedByOwner'],
+      });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(DeviceRevokedByOwnerError);
+
+      expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+      expect(onRevoked).toHaveBeenCalledTimes(1);
+      expect(ctx.deviceId).toBe('d-revoked');
+      expect(localStorage.getItem('mls_device_id_u')).toBeNull();
+      expect(ctx.deleteDevice).not.toHaveBeenCalled();
+      expect(impl).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('REVOKED BY ITS OWNER'));
+      error.mockRestore();
+    }
+  );
+
+  it('an owner revocation with no handler wired yet still never rotates, and says who wipes', async () => {
+    const impl = vi.fn().mockRejectedValue(new DeviceRevokedByOwnerError('d-revoked', true));
+    const ctx = makeCtx({
+      generateKeyPackageImpl: impl,
+      rotateDeviceIdentity: vi.fn(),
+      deviceRevokedCallback: null,
+      reportRevokedByOwner: BaseMlsService.prototype['reportRevokedByOwner'],
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(DeviceRevokedByOwnerError);
+
+    expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('login revocation gate'));
+    error.mockRestore();
+  });
 
   it('re-enrols under a fresh id and publishes again', async () => {
     const published = new Uint8Array([9]);
@@ -74,7 +133,7 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     expect(localStorage.getItem('mls_device_id_u')).toBe('d-fresh');
     // The rotation's write ends the document if it is refused - see the latch cases below.
     expect(ctx.persistCheckpoint).toHaveBeenCalledWith({ endsDocumentOnRefusal: true });
-    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked', 'retired');
     expect(impl).toHaveBeenCalledTimes(2);
   });
 
@@ -111,15 +170,59 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     expect(impl).toHaveBeenCalledTimes(1);
   });
 
-  it('does not end the document for a rotation that failed for any other reason', async () => {
-    const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
-    const ctx = makeCtx({
-      generateKeyPackageImpl: impl,
-      persistCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
-    });
+  /**
+   * ANY OTHER FAILED ROTATION LOSES THE SESSION, NAMED FOR WHAT IT IS. A checkpoint that failed (a full
+   * disk) says nothing about the native slot - and web has none - so it is reported as a failed
+   * rotation, never as an empty slot; the outcome is the same local one (the PIN gate).
+   */
+  it('does not end the document for a rotation that failed for any other reason - it reports a failed rotation', async () => {
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
+      const ctx = makeCtx({
+        generateKeyPackageImpl: impl,
+        persistCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+      });
 
-    await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
-    expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
+      expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      expect(lost).toHaveBeenCalledWith('identity rotation failed');
+    } finally {
+      setMlsSessionLostHandler(null);
+      error.mockRestore();
+    }
+  });
+
+  /**
+   * A ROTATION WHOSE LOAD FOUND NO NATIVE SESSION LOSES THE SESSION, AND SAYS SO. The native side
+   * answered `MLS_MANAGER_ABSENT` after the client's id had moved: the old identity is no longer
+   * installed and the new one never was, so carrying on leaves a signed-in screen whose every MLS
+   * command is refused. The loss is reported - the shell reopens the session at the PIN gate - and the
+   * id on disk is still the old one, which is what that unlock reopens.
+   */
+  it('reports the empty native slot when the re-enrolment load says so, the stored id untouched', async () => {
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const ctx = makeCtx({
+        generateKeyPackageImpl: vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked')),
+        loadStateWithKey: vi
+          .fn()
+          .mockRejectedValue(new Error('MLS_MANAGER_ABSENT: install failed')),
+      });
+
+      await expect(generateKeyPackage(ctx)).rejects.toThrow('install failed');
+
+      expect(lost).toHaveBeenCalledWith('identity rotation found no native session');
+      expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+      expect(localStorage.getItem('mls_device_id_u')).toBeNull();
+    } finally {
+      setMlsSessionLostHandler(null);
+      error.mockRestore();
+    }
   });
 
   /**

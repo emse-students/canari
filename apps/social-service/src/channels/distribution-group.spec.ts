@@ -61,8 +61,14 @@ describe('ChannelService - the community distribution group', () => {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       manager: {
-        transaction: jest.fn((cb: (m: { delete: jest.Mock }) => Promise<void>) =>
-          cb({ delete: jest.fn().mockResolvedValue({ affected: 1 }) })
+        // The deletion takes the community removal lock (`query`) and asks its premise again
+        // through the member and role repositories.
+        transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: jest.fn().mockResolvedValue({ affected: 1 }),
+            query: jest.fn().mockResolvedValue([]),
+            getRepository: (entity: unknown) => (entity === ChannelRole ? roleRepo : memberRepo),
+          })
         ),
       },
     };
@@ -293,6 +299,78 @@ describe('ChannelService - the community distribution group', () => {
       });
     });
 
+    describe("the asking device's seat, served with the base", () => {
+      // Channel-encryption section 20: a joiner judges the base it builds on against a seat read
+      // AFTER that base, in ONE answer, so an Add that stored the base is always seen with its seat.
+      const member = () => {
+        const made = makeService();
+        made.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+        made.memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
+        return made;
+      };
+
+      it('names the device on the delivery read and passes a pending seat through', async () => {
+        const { service } = member();
+        const fetchSpy = answerWith({
+          groupId: 'g-1',
+          groupInfo: 'Z2k=',
+          baseEpoch: 6,
+          seat: { status: 'pending', welcomeQueued: true, addInFlight: false },
+        });
+        global.fetch = fetchSpy as unknown as typeof fetch;
+
+        const ref = await service.getDistributionGroupForMember(WORKSPACE, USER, 'web-dev-1');
+
+        expect(String((fetchSpy as jest.Mock).mock.calls[0][0])).toContain('&deviceId=web-dev-1');
+        expect(ref.seat).toEqual({ status: 'pending', welcomeQueued: true, addInFlight: false });
+      });
+
+      it('keeps an unread add lock unknown, never false', async () => {
+        const { service } = member();
+        global.fetch = answerWith({
+          groupId: 'g-1',
+          groupInfo: 'Z2k=',
+          baseEpoch: 6,
+          seat: { status: 'pending', welcomeQueued: false },
+        }) as unknown as typeof fetch;
+
+        const ref = await service.getDistributionGroupForMember(WORKSPACE, USER, 'web-dev-1');
+
+        expect(ref.seat).toEqual({ status: 'pending', welcomeQueued: false });
+        expect(ref.seat).not.toHaveProperty('addInFlight');
+      });
+
+      it('drops a seat it cannot read rather than passing a guess', async () => {
+        const { service } = member();
+        global.fetch = answerWith({
+          groupId: 'g-1',
+          groupInfo: 'Z2k=',
+          baseEpoch: 6,
+          seat: { status: 'pending' },
+        }) as unknown as typeof fetch;
+
+        const ref = await service.getDistributionGroupForMember(WORKSPACE, USER, 'web-dev-1');
+
+        expect(ref).not.toHaveProperty('seat');
+      });
+
+      it('asks for no seat when no device is named', async () => {
+        const { service } = member();
+        const fetchSpy = answerWith({
+          groupId: 'g-1',
+          groupInfo: 'Z2k=',
+          baseEpoch: 6,
+          seat: { status: 'active' },
+        });
+        global.fetch = fetchSpy as unknown as typeof fetch;
+
+        const ref = await service.getDistributionGroupForMember(WORKSPACE, USER);
+
+        expect(String((fetchSpy as jest.Mock).mock.calls[0][0])).not.toContain('deviceId');
+        expect(ref).not.toHaveProperty('seat');
+      });
+    });
+
     it('says loudly that a community has no distribution group at all', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
       workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
@@ -431,8 +509,13 @@ describe('ChannelService - the community distribution group', () => {
       ]);
       const query = jest.fn().mockResolvedValue([]);
       repos.workspaceRepo.manager.transaction.mockImplementation(
-        (cb: (m: { delete: jest.Mock; query: jest.Mock }) => Promise<void>) =>
-          cb({ delete: jest.fn().mockResolvedValue({ affected: 1 }), query })
+        (cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: jest.fn().mockResolvedValue({ affected: 1 }),
+            query,
+            getRepository: (entity: unknown) =>
+              entity === ChannelRole ? repos.roleRepo : repos.memberRepo,
+          })
       );
       global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
 
@@ -954,11 +1037,11 @@ describe('ChannelService - the community distribution group', () => {
 
     /** An actor holding exactly `permissions` in the community. */
     function arrangeActorRole(repos: ReturnType<typeof makeService>, permissions: string[]) {
-      repos.memberRepo.findOne.mockResolvedValue({
-        workspaceId: WORKSPACE,
-        userId: USER,
-        roleIds: ['r-admin'],
-      });
+      const actor = { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
+      repos.memberRepo.findOne.mockResolvedValue(actor);
+      // The community as a locked read sees it: the actor is a member, so a flip that grants them
+      // passes the grantee check (`assertGranteesAreMembers`).
+      repos.memberRepo.find.mockResolvedValue([actor]);
       repos.roleRepo.find.mockResolvedValue([{ id: 'r-admin', permissions, priority: 10 }]);
     }
 
@@ -1149,7 +1232,8 @@ describe('ChannelService - the community distribution group', () => {
       arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
       global.fetch = answerWith({ groupId: 'g-new', created: true }) as unknown as typeof fetch;
 
-      await repos.service.updateChannelAccess(CHANNEL, USER, true, [USER]);
+      // The toggle's request: a public salon's panel holds no list; the flipper is granted.
+      await repos.service.updateChannelAccess(CHANNEL, USER, true, []);
 
       const posts = (global.fetch as jest.Mock).mock.calls.filter(
         ([url, init]: [unknown, RequestInit]) =>

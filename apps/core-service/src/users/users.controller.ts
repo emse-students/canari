@@ -30,7 +30,10 @@ import {
   UpdateNotesDto,
   DirectoryQueryDto,
   BlockUserDto,
+  SetAdminDto,
 } from './dto/user.dto';
+import { AuthSessionsService } from '../auth/auth-sessions.service';
+import { UserIdTakenError } from './user-write';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
@@ -93,7 +96,8 @@ export class UsersController {
     private readonly blocksService: UserBlocksService,
     private readonly profileEdit: ProfileEditService,
     private readonly corrections: ProfileCorrectionService,
-    private readonly accountErasure: AccountErasureService
+    private readonly accountErasure: AccountErasureService,
+    private readonly sessions: AuthSessionsService
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -374,7 +378,16 @@ export class UsersController {
   /** Creates a new user from the provided DTO. Restricted to global admins (OIDC flow uses findOrCreateFromOidc internally). */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
+  async create(@Body() createUserDto: CreateUserDto) {
+    // An account whose erasure is still running has no row, and making one under its id would
+    // recreate it: refused the way an existing id is, as a conflict.
+    const erasure = await this.accountErasure.erasureState(createUserDto.id);
+    if (erasure !== 'none') {
+      this.logger.warn(
+        `[users.create] refused: user=${String(createUserDto.id).slice(0, 8)} erasure=${erasure}`
+      );
+      throw new UserIdTakenError(createUserDto.id);
+    }
     return this.usersService.create(createUserDto);
   }
 
@@ -505,27 +518,46 @@ export class UsersController {
 
   /**
    * Sets or clears the global admin flag on a user; requires global admin.
-   * An admin cannot revoke their *own* flag - another admin must do it. This guarantees
-   * a sole admin can never lock themselves (and the platform) out, so at least one admin
-   * always remains.
+   *
+   * NOBODY CHANGES THEIR OWN FLAG, either way: another admin must do it. That guarantees a sole
+   * admin can never lock themselves (and the platform) out, and that no flag is ever written by the
+   * account it describes. The body is a `SetAdminDto`, so anything but a boolean is a 400.
+   *
+   * A ROLE CHANGE ENDS THE SESSIONS THAT CARRIED IT: the flag travels in each access token, so a
+   * removal ends every session of the person. Each of their tokens then authenticates nothing at
+   * `/api/auth/verify`, at once, and the next sign-in mints tokens from the row as it now stands.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Patch(':id/admin')
   async setAdmin(
     @Param('id') targetId: string,
     @Headers('x-user-id') callerId: string,
-    @Body() body: { admin: boolean }
+    @Body() body: SetAdminDto
   ) {
     const isSelf = targetId.trim().toLowerCase() === (callerId ?? '').trim().toLowerCase();
-    if (body.admin === false && isSelf) {
+    if (isSelf) {
+      this.logger.warn(`[ADMIN] refused: user=${targetId.slice(0, 8)} changing their own flag`);
       throw new ForbiddenException(
-        refusalBody(
-          RefusalCode.ADMIN_SELF_DEMOTE,
-          'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.'
-        )
+        body.admin === false
+          ? refusalBody(
+              RefusalCode.ADMIN_SELF_DEMOTE,
+              'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.'
+            )
+          : refusalBody(
+              RefusalCode.ADMIN_SELF_CHANGE,
+              'Un administrateur ne peut pas modifier ses propres droits ; un autre administrateur doit le faire.'
+            )
       );
     }
     await this.usersService.setAdmin(targetId, body.admin);
+    // EVERY removal ends the sessions, a removal of a flag already off included: a retry after a
+    // failure between the update and this line still ends them.
+    if (!body.admin) {
+      const ended = await this.sessions.revokeOthers(targetId, null);
+      this.logger.log(
+        `[ADMIN] user=${targetId.slice(0, 8)} flag removed - ${ended} session(s) ended`
+      );
+    }
     return { ok: true, userId: targetId, admin: body.admin };
   }
 }

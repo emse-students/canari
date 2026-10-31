@@ -22,24 +22,68 @@ const GRID_LINE = /class=(["{])[^">]*grid/i;
 const LOOKBACK = 10;
 
 /**
- * Every `<CardTile` in the tree, paired with the nearest grid that encloses it - or `null` when
- * the tile does not sit in a grid at all, which is how a single preview tile reads.
+ * How far above a component's OWN tag its wrapping grid may sit, for the one-level indirection
+ * below. Wider than `LOOKBACK`: the tag sits one `{#if}`/`{#each}` further from the wall than a
+ * `<CardTile` does, by construction - `ProductCard`/`MembershipCard` (#2546) measure 11, so 15
+ * leaves the same margin `LOOKBACK` leaves the direct case, no more.
  */
-function cardTileGrids(): { file: string; line: number; grid: string | null }[] {
+const CALLER_LOOKBACK = 15;
+
+/** The nearest line matching `GRID_LINE` within `span` lines above `lines[i]`, or null. */
+function nearestGridAbove(lines: string[], i: number, span: number): string | null {
+  for (let j = i - 1; j >= 0 && j >= i - span; j--) {
+    if (GRID_LINE.test(lines[j])) return lines[j].trim();
+  }
+  return null;
+}
+
+/** A file's own component name, as a template would tag it: `ProductCard` for `ProductCard.svelte`. */
+function componentNameOf(file: string): string {
+  return file
+    .split(/[\\/]/)
+    .pop()!
+    .replace(/\.svelte$/, '');
+}
+
+/**
+ * Every `<CardTile` among `files`, paired with the nearest grid that encloses it - `null` when the
+ * tile does not sit in a grid at all, which is how a single preview tile reads - following ONE
+ * level of component extraction when the wall and the tile live in different files.
+ *
+ * `ProductCard.svelte` and `MembershipCard.svelte` (#2546) render `<CardTile` with no grid class
+ * anywhere in their OWN source: the wall stays in the page that lays out `/shop`, one level up,
+ * wrapping `<ProductCard>`/`<MembershipCard>` instead. A scan confined to one file would read this
+ * exactly like the escaped `PartnershipCardList` wall of 2026-09-10 - a false negative, not a real
+ * one - so a `<CardTile` with no local grid is re-checked against every place its OWN component is
+ * RENDERED, and counts as walled if any of those call sites sits under a grid class. FURTHER
+ * indirection (a grid two components away) is NOT followed: a guard that permissive stops meaning
+ * anything, per the comment on the offender check below.
+ *
+ * Takes `files` rather than reading the tree itself, so the mutation test below can hand it a
+ * two-file fixture and prove the indirection actually bites, rather than trusting that the real
+ * tree happens to exercise it.
+ */
+function resolveCardTileGrids(
+  files: readonly { path: string; text: string }[]
+): { file: string; line: number; grid: string | null }[] {
   const found: { file: string; line: number; grid: string | null }[] = [];
-  for (const { path: file, text } of sourceFiles({
-    under: 'src',
-    extensions: ['svelte'],
-    tests: 'include',
-  })) {
+
+  for (const { path: file, text } of files) {
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (!/<CardTile\b/.test(lines[i])) continue;
-      let grid: string | null = null;
-      for (let j = i - 1; j >= 0 && j >= i - LOOKBACK; j--) {
-        if (GRID_LINE.test(lines[j])) {
-          grid = lines[j].trim();
-          break;
+      let grid = nearestGridAbove(lines, i, LOOKBACK);
+      if (grid === null) {
+        const tag = new RegExp(`<${componentNameOf(file)}\\b`);
+        for (const caller of files) {
+          if (caller.path === file) continue;
+          const callerLines = caller.text.split('\n');
+          for (let k = 0; k < callerLines.length; k++) {
+            if (!tag.test(callerLines[k])) continue;
+            const callerGrid = nearestGridAbove(callerLines, k, CALLER_LOOKBACK);
+            if (callerGrid !== null) grid = callerGrid;
+          }
+          if (grid !== null) break;
         }
       }
       found.push({
@@ -50,6 +94,13 @@ function cardTileGrids(): { file: string; line: number; grid: string | null }[] 
     }
   }
   return found;
+}
+
+/** `resolveCardTileGrids` over the real tree, for the two tests below. */
+function cardTileGrids(): { file: string; line: number; grid: string | null }[] {
+  return resolveCardTileGrids([
+    ...sourceFiles({ under: 'src', extensions: ['svelte'], tests: 'include' }),
+  ]);
 }
 
 describe('CARD_GRID', () => {
@@ -106,5 +157,40 @@ describe('CARD_GRID', () => {
   it('actually finds the card walls it claims to check', () => {
     const inAGrid = cardTileGrids().filter((t) => t.grid !== null);
     expect(inAGrid.length).toBeGreaterThanOrEqual(5);
+  });
+
+  /**
+   * MUTATION TEST for the one-level indirection above: a synthetic two-file fixture, not the real
+   * tree, so a passing suite proves the MECHANISM catches an escaped wall rather than proving the
+   * real files currently happen to have one. `page.svelte`'s grid wraps `<Child>`, which renders
+   * `<CardTile` with no grid of its own - resolved while the wall is there, and the second case
+   * removes exactly that class to confirm the guard would have failed it.
+   */
+  describe('the one-level indirection, proven by mutation', () => {
+    const child = {
+      path: 'src/lib/Child.svelte',
+      text: ['<script></script>', '', '<CardTile>', '  content', '</CardTile>'].join('\n'),
+    };
+    const pageWithWall = {
+      path: 'src/routes/page.svelte',
+      text: [
+        '<div class={CARD_GRID}>',
+        '  {#each items as item}',
+        '    <Child {item} />',
+        '  {/each}',
+        '</div>',
+      ].join('\n'),
+    };
+
+    it('resolves the child CardTile to the parent wall when the wall is there', () => {
+      const [found] = resolveCardTileGrids([child, pageWithWall]);
+      expect(found.grid).toContain('CARD_GRID');
+    });
+
+    it('MUTATION: removing the wall class from the parent makes the same CardTile un-walled', () => {
+      const pageWithoutWall = { ...pageWithWall, text: pageWithWall.text.replace('CARD_GRID', '') };
+      const [found] = resolveCardTileGrids([child, pageWithoutWall]);
+      expect(found.grid).toBeNull();
+    });
   });
 });

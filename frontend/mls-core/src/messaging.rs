@@ -403,6 +403,35 @@ impl MlsManager {
                 // through this very return, and both classifiers key on those markers. So a frame
                 // can carry two, and the order is fixed on both sides - a specific marker names
                 // the ratchet position, this one names only what is left when none of them does.
+                // A SPENT GENERATION IS NOT A DAMAGED FRAME, AND IT IS NOT A FORK QUESTION EITHER -
+                // classified HERE, at the throw, from the error's type. OpenMLS reaches
+                // `SecretReuseError` only AFTER it opened the frame's sender data with this epoch's
+                // `sender_data_secret` and found the sender's ratchet position already consumed: the
+                // frame was sealed under OUR copy of this epoch (a forked one fails earlier, at the
+                // sender data) and its bytes are intact. What is left is the question the caller's
+                // ledger answers from the bytes - the same frame read twice (a live delivery and a
+                // re-fetch of the row it had not acknowledged yet, after a Welcome), or a rewound
+                // sender (WP-LOSS-1). So no fork verdict is judged, no "damaged" line is written,
+                // and the error still reaches every caller with its marker.
+                //
+                // Measured on DUP-2 (2026-10-25, a joiner re-fetching after its Welcome): the
+                // re-fetched copy of a frame live delivery had just read logged `[FORK] not a fork
+                // ... the frame itself is damaged` at WARN, and the pipeline then ACKed it as the
+                // duplicate it was. Both halves of that line were false.
+                if is_spent_generation(&e) {
+                    log::debug!(
+                        "Spent generation at our own epoch: group={} epoch={} - the frame was \
+                         sealed under this tree and its key is already consumed (a re-delivery, or \
+                         a rewound sender); the caller's frame ledger tells which",
+                        group_id,
+                        msg_epoch
+                    );
+                    return Err(MlsError::OpenMls(format!(
+                        "Process error: same-epoch refusal {:?} [msg_epoch={}, group_epoch={}]",
+                        e, msg_epoch, group_epoch
+                    )));
+                }
+
                 // AND THE ONE PLACE A FORK CAN BE SEEN: a frame from the other side of a fork is
                 // this very refusal. Its claim says whether the sender's copy of this epoch is ours
                 // (`Agrees`: the bytes are bad) or another one (`fork_check.rs`).
@@ -478,6 +507,16 @@ impl MlsManager {
                 }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                // RFC 9420 12.4.3.2, BEFORE ANYTHING IS MERGED: an external commit removes only
+                // the joiner's own prior leaf. OpenMLS leaves this check to the application.
+                if external_commit {
+                    refuse_foreign_external_remove(
+                        group,
+                        group_id,
+                        &staged_commit,
+                        sender_identity.as_deref(),
+                    )?;
+                }
                 // The leaves BEFORE the merge, for the device record (`crate::device_trust`).
                 let leaves_before = leaf_keys(group);
                 // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
@@ -595,4 +634,92 @@ impl MlsManager {
             }
         }
     }
+}
+
+/// Refuses an external commit whose Remove proposals reach beyond the joiner's own prior leaf.
+///
+/// RFC 9420 section 12.4.3.2: an external commit may carry at most one Remove, and only for "an old
+/// version of" the joiner - the resync case. OpenMLS 0.9 validates the proposal list's SHAPE (one
+/// ExternalInit; ExternalInit, Remove and PreSharedKey inline) and states, at that check, that the
+/// identity half "MUST be checked by the application" (`public_group/validation.rs`). This is that
+/// check, and it runs on the staged commit, so a refusal merges nothing.
+///
+/// THE IDENTITY IS THE DEVICE (`userId:deviceId`, compared through `same_identity`), not the user.
+/// The one Remove this estate's joins carry is the one OpenMLS's external-commit builder adds itself:
+/// the leaf holding the joiner's own signature key, which is a key one device holds under one
+/// credential (`welcome.rs`). A device of the same user is a sibling, not a prior self, and a
+/// further device enters beside its siblings, never in place of one (`further_device_door.rs`).
+///
+/// `joiner` is the credential MLS verified the commit against - the new leaf's. An unreadable one
+/// cannot be compared, so a commit that removes anything under it is refused too.
+fn refuse_foreign_external_remove(
+    group: &MlsGroup,
+    group_id: &str,
+    staged_commit: &StagedCommit,
+    joiner: Option<&str>,
+) -> Result<(), MlsError> {
+    let removed: Vec<LeafNodeIndex> = staged_commit
+        .remove_proposals()
+        .map(|p| p.remove_proposal().removed())
+        .collect();
+    if removed.is_empty() {
+        return Ok(());
+    }
+    let joiner_name = joiner.unwrap_or("<unreadable>");
+    if removed.len() > 1 {
+        log::error!(
+            "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name:?} \
+             carries {} Remove proposals, and RFC 9420 allows at most one (the joiner's own prior \
+             leaf) - nothing merged",
+            removed.len()
+        );
+        return Err(MlsError::ForeignExternalRemove(format!(
+            "group={group_id} removed_leaf={} removes={}",
+            removed[0].u32(),
+            removed.len()
+        )));
+    }
+    let index = removed[0];
+    let target = group
+        .member_at(index)
+        .map(|m| credential_identity(&m.credential).map_err(|why| why.to_string()))
+        .unwrap_or_else(|| Err("no leaf at that index".to_string()));
+    let own_prior_leaf = matches!(
+        (&target, joiner),
+        (Ok(target), Some(joiner)) if crate::device_trust::same_identity(target, joiner)
+    );
+    if own_prior_leaf {
+        log::debug!(
+            "[EXTERNAL_COMMIT] group {group_id}: {joiner_name:?} replaces its own prior leaf {index:?}"
+        );
+        return Ok(());
+    }
+    log::error!(
+        "[EXTERNAL_COMMIT] REFUSED on group {group_id}: an external commit by {joiner_name:?} \
+         removes leaf {index:?} ({target:?}), which is not the joiner's own prior leaf \
+         (RFC 9420 12.4.3.2) - nothing merged"
+    );
+    // THE ERROR TEXT CARRIES NOTHING THE COMMITTER CHOSE: the identities are credential bytes it
+    // wrote, and the web classifies this text by substring (`classifyIncomingDecryptError`), so a
+    // credential spelling another marker would reclassify the refusal. They are in the ERROR above.
+    Err(MlsError::ForeignExternalRemove(format!(
+        "group={group_id} removed_leaf={}",
+        index.u32()
+    )))
+}
+
+/// Whether OpenMLS refused a frame because its sender's ratchet generation is already CONSUMED here.
+///
+/// Read from the error's TYPE, never from its `Debug` text: this is the one refusal that proves the
+/// frame was sealed under this device's copy of the epoch (the sender data opened), so it decides
+/// that no fork verdict is judged and no "damaged frame" line is written. A rewording upstream must
+/// not be able to move a frame from one answer to the other.
+fn is_spent_generation<S>(error: &ProcessMessageError<S>) -> bool {
+    use openmls::framing::errors::{MessageDecryptionError, SecretTreeError};
+    matches!(
+        error,
+        ProcessMessageError::ValidationError(ValidationError::UnableToDecrypt(
+            MessageDecryptionError::SecretTreeError(SecretTreeError::SecretReuseError)
+        ))
+    )
 }

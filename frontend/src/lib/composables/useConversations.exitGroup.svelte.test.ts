@@ -24,7 +24,7 @@ const isGroupActiveOnServer = vi.hoisted(() => vi.fn());
 const leaveGroupAndBroadcast = vi.hoisted(() => vi.fn());
 const deleteGroupAndBroadcast = vi.hoisted(() => vi.fn());
 const purgeOrphanGroup = vi.hoisted(() => vi.fn());
-const fetchUniqueGroupMembers = vi.hoisted(() => vi.fn());
+const fetchGroupRoster = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/groupActions')>();
@@ -34,7 +34,7 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
     leaveGroupAndBroadcast,
     deleteGroupAndBroadcast,
     purgeOrphanGroup,
-    fetchUniqueGroupMembers,
+    fetchGroupRoster,
   };
 });
 
@@ -118,7 +118,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   isGroupActiveOnServer.mockResolvedValue(true);
   purgeOrphanGroup.mockResolvedValue(undefined);
-  fetchUniqueGroupMembers.mockResolvedValue(['u1', 'u2']);
+  fetchGroupRoster.mockResolvedValue(['u1', 'u2']);
   drainOutboxForExit.mockResolvedValue(0);
 });
 
@@ -216,7 +216,7 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
     );
 
     // The 403 GRP-6 recorded: the request itself, not the way it was handled.
-    expect(fetchUniqueGroupMembers).not.toHaveBeenCalled();
+    expect(fetchGroupRoster).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining('not requested - conversation retired')
     );
@@ -229,7 +229,7 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
 
     expect(deleteGroupAndBroadcast).toHaveBeenCalledOnce();
     expect(seen.lifecycle).toBe('removed');
-    expect(fetchUniqueGroupMembers).not.toHaveBeenCalled();
+    expect(fetchGroupRoster).not.toHaveBeenCalled();
   });
 
   it('still purges the row afterwards - retiring is the window, not the end state', async () => {
@@ -334,12 +334,24 @@ describe('exitGroupAndCleanup - an exit the server never answered stays owed', (
     const { storage, log } = await exitWith(
       leaveGroupAndBroadcast,
       async () => {
-        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave');
+        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave', 'gateway');
       },
       'leave'
     );
     expect(storage.rows.size).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Deja fait cote serveur'));
+  });
+
+  // An edge's or a portal's 403 page says nothing about the group: the owed leave stays.
+  it("keeps the row when the 403 is an edge's page, not the delivery service's", async () => {
+    const { storage } = await exitWith(
+      leaveGroupAndBroadcast,
+      async () => {
+        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave', 'edge');
+      },
+      'leave'
+    );
+    expect(storage.rows.has(GROUP_ID)).toBe(true);
   });
 
   // A reachable server refusing is a defect to find, not a decision to forget - so the row stays,
@@ -348,7 +360,7 @@ describe('exitGroupAndCleanup - an exit the server never answered stays owed', (
     const { storage, log } = await exitWith(
       leaveGroupAndBroadcast,
       async () => {
-        throw new GroupExitRefusedError(GROUP_ID, 500, 'leave');
+        throw new GroupExitRefusedError(GROUP_ID, 500, 'leave', 'gateway');
       },
       'leave'
     );

@@ -45,16 +45,19 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 type Log = (message: string) => void;
 
 /**
- * Statuses that mean THE EXIT ALREADY HAPPENED, so the row has done its job and goes.
+ * Whether a refusal says THE EXIT ALREADY HAPPENED, so the row has done its job and goes.
  *
- * 404: the server holds no such group - the end state a delete asks for. 403: the caller is not a
- * member of it - the end state a leave asks for, and the one status these endpoints return to state
- * exactly that (`NotAGroupMemberError` documents the same reading next door).
+ * ONE ANSWER, AND ONLY FROM THE DELIVERY SERVICE: a 403 in its JSON - the caller is not a member of
+ * the group, the end state an exit asks for (`NotAGroupMemberError` reads it the same way next door).
+ * An edge's or a portal's 403 page says nothing about the group. A 404 is never it: neither exit
+ * route sends one (the delete tombstones idempotently and answers `{ status: 'deleted' }`, the leave
+ * answers `{ status: 'removed' }`), so a 404 is an edge, a portal or a misrouted deploy.
  *
- * Every other status is the server being reachable and refusing, which is a defect somewhere and NOT
- * a reason to forget the decision.
+ * Every other refusal is a defect somewhere and NOT a reason to forget the decision.
  */
-const ALREADY_GONE_STATUSES = new Set([403, 404]);
+function exitAlreadyHappened(error: GroupExitRefusedError): boolean {
+  return error.status === 403 && error.origin === 'gateway';
+}
 
 /**
  * What happened to an exit call that did not simply succeed. Three outcomes, two behaviours:
@@ -76,12 +79,39 @@ export type ExitFailure = 'already-gone' | 'refused' | 'unreachable';
  */
 export function classifyExitFailure(error: unknown): ExitFailure {
   if (error instanceof GroupExitRefusedError) {
-    return ALREADY_GONE_STATUSES.has(error.status) ? 'already-gone' : 'refused';
+    return exitAlreadyHappened(error) ? 'already-gone' : 'refused';
   }
   // NOT "everything else is unreachable": a bug in this path throws too, and calling that a network
   // problem would keep a row for ever while blaming the link. `isTransportFailure` is the same
   // predicate `apiFetch` uses to decide the server is unreachable, so the two cannot drift.
   return isTransportFailure(error) ? 'unreachable' : 'refused';
+}
+
+/**
+ * The one log line of a BEST-EFFORT server delete whose failure nothing retries (an orphan group a
+ * failed creation or a merged duplicate leaves behind). Every swallowed branch logs, at the level its
+ * TYPED outcome earns ({@link classifyExitFailure}): no answer or the service's own refusal is a
+ * warning (the orphan stays for the server's collection); anything else is a defect of ours, an error.
+ *
+ * @param groupId The group the delete was for.
+ * @param error What `deleteGroupOnServer` threw.
+ * @param why What the delete was cleaning up, for the line.
+ */
+export function logBestEffortGroupDeleteFailure(
+  groupId: string,
+  error: unknown,
+  why: string
+): void {
+  const short = groupId.slice(0, 8);
+  const failure = classifyExitFailure(error);
+  if (failure === 'unreachable' || error instanceof GroupExitRefusedError) {
+    console.warn(
+      `[EXIT] ${short}... ${why}: server delete not done (${failure}) - left to the server's collection:`,
+      error
+    );
+    return;
+  }
+  console.error(`[EXIT] ${short}... ${why}: server delete failed on our side:`, error);
 }
 
 /**
@@ -255,11 +285,11 @@ export async function drainPendingGroupExits(params: {
       const short = entry.groupId.slice(0, 8);
       try {
         if (entry.kind === 'delete') {
-          const deleted = await mlsService.deleteGroupOnServer(entry.groupId);
-          // `false` is the 404: the group is not there, which is the end state asked for.
-          log(
-            `[EXIT] ${short}... delete replayed - server ${deleted ? 'deleted it' : 'had no such group'}`
-          );
+          // Resolves only on the delivery service's own answer (an absent group is answered
+          // `deleted` too). A throw lands below: only the service's own 403 clears the row
+          // (`classifyExitFailure`), every other refusal and every non-answer keeps it.
+          await mlsService.deleteGroupOnServer(entry.groupId);
+          log(`[EXIT] ${short}... delete replayed - server deleted it`);
         } else {
           await mlsService.removeMemberFromServer(entry.groupId, userId);
           log(`[EXIT] ${short}... leave replayed - server removed this user`);
@@ -275,7 +305,13 @@ export async function drainPendingGroupExits(params: {
       } catch (e) {
         const failure = classifyExitFailure(e);
         if (failure === 'already-gone') {
-          log(`[EXIT] ${short}... ${entry.kind} already done server-side - clearing`);
+          // The same outcome, its own line: a key-distribution group is ended with its community and
+          // never by this route, so "already done" would name something that did not happen.
+          log(
+            e instanceof GroupExitRefusedError && e.code === 'KEY_DISTRIBUTION_GROUP'
+              ? `[EXIT] ${short}... ${entry.kind} refused KEY_DISTRIBUTION_GROUP - a key-distribution group is ended with its community, never by this device; nothing owed - clearing`
+              : `[EXIT] ${short}... ${entry.kind} already done server-side - clearing`
+          );
           await clearPendingGroupExit(storage, entry.groupId, log);
           outcomes.push({ groupId: entry.groupId, kind: entry.kind, result: 'answered' });
           continue;

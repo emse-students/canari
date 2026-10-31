@@ -30,7 +30,8 @@
  */
 import { listTargets, connect, evaluate } from './cdp.mjs';
 import { roleForSubject } from './accounts.mjs';
-import { PORTS, ORIGIN, ACCOUNT_OF } from './names.mjs';
+import { PORTS, ACCOUNT_OF } from './names.mjs';
+import { ORIGIN } from './site.mjs';
 import { redis } from './estate.mjs';
 import { subjectOfToken, subjectsOfDeviceSocket, describeIdentity, wrongIdentities } from './subject.mjs';
 

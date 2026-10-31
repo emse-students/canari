@@ -78,7 +78,7 @@
 
   onMount(async () => {
     if (!isGlobalAdmin()) {
-      void goto(resolve('/dashboard'), { replaceState: true });
+      void goto(resolve('/dashboard'), { replace: true });
       return;
     }
     await load();

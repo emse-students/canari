@@ -1,6 +1,7 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
 import { reconcileAbsentLocalGroup, type AbsentLocalGroupVerdict } from './groupLifecycle';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -54,10 +55,18 @@ export interface GroupSweepSnapshot {
    * ABSENCE FROM THE LIST IS A REASON TO ASK, NEVER A REASON TO DESTROY - and this flag is about
    * the list itself rather than about any one group. Two shapes make it worthless:
    *  - the fetch failed (a 502 during a redeploy): every group reads absent;
-   *  - it came back EMPTY while this device holds trees: an account with active MLS trees always
-   *    has `dm_group_members` rows server-side, and leaving or deleting a group drops the local
-   *    tree in the same breath (`leaveGroupAndBroadcast`, `deleteGroupAndBroadcast`), so "local trees,
-   *    no server rows" is a transient answer rather than a state a user can reach.
+   *  - it came back EMPTY while this device holds CONVERSATION trees: an account with such trees
+   *    always has `dm_group_members` rows server-side, and leaving or deleting a group drops the
+   *    local tree in the same breath (`leaveGroupAndBroadcast`, `deleteGroupAndBroadcast`), so
+   *    "local trees, no server rows" is a transient answer rather than a state a user can reach.
+   *    A Graine key-group tree does NOT count: the list never carries key groups (they hold no
+   *    `dm_group_members` row), so any community member's device holds trees the list cannot name,
+   *    and counting them made an honestly empty list - a joiner whose only ask was declined -
+   *    unbelievable for ever (review of #2493).
+   *    THE PRICE, TAKEN DELIBERATELY: a device whose only conversation trees are none at all - a
+   *    member whose only conversations are pending link asks - now believes a transient `200 []`
+   *    too. Its ask row is then removed locally though the seat stands; the cost is a second ask
+   *    from the link, and no history, since a never-admitted row holds none.
    */
   absenceIsEvidence: boolean;
   /** Why the list may not be used, in the words the skip is logged with; `null` when it may. */
@@ -73,7 +82,7 @@ export interface GroupSweepSnapshot {
  * Nothing downstream may purge on it - `absenceIsEvidence` is what says so.
  */
 export async function readGroupSweepSnapshot(
-  mlsService: Pick<IMlsService, 'getLocalGroups' | 'getUserGroups'>,
+  mlsService: Pick<IMlsService, 'getLocalGroups' | 'getUserGroups' | 'isDistributionGroup'>,
   userId: string,
   log: (msg: string) => void
 ): Promise<GroupSweepSnapshot> {
@@ -85,8 +94,16 @@ export async function readGroupSweepSnapshot(
     rows = await mlsService.getUserGroups(userId);
     fetchOk = true;
   } catch (e) {
-    log(`[SYNC] Failed to fetch user groups: ${e}`);
-    console.error('[SYNC] Failed to fetch user groups:', e);
+    // ONE LINE, BY CLASS. It was two - `log` (a `console.log`) and `console.error` - for every
+    // failure, a transport failure included: an absent link at a cold start is the expected state,
+    // and saying it at `error`, twice, buried the failures that are defects.
+    if (isTransportFailure(e)) {
+      log(
+        `[SYNC] the user group list got no answer - this sweep purges nothing without it, the next connection's sweep reads it: ${String(e)}`
+      );
+    } else {
+      console.error('[SYNC] Failed to fetch user groups:', e);
+    }
   }
 
   // Some backends can transiently return duplicates; keep the FIRST occurrence by groupId.
@@ -103,8 +120,12 @@ export async function readGroupSweepSnapshot(
   let unusableReason: string | null = null;
   if (!fetchOk) {
     unusableReason = 'the server list could not be fetched';
-  } else if (serverGroups.length === 0 && localGroups.size > 0) {
-    unusableReason = `the server list is empty while this device holds ${localGroups.size} group(s)`;
+  } else if (serverGroups.length === 0) {
+    // Only the trees the list could name are evidence against it - see `absenceIsEvidence`.
+    const conversationTrees = [...localGroups].filter((id) => !mlsService.isDistributionGroup(id));
+    if (conversationTrees.length > 0) {
+      unusableReason = `the server list is empty while this device holds ${conversationTrees.length} conversation group(s)`;
+    }
   }
 
   return {

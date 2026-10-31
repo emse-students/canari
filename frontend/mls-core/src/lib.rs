@@ -19,6 +19,9 @@ pub mod state;
 pub mod state_blob;
 pub mod welcome;
 
+#[cfg(test)]
+mod external_join_pending_tests;
+
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
 pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
@@ -92,6 +95,16 @@ pub enum MlsError {
     /// tells "already gone" from "still there".
     #[error("NO_SUCH_MEMBER: {0}")]
     NoSuchMember(String),
+    /// An external join was asked for a group this device ALREADY HOLDS, so nothing was built.
+    ///
+    /// NOT A FAILURE OF THE JOIN: the group the join was for is here, installed by a Welcome that
+    /// landed while the recovery asking for the join was on its way. A caller reads it as "joined"
+    /// and stands down. Typed because the caller that used to meet it as
+    /// `OpenMls("... already present locally")` read it as a failed build and asked a member to
+    /// re-add a device whose leaf was healthy (review of #2466) - and because it is raised BEFORE
+    /// `finalize`, which writes the built group into the same storage rows the live one is kept in.
+    #[error("GROUP_ALREADY_HELD: {0}")]
+    GroupAlreadyHeld(String),
     /// The saved MLS state could not be OPENED: its AEAD tag did not verify, or it is too short to
     /// be an envelope at all.
     ///
@@ -164,6 +177,20 @@ pub enum MlsError {
     /// classifying (Mi 9T, 2026-09-28).
     #[error("KEYSTORE_KEY_UNAVAILABLE: {0}")]
     KeystoreKeyUnavailable(String),
+    /// An EXTERNAL commit whose Remove proposals reach beyond the joiner's own prior leaf, refused
+    /// before it merged (RFC 9420 section 12.4.3.2; `messaging.rs`, `refuse_foreign_external_remove`).
+    ///
+    /// Permanent for these bytes: the commit was processed at exactly our epoch, and the tree it
+    /// was judged against cannot change. So it is a same-epoch refusal for every caller - typed here
+    /// for [`MlsError::decrypt_kind`], and carrying that marker in its text for the two FFI
+    /// boundaries that classify on it (`classifyIncomingDecryptError`), so it is ACKed and never
+    /// queued or answered with a heal.
+    ///
+    /// The payload is `group=<id> removed_leaf=<n>` and nothing else: the identities are bytes the
+    /// committer chose, and a substring classifier reading them could be steered to another kind.
+    /// They go to the ERROR line only.
+    #[error("FOREIGN_EXTERNAL_REMOVE: same-epoch refusal {0}")]
+    ForeignExternalRemove(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on
@@ -242,6 +269,7 @@ impl MlsError {
         match self {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
             MlsError::Evicted(_) => DecryptErrorKind::Evicted,
+            MlsError::ForeignExternalRemove(_) => DecryptErrorKind::SameEpochRefusal,
             MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
             // Before the generic `Process error:` arm: a too-far-ahead generation IS a process
             // error, and reading it as a retryable ratchet gap is what queued a frame that could

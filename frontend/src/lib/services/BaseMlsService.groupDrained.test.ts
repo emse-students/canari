@@ -9,7 +9,10 @@ import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 /** @see BaseMlsService.deliveryIdentity.test.ts - same reason the cast is what instantiates the base. */
-abstract class Harness extends BaseMlsService {}
+abstract class Harness extends BaseMlsService {
+  // `destroy` releases the socket through the platform half; this harness has none.
+  protected override pausePlatformSocket(): void {}
+}
 
 const makeService = (): BaseMlsService =>
   new (Harness as unknown as new (platform: 'web' | 'tauri') => BaseMlsService)('web');

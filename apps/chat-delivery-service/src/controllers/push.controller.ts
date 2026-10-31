@@ -38,6 +38,7 @@ import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { parseVoipTokenField } from '../utils/voip-token';
 import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { parseSessionId } from '../utils/session-id';
+import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -656,7 +657,8 @@ export class PushController {
    * Acquires the distributed add-lock for a group.
    * Called by the Android background service before creating a Welcome package
    * to prevent concurrent epoch forks when multiple devices race to add the same requester.
-   * Auth: PushSecret (no JWT - app may be killed).
+   * Auth: PushSecret (no JWT - app may be killed), and the user must be an admitted member of the
+   * group, as on the JWT door.
    */
   @Post('mls/push/acquire-add-lock')
   async acquireAddLockPush(
@@ -667,14 +669,10 @@ export class PushController {
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    // The PushSecret binds the call to this user and device; membership is the group's own question.
+    await this.messagingService.assertCallerActsOnGroup('ADD_LOCK_PUSH', groupId, userId);
 
-    const acquired = await acquireAddLock(
-      this.redis,
-      this.logger,
-      { groupId, userId, deviceId },
-      'push'
-    );
-    return { acquired };
+    return acquireAddLock(this.redis, this.logger, { groupId, userId, deviceId }, 'push');
   }
 
   /**
@@ -684,18 +682,24 @@ export class PushController {
   @Delete('mls/push/release-add-lock')
   async releaseAddLockPush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string }
+    @Body()
+    body: { userId: string; deviceId: string; groupId: string; token?: string; owed?: unknown }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    const token = body.token ? sanitizeQueryValue(body.token, 'token') : undefined;
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
+    // An Android build that predates the token sends none: the LEGACY owner-only release
+    // (`utils/add-lock.ts`). `owed` is logged only, as on the JWT door.
     const released = await releaseAddLock(
       this.redis,
       this.logger,
       { groupId, userId, deviceId },
-      'push'
+      'push',
+      token,
+      body.owed
     );
     return { released };
   }
@@ -1003,6 +1007,17 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     if (typeof body.proto !== 'string' || !body.proto) {
       throw new BadRequestException('proto required');
+    }
+    // The same rule as `POST /mls/send` (`clientSendRefusal`): the send routes relay only private
+    // (application) frames; a public handshake frame goes through the commit route.
+    if (isPublicMlsFrame(body.proto)) {
+      this.logger.error(
+        `[BG_SEND] REJECT public_frame_refused group=${groupId} sender=${userId}:${deviceId}`
+      );
+      throw new BadRequestException({
+        error: 'public_frame_refused',
+        message: 'this send is not accepted',
+      });
     }
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;

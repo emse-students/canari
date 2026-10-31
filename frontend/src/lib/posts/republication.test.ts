@@ -34,10 +34,10 @@ describe('republishedByLine', () => {
     expect(republishedByLine([])).toBeNull();
   });
 
-  it('names three and counts the rest', () => {
+  it('names one and counts the rest, the line sharing the time row', () => {
     const five = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id, slug: id, logoUrl: null }));
-    expect(republishedByLine(five)).toEqual({ names: ['a', 'b', 'c'], extra: 2 });
-    expect(republishedByLine(five.slice(0, 2))).toEqual({ names: ['a', 'b'], extra: 0 });
+    expect(republishedByLine(five)).toEqual({ names: ['a'], extra: 4 });
+    expect(republishedByLine(five.slice(0, 1))).toEqual({ names: ['a'], extra: 0 });
   });
 });
 

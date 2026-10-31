@@ -37,6 +37,13 @@ If cash payment:
   -> Association admin validates/cancels via EditFormsTab
 ```
 
+## The server validates the item model, not only the frontend
+
+A form or booking space is written through `FormItemDto` (`apps/social-service/src/forms/dto/form.dto.ts`, reused by `space.dto.ts`). Two write-side bounds live there:
+
+- **The question type must be one of `SUPPORTED_QUESTION_TYPES`** (`forms/dto/question-types.ts`) - the backend mirror of the canonical `QUESTION_TYPES` in `src/lib/forms/questionTypes.ts`. An unlisted type (the dev-only junk `text`/`select` a hand-posted call once sent) is now rejected with a 400. The `single` alias is read by `FormQuestion.svelte` for old rows but never written, so it is deliberately absent from the write allowlist. The two lists cannot share a module across the package boundary, so a drift test (`forms/dto/form.dto.spec.ts`) reads the frontend source and fails when they differ.
+- **`basePrice` and an option's `priceModifier` are integer CENTS** (`@IsInt`), so a fractional cent is rejected; the client sends `Math.round(euros * 100)` and the service passes a `priceModifier` straight to Stripe as a `unit_amount`. **`priceModifier` is also `@Min(0)`**: `calculateModifiers` ignores a value <= 0, so a negative one would show the payer a discount the charge never applies - the builder number inputs now carry `min="0"` too.
+
 ## The fill page is three reusable pieces and its own payment logic (2026-09-30)
 
 `routes/forms/[id]/+page.svelte` was ~1300 lines holding everything; what any page filling a form
@@ -341,6 +348,60 @@ refuses it (`parseAudienceCondition`), but that refusal is a developer sentence 
 not what a manager should read for having flipped a switch and stopped. So `forms/audience.ts`
 catches it before the request, naming the form or the question it belongs to.
 
+### A cotisation NOT held: `notCotisation` (owner, 2026-10-30)
+
+A form, or one question, can be reserved to people who do **not** hold a given cotisation - the
+creator picks the tier ("BDE" in a `dated` association is this academic year's tag, so "not
+BDE 2026-2027"), and nobody pays it twice. The editor's cotisation criterion has a mode, "Detient la
+cotisation" / "Ne detient pas la cotisation" (`cotisationModeOf` / `withCotisationMode` in
+`frontend/src/lib/forms/audience.ts`); the tiers ticked are kept when the mode flips.
+
+- **Its own key, `notCotisation`, same shape as `cotisation`** (`anyTier` = holds no tier of the
+  association at all). Not a `negate` flag inside `cotisation`: a 1.5.1 editor rebuilds
+  `cotisation` from its checkboxes and would DROP the flag, silently turning "not a cotisant" into
+  "cotisant"; it spreads an unknown key through untouched. `parseAudienceCondition` refuses the two
+  keys together - one criterion, one mode - and validates the tiers exactly as for `cotisation`.
+- **The server is the only judge, as for every profile criterion.** No client evaluates promo,
+  formation or cotisation: `GET /forms/:id/check` answers `maySubmit` and `hiddenItemIds`, so a 1.5.1
+  client shows a holder the form as closed and the question as hidden without knowing the key exists.
+- **The refusal is typed** (`forms/submit-refusal.ts`): `submit` and the file upload answer
+  `403 { code: 'FORM_COTISATION_HELD' }` to a holder, `403 { code: 'FORM_NOT_OPEN_TO_YOU' }` for any
+  other failed criterion. `failedCriterion` (`pricing/audience.ts`) names the criterion that failed,
+  `notCotisation` first, and `matchesCondition` is `failedCriterion(...) === null`. The check carries
+  the same code as `refusalCode`, which is how the fill page says "Vous detenez deja cette cotisation"
+  rather than "Ce formulaire ne vous est pas destine".
+- **Re-judged when the money lands, INSIDE the locked grant, on a form that GRANTS a cotisation.**
+  `fulfilPayment` (online and cash alike) hands the form's `notCotisation` to
+  `UserTagService.grantCotisantIfARise`, which decides under the buyer's tier lock - so a shop
+  settlement that committed while the form's payment was in flight is SEEN. It refuses a held tier
+  of that set (`EXCLUDED_TIER_HELD`) and, on every granting form, the very tier already held
+  (`held`): the old rule renewed it, taking its price twice from a holder - the same case submit
+  refuses as `FORM_TIER_ALREADY_HELD`, now judged again when the money lands. No path wanted that
+  renewal (paid forms are the rule's only caller); the one held tag still answered `granted` is
+  this answer's own delivery (`metadata.submissionId`), a replay that writes nothing. A refusal is
+  recorded `paid_not_granted` - the existing refund-owed marker the purchases tab and the hourly
+  report show, closed by a manager; no new mechanism. A throw of the lock or a read releases the
+  grant claim (`failed`) for a replay, never a refusal on a read that failed.
+- **A replay reaches the same verdict from durable state.** When the record write failed and is
+  replayed (`grant === null`), `formTierDelivered` asks whether the tier is held AS THIS ANSWER'S
+  DELIVERY (`holdsTierDeliveredBy`: the tag names this `submissionId`), not merely held - a tier
+  bought in the shop is held but not delivered, and its refund stays owed. The manager hint
+  (`target-held`), the hourly line and the buyer's status say it: already held when the payment
+  landed - refund, do not grant by hand.
+- **A form that grants nothing keeps the seat it sold**, holder or not: it took no cotisation's
+  price, so nothing was paid twice, and refusing the seat after the money would turn an admitted,
+  paid answer into a refund for a rule whose only purpose is not charging a cotisation twice.
+- **A 1.5.1 editor sends both keys** when a manager ticks a held tier on a "ne detient pas"
+  condition (it spreads `notCotisation` through and adds `cotisation`): refused
+  `400 { code: 'AUDIENCE_COTISATION_BOTH_MODES' }`, worded by a newer client through Paraglide; the
+  older one shows the English sentence, which says to update the app.
+- **Old forms are unchanged**: an absent key is no constraint, and no stored row carries it.
+- Booking spaces share the editor and the predicate, so a space's audience gets the mode too.
+
+Tests: `pricing/audience.spec.ts`, `pricing/validate.spec.ts`, `forms/submit-refusal.spec.ts`,
+`forms/forms.service.matrix.spec.ts` ("a form for people who do NOT hold a cotisation"),
+`frontend/src/lib/forms/audience.test.ts`.
+
 ## Cotisations: a form names a TIER, never a tag
 
 This is the rule the whole cotisation surface turns on, and it is the one thing to read before
@@ -461,7 +522,7 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 - **A throttle of 30 answers per minute per visitor** (`ClientIpThrottlerGuard`). Building it found
   that no per-IP throttle here had ever been one: the container nginx overwrote `X-Real-IP` with the
-  Docker gateway, so prod logged `172.25.0.1` for every visitor and the existing "20/min per IP" on
+  Docker gateway, so prod logged the bridge gateway's address for every visitor and the existing "20/min per IP" on
   `/api/public/` was 20/min for everybody. The container now takes the client from the host proxy
   (`set_real_ip_from` the private ranges, `real_ip_header X-Real-IP`) and the guard keys on that
   header. A room of guests behind ONE NAT (a school network at an event) shares an address, which is
@@ -553,7 +614,7 @@ sent the answer.
     the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
     `access-log-redaction.test.mjs` and run against a real nginx);
   - every `/f/` page is answered with the HEADER `Referrer-Policy: no-referrer` (the
-    `$public_form_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
+    `$capability_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
     `static-headers.test.mjs` and run against a real nginx), so the page's own requests - its
     chunks, the confirm call, the retry link - do not carry the URL into that log's referer field.
     It has to be a header: the page boots on the client, so its first chunk requests leave before
@@ -1041,7 +1102,7 @@ Measured on `main` before this: `submit` counted `pending` toward `maxSubmission
 
 - **The hold is read from the row.** `apps/social-service/src/forms/seat-hold.ts` holds the one constant (`PENDING_PAYMENT_HOLD_SECONDS`, 30 min, from which the Lydia request's shorter lifetime is derived, D1 below) and the one SQL fragment (`PENDING_HOLD_CUTOFF_SQL`, on the DATABASE clock: the column is a `timestamp` written by the database's `now()`, and the service process does not run in the same zone - measured +2 h against a UTC session). The hold counts from **`paymentRequestedAt`** (migration 084), the instant the row's CURRENT payment request was issued, not from `createdAt`: `submit` reuses a live pending row and issues a new request, and the hold restarts with it. `seatHoldingWhere` counts `paid`, `free`, `pending_cash` and a `pending` younger than the hold; the seat count, `get`, `getPublic`, `hasSubmission` and the reuse in `submit` all read it, so a seat is free the moment the hold passes, whether or not any job ran.
 - **A retry is not a new answer.** `submit` looks the person's live pending row up BEFORE the capacity check: it already holds their seat, so a retry on a form it filled is reused instead of being refused as "Form is full" (which it was on `main`).
-- **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) moves `pending` past the hold to `expired` - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
+- **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) first reads at Lydia every `pending` row whose request has ended and settles it on a verified answer (the reconciliation sweep, [lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)), then moves what is left `pending` past the hold to `expired` - both by ONE hold cutoff read from the database clock at the start of the tick (`pendingHoldCutoff`), so no row is expired that the read did not select - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
 - **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). Refunding is the organiser's, outside the application: no refund mechanism exists.
 - **What a payment buys runs from durable flags.** The cotisation grant and the purchase record run after the payment's commit; `cotisationGrantedAt` and `purchaseRecordedAt` (migration 084) are CLAIMED by a conditional `UPDATE` only one caller can win, and released if the effect failed. A replay of the same payment (a repeated Lydia callback, or the callback and the payer's return - `confirmPayment` - both landing in `markPaid`) finishes only what is still NULL: before this, each call re-granted and wrote another purchase record, and a failed grant was lost for good. The migration sets both flags on every row already `paid`, because the old code ran both effects on every call.
 - **The row names its current request by BOTH of Lydia's ids.** `request/do` answers a numeric `request_id` (what the callbacks and `request/cancel` carry) and a `request_uuid` (what `request/state` and the return URL carry), measured on the sandbox 2026-10-15 ([payments](payments.md)). `submit` stores the first in **`paymentRequestId`** (migration 084) and the second in `stripeSessionId`, by named-column `UPDATE`: the whole-entity `save` it replaced wrote the pre-transaction `paymentRequestedAt` back and silently undid the hold restart of a reuse (measured on Postgres 18).

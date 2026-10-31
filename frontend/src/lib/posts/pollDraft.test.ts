@@ -105,7 +105,15 @@ describe('pollDraftIssue', () => {
   it('accepts a deadline in the future', () => {
     // Through the same converter the inputs use: an ISO string sliced to 16 characters is UTC, and
     // a test that spelled it that way would pass or fail depending on the runner's timezone.
-    const inAnHour = toDatetimeLocalValue(new Date(Date.now() + 3600_000).toISOString());
-    expect(pollDraftIssue(draft({ endsAt: inAnHour }))).toBeNull();
+    // AND AT A PINNED INSTANT, NEVER THE RUNNER'S CLOCK: in the hour a zone repeats when summer time
+    // ends, "in an hour" written as local text names the FIRST occurrence of that hour - now - and
+    // the test failed for one hour a year (met 2026-10-25 at 02:36 in Paris).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-06-15T10:00:00Z') });
+    try {
+      const inAnHour = toDatetimeLocalValue(new Date(Date.now() + 3600_000).toISOString());
+      expect(pollDraftIssue(draft({ endsAt: inAnHour }))).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

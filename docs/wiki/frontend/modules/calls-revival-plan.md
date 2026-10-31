@@ -449,7 +449,7 @@ the only copy. What it changes here:
   Owed: mobile data (no SIM in the Mi 9T), campus Wi-Fi, the iPhone (the probe page needs a public
   origin). A CREDENTIALED allocation is measured since (section 14, Q1). **Dev has no Cloudflare TURN pair**, so dev's
   `/api/calls/ice-servers` answers 503 until the user gives it one.
-- **The DSI rule (UDP 3478 out from `.67`) is needed only if the Rust SFU stays on the host.**
+- **The DSI rule (UDP 3478 out from the host's egress address) is needed only if the Rust SFU stays on the host.**
 
 ## 14. Probes of 2026-10-16: clients
 
@@ -496,4 +496,4 @@ What this changes:
 - [chat-delivery calls](../../services/chat-delivery.md#calls) - room tokens, ICE, ring fan-out
 - [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) - the App Review letter
 - [device-verification](../../device-verification.md) - the bench and its rules
-- [backlog: calls held off](../../backlog.md#p3---the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27-a-check-before-production-calls)
+- [backlog: calls held off](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md)

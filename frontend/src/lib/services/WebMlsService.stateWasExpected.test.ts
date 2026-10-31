@@ -109,6 +109,19 @@ describe('what the WASM is told about a missing state', () => {
       owedSendBurns: new Map(),
       unprovenSendRatchets: new Set(),
       owedBurnInFlight: new Map(),
+      // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
+      reopenGatewaySocketAfterRotation: vi.fn(),
+      retireAbandonedIds: (WebMlsService.prototype as unknown as Record<string, unknown>)[
+        'retireAbandonedIds'
+      ],
+      deleteAbandonedDevice: (WebMlsService.prototype as unknown as Record<string, unknown>)[
+        'deleteAbandonedDevice'
+      ],
+      gatewaySocketSettled: (WebMlsService.prototype as unknown as Record<string, unknown>)[
+        'gatewaySocketSettled'
+      ],
+      isWsOpen: () => false,
+      socketStepsPending: 0,
       // The REAL load, placed on the context because `rotateDeviceIdentity` calls it through
       // `this` and a plain object has no prototype chain to find it on.
       loadStateWithKey: (WebMlsService.prototype as unknown as Record<string, unknown>)

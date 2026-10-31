@@ -8,14 +8,26 @@ import {
 } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
-import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
+import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
+import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
-import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import {
+  CommitOutcomeUnknownError,
+  FollowerTabCommitError,
+  PreviousCommitUnresolvedError,
+} from '$lib/mls-client/commitSubmission';
+import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
+import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
+import {
+  MemberNotAdmittedError,
+  type GroupRosterAtGeneration,
+} from '$lib/mls-client/mlsDeliveryApi';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -34,6 +46,9 @@ interface GroupCreationDeps {
   /** When true, skip UI selection (e.g. background key distribution via DM). */
   silent?: boolean;
 }
+
+/** What an invitation needs beyond creation: where the inviter's own `memberAdded` notice goes. */
+type InviteDeps = GroupCreationDeps & { addMessageToChat: NoticeWriter };
 
 /**
  * WHY A CONVERSATION WAS NOT CREATED - A TYPE, DECIDED WHERE THE REFUSAL HAPPENS.
@@ -196,24 +211,34 @@ export async function createNewGroup(
     if (ownDevices.length > 0) {
       const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
       try {
-        // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
-        // added subset receives the Welcome instead; skipped devices are not in the group anyway).
-        const excludeIds = ownDevices.map((d) => `${userId}:${d.deviceId}`);
-        const bulk = await mlsService.addMembersBulk(groupId, ownDevices, excludeIds);
-        log(
-          `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
-        );
-        warnSkippedKeyPackages(bulk.skipped, groupId, '[GROUP]', log);
-
-        // All added devices belong to the current user; deliveries run in parallel.
-        await deliverWelcomes({
+        // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`): exclude every
+        // candidate device from the commit broadcast (the added subset receives the Welcome
+        // instead; skipped devices are not in the group anyway). Own devices that joined by their
+        // own external commit meanwhile already hold a leaf, and are not added twice.
+        const raced = await addDevicesRebuildingOnRace(
           mlsService,
           groupId,
-          bulk,
-          ownerOf: () => userId,
-          tag: '[GROUP]',
-          log,
-        });
+          userId,
+          ownDevices.map((d) => ({ ...d, userId })),
+          log
+        );
+        if (raced.kind === 'added') {
+          const bulk = raced;
+          log(
+            `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
+          );
+          warnSkippedKeyPackages(bulk.skipped, groupId, '[GROUP]', log);
+
+          // All added devices belong to the current user; deliveries run in parallel.
+          await deliverWelcomes({
+            mlsService,
+            groupId,
+            bulk,
+            ownerOf: () => userId,
+            tag: '[GROUP]',
+            log,
+          });
+        }
 
         // Save MLS state after the merged commit (crash-safety).
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -260,6 +285,10 @@ export async function createNewGroup(
           contactName: groupDisplayName,
           displayName: groupDisplayName, // preserve original casing for display
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     selectConversation(conversationKey);
@@ -283,8 +312,9 @@ export async function createNewGroup(
     if (groupId) {
       try {
         await mlsService.deleteGroupOnServer(groupId);
-      } catch {
+      } catch (cleanupError) {
         // Non-blocking
+        logBestEffortGroupDeleteFailure(groupId, cleanupError, 'failed group creation');
       }
     }
     return { ok: false, reason: creationRefusal(e) };
@@ -303,6 +333,32 @@ export type BulkAdditionRefusal =
   | 'add-lock-busy'
   /** The commit added no device - every key package was skipped (logged per device). */
   | 'no-device-added'
+  /**
+   * The Add commit lost a race (`epoch_mismatch` / `concurrent_commit`) and no progress was proven,
+   * so it was not rebuilt: nothing was added, the invite can be retried.
+   */
+  | 'commit-race-lost'
+  /**
+   * A person on the roster when the invitation began was taken off it by a concurrent Remove while
+   * the Add was being rebuilt: the invitation stopped rather than undo that removal. Nothing added.
+   */
+  | 'removed-meanwhile'
+  /**
+   * The tree could not be confirmed at the server's epoch, so which invited devices already hold a
+   * leaf is unknown: nothing was staged, the invite can be retried.
+   */
+  | 'tree-unconfirmed'
+  /**
+   * The Add commit got NO ANSWER: it is kept, with the invitation in its intent, and settled at the
+   * next connection - merged if it landed, re-planned if it did not (`owedInvitations.ts`). Nothing
+   * added YET, and nothing for the member to retry.
+   */
+  | 'outcome-unknown'
+  /**
+   * An EARLIER commit of the conversation is still unanswered, so this invitation staged nothing
+   * (`PreviousCommitUnresolvedError`): nothing kept of it, the member retries once back online.
+   */
+  | 'previous-commit-unresolved'
   /** Something threw before the commit merged (logged). */
   | 'failed';
 
@@ -321,18 +377,31 @@ export type BulkAdditionOutcome =
 /**
  * Core helper that collects all devices for the given user IDs, adds them to
  * the MLS group in a single bulk commit, delivers Welcome messages per-device,
- * and broadcasts a `memberAdded` system event to all existing members.
+ * and broadcasts a `memberAdded` system event to all existing members - writing the inviter's own
+ * notice under the frame's id, since MLS never hands this device its own frame.
  *
  * Users whose devices cannot be fetched are skipped with a warning rather than
  * aborting the entire operation.
  *
  * NEVER THROWS, AND SAYS WHAT HAPPENED INSTEAD ({@link BulkAdditionOutcome}): every early return
  * and the catch-all name their reason, so a caller can tell an Add from a refusal.
+ *
+ * `resumed` is set only by {@link replanLostInvitation}: the same invitation, made again after its
+ * kept commit did not land. `answering` only by a member's answer to a join ask: the ask it answers.
+ *
+ * A PERSON THE GATE REFUSED TO ADMIT (`admit_refused` - a Decline or a departure recorded after the
+ * Add was decided, a block) is never given a leaf: the commit is rebuilt without them
+ * (`addDevicesRebuildingOnRace`) and they are absent from `addedUsers`; when nobody is left, the
+ * invite is `removed-meanwhile`. A member-add call that answers `MemberNotAdmittedError` after the
+ * commit merged means the person departed since the commit: no Welcome, not announced, and the
+ * departure's own Remove takes their leaf.
  */
 async function processBulkAddition(
   memberIds: string[],
   conversation: Conversation,
-  deps: GroupCreationDeps
+  deps: InviteDeps,
+  resumed?: ResumedInvitation,
+  answering?: AnsweredJoinAsk
 ): Promise<BulkAdditionOutcome> {
   const { mlsService, userId, deviceKeyB64, log } = deps;
   const notAdded = (reason: BulkAdditionRefusal): BulkAdditionOutcome => ({
@@ -345,6 +414,10 @@ async function processBulkAddition(
   if (targetUsers.length === 0) return notAdded('nobody-named');
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
+
+  // Whether this Add went out WITH a seat generation (see `rosterPremise`). Without one the server
+  // cannot date the departures it checks, so its refusal is a client-side read failure and not a race.
+  let seatGenerationCarried = false;
 
   // Same reason as the 1-to-1 path: the server's refusal at `addGroupMember` is authoritative, but
   // it lands after the Welcomes have gone out. Anyone a block stands between is dropped from the
@@ -367,6 +440,9 @@ async function processBulkAddition(
 
   // Set once the Add commit has MERGED: from then on the users are in the tree whatever fails next.
   let addedUsers: Set<string> | null = null;
+  // Refused by the gate (left out of the commit), or departed between the merge and the member-add
+  // call: not added, whatever else the commit did.
+  const notAdmitted = new Set<string>();
   try {
     await mlsService.registerMember(conversation.id, userId);
 
@@ -414,16 +490,60 @@ async function processBulkAddition(
     const announcedUsers = new Set<string>();
 
     try {
-      // Add all devices in one staged MLS commit (C7-A): exclude every candidate device from the
-      // commit broadcast (the added subset receives the Welcome instead; skipped devices are not in
-      // the group anyway). The stage -> validate -> merge -> broadcast runs inside addMembersBulk.
-      const excludeIds = allDevices
-        .map((d) => {
-          const uid = userMap.get(d.deviceId);
-          return uid ? `${uid}:${d.deviceId}` : null;
-        })
-        .filter((s): s is string => s !== null);
-      const bulk = await mlsService.addMembersBulk(conversation.id, allDevices, excludeIds);
+      // Add all devices in one staged MLS commit (C7-A), REBUILT ON A LOST RACE (`commitRace.ts`):
+      // a refusal whose catch-up moved the epoch is staged again on the tree that won, offering only
+      // the devices still without a leaf (CC-1, CC-4). Every candidate is excluded from the commit
+      // broadcast (the added subset receives the Welcome instead).
+      //
+      // A REBUILD RE-CONFIRMS THE GESTURE'S PREMISE FIRST (`rosterPremise`): the commit that won may
+      // be a Remove of the very person invited, and an invitation must never undo a removal.
+      //
+      // THE INVITATION RIDES IN THE COMMIT'S INTENT, with its roster baseline: a commit that is KEPT
+      // (no answer) and then does not land is re-planned from it, never lost (`owedInvitations.ts`).
+      //
+      // A RESUMED invitation's premise reads the tree's own departures, so it is checked on the tree
+      // CONFIRMED at the server's epoch (`premiseReadsTree`): the Remove that undoes it may be in the
+      // very commits this device catches up on.
+      const premise = await rosterPremise(
+        mlsService,
+        conversation.id,
+        targetUsers,
+        log,
+        resumed,
+        answering
+      );
+      seatGenerationCarried = premise.seatGeneration !== undefined;
+      const raced = await addDevicesRebuildingOnRace(
+        mlsService,
+        conversation.id,
+        userId,
+        allDevices,
+        log,
+        {
+          confirmPremise: premise.check,
+          premiseReadsTree: resumed !== undefined,
+          ...(premise.beforeStage ? { beforeStage: premise.beforeStage } : {}),
+          invitation: {
+            users: targetUsers,
+            ...(premise.rostered ? { rostered: premise.rostered } : {}),
+            ...(premise.seatGeneration !== undefined
+              ? { seatGeneration: premise.seatGeneration }
+              : {}),
+          },
+        }
+      );
+      for (const u of raced.notAdmitted) notAdmitted.add(u);
+      if (raced.kind === 'already-in-tree') {
+        // The tree, CONFIRMED at the server's epoch, holds every one of them: their Welcome and
+        // registration were the winning commit's author's. The Add is done, nothing announced twice.
+        addedUsers = new Set(
+          allDevices.map((d) => d.userId).filter((u: string) => !notAdmitted.has(u))
+        );
+        if (addedUsers.size === 0) return notAdded('removed-meanwhile');
+        log(`[SYNC] every invited device already holds a leaf - added by another member's commit`);
+        return { kind: 'added', addedUsers: [...addedUsers] };
+      }
+      const bulk = raced;
       warnSkippedKeyPackages(bulk.skipped, conversation.id, '[SYNC]', log);
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -447,6 +567,15 @@ async function processBulkAddition(
             await mlsService.registerMember(conversation.id, tUser);
             registeredUsers.add(tUser);
           } catch (err) {
+            if (err instanceof MemberNotAdmittedError) {
+              // The commit admitted them; the server holds no seat for them NOW - a departure since
+              // the merge, whose own Remove takes the leaf. Not announced, no Welcome.
+              log(
+                `[SYNC] [WARN] ${tUser} holds no seat after the accepted Add of ${conversation.id.slice(0, 8)}... (a departure since) - Welcome withheld`
+              );
+              notAdmitted.add(tUser);
+              return;
+            }
             log(`[WARN] registerMember failed for ${tUser}: ${String(err)} - Welcome withheld`);
           }
         })
@@ -476,14 +605,26 @@ async function processBulkAddition(
       if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
     }
 
+    // NOT ADMITTED IS NOT ADDED: refused by the gate (no leaf given), or departed since the merge.
+    if (notAdmitted.size > 0) {
+      for (const u of notAdmitted) addedUsers?.delete(u);
+      log(`[SYNC] not added, the server did not admit them: ${[...notAdmitted].join(', ')}`);
+      if (addedUsers === null || addedUsers.size === 0) return notAdded('removed-meanwhile');
+    }
+
     // Broadcast member addition notification (one generic or multiple specific?)
     // Let's send one generic message listing all new users
     if (announcedUsers.size > 0) {
       try {
-        const controlMsg = encodeAppMessage(
-          mkVisibleSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
+        // Our own notice is written under the frame's id once it is accepted: MLS never hands
+        // this device its own frame, and every other device writes the row from it.
+        await sendVisibleNotice(
+          mlsService,
+          conversation.id,
+          'memberAdded',
+          { newUsers: [...announcedUsers] },
+          { contactName: conversation.id, actor: userId, addMessageToChat: deps.addMessageToChat }
         );
-        await mlsService.sendMessage(conversation.id, controlMsg);
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
@@ -497,6 +638,52 @@ async function processBulkAddition(
   } catch (e: any) {
     // The one failure the member can act on, so it reaches them (`inviteMembersToCurrentGroup`).
     if (e instanceof FollowerTabCommitError) throw e;
+    // NO ANSWER IS NOT A FAILURE. The commit is KEPT, with this invitation in its intent: accepted at
+    // the next settlement it is merged, refused it is re-planned (`owedInvitations.ts`) - so the
+    // member is told it will finish, never to try again (OFF-3: "the invitation failed" was false).
+    // Unless the commit kept is an EARLIER one and this invitation never staged: then it is theirs.
+    if (e instanceof PreviousCommitUnresolvedError) {
+      log(
+        `[SYNC] an earlier commit of the group is still unanswered - nothing staged, nobody added`
+      );
+      return notAdded('previous-commit-unresolved');
+    }
+    if (e instanceof CommitOutcomeUnknownError) {
+      log(
+        `[SYNC] the Add got no answer - kept with its invitation, settled at the next connection: ${String(e).slice(0, 120)}`
+      );
+      console.warn(`[SYNC] processBulkAddition: outcome unknown on ${conversation.id}`);
+      return notAdded('outcome-unknown');
+    }
+    // ABANDONED BEFORE ANY STAGE (`AddAbortedError`): nothing was committed or registered. A premise
+    // that could not be READ is a rebuild that could not be justified - retried like a lost race.
+    if (e instanceof AddAbortedError) {
+      log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
+      // Refused to admit everyone it named: a Decline, a departure or a block came first. With a seat
+      // generation carried that is the designed outcome of a race the member lost on purpose: an info
+      // line with the same facts. WITHOUT one (the roster read failed, or an old resumed entry) the
+      // server's refusal of an undated departure is a client-side read failure, so it still warns.
+      const designed =
+        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') &&
+        (seatGenerationCarried || e.seatGenerationKnown);
+      if (designed) console.info(`[SYNC] processBulkAddition: ${e.message}`);
+      else console.warn(`[SYNC] processBulkAddition: ${e.message}`);
+      if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
+        return notAdded('removed-meanwhile');
+      }
+      if (e.why === 'tree-unconfirmed') return notAdded('tree-unconfirmed');
+      return notAdded('commit-race-lost');
+    }
+    // A RACE THAT PROVED NO PROGRESS (`rebuildableRefusal` declined it): another commit held or took
+    // the epoch and this device could not see it land, so nothing was added and nothing may be
+    // guessed. Its own reason, so the member is told to retry rather than that the Add broke.
+    if (isCommitRaceRefusal(e) && (addedUsers === null || addedUsers.size === 0)) {
+      log(
+        `[SYNC] the Add lost a commit race without proof of progress (${e.reason}) - nobody added`
+      );
+      console.warn(`[SYNC] processBulkAddition: race refusal ${e.reason} on ${conversation.id}`);
+      return notAdded('commit-race-lost');
+    }
     log(`Bulk invite error: ${String(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
     // A throw AFTER the commit merged does not unmake the Add: the users are in the tree.
@@ -504,6 +691,247 @@ async function processBulkAddition(
   }
   if (addedUsers === null || addedUsers.size === 0) return notAdded('no-device-added');
   return { kind: 'added', addedUsers: [...addedUsers] };
+}
+
+/**
+ * The premise of a member's invitation, re-checked before each REBUILD of its Add
+ * (`addDevicesRebuildingOnRace`): every invited person who was on the roster when the invitation
+ * began is still on it. A rebuild exists because another commit won, and that commit may be a Remove
+ * of the very person invited (an approved join ask declined by another member, a member's device
+ * re-added while an admin removes them) - re-adding them would undo it. The first pass needs no
+ * check: it IS the gesture, made a moment ago.
+ *
+ * The roster is read once now, as the baseline. A baseline or a later read that fails proves
+ * nothing, so a rebuild that needs it is abandoned (`premise-unreadable`) rather than guessed.
+ *
+ * WHAT IT CANNOT SEE: a person absent from the roster at the start, added AND removed by other
+ * commits between two passes - the roster reads the same both times. The rebuild then re-adds them.
+ *
+ * **A RESUMED INVITATION (`resumed`) CHECKS ITS FIRST PASS TOO, AND SEES THAT CASE** - its gesture
+ * was made before an absence, not a moment ago. Its baseline is the one recorded with the lost
+ * commit (`CommitInvitation.rostered`), never a read made now, which would already lack the person
+ * a Remove or a Decline took off; and a departure merged after the lost commit's base
+ * (`removalEpochs`, read from the tree's own record) is a removal the invitation must not undo,
+ * roster or not. That record is only complete on a tree caught up to the server, so the resumed
+ * check runs AFTER the tree is confirmed (`premiseReadsTree`), never before - and again UNDER THE MLS
+ * LOCK right before the stage (`beforeStage`): a Remove applied between the two would otherwise be
+ * staged over.
+ *
+ * **THE BASELINE CARRIES WHEN THE MEMBER DECIDED** (ADM-3, 2026-10-25): the first read is made with
+ * the group's seat generation (`getGroupRosterAtGeneration`), written into the intent and sent with
+ * the Add, so the gate holds a Decline or a removal recorded after it against this Add and lets one
+ * recorded before it pass - a re-invite after a Decline at an unchanged epoch is then a fresh invite.
+ * And an ANSWER TO AN ASK (`answering`) is checked against that same read: the ask the member tapped
+ * must still be on the roster, awaiting, under its identity - a Decline that settled it first is
+ * gone from the read, and the Add is abandoned (`removed-meanwhile`) before anything is staged.
+ *
+ * @returns the check, and the baseline to write into the commit's intent - the recorded one when
+ *   resumed, so a second loss is still judged against the gesture's own start.
+ */
+async function rosterPremise(
+  mlsService: IMlsService,
+  groupId: string,
+  invited: readonly string[],
+  log: (msg: string) => void,
+  resumed?: ResumedInvitation,
+  answering?: AnsweredJoinAsk
+): Promise<{
+  check: (attempt: number, refused: ReadonlySet<string>) => Promise<void>;
+  beforeStage: ((refused: ReadonlySet<string>) => Promise<void>) | undefined;
+  rostered: string[] | undefined;
+  seatGeneration: number | undefined;
+}> {
+  const rosterOf = async (): Promise<Set<string>> =>
+    new Set((await mlsService.getGroupUserMembers(groupId)).map((m) => m.userId));
+  const firstRead: GroupRosterAtGeneration | null = resumed
+    ? null
+    : await mlsService.getGroupRosterAtGeneration(groupId).catch((e: unknown) => {
+        log(
+          `[SYNC] roster of ${groupId.slice(0, 8)}... unreadable at the invite: ${String(e).slice(0, 100)}`
+        );
+        return null;
+      });
+  if (answering) {
+    if (!firstRead) {
+      throw new AddAbortedError(
+        groupId,
+        'premise-unreadable',
+        'the answered ask could not be read'
+      );
+    }
+    // The ask this answer was tapped on, as the read finds it. Declined or expired, its seat is gone;
+    // declined and asked again, the seat awaiting is a NEW ask (another identity) - either way the
+    // tapped ask was settled, and an Add now would answer something the member never saw. A seat
+    // no longer awaiting was admitted by another member's Add: the invite goes on, and finds them in
+    // the tree once its own commit loses to that one (`already-in-tree`).
+    const row = firstRead.members.find(
+      (m) => m.userId.toLowerCase() === answering.userId.toLowerCase()
+    );
+    if (!row || (row.awaitingAdmission === true && row.askId !== answering.askId)) {
+      throw new AddAbortedError(
+        groupId,
+        'removed-meanwhile',
+        `the ask of ${answering.userId} was settled before the Add was built`,
+        firstRead.seatGeneration !== null && firstRead.seatGeneration !== undefined
+      );
+    }
+  }
+  const atStart: Set<string> | null = resumed
+    ? resumed.rostered
+      ? new Set(resumed.rostered)
+      : null
+    : firstRead
+      ? new Set(firstRead.members.map((m) => m.userId))
+      : null;
+  const seatGeneration = resumed
+    ? resumed.seatGeneration
+    : (firstRead?.seatGeneration ?? undefined);
+  // The people the gate refused to admit are out of the commit: their departure is no premise of it.
+  const check = async (attempt: number, refused: ReadonlySet<string>) => {
+    if (attempt === 0 && !resumed) return;
+    if (atStart === null) {
+      throw new AddAbortedError(groupId, 'premise-unreadable', 'no roster baseline to rebuild on');
+    }
+    let now: Set<string>;
+    try {
+      now = await rosterOf();
+    } catch (e) {
+      throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+    }
+    const removed = invited.filter((u) => !refused.has(u) && atStart.has(u) && !now.has(u));
+    if (resumed)
+      removed.push(...(await departedSince(resumed.baseEpoch, [...removed, ...refused])));
+    if (removed.length > 0) {
+      throw new AddAbortedError(
+        groupId,
+        'removed-meanwhile',
+        `${removed.join(', ')} left the roster or the tree while the Add ${resumed ? 'was kept' : 'was rebuilt'}`
+      );
+    }
+  };
+  /** The invited people the tree records a departure of after `baseEpoch` - its own record, no I/O. */
+  const departedSince = async (baseEpoch: number, known: readonly string[] = []) => {
+    const departed: string[] = [];
+    for (const u of invited) {
+      if (known.includes(u)) continue;
+      let departures: number[];
+      try {
+        departures = await mlsService.removalEpochs(groupId, u);
+      } catch (e) {
+        throw new AddAbortedError(groupId, 'premise-unreadable', String(e).slice(0, 100));
+      }
+      if (departures.some((epoch) => epoch > baseEpoch)) departed.push(u);
+    }
+    return departed;
+  };
+  const beforeStage = resumed
+    ? async (refused: ReadonlySet<string>) => {
+        const departed = await departedSince(resumed.baseEpoch, [...refused]);
+        if (departed.length > 0) {
+          throw new AddAbortedError(
+            groupId,
+            'removed-meanwhile',
+            `${departed.join(', ')} left the tree in a commit applied just before the stage`
+          );
+        }
+      }
+    : undefined;
+  return {
+    check,
+    beforeStage,
+    rostered: atStart ? invited.filter((u) => atStart.has(u)) : undefined,
+    seatGeneration,
+  };
+}
+
+/**
+ * A member's invitation whose kept commit did not land, re-planned at the epoch that won
+ * ({@link replanLostInvitation}): the epoch its commit was staged on, and the roster baseline and
+ * seat generation its intent recorded (absent when they could not be read then).
+ */
+interface ResumedInvitation {
+  baseEpoch: number;
+  rostered: string[] | undefined;
+  seatGeneration: number | undefined;
+}
+
+/**
+ * The join ask a member's Add answers (`admitJoinRequest`): the person, and the ask's identity - the
+ * seat its link wrote - which must still stand when the Add is built ({@link rosterPremise}).
+ */
+export interface AnsweredJoinAsk {
+  userId: string;
+  askId: string;
+}
+
+/** How a re-planned invitation ended - what the member is told, read by the caller. */
+export type LostInvitationOutcome =
+  /** Every invited person now holds a leaf - added by this re-plan, or already by someone else. */
+  | { kind: 'completed' }
+  /** Its commit is kept in turn (no answer again): its own intent carries the invitation on. */
+  | { kind: 'kept' }
+  /**
+   * It cannot run YET - the add lock was refused, or the tree could not be confirmed at the server's
+   * epoch. Nothing staged, the entry stays for the next drain - never a word to the member, the
+   * invitation is not over.
+   */
+  | { kind: 'waiting'; on: 'add-lock' | 'tree-unconfirmed' }
+  /**
+   * The gate refused the lost commit for something other than a race - `reason` is its token
+   * (`committer_not_member`, `welcome_target_not_member`, ...). Not re-planned: the same invitation
+   * meets the same answer, so the member is told, never asked to invite again.
+   */
+  | { kind: 'refused'; reason: string | undefined }
+  /** The conversation was retired on this device (`lifecycle: 'removed'`): nobody can be added. */
+  | { kind: 'conversation-gone' }
+  /** Nothing was added, for `reason` - the member is told. */
+  | { kind: 'not-completed'; reason: BulkAdditionRefusal };
+
+/**
+ * RE-PLANS A MEMBER'S INVITATION WHOSE KEPT COMMIT DID NOT LAND (OFF-3, 1.4.1 campaign) - the same
+ * invitation, made again at the epoch that won, under the premises a rebuilt Add answers to
+ * ({@link rosterPremise} in its resumed form, then `addDevicesRebuildingOnRace`):
+ * - a person removed, declined or departed meanwhile is never brought back (`removed-meanwhile`);
+ * - one who already holds a leaf - another member's Add - is not added twice (`already-in-tree`);
+ * - a tree that cannot be confirmed, or a roster that cannot be read, adds nobody.
+ *
+ * A `refused` loss (the gate refused it for anything but a race, its typed reason recorded) is not
+ * re-planned: the same invitation would meet the same refusal, so the member is told. Another
+ * device's add lock (`add-lock-busy`) is `waiting`: nothing was staged and the invitation is not
+ * over, so the entry stays for the next drain.
+ *
+ * @returns how it ended; it never throws but for a follower tab's refusal, which the drain never
+ *   reaches (only the leader drains).
+ */
+export async function replanLostInvitation(
+  owed: OwedInvitation,
+  conversation: Conversation,
+  deps: InviteDeps
+): Promise<LostInvitationOutcome> {
+  const short = owed.groupId.slice(0, 8);
+  if (owed.cause === 'refused') {
+    deps.log(
+      `[INVITE_OWED] ${short}... the invitation lost at epoch ${owed.baseEpoch} was refused by the gate (${owed.reason ?? 'no reason'}) - not re-planned, the member is told`
+    );
+    return { kind: 'refused', reason: owed.reason };
+  }
+  const outcome = await processBulkAddition(owed.invitation.users, conversation, deps, {
+    baseEpoch: owed.baseEpoch,
+    rostered: owed.invitation.rostered,
+    seatGeneration: owed.invitation.seatGeneration,
+  });
+  deps.log(
+    `[INVITE_OWED] ${short}... the invitation lost at epoch ${owed.baseEpoch}: ${outcome.kind === 'added' ? 'completed' : outcome.reason}`
+  );
+  if (outcome.kind === 'added') return { kind: 'completed' };
+  if (outcome.reason === 'outcome-unknown') return { kind: 'kept' };
+  // NOTHING STAGED, AND NOTHING THAT ENDS THE INVITATION: the lock was refused, or the tree could not
+  // be confirmed (a log that could not be read, a replay held behind frames refused for lack of a row
+  // whose pull is already asked, a catch-up that stopped short). Each lifts on an event - a commit
+  // applied in the group, the next connection - so the entry waits for it.
+  if (outcome.reason === 'add-lock-busy') return { kind: 'waiting', on: 'add-lock' };
+  if (outcome.reason === 'tree-unconfirmed') return { kind: 'waiting', on: 'tree-unconfirmed' };
+  return { kind: 'not-completed', reason: outcome.reason };
 }
 
 /**
@@ -525,19 +953,35 @@ async function performDirectAdd(
 
   const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   try {
-    // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
-    // added subset receives the Welcome instead). stage -> validate -> merge -> broadcast is
-    // handled inside addMembersBulk.
-    const excludeIds = allDevices.map((d) => {
-      const owner = contactDeviceIds.has(d.deviceId) ? contact : userId;
-      return `${owner}:${d.deviceId}`;
-    });
-    const bulk = await mlsService.addMembersBulk(groupId, allDevices, excludeIds);
+    // Staged transaction (C7-A), rebuilt on a lost race (`commitRace.ts`); every candidate device
+    // is excluded from the commit broadcast (the added subset receives the Welcome instead).
+    const raced = await addDevicesRebuildingOnRace(
+      mlsService,
+      groupId,
+      userId,
+      allDevices.map((d) => ({
+        ...d,
+        userId: contactDeviceIds.has(d.deviceId) ? contact : userId,
+      })),
+      log,
+      // A CONVERSATION WITHOUT ITS PEER IS NOT CREATED. The gate refusing to admit them (a block
+      // recorded since the check above) abandons the Add before anything is staged again
+      // (`AddAbortedError`), and the caller's catch drops the group on both estates.
+      { mustAdmit: contact }
+    );
+    if (raced.kind === 'already-in-tree') {
+      log(`[ADD] every device already holds a leaf in ${groupId} - nothing to add`);
+      return;
+    }
+    const bulk = raced;
     log(`[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}`);
     warnSkippedKeyPackages(bulk.skipped, groupId, '[ADD]', log);
 
     // registerMember is user-level (upsert GroupMember): one call per userId is enough.
     // Calling once per device generates N-1 redundant transactions for a multi-device user.
+    // The accepted commit already enrolled every person it admitted; a refusal here
+    // (`MemberNotAdmittedError`: the peer departed since the merge) rejects the creation, and the
+    // caller's catch drops the group on both estates - no conversation is presented without its peer.
     const owners = new Set(
       bulk.addedDeviceIds.map((did) => (contactDeviceIds.has(did) ? contact : userId))
     );
@@ -563,15 +1007,19 @@ async function performDirectAdd(
  * Adds one or more users to an existing MLS group by their Canari user IDs.
  * All devices belonging to each user are added in a single bulk MLS commit.
  *
+ * `opts.answering` names the join ask this invitation answers: the Add then proceeds only while that
+ * very ask is still open (or already admitted by another member), never over a Decline.
+ *
  * @returns what it did ({@link BulkAdditionOutcome}) - it never throws, so a caller that must know
  *   whether a person was added reads this, never the absence of an exception.
  */
 export async function inviteMembersToGroup(
   memberIds: string[],
   conversation: Conversation,
-  deps: GroupCreationDeps
+  deps: InviteDeps,
+  opts: { answering?: AnsweredJoinAsk } = {}
 ): Promise<BulkAdditionOutcome> {
-  return processBulkAddition(memberIds, conversation, deps);
+  return processBulkAddition(memberIds, conversation, deps, undefined, opts.answering);
 }
 
 /**
@@ -796,6 +1244,10 @@ export async function startNewConversation(
           displayName: contact,
           directPeerId: contact,
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     maybeSelect(conversationKey);

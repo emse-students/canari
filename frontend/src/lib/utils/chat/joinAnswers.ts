@@ -2,8 +2,9 @@ import type { IMlsService } from '$lib/mlsService';
 import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
-import type { BulkAdditionOutcome } from './groupCreation';
+import type { AnsweredJoinAsk, BulkAdditionOutcome } from './groupCreation';
 import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
+import { approveMemberDevice, declineMemberDevice } from './memberDeviceAnswers';
 
 /**
  * A MEMBER'S TWO ANSWERS TO "X ASKS TO JOIN" (`joinRequests.svelte.ts`), each saying whether it
@@ -18,10 +19,25 @@ import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
  * docs/wiki/protocols/mls-protocol.md, "Who admits a new person".
  */
 export interface JoinAnswerDeps {
-  mlsService: Pick<IMlsService, 'getGroupMemberIdentities' | 'declineJoinRequest'>;
+  mlsService: Pick<
+    IMlsService,
+    'getGroupMemberIdentities' | 'getGroupRosterAtGeneration' | 'declineJoinRequest'
+  >;
   conversations: ReadonlyMap<string, Conversation>;
-  /** The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws. */
-  invite: (userIds: string[], conversation: Conversation) => Promise<BulkAdditionOutcome>;
+  /**
+   * The member's own Add (`inviteMembersToGroup`), which returns what it did and never throws.
+   * `answering` is the ask it answers: the Add goes ahead only while that very ask is still open.
+   */
+  invite: (
+    userIds: string[],
+    conversation: Conversation,
+    answering?: AnsweredJoinAsk
+  ) => Promise<BulkAdditionOutcome>;
+  /**
+   * Runs the stray collector (`removeStrayLeaves`) on one group, now: true when a Remove landed. A
+   * leaf whose holder has no admitted seat is taken out before the member's Add brings them in.
+   */
+  collectStrayLeaves: (groupId: string) => Promise<boolean>;
   log: (message: string) => void;
 }
 
@@ -52,24 +68,70 @@ async function holdsALeaf(request: JoinRequest, deps: JoinAnswerDeps): Promise<b
 }
 
 /**
+ * The requester's seat on the server: `admitted`, still `awaiting` a member, `absent`, or `null`
+ * when the roster could not be read.
+ */
+async function seatOf(
+  request: JoinRequest,
+  deps: JoinAnswerDeps
+): Promise<'admitted' | 'awaiting' | 'absent' | null> {
+  try {
+    const { members } = await deps.mlsService.getGroupRosterAtGeneration(request.groupId);
+    const row = members.find((m) => m.userId.toLowerCase() === request.userId.toLowerCase());
+    if (!row) return 'absent';
+    return row.awaitingAdmission === true ? 'awaiting' : 'admitted';
+  } catch (e) {
+    deps.log(
+      `[JOIN_REQUEST] roster of ${request.groupId.slice(0, 8)}... unreadable: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  }
+}
+
+/**
  * ADMITS the person: the member's own Add, built and signed by this device - the one way a new
  * person enters a conversation (`automaticAdmission` in `actions.ts`). Done only when the Add's
  * commit put a device of theirs in the tree (`BulkAdditionOutcome.added`), or when another member's
  * Add already had.
+ *
+ * A LEAF IS NOT AN ADMISSION: only the seat the server holds says another member's Add admitted
+ * them. A leaf held under a seat still awaiting (or no seat) is taken out by the stray collector
+ * first, then the member's Add is built - never answered "done" on the leaf alone, which left the
+ * seat awaiting with nobody to lift it.
  */
 export async function admitJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
+  if (request.kind === 'device') return admitUnseenDevice(request, deps);
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   if ((await holdsALeaf(request, deps)) === true) {
+    const seat = await seatOf(request, deps);
+    if (seat === 'admitted') {
+      deps.log(
+        `[JOIN_REQUEST] ${request.userId} already holds a leaf in ${request.groupId.slice(0, 8)}... - admitted by another member's Add`
+      );
+      return { done: true };
+    }
+    if (seat === null) return { done: false, reason: 'their seat could not be read' };
     deps.log(
-      `[JOIN_REQUEST] ${request.userId} already holds a leaf in ${request.groupId.slice(0, 8)}... - admitted by another member's Add`
+      `[JOIN_REQUEST] ${request.userId} holds a leaf in ${request.groupId.slice(0, 8)}... under a seat that is ${seat === 'awaiting' ? 'still awaiting' : 'gone'} - removing it before the Add`
     );
-    return { done: true };
+    if (!(await deps.collectStrayLeaves(request.groupId))) {
+      return {
+        done: false,
+        reason: 'a leaf of theirs that holds no admitted seat is not removed yet',
+      };
+    }
   }
-  const outcome = await deps.invite([request.userId], convo);
+  // An ask with an identity is answered AS that ask: a Decline or a newer ask since it was raised
+  // makes this Add stop before its stage (`rosterPremise`), never admit over the Decline.
+  const outcome = await deps.invite(
+    [request.userId],
+    convo,
+    request.askId !== undefined ? { userId: request.userId, askId: request.askId } : undefined
+  );
   if (outcome.kind === 'not-added') {
     return { done: false, reason: `the Add did not happen (${outcome.reason})` };
   }
@@ -102,6 +164,14 @@ export async function declineJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
+  if (request.kind === 'device') {
+    // About this DEVICE in this conversation alone: the person stays a member, their seat and other
+    // devices untouched. Undone from the toast the banner shows (`undoMemberDeviceDecline`).
+    const [deviceId] = request.deviceIds;
+    if (deviceId === undefined) return { done: false, reason: 'the ask names no device' };
+    declineMemberDevice(request.groupId, request.userId, deviceId);
+    return { done: true };
+  }
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   let outcome: JoinDeclineOutcome;
@@ -111,5 +181,29 @@ export async function declineJoinRequest(
     return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
   }
   deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
+  return { done: true };
+}
+
+/**
+ * ADMITS ONE device this device never saw, of a user already in the conversation (`kind: 'device'`):
+ * the member's approval is recorded for that DEVICE under the key fingerprint the entry showed, and
+ * the pending-invitation sweep - started, not awaited - adds it: the same Add every member device
+ * gets, in every conversation this device shares with its owner, refused for a package under another
+ * key (`memberDeviceAnswers.ts`). Done once the approval is recorded; a sweep that cannot add the
+ * device now says why in its log. An entry with no fingerprint, or naming several devices, binds
+ * nothing and is refused.
+ */
+function admitUnseenDevice(request: JoinRequest, deps: JoinAnswerDeps): JoinAnswerResult {
+  const [deviceId, ...others] = request.deviceIds;
+  if (deviceId === undefined || others.length > 0 || !request.keyFingerprint) {
+    console.error(
+      `[JOIN_REQUEST] a device ask of ${request.userId} in ${request.groupId.slice(0, 8)}... names ${request.deviceIds.length} device(s) and ${request.keyFingerprint ? 'a key' : 'no key'} - not approved`
+    );
+    return { done: false, reason: 'the ask does not name exactly one device under one key' };
+  }
+  approveMemberDevice(request.userId, deviceId, request.keyFingerprint);
+  deps.log(
+    `[JOIN_REQUEST] unseen device ${deviceId.slice(0, 12)}... of ${request.userId} approved in ${request.groupId.slice(0, 8)}... - the sweep adds it`
+  );
   return { done: true };
 }

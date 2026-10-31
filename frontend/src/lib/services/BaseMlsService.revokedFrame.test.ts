@@ -1,4 +1,5 @@
 import { MlsDeliveryApi } from '$lib/mls-client/mlsDeliveryApi';
+import { SessionEndedByDeviceRevocationError, SessionExpiredError } from '$lib/stores/auth';
 
 /**
  * A `device_revoked` frame asks a device to erase itself and sign out, which makes it a DESTRUCTIVE
@@ -62,6 +63,61 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
     );
     expect(a.userId).toBe('unknown');
     expect(a.deviceId).toBe('pending');
+  });
+
+  /**
+   * THE REVOCATION ENDS THIS DEVICE'S SESSION, so the check usually meets a dead credential: a 401,
+   * then a renewal the server refuses. When the refusal says the session died BY THIS REVOCATION, that
+   * is the answer `true` - it used to be read as "unreachable, not revoked", and the device kept every
+   * store (DEV-2, 2026-10-25). Any other dead session is no proof of a revocation.
+   */
+  describe('asked with the credential the revocation ended', () => {
+    const deadSession = (renewal: () => Promise<string>) =>
+      new MlsDeliveryApi({
+        historyUrl: 'https://example.test',
+        getToken: async () => 'token',
+        refreshToken: renewal,
+        fetchImpl: vi
+          .fn()
+          .mockResolvedValue(
+            json({ statusCode: 401, message: 'Unauthorized' }, 401)
+          ) as unknown as typeof fetch,
+      });
+
+    it('reads a renewal refused BY THIS REVOCATION as revoked', async () => {
+      const a = deadSession(async () => {
+        throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd1' });
+      });
+      await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(true);
+    });
+
+    it('reads a renewal refused by the revocation of ANOTHER device as not revoked', async () => {
+      // The session was bound to an id this install has rotated away from (or another account's).
+      const a = deadSession(async () => {
+        throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd-old' });
+      });
+      await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
+    });
+
+    it('reads any other dead session as not revoked', async () => {
+      const a = deadSession(async () => {
+        throw new SessionExpiredError();
+      });
+      await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
+    });
+
+    it('reads a token it cannot even obtain, latched as revoked, as revoked - without asking', async () => {
+      const fetchFn = vi.fn();
+      const a = new MlsDeliveryApi({
+        historyUrl: 'https://example.test',
+        getToken: async () => {
+          throw new SessionEndedByDeviceRevocationError({ userId: 'u1', deviceId: 'd1' });
+        },
+        fetchImpl: fetchFn as unknown as typeof fetch,
+      });
+      await expect(a.isDeviceRevoked('u1', 'd1')).resolves.toBe(true);
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
   });
 
   it('treats a malformed answer as not revoked', async () => {

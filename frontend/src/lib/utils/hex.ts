@@ -1,4 +1,5 @@
-import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -53,6 +54,13 @@ export function toBase64(bytes: Uint8Array): string {
     parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + BASE64_CHUNK_BYTES) as never));
   }
   return btoa(parts.join(''));
+}
+
+/** Whether `a` and `b` hold the same bytes - a value comparison, never the arrays' identity. */
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 const B64_PREFIX = 'b64:';
@@ -554,11 +562,11 @@ export async function removeMlsState(userId: string): Promise<void> {
   }
 
   if (isTauriRuntime()) {
+    // The native session ends in the same hold as the sweep, so no manager outlives its files.
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('delete_mls_state');
+      await endNativeMlsSession('state reset', { sweepState: true });
     } catch (e) {
-      console.warn('[MLS] delete_mls_state failed:', e);
+      console.warn('[MLS] ending the native MLS session with its state failed:', e);
     }
     return;
   }

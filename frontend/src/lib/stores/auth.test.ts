@@ -42,7 +42,12 @@ const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/token
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
 function answer(status: number): Response {
-  if (status !== 200) return new Response('', { status });
+  // A refusal as core-service sends it (Nest JSON): only that proves the cookie dead.
+  if (status !== 200)
+    return new Response(JSON.stringify({ statusCode: status, message: 'Unauthorized' }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
   const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }));
   return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), {
     status: 200,
@@ -85,6 +90,33 @@ describe('the session-expired announcement', () => {
     fetchMock.mockResolvedValue(answer(503));
 
     await expect(refresh()).rejects.toThrow();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on an edge's HTML 403 - a WAF or a portal says nothing about the cookie", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response('<html>Access denied</html>', {
+        status: 403,
+        headers: { 'content-type': 'text/html' },
+      })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on a JSON-speaking edge 403 - only Nest's envelope proves the cookie dead", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      Response.json({ status: 403, title: 'Access denied' }, { status: 403 })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -183,6 +215,29 @@ describe('the fetch a refresh is made with', () => {
     fetchMock.mockResolvedValue(answer(200));
     await expect(refresh()).resolves.toMatch(/^h\./);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ONE LINE PER REFRESH SENT, NOT ONE PER CALLER (production 1.5.1: 653 `[A] token→refresh` lines
+ * for 51 refreshes). The reason rides the request's own line; a caller that joins says nothing.
+ */
+describe('what a burst of callers without a usable token logs', () => {
+  it('logs the refresh that leaves, once, with its reason - and nothing per caller', async () => {
+    const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 30 }));
+    setToken(`h.${claims}.s`);
+    fetchMock.mockResolvedValue(answer(200));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await Promise.all([getToken(), getToken(), getToken(), getToken(), getToken()]);
+
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[A] '));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lines.filter((l) => l.includes('→refresh'))).toEqual([]);
+    const sent = lines.filter((l) => l.startsWith('[A] refresh→ '));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/\(token exp=\d+s\)$/);
+    log.mockRestore();
   });
 });
 

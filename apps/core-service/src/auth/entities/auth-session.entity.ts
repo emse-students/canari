@@ -3,9 +3,11 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 /**
  * One row per long-lived login (one browser, one phone, one desktop app).
  *
- * The access token stays stateless - six services and the nginx `auth_request`
- * verify it without touching a database - so this row backs the REFRESH token
- * only. It is what makes revocation possible at all: before it existed, a
+ * The access token is never looked up by the six services, so this row backs
+ * the REFRESH token - and the one verifier every request passes through
+ * (`/api/auth/verify`, nginx's `auth_request`) reads it by the token's `sid`,
+ * so an access token lives no longer than its session
+ * (`AuthSessionsService.isLive`). It is what makes revocation possible at all: before it existed, a
  * refresh token was a self-describing 7-day bearer credential that `logout`
  * could not invalidate and that minted a fresh 7 days on every use.
  *

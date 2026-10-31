@@ -68,7 +68,7 @@ the Rust test `unsaved_ratchet_advance` carries it).
 Findings: the reply context followed the member into the next conversation (fixed by #1548); the
 swipe to the camera did nothing three times on a fresh Feed (open, in the backlog); NOTIF-10 stayed
 `FAIL` with the ordering fa6b9d6aa asked for now measured
-([cross-client-testing](cross-client-testing.md#14---notif---notifications)).
+([cross-client-testing](cross-client-testing-archive-1-4-0.md#14---notif---notifications)).
 **Local estate prerequisite, not a product defect**: migrations 069-077 were not in the local
 `schema_migrations` ledger and `spaces` was EMPTY, so the signed subscription refused its own reader
 (403 `outside their spaces`) until the seed of `071_spaces.sql` was run by hand. No runner applies
@@ -1122,7 +1122,7 @@ The second is a local build, which costs the Mi 9T's enrolment if installed over
 
 | # | Reading | Pass | Source |
 | --- | --- | --- | --- |
-| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [backlog](backlog.md#p1---call-ws-v6-shipped-in-v131-2167-owed-one-phone-reading-2026-10-20) |
+| N1 | **CALL-WS-V6** (#2167): the PC's mobile hotspot with broken IPv6 (bench P6), the Mi 9T on it | `Connected to Chat Gateway` within a second; ONE `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` means the attempt errored rather than hung: record which); no `[WS] native socket completed ... closing it` WARN; **the iPhone's call RINGS the phone**; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete the backlog item with this reading | [backlog](backlog.d/p1-call-ws-v6-shipped-in-v1-3-1-2167-owed-one-phone-reading-2026-10-20.md) |
 | N2 | **A relayed call on a phone.** The rig read forced TURN relay clean over UDP, TCP and TLS 443 on all three engines (#2165); no PHONE has read a relayed call. Take any call that goes through Cloudflare TURN (a throttled uplink, or the hotspot of N1) and record `relayed=yes` in `[CALL_REPORT]` and the `selected path pair=` line | audio both ways; `relayed=yes` where it is relayed (`relayed=` can over-count, see CALL-PATH-LINE in the backlog) | [calls B10](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [backlog](backlog.md#p3---call-path-line-the-selected-path--relayed-line-over-counts-relayed-calls-2026-10-20-not-built) |
 | N3 | The Tier B audio cells K1, K9, K12 (Mi 9T / iPhone / desktop) and K6 (both phones) of [the matrix](frontend/modules/calls-revival-plan.md#7-the-test-matrix) | as the cells | calls B10 |
 

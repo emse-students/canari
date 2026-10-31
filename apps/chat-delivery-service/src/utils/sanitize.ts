@@ -1,8 +1,124 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { cutLeafIdentity, cutUserId } from './log-repeat';
 
 /** Allowlist regex for generic query/path values: alphanumerics plus `_`, `.`, `:`, `@`, `-`, up to 128 chars. */
 export const SAFE_QUERY_VALUE_REGEX = /^[a-zA-Z0-9_.:@-]{1,128}$/;
+
+/** A leaf identity's two halves, read by {@link parseLeafIdentity}; `identity` is the value AS SENT. */
+export interface LeafIdentity {
+  identity: string;
+  userId: string;
+  deviceId: string;
+}
+
+/**
+ * Splits an MLS leaf identity `userId:deviceId` into its halves, or `null` when it is not one: not
+ * a string, not exactly ONE colon, or a half this service would refuse as a `userId` / `deviceId`
+ * wherever that half is written ({@link SAFE_QUERY_VALUE_REGEX}, untrimmed - an identity is matched
+ * against a leaf string AS SENT).
+ *
+ * **WHY EACH HALF AND NEVER THE WHOLE.** The pair is not a query value, it is two of them. A real
+ * identity is `<64-hex user>:<platform>-<64-hex user>-<base36 time>-<base36 rand>` (the device id
+ * embeds its user, `BaseMlsService.generateDeviceId`), 147 characters on the web and 149 on a Tauri
+ * build - so the generic 128 bound refused EVERY real one, and the revoked-leaves route that applied
+ * it answered 400 to every request it ever received. Each half keeps the exact alphabet and bound it
+ * is stored under, which is all the allowlist was for (no whitespace, no newline, no quote reaches a
+ * log line or a query parameter); the pair's own bound is therefore 128 + 1 + 128.
+ * `sanitize.leaf-identity.spec.ts` ties this to the generator's shape so the two cannot drift again.
+ *
+ * **THE CLIENT APPLIES THE SAME RULE BEFORE IT SENDS** (`isAddressableLeafIdentity`,
+ * `frontend/src/lib/mls-client/leafIdentity.ts`): both sides run every case of
+ * `libs/contracts/leaf-identity.cases.json`.
+ */
+export function parseLeafIdentity(value: unknown): LeafIdentity | null {
+  if (typeof value !== 'string') return null;
+  const colon = value.indexOf(':');
+  if (colon === -1 || colon !== value.lastIndexOf(':')) return null;
+  const userId = value.slice(0, colon);
+  const deviceId = value.slice(colon + 1);
+  if (!SAFE_QUERY_VALUE_REGEX.test(userId) || !SAFE_QUERY_VALUE_REGEX.test(deviceId)) return null;
+  return { identity: value, userId, deviceId };
+}
+
+/**
+ * THE ONE CANONICAL FORM OF A DEVICE KEY `userId:deviceId` in this service: the user half
+ * ASCII-lowercased (a user id is case-insensitive here - `HeaderAuthGuard` lowercases the caller),
+ * the device half as sent. Every comparison of two device keys goes through it, so two spellings
+ * the service accepts as one device are one device everywhere - and it matches `mls-core`'s
+ * `canonical_identity`, so the server and the clients agree on what "the same device" means.
+ */
+export function canonicalDeviceKey(userId: string, deviceId: string): string {
+  return `${userId.toLowerCase()}:${deviceId}`;
+}
+
+/**
+ * A leaf identity in {@link canonicalDeviceKey} form, or null when it is not one
+ * ({@link parseLeafIdentity}).
+ */
+export function canonicalLeafIdentity(value: unknown): string | null {
+  const leaf = parseLeafIdentity(value);
+  return leaf ? canonicalDeviceKey(leaf.userId, leaf.deviceId) : null;
+}
+
+/**
+ * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
+ * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
+ * included, and the rest of the device kept - it is what tells two devices of one person apart. A
+ * bare user id (a field that may name only the user)
+ * is cut the same way. Anything else reads as {@link sanitizeLogValue} reads it: `invalid`, or
+ * `absent` when nothing was sent - never a refusal.
+ *
+ * A real identity is longer than the 128 bound, so these fields printed `invalid` until 2026-10-28
+ * - the evidence each report exists to carry - and then printed the whole user id.
+ */
+export function sanitizeLeafLogValue(value: unknown, absent = 'unstated'): string {
+  if (typeof value === 'string') {
+    const leaf = parseLeafIdentity(value.trim());
+    if (leaf !== null) return cutLeafIdentity(leaf.userId, leaf.deviceId);
+  }
+  const plain = sanitizeLogValue(value, absent);
+  return plain === absent || plain === 'invalid' ? plain : cutUserId(plain);
+}
+
+/**
+ * A user and a device sent as TWO fields (a reporter's headers, an envelope's sender), printed as
+ * one `user:device` log value the way {@link sanitizeLeafLogValue} prints a leaf: each half through
+ * {@link sanitizeLogValue} first (so a forged newline is still `invalid`), then no full user id left
+ * in either ({@link cutLeafIdentity}). `absentDevice` names a device the caller did not send.
+ */
+export function sanitizeDevicePairLogValue(
+  userId: unknown,
+  deviceId: unknown,
+  absentDevice = 'unstated'
+): string {
+  return cutLeafIdentity(sanitizeLogValue(userId), sanitizeLogValue(deviceId, absentDevice));
+}
+
+/**
+ * The rule a user id is minted under (core-service `src/users/user-id.ts`, the one rule): non-empty
+ * visible ASCII (U+0021 to U+007E) with no ':'. Not a UUID - the id is the identity provider's
+ * subject - so a route that acts on an account by its id holds it to this rule instead.
+ *
+ * NO LENGTH CAP, because the mint rule has none: a cap here stricter than the rule would refuse an
+ * id core-service holds, and the erasure core-service retries would be a 400 for ever. The length
+ * bound is `users.id`'s own `varchar(255)`, which no id that exists can exceed.
+ */
+const MINTABLE_USER_ID_REGEX = /^[\x21-\x39\x3b-\x7e]+$/;
+
+/**
+ * `value` as a user id that obeys the mint rule ({@link MINTABLE_USER_ID_REGEX}), or a 400. WHY: an
+ * account erasure matches Redis keys and members on `<userId>:`, and an id with a ':' would match
+ * another account's prefix.
+ */
+export function sanitizeAccountUserId(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !MINTABLE_USER_ID_REGEX.test(value)) {
+    throw new BadRequestException(
+      `${fieldName} must be non-empty visible ASCII with no ':' (the user id rule)`
+    );
+  }
+  return value;
+}
 
 /**
  * Validates that `value` is a non-empty string matching the safe query allowlist.
@@ -91,6 +207,9 @@ export function isUnresolvedIdentity(value: string): boolean {
  * itself, `unstated` when the caller sent none, and `invalid` when it sent something outside
  * {@link SAFE_QUERY_VALUE_REGEX} - which is also what stops a caller writing newlines into a log and
  * forging lines in it.
+ *
+ * A field that carries a leaf identity uses {@link sanitizeLeafLogValue} instead: a real one is
+ * longer than the 128 bound.
  */
 export function sanitizeLogValue(value: unknown, absent = 'unstated'): string {
   if (value === undefined || value === null || value === '') return absent;
@@ -150,6 +269,15 @@ export function assertCallerOwnsUserId(
   if (caller !== targetUserId) {
     throw new ForbiddenException(message);
   }
+}
+
+/**
+ * The one form two account ids are compared in: trimmed and lower-cased, the form
+ * `HeaderAuthGuard` verifies the `x-user-id` HMAC against. Comparing a body field with the raw
+ * header instead would let the same account fail, or match, on case alone.
+ */
+export function canonicalUserId(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** Validates that `value` is a non-empty string of at most 256 characters suitable for display. */

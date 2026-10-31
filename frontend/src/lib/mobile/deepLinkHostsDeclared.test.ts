@@ -24,10 +24,14 @@ const SERVER_HOSTS = [
   'live',
   // D38b: the author's inbox of republication requests.
   'republication-requests',
+  // WP-F4: the reader's inbox of follow requests.
+  'follow-requests',
   // WP-L8b: a cut live, a suspension, a withdrawal - the notifications list, where their row is.
   'notifications',
   // The organiser alert (a payment landed on a full form): that form's responses.
   'form-responses',
+  // WP-N: a booking cancelled, left, made for the reader, or about to start - the Reservations page.
+  'bookings',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */

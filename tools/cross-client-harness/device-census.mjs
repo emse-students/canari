@@ -194,3 +194,48 @@ export function summarize(rows) {
     enrolledUnrouted: expected.filter((r) => !r.routed).length,
   };
 }
+
+/**
+ * WHICH BROWSER DEVICES OF THE RIG'S OWN ACCOUNTS ARE DEBRIS - the plan `stale-devices.mjs` purges.
+ *
+ * WHY IT EXISTS (alpha.5, 2026-10-26). Every DEV row mints a browser device for the owner account and
+ * abandons it, and each one stays enrolled. The peer's client then vouches for every one of them in
+ * every row that commits in a group the owner is in (`[PENDING] ... already in tree ... vouching`,
+ * seven lines per ADM row), which is rig debris the bar of `PASS` will not narrate away.
+ *
+ * **AN ALLOWLIST, NEVER A DENYLIST.** A device is a target only if ALL of these hold: its account is
+ * one of the rig's (`users`); it is a browser device (`web-`); it is NOT a live seat's (`live`, read
+ * from every seat's own page); and the campaign ledger records creating it (`owned`). A phone is
+ * never `web-`, and is in `live` besides. Everything else is KEPT and listed with the reason.
+ *
+ * **AN UNREAD SEAT REFUSES THE WHOLE PLAN.** A web seat whose device id could not be read would look
+ * exactly like debris, so `unread` names the seats that did not answer and the plan is refused while
+ * it is not empty - never "purge what we can see".
+ *
+ * @param {{rows: {deviceId: string, userId: string}[], users: string[], live: string[], owned: string[], unread?: string[]}} p
+ * @returns {{ok: boolean, refusal: string|null, targets: {deviceId: string, userId: string}[], kept: {deviceId: string, userId: string, why: string}[]}}
+ */
+export function planStaleDevices({ rows, users, live, owned, unread = [] }) {
+  if (unread.length) {
+    return { ok: false, refusal: `seat(s) ${unread.join(' ')} could not be read - their device would look like debris`, targets: [], kept: [] };
+  }
+  const rig = new Set(users);
+  const liveSet = new Set(live);
+  const ownedSet = new Set(owned);
+  const targets = [];
+  const kept = [];
+  for (const r of rows ?? []) {
+    if (!rig.has(r.userId)) continue;
+    const why =
+      runtimeOf(r.deviceId) !== 'web'
+        ? 'not a browser device'
+        : liveSet.has(r.deviceId)
+          ? 'a live seat'
+          : !ownedSet.has(r.deviceId)
+            ? 'not in the campaign ledger'
+            : null;
+    if (why) kept.push({ deviceId: r.deviceId, userId: r.userId, why });
+    else targets.push({ deviceId: r.deviceId, userId: r.userId });
+  }
+  return { ok: true, refusal: null, targets, kept };
+}

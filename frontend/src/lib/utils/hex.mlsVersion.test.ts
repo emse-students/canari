@@ -11,7 +11,7 @@ import {
 } from './hex';
 
 // Tauri runtime detection must be false so saveMlsStateEncrypted takes the IndexedDB path.
-vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => false }));
+vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => false }));
 
 /**
  * Minimal in-memory IndexedDB fake covering the single-store read-modify-write the MLS

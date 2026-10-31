@@ -1,4 +1,8 @@
-import { ADDRESSED_HISTORY_CAPABILITY, gatewaySocketUrl } from './frameDelivery';
+import {
+  ADDRESSED_HISTORY_CAPABILITY,
+  JOIN_ASK_CAPABILITY,
+  gatewaySocketUrl,
+} from './frameDelivery';
 import webMlsService from '$lib/services/WebMlsService.ts?raw';
 import tauriMlsService from '$lib/services/TauriMlsService.ts?raw';
 
@@ -9,13 +13,16 @@ import tauriMlsService from '$lib/services/TauriMlsService.ts?raw';
  * answers off for every device it runs on - so both openers build their URL through ONE function.
  */
 describe('the gateway socket URL', () => {
-  it('declares the addressed-history capability, with or without a token', () => {
+  it('declares the addressed-history and join-ask capabilities, with or without a token', () => {
     for (const token of [undefined, 'tok']) {
       const { url } = gatewaySocketUrl('wss://example.test', 'device 1', token);
       const query = new URL(url).searchParams;
 
       expect(query.get('device_id')).toBe('device 1');
-      expect(query.get('caps')).toBe(ADDRESSED_HISTORY_CAPABILITY);
+      expect(query.get('caps')?.split(',')).toEqual([
+        ADDRESSED_HISTORY_CAPABILITY,
+        JOIN_ASK_CAPABILITY,
+      ]);
       expect(query.get('token')).toBe(token ?? null);
     }
   });

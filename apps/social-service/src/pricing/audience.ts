@@ -88,11 +88,25 @@ export const OTHERS_BUCKET_ID = '_others';
  */
 export interface AudienceCondition {
   cotisation?: Pick<CotisationBucket, 'anyTier' | 'variantKeys'>;
+  /**
+   * The NEGATION of `cotisation`: the person holds NONE of these tiers (`anyTier`: no cotisation of
+   * the association at all). What keeps a holder of "BDE 2026-2027" from paying it twice through a
+   * form that sells it (owner, 2026-10-30).
+   *
+   * A KEY OF ITS OWN rather than a `negate` flag inside `cotisation`, for the clients that predate
+   * it: an older editor rewrites `cotisation` from its checkboxes and would drop a flag - turning
+   * "not a cotisant" into "cotisant" in silence - while it spreads an unknown key through untouched.
+   * Never beside `cotisation` (`parseAudienceCondition` refuses the pair): one criterion, one mode.
+   */
+  notCotisation?: Pick<CotisationBucket, 'anyTier' | 'variantKeys'>;
   promo?: { values: number[] };
   formation?: { values: string[] };
   /** The generalisation of `dependsOn`/`dependsValue`: this question has one of these options. */
   answer?: { questionId: string; optionIds: string[] };
 }
+
+/** A criterion of a condition, as the key that carries it. */
+export type AudienceCriterion = keyof AudienceCondition;
 
 /** True when the submitter holds a cotisation the bucket accepts. */
 function matchesCotisation(
@@ -153,17 +167,37 @@ export function bucketFor(dimension: Dimension, facts: PricingFacts): string {
   }
 }
 
-/** True when the submitter satisfies every criterion present in the condition. */
-export function matchesCondition(condition: AudienceCondition, facts: PricingFacts): boolean {
-  if (condition.cotisation && !matchesCotisation(condition.cotisation, facts)) return false;
-  if (condition.promo && !matchesPromo(condition.promo.values, facts)) return false;
-  if (condition.formation && !matchesFormation(condition.formation.values, facts)) return false;
+/**
+ * The first criterion of the condition the submitter does NOT satisfy, or null when they satisfy
+ * every one (the keys are ANDed).
+ *
+ * `notCotisation` is asked first, so a refusal names it whenever it is among the failures: "you
+ * already hold this cotisation" is the one refusal a person can read as an answer rather than a
+ * wall, and the caller types it (`submitRefusalCode`) instead of reading it back out of prose.
+ */
+export function failedCriterion(
+  condition: AudienceCondition,
+  facts: PricingFacts
+): AudienceCriterion | null {
+  if (condition.notCotisation && matchesCotisation(condition.notCotisation, facts)) {
+    return 'notCotisation';
+  }
+  if (condition.cotisation && !matchesCotisation(condition.cotisation, facts)) return 'cotisation';
+  if (condition.promo && !matchesPromo(condition.promo.values, facts)) return 'promo';
+  if (condition.formation && !matchesFormation(condition.formation.values, facts)) {
+    return 'formation';
+  }
   if (
     condition.answer &&
     !matchesAnswer(condition.answer.questionId, condition.answer.optionIds, facts)
   )
-    return false;
-  return true;
+    return 'answer';
+  return null;
+}
+
+/** True when the submitter satisfies every criterion present in the condition. */
+export function matchesCondition(condition: AudienceCondition, facts: PricingFacts): boolean {
+  return failedCriterion(condition, facts) === null;
 }
 
 /**

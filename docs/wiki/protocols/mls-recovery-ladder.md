@@ -95,6 +95,20 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
    can stop mid-backlog) and not by the end of the listing (a live frame queued ahead of the listed
    rows would then meet the healer first).
 
+   **Every other replay honours the same mark, and asks for the same pull.** `replayAndRecord`
+   (`commitReplay.ts`) is rung 1 for a refused commit's catch-up and a gesture's confirmed tree
+   (`readConfirmedTree`); held behind the mark, it replays nothing and calls
+   `notifyConversationAvailable` itself, since a quiet conversation has no next frame to start that
+   pull, and without it the hold lasted until the stuck-gap escalation or a reconnect. **A pull that
+   dies half-way re-arms its groups** (`rearmRefusedBacklog`): its start took them off the work list
+   while only a WHOLE listing discharges the mark, so the next event asking for that backlog would
+   otherwise take nothing and pull nothing; and a discharge removes the group's work-list entry with
+   its mark, so overlapping pulls (one dead, one whole) leave no entry for a notify to pull for. No
+   timer either way - and none behind it: the next pull rides the group's next event (a held frame or
+   replay, a new row, a reconnect). Nothing re-attempts a refused commit on a clock - no outbox
+   backoff, the stale-leaf refresh waits for the epoch to move - so a quiet group whose pull died
+   waits for that event.
+
    The row itself is written by every path that can make it appear, and each one announces it: the
    redelivered Welcome of a held group with no row (`writeRowForHeldGroup` - from storage when
    storage holds one the restore has not seeded yet, so its watermarks are not overwritten), the
@@ -224,6 +238,53 @@ residual window is a Welcome processed whose activation call has not landed and 
 already acked, on an adder that predates `admits`: the repair then costs one self-served external
 join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
 `initializeConnection.sync.test.ts`.
+
+### A further device's ask is decided once and asked on the cadence
+
+A further device of a member (the join answers `further_device`) can only be let in by a member's
+Add, so the seam sends it a `welcome_request`. On DEVREVOKE-KEYGROUP (`1.5.1-alpha.8`, 2026-10-29) a
+minted device sent one for each of its six conversations, then all six again 20 s later. Nothing had
+changed, and the owner's seat said the same decision twice for each.
+
+The second pass re-asked every group at once. Only `resetReAddCooldowns` clears every group's
+throttle, and its one caller is the session setup (`setupMessageHandler`). The requester's console
+was not kept, so this cause is read from the code and is not proven.
+
+**The requester asks on its cadence, about once a minute per group, and records nothing.**
+`sendWelcomeRequest` returns what the server did (`WelcomeRequestAnswer`) and `askAMemberToReAddUs`
+logs it, but no answer makes the ask durable:
+
+- `forwarded` reaches one online member's screen and nothing else.
+- `stored` (`no_peer_online`) is kept for every member's next connection (`pending_welcome`,
+  `pending_welcome_notify`, 24 h), then drained to a member's screen - no more durable than a
+  forwarded ask once there.
+- A screen that reloads or closes before deciding loses the ask, and nothing on the requester can see
+  that. A record of "already asked against this epoch pair" was tried in review and REMOVED: in a
+  quiet group the pair never moves, and the presence edge does not watch group members, so the device
+  would wait for a reload.
+
+**What it costs.** While a member is online, a further device's ask is forwarded on every cadence.
+The member says its decision once and counts the repeats (below), so the cost is requests, not
+noise. A device with a `pending` seat is also re-raised by every member's own pending-invitation
+sweep from that durable row (`processPendingInvitations` -> `askAboutUnseenDevice`). **A device with
+NO seat has no durable ask** and depends on its own cadence. The durable fix is on the
+[backlog](../backlog.md): store a further device's ask as a server row, as a link's ask is, let
+members re-raise it, and let the requester stop asking once the row exists.
+
+**The member says its decision once and counts repeats.** `askAboutUnseenDevice` (`actions.ts`) logs
+`... is a device this one never saw ...` once per (group, `user:device`, key fingerprint, this
+device's epoch of the group), while the ask is still shown (`isDeviceAskShown`,
+`joinRequests.svelte.ts`). A repeat of the same decision is not silent: it is counted and said at its
+1st, 10th and 100th occurrence (`DecisionLog`, `utils/decisionLog.ts`, the client twin of the
+server's `RepeatCounter`). The record is bounded (2000 slots) and reset at sign-out. The ask itself is
+still raised on every request, because a pending sweep keeps only what it raised
+(`settleSweptJoinRequests`). A new epoch, another key, or an ask that left the screen decides again.
+
+**The answerer's withholding works the same way.** `utils/graine/frameHandler.ts` says
+`withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group
+(`sayAnswerDecisionOnce`, same `DecisionLog`), with repeats counted at 1, 10 and 100. Each line is
+keyed on what it was decided on: which sessions were withheld and why. Pinned by `recovery.test.ts`,
+`decisionLog.test.ts`, `actions.admission.test.ts` and `frameHandler.test.ts`.
 
 ## Verification (tests + runtime)
 

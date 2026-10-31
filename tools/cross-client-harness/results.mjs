@@ -6,7 +6,7 @@
  * session, so every runner writes here rather than only to stdout.
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, existsSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,11 +15,12 @@ import { request as requestOverHttps } from 'node:https';
 import { srvLines } from './estate.mjs';
 import { foldServerWindow, takeServerWindow } from './serverwindow.mjs';
 import { instrumentShaOf } from './instrument.mjs';
-import { SITE, STATE_DIR } from './names.mjs';
+import { STATE_DIR } from './names.mjs';
+import { ESTATE, SITE } from './site.mjs';
 import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
 import { observedBundles } from './bundle.mjs';
 import { RECORDER_ONLY, VERDICTS, isVerdict } from './verdicts.mjs';
-import { gate, report } from './watch.mjs';
+import { consoleDump, gate, report } from './watch.mjs';
 import { parseBuildStamp } from './buildstamp.mjs';
 
 /**
@@ -44,7 +45,7 @@ const SOURCE_STAMP = readSourceStamp()?.sha ?? null;
  * the build's own millisecond timestamp into it, and it changes with every build. That is the
  * evidence, in the sense of rule 17 - a property of the code that is actually serving.
  *
- * THE COMMIT IS NAMED BY THE BUNDLE ITSELF: `svelte.config.js` writes `<builtAtMs>-<sha>` into
+ * THE COMMIT IS NAMED BY THE BUNDLE ITSELF: `kit.config.js` writes `<builtAtMs>-<sha>` into
  * `version.json`, and `parseBuildStamp` reads it back - no clock, no history, no inference. The
  * timestamp stays beside the commit because it separates two builds of the SAME commit.
  *
@@ -297,7 +298,7 @@ const observed = (detail) =>
  * them. It goes back in once those runners rename their field; until then the loss is written down
  * here rather than demoted, and `rows.mjs` must not be taught to trust `check` on those phases.
  */
-const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha'];
+const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha', 'estate', 'site'];
 
 /**
  * An `ERROR` verdict's detail: what was thrown, AND WHERE.
@@ -475,6 +476,10 @@ export function record(id, verdict, detail) {
     check: CHECK.file,
     checkSha: CHECK.sha,
     instrumentSha: CHECK.instrumentSha,
+    // WHICH ESTATE THE VERDICT IS ABOUT (R1): one `STATE_DIR` serves local and dev, and `rows.mjs`
+    // reads only the rows of the estate `SITE` names (`ledgerEstateOf`).
+    estate: ESTATE,
+    site: SITE,
   };
   appendFileSync(FILE, `${JSON.stringify(row)}\n`);
   console.log(`[${stated}] ${id} ${JSON.stringify(detail)}`);
@@ -595,6 +600,8 @@ export async function recordObserved(id, verdict, detail, observers) {
     blind: { '*': `the bundle check itself failed: ${String(e?.message ?? e)}` },
   }));
 
+  // THE WHOLE CONSOLE, read now and written only if the row does not PASS - see `consoleDump`.
+  const consoles = consoleDump(observers);
   const reports = {};
   for (const [label, o] of Object.entries(observers))
     if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
@@ -605,9 +612,35 @@ export async function recordObserved(id, verdict, detail, observers) {
   const { serverWindowSince, ...rowDetail } = detail ?? {};
   const folded = foldServerWindow(
     gated,
-    serverWindowSince ? takeServerWindow(srvLines, serverWindowSince) : null
+    // THE ROW'S OWN ID decides which 1.4.1 server lines are its own (`srvlog.mjs` `ROW_RULES`).
+    serverWindowSince ? takeServerWindow(srvLines, serverWindowSince, [], id) : null
   );
-  return record(id, folded.verdict, { ...folded.detail, ...rowDetail });
+  const kept = folded.verdict === 'PASS' ? null : keepConsoles(id, consoles);
+  return record(id, folded.verdict, { ...folded.detail, ...rowDetail, ...(kept ? { consoles: kept } : {}) });
+}
+
+/**
+ * Writes each client's console to `<STATE_DIR>/logs/consoles/`, outside the repository (the lines
+ * carry ids), and returns label -> path. A write that fails is a note in the row, never a lost verdict.
+ */
+export function keepConsoles(id, consoles) {
+  const labels = Object.keys(consoles);
+  if (!labels.length) return null;
+  const dir = join(STATE_DIR, 'logs', 'consoles');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const paths = {};
+  for (const label of labels) {
+    const path = join(dir, `${id}-${stamp}-${label}.log`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path, consoles[label] + '\n');
+      paths[label] = path;
+    } catch (e) {
+      console.error(`[results] could not keep ${label}'s console for ${id}: ${String(e?.message ?? e)}`);
+      paths[label] = `unwritten: ${String(e?.message ?? e)}`;
+    }
+  }
+  return paths;
 }
 
 /**

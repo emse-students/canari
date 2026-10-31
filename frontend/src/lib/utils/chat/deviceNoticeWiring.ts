@@ -16,6 +16,65 @@ import {
 
 /** The MLS service the notices consume events from, while an account is signed in. */
 let registeredMls: IMlsService | null = null;
+/** The signed-in account and this device, read live, while the notices are registered. */
+let registeredSession: Pick<DeviceNoticeSession, 'getUserId' | 'getMyDeviceId'> | null = null;
+
+/**
+ * THIS DEVICE'S OWN KEY FINGERPRINT (`keyFingerprintOf` over its credential signature key), in the
+ * form a member's device ask shows it - what the owner compares while this device waits to be added.
+ *
+ * @returns `null` before an account is registered or the engine is ready (logged).
+ */
+export async function ownKeyFingerprint(): Promise<string | null> {
+  const mls = registeredMls;
+  if (!mls) return null;
+  try {
+    return await keyFingerprintOf(await mls.ownSignatureKey());
+  } catch (e) {
+    console.warn(
+      `[DEVICE_NOTICE] this device's own key could not be read: ${String(e).slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * "NOT ME": the owner says a device the alert names is not theirs, and it is REVOKED - the same
+ * revocation as the device list's (`deleteDevice`): its id is banned, its logins end, its seats go
+ * server-side, and every member's stray collector (`removeStrayLeaves`) takes its leaf out of each
+ * conversation, since it holds no seat any more. Never this device itself.
+ *
+ * @returns whether the server answered the revocation done; a refusal or a failure is logged at a
+ *   level that accuses, and the alert stays so the owner can retry or use the list.
+ */
+export async function revokeNoticedDevice(deviceId: string): Promise<boolean> {
+  const mls = registeredMls;
+  const session = registeredSession;
+  if (!mls || !session) {
+    console.error('[DEVICE_NOTICE] "not me" with no account registered - nothing revoked');
+    return false;
+  }
+  if (deviceId === session.getMyDeviceId()) {
+    console.error('[DEVICE_NOTICE] "not me" named this very device - refused, nothing revoked');
+    return false;
+  }
+  const short = deviceId.slice(0, 8);
+  console.warn(`[DEVICE_NOTICE] the owner says ${short}... is not theirs - revoking it`);
+  try {
+    const result = await mls.deleteDevice(session.getUserId(), deviceId);
+    if (result.status === 'device_deleted') {
+      console.warn(
+        `[DEVICE_NOTICE] ${short}... revoked: ${result.groupsCleaned} seat(s) withdrawn, its leaves go with the stray collector`
+      );
+      return true;
+    }
+    console.error(`[DEVICE_NOTICE] revocation of ${short}... answered status=${result.status}`);
+    return false;
+  } catch (e) {
+    console.error(`[DEVICE_NOTICE] revocation of ${short}... failed: ${String(e).slice(0, 160)}`);
+    return false;
+  }
+}
 
 /**
  * Unbinds the notices from the account that signs out: no more consumer, so the device events stay
@@ -24,6 +83,7 @@ let registeredMls: IMlsService | null = null;
 export function unregisterDeviceNotices(): void {
   registeredMls?.setDeviceEventConsumer(null);
   registeredMls = null;
+  registeredSession = null;
   setRefusedDeviceListener(null);
   forgetDeviceNotices();
 }
@@ -178,31 +238,33 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
 /**
  * Binds the new-device notices to the signed-in account and makes them the consumer of the MLS
  * layer's device events - which also drains whatever the sealed state already holds - and the
- * listener of the refusals this device records (`refusedDevices.ts`), so a refused device of the
- * account's own is told to its owner.
+ * listener of the refusals this device records (`refusedDevices.ts`), which a refused device of the
+ * account's own is logged from (it is shown nowhere).
  */
 export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSession): void {
   loadDeviceNotices(session.getUserId());
   registeredMls = mls;
+  registeredSession = session;
   const onPhone = isMobileTauriRuntime();
-  const refusedCtx = () => ({
-    ownUserId: session.getUserId(),
-    deviceLabel: (deviceId: string) => deviceLabelOf(mls, session.getUserId(), deviceId),
-  });
-  // The refusals this device already remembers, then each new one as it is recorded.
-  void noteRefusedOwnDevices(
+  const refusedCtx = () => ({ ownUserId: session.getUserId() });
+  // The refusals this device already remembers, then each new one as it is recorded - logged only.
+  noteRefusedOwnDevices(
     listRefusedDevices({ userId: session.getUserId(), deviceId: session.getMyDeviceId() }),
     refusedCtx()
   );
-  setRefusedDeviceListener((identity) => void noteRefusedOwnDevices([identity], refusedCtx()));
+  setRefusedDeviceListener((identity) => noteRefusedOwnDevices([identity], refusedCtx()));
   if (onPhone) void preclaimOldOwnDevices(mls, session.getUserId(), session.getMyDeviceId());
+  // The account whose state this consumer drains, fixed now: an account switch re-registers, and the
+  // events of a delivery it overtakes are still this account's.
+  const account = session.getUserId();
   mls.setDeviceEventConsumer((events) =>
     deliverDeviceEvents(events, {
-      ownUserId: session.getUserId(),
+      ownUserId: account,
       ownDeviceId: session.getMyDeviceId(),
       isDistributionGroup: (groupId) => mls.isDistributionGroup(groupId),
       conversations: session.conversations,
       localGroups: () => mls.getLocalGroups(),
+      heldGroupsKnown: () => mls.heldGroupsKnown(),
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),

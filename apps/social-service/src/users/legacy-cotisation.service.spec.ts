@@ -10,8 +10,7 @@ describe('LegacyCotisationService.claimFor', () => {
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
     };
     const userTags: any = {
-      holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
-      grantCotisant: jest.fn(() => Promise.resolve({})),
+      grantCotisantUnlessHeld: jest.fn(() => Promise.resolve({})),
     };
     const service = new LegacyCotisationService(
       repo as unknown as Repository<LegacyCotisation>,
@@ -40,7 +39,7 @@ describe('LegacyCotisationService.claimFor', () => {
 
     const outcome = await service.claimFor(alice);
 
-    expect(userTags.grantCotisant).toHaveBeenCalledWith(
+    expect(userTags.grantCotisantUnlessHeld).toHaveBeenCalledWith(
       'assoc-bde',
       'user1',
       'system:legacy-import',
@@ -58,11 +57,11 @@ describe('LegacyCotisationService.claimFor', () => {
     // grantCotisant revokes sibling tiers in the same transaction, so granting the legacy tier to
     // someone who bought another one would take away what they paid for.
     const { service, userTags } = makeService([staged({ variantKey: 'avec-alcool' })]);
-    userTags.holdsAnyCotisation.mockResolvedValue(true);
+    // Asked under the buyer's tier lock: the grant answers null when a tier is already held.
+    userTags.grantCotisantUnlessHeld.mockResolvedValue(null);
 
     const outcome = await service.claimFor(alice);
 
-    expect(userTags.grantCotisant).not.toHaveBeenCalled();
     expect(outcome).toEqual({ granted: 0, alreadyHeld: 1, failed: 0, conflicts: 0 });
   });
 
@@ -71,14 +70,14 @@ describe('LegacyCotisationService.claimFor', () => {
 
     const outcome = await service.claimFor(alice);
 
-    expect(userTags.grantCotisant).not.toHaveBeenCalled();
+    expect(userTags.grantCotisantUnlessHeld).not.toHaveBeenCalled();
     expect(repo.update).not.toHaveBeenCalled();
     expect(outcome).toEqual({ granted: 0, alreadyHeld: 0, failed: 0, conflicts: 0 });
   });
 
   it('leaves the row pending when the grant throws, so the next sign-in retries it', async () => {
     const { service, repo, userTags } = makeService([staged()]);
-    userTags.grantCotisant.mockRejectedValue(new Error('association not found'));
+    userTags.grantCotisantUnlessHeld.mockRejectedValue(new Error('association not found'));
 
     const outcome = await service.claimFor(alice);
 
@@ -91,7 +90,7 @@ describe('LegacyCotisationService.claimFor', () => {
 
     const outcome = await service.claimFor(alice);
 
-    expect(userTags.grantCotisant).not.toHaveBeenCalled();
+    expect(userTags.grantCotisantUnlessHeld).not.toHaveBeenCalled();
     expect(outcome.conflicts).toBe(1);
   });
 
@@ -109,11 +108,11 @@ describe('LegacyCotisationService.claimFor', () => {
       staged({ id: 'row1', associationId: 'assoc-bde' }),
       staged({ id: 'row2', associationId: 'assoc-cercle', variantKey: 'avec-alcool' }),
     ]);
-    userTags.grantCotisant.mockRejectedValueOnce(new Error('boom'));
+    userTags.grantCotisantUnlessHeld.mockRejectedValueOnce(new Error('boom'));
 
     const outcome = await service.claimFor(alice);
 
-    expect(userTags.grantCotisant).toHaveBeenCalledTimes(2);
+    expect(userTags.grantCotisantUnlessHeld).toHaveBeenCalledTimes(2);
     expect(outcome).toEqual({ granted: 1, alreadyHeld: 0, failed: 1, conflicts: 0 });
   });
 });

@@ -8,8 +8,10 @@ import {
   Param,
   Inject,
   BadRequestException,
+  ForbiddenException,
   UseGuards,
   Logger,
+  Headers,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -17,10 +19,19 @@ import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
-import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import { assertCallerActsOnGroup, isKeyDistributionGroup } from '../utils/group-membership';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { cutUserId } from '../utils/log-repeat';
+import {
+  canonicalUserId,
+  sanitizeIdentityValue,
+  sanitizeOptionalQueryValue,
+  sanitizeQueryValue,
+} from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
 /** MLS group lifecycle: create, read, rename, delete, and epoch management. */
@@ -32,11 +43,50 @@ export class GroupsController {
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(GroupMember)
+    private groupMemberRepo: Repository<GroupMember>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService
   ) {}
+
+  /**
+   * The caller must be an admitted member of `groupId` ({@link assertCallerActsOnGroup}): the
+   * metadata and lifecycle routes below act on the conversation for EVERY member, so being signed in
+   * is not enough. Any admitted member of an ordinary or 1:1 group may rename, set the photo or
+   * delete for everyone - the rule the conversation panel offers - and there is no role requirement.
+   *
+   * **A KEY-DISTRIBUTION GROUP IS REFUSED TO EVERY CALLER** (403 `KEY_DISTRIBUTION_GROUP`): it is no
+   * conversation, its lifecycle belongs to the internal `mls/distribution-groups` routes, and no
+   * client ever addresses it here. The membership check runs FIRST, so a caller outside the group
+   * meets the same `NOT_A_MEMBER` as for any other id and learns nothing about its kind.
+   */
+  private async assertMayEditConversation(
+    route: string,
+    groupId: string,
+    headerUserId: string | undefined
+  ): Promise<void> {
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    const group = await assertCallerActsOnGroup(
+      { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+      this.logger,
+      route,
+      groupId,
+      caller
+    );
+    if (isKeyDistributionGroup(group)) {
+      this.logger.warn(
+        `[${route}] REFUSED key-distribution group=${groupId} caller=${cutUserId(caller)} - its lifecycle belongs to the distribution-groups routes (403 KEY_DISTRIBUTION_GROUP)`
+      );
+      throw new ForbiddenException(
+        refusalBody(
+          RefusalCode.KEY_DISTRIBUTION_GROUP,
+          'A key-distribution group is managed through its community, not through this route.'
+        )
+      );
+    }
+  }
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
@@ -104,12 +154,28 @@ export class GroupsController {
    * microseconds earlier by this same request and provably owns nothing - the one condition a
    * destructive action here needs. The failure is NEVER masked: the discard's own errors are logged
    * and the original refusal is what the caller receives.
+   *
+   * **THE CREATOR IS THE AUTHENTICATED CALLER, AND THE ROW RECORDS IT** (`Group.createdBy`, in
+   * canonical form). The creation bootstrap enrols the group's recorded creator and nobody else; a
+   * group with no recorded creator is bootstrapped by nobody. A body `createdBy` naming another
+   * account is refused 403 before anything is written.
    */
   async createGroup(
     @Body()
-    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string }
+    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string },
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('create-grp');
+    const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const caller = header ? canonicalUserId(header) : null;
+    if (caller && body.createdBy && canonicalUserId(String(body.createdBy)) !== caller) {
+      this.logger.warn(
+        `[CREATE_GROUP][${traceId}] REFUSED createdBy=${cutUserId(String(body.createdBy))} caller=${cutUserId(caller)} - a group is created by its caller; no group row was written`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.MEMBERSHIP_NOT_ALLOWED, 'createdBy must be the caller')
+      );
+    }
     // A group with no creator device enrols nobody - there is no membership to gate, and the
     // creator reaches it through the ordinary invitation path like any other device.
     const enrolling = Boolean(body.createdBy && body.creatorDeviceId);
@@ -146,6 +212,7 @@ export class GroupsController {
       id: groupId,
       name: body.name,
       isGroup: body.isGroup ?? true,
+      createdBy: caller,
     });
     await this.groupRepo.save(newGroup);
 
@@ -209,21 +276,33 @@ export class GroupsController {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
     if (!g) {
       this.logger.log(`[GET_GROUP] groupId=${groupId} found=false`);
-      return null;
+      // ABSENCE IS SPELT AS JSON, because the client PURGES on it. A bare `null` leaves Nest as an
+      // empty, untyped 200 - which a captive portal can answer too - so the client could only read
+      // "absent" from the absence of an answer. An object with no `groupId` is what every client,
+      // old or new, already reads as absent.
+      return { found: false };
     }
     const base = await this.groupInfoRepo.findOne({
       select: { groupId: true, baseEpoch: true },
       where: { groupId: g.id },
     });
     this.logger.log(`[GET_GROUP] groupId=${groupId} found=true`);
-    return { ...g, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
+    // `createdBy` is internal - it decides the creation bootstrap and nothing a client reads - so it
+    // never leaves the service, whoever holds the id.
+    const { createdBy: _createdBy, ...visible } = g;
+    return { ...visible, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
   }
 
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/groups/:groupId')
-  /** Renames a group. */
-  async renameGroup(@Param('groupId') groupId: string, @Body() body: { name: string }) {
+  /** Renames a group. The caller must be an admitted member of it. */
+  async renameGroup(
+    @Param('groupId') groupId: string,
+    @Body() body: { name: string },
+    @Headers('x-user-id') headerUserId?: string
+  ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.assertMayEditConversation('RENAME_GROUP', safeGroupId, headerUserId);
     if (typeof body.name !== 'string' || !body.name.trim()) {
       throw new BadRequestException('name is required');
     }
@@ -237,9 +316,17 @@ export class GroupsController {
 
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/groups/:groupId/image')
-  /** Sets or clears the group's avatar (media-service id). Pass mediaId=null to remove the photo. */
-  async setGroupImage(@Param('groupId') groupId: string, @Body() body: { mediaId: string | null }) {
+  /**
+   * Sets or clears the group's avatar (media-service id). Pass mediaId=null to remove the photo.
+   * The caller must be an admitted member of the group.
+   */
+  async setGroupImage(
+    @Param('groupId') groupId: string,
+    @Body() body: { mediaId: string | null },
+    @Headers('x-user-id') headerUserId?: string
+  ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.assertMayEditConversation('SET_GROUP_IMAGE', safeGroupId, headerUserId);
     const mediaId = body?.mediaId ?? null;
     if (mediaId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId format');
@@ -259,9 +346,17 @@ export class GroupsController {
    * written three times is a sequence that drifts: it once named four tables by hand and left
    * `mls_commit_log`, `mls_group_info`, `group_invites` and `user_dismissed_groups` behind, which
    * the orphan sweep can never collect because the row deliberately SURVIVES as a tombstone.
+   *
+   * **ONLY AN ADMITTED MEMBER MAY END IT**, and the check runs before the tombstone. The tombstone
+   * purges every seat, so a second delete - a client replaying an exit it still owes - is answered
+   * the 403 `NOT_A_MEMBER`, which that replay reads as "already done" and stops owing.
    */
-  async deleteGroup(@Param('groupId') groupId: string) {
+  async deleteGroup(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string
+  ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
 
     const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [safeGroupId]);
 

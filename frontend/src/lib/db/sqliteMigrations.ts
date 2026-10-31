@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -72,4 +72,18 @@ export function outboxServerErrorsStatement(columns: readonly string[]): string 
   return columns.includes('server_errors')
     ? null
     : 'ALTER TABLE outbox ADD COLUMN server_errors INTEGER DEFAULT 0';
+}
+
+/**
+ * The v14 -> v15 step: the conversation row gains `awaiting_admission`, whether this account's seat
+ * is an invitation-link ask no member has answered (`ConversationMeta.awaitingAdmission`). NULL on
+ * arrival, which reads as "not an ask" - the next discovery sets it from the server's list. Returns
+ * `null` when the column is there - a fresh database, or a rerun - so the step is a no-op twice.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationAwaitingAdmissionStatement(columns: readonly string[]): string | null {
+  return columns.includes('awaiting_admission')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN awaiting_admission INTEGER';
 }

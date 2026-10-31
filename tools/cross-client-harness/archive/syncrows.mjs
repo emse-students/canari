@@ -39,7 +39,8 @@
 import { pathToFileURL } from "node:url";
 import { client, evaluate } from "../chat.mjs";
 import { epochForks } from "../epochfork.mjs";
-import { ORIGIN, PORTS } from "../names.mjs";
+import { PORTS } from "../names.mjs";
+import { ORIGIN } from "../site.mjs";
 // The four values that decide what "the app answered" means live in their own module so the gate can
 // test them: anything reaching `names.mjs` cannot run on a fresh checkout. See `usability.mjs`.
 import { OPENED, READY_TILE, REACTED, SYNCING_TILE } from "./usability.mjs";

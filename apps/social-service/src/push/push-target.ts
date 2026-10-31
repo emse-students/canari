@@ -1,3 +1,10 @@
+/**
+ * The `target` naming a person's follow-request inbox (WP-F4), and the deep-link host for it: the tap
+ * of a `follow_request` push. A build older than the inbox does not own the host and lands on the
+ * notifications list (the hook's unknown-host branch), where the request's row is.
+ */
+export const FOLLOW_REQUESTS_TARGET = 'follow-requests';
+
 /** The `target` naming a person's republication requests page (D38b), and the deep-link host for it. */
 export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
 
@@ -15,6 +22,13 @@ export const NOTIFICATIONS_TARGET = 'notifications';
  * `form/<id>` link opens the page that ANSWERS it, which is not where a refund is decided.
  */
 export const FORM_RESPONSES_TARGET = 'form-responses';
+
+/**
+ * The `target` naming the reader's Reservations page (WP-N), and the deep-link host for it: the tap
+ * of a bookings notice - a cancellation, a withdrawal, an addition, a reminder. The page lists the
+ * reader's bookings, the cancelled ones included, so every notice lands where its booking is.
+ */
+export const BOOKINGS_TARGET = 'bookings';
 
 /**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
@@ -63,11 +77,21 @@ export function socialDeepLink(data: Record<string, string>): string {
   if (data.target === REPUBLICATION_REQUESTS_TARGET) {
     return `fr.emse.canari://${REPUBLICATION_REQUESTS_TARGET}`;
   }
+  // A follow request (WP-F4): the inbox where it is answered. Before `postId`, which a follow notice
+  // carries as the ASKER's id - a `post/<id>` link would open a post that does not exist.
+  if (data.target === FOLLOW_REQUESTS_TARGET) {
+    return `fr.emse.canari://${FOLLOW_REQUESTS_TARGET}`;
+  }
   // A notice with no page of its own (a cut live, a suspension, a withdrawal): the notifications
   // list, where its row says it. Before `postId`, which such a notice carries as the live's id or
   // the member's - a `post/<id>` link would open a post that does not exist.
   if (data.target === NOTIFICATIONS_TARGET) {
     return `fr.emse.canari://${NOTIFICATIONS_TARGET}`;
+  }
+  // A bookings notice (WP-N): Reservations. Before `postId`, which such a notice never carries as
+  // a post - its row's id is the BOOKING's.
+  if (data.target === BOOKINGS_TARGET) {
+    return `fr.emse.canari://${BOOKINGS_TARGET}`;
   }
   const postId = data.postId;
   if (postId) {

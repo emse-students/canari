@@ -1,5 +1,5 @@
 /**
- * The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead.
+ * The three questions the COMM phase cannot ask a SCREEN, asked of the estate's database instead (local or dev).
  *
  * WHY THE DATABASE AT ALL, in a phase that is otherwise about what a person sees. Since 2026-08-20 a
  * private salon's seeds travel on a group of its own, whose roster is the salon's members - so the
@@ -40,6 +40,17 @@ export function channelIdOf(workspaceId, name) {
   );
   const found = rows(out);
   return found.length === 1 ? found[0][0] : null;
+}
+
+/**
+ * Every channel of a community and the key group each is linked to (empty when none): the ids a
+ * row's narration is scoped to (`salonNarration`).
+ *
+ * @returns {{channelIds: string[], keyGroupIds: string[]}}
+ */
+export function communityChannels(workspaceId) {
+  const found = rows(psql(`SELECT id, coalesce("distributionGroupId"::text,'') FROM channels WHERE "workspaceId" = '${workspaceId}'`));
+  return { channelIds: found.map((r) => r[0]), keyGroupIds: found.map((r) => r[1]).filter(Boolean) };
 }
 
 /**
@@ -269,6 +280,22 @@ export function userIdOf(displayName) {
 export function messageCount(channelId) {
   const found = rows(psql(`SELECT count(*) FROM channel_messages WHERE "channelId" = '${channelId}'`));
   return found.length === 1 ? Number(found[0][0]) : null;
+}
+
+/**
+ * A salon's messages as the server holds them: its own id and the id the sending client minted
+ * (`clientMessageId`, empty when none was sent), oldest first. A removal row reads its one message
+ * here so the sender's echo lines are forgiven for THAT message only (`removalNarration`).
+ *
+ * @returns {{id: string, clientId: string}[]}
+ */
+export function channelMessages(channelId) {
+  return rows(
+    psql(
+      `SELECT id, coalesce("clientMessageId",'') FROM channel_messages ` +
+        `WHERE "channelId" = '${channelId}' ORDER BY "createdAt"`
+    )
+  ).map(([id, clientId]) => ({ id, clientId }));
 }
 
 /**
@@ -644,4 +671,36 @@ export function workspaceOrderOf(userId) {
     sortOrder: Number(sortOrder),
     name,
   }));
+}
+
+/**
+ * Every live KEY GROUP a device is routed on - a community's or a private salon's own distribution
+ * group - with its epoch. Read BEFORE a device is revoked: the revoke deletes these routing rows, so
+ * afterwards nothing would say which groups the device's leaf was in.
+ *
+ * @param {string} deviceId
+ * @returns {{ groupId: string, scope: 'community'|'salon', epoch: number }[]}
+ */
+export function keyGroupsOfDevice(deviceId) {
+  return rows(
+    psql(
+      `SELECT g.id, CASE WHEN g."distributionWorkspaceId" IS NOT NULL THEN 'community' ELSE 'salon' END, g."activeEpoch" ` +
+        `FROM dm_device_group_memberships m JOIN dm_groups g ON g.id = m."groupId" ` +
+        `WHERE m."deviceId" = '${deviceId}' AND g."deletedAt" IS NULL ` +
+        `AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL) ORDER BY g.id`
+    )
+  ).map(([groupId, scope, epoch]) => ({ groupId, scope, epoch: Number(epoch) }));
+}
+
+/**
+ * A group's server epoch and the devices routed on it, read together, or null for no such group.
+ *
+ * @param {string} groupId
+ * @returns {{ epoch: number, devices: string[] } | null}
+ */
+export function groupEpochAndRoster(groupId) {
+  const found = rows(psql(`SELECT "activeEpoch" FROM dm_groups WHERE id = '${groupId}'`));
+  if (found.length !== 1) return null;
+  const devices = rows(psql(`SELECT "deviceId" FROM dm_device_group_memberships WHERE "groupId" = '${groupId}'`)).map(([d]) => d);
+  return { epoch: Number(found[0][0]), devices };
 }

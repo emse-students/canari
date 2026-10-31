@@ -43,6 +43,7 @@ import {
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
+import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -422,13 +423,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // Reset to pending - the device will need to receive a new Welcome.
       // `removedFromTreeAt: null`: nothing removed this device's leaf, it simply stopped
       // republishing a KeyPackage. Recording a kick here would make the hourly stranded report
-      // accuse a member of an Add nobody ever promised.
-      await this.messagingService.deactivateDeviceMembership(
+      // accuse a member of an Add nobody ever promised. Only the row this sweep read is demoted
+      // (`seatId`): one deleted since is not re-created, and one written again since is another
+      // seat. The writer says so under this tag, and it is not counted.
+      const demoted = await this.messagingService.deactivateDeviceMembership(
         member.userId,
         member.deviceId,
         member.groupId,
-        { removedFromTreeAt: null, tag: 'CRON_STALE_DEVICE' }
+        { removedFromTreeAt: null, seatId: member.id, tag: 'CRON_STALE_DEVICE' }
       );
+      if (!demoted) continue;
       reset++;
       // `lastUpdate` is reported because it is EVIDENCE, not because it decided anything: when a
       // demotion looks wrong, the first question is whether somebody else's write kept the row
@@ -1244,7 +1248,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * 90 of them inside its window, and ONE created 32 days earlier whose `updatedAt` was two days
    * old. Its window had been reset by a write it had no part in, so it could never expire.
    */
-  private async cleanupStalePendingInvitations() {
+  private cleanupStalePendingInvitations(): Promise<void> {
+    // ONE TRACKED UNIT FROM ITS FIRST READ: a replica retired while this runs finishes it - the
+    // expiries and their announcements included - before it exits (`finishJoinAskWorkInFlight`), so
+    // no ask is expired unannounced. Tracked here, synchronously, so no await precedes it.
+    return trackJoinAskWork(() => this.runStalePendingCleanup());
+  }
+
+  /** The body of {@link cleanupStalePendingInvitations}, run only as its tracked unit. */
+  private async runStalePendingCleanup(): Promise<void> {
     const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
 
     const stale = await this.deviceGroupRepo.find({
@@ -1253,11 +1265,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (stale.length === 0) return;
 
-    const { awaiting, outcomes } = await expireUnansweredAsks(
+    const { awaiting, outcomes, expired } = await expireUnansweredAsks(
       this.groupMemberRepo.manager,
       stale,
       expiry
     );
+    // Each expiry committed in its own transaction: every online member's ask goes now - awaited,
+    // as part of this tracked unit.
+    await announceExpiredAsks(this.groupMemberRepo.manager, this.redis, expired);
     if (awaiting.size > 0) {
       this.logger.log(
         `[CRON] cleanupStalePendingInvitations: ${awaiting.size} invitation-link ask(s) awaiting a member - ${JSON.stringify(outcomes)}`

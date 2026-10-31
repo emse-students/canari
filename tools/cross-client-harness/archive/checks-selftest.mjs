@@ -32,7 +32,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
+import { PHASES, PHONE_SCRIPTS, ROW_TABLES, SCRATCH_SCRIPTS, devicesFor, fileRefusal, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
 
 /** The harness root, one level above this self-test. */
@@ -52,9 +52,10 @@ const A1_DOORS = /PORTS\.A1|sameAccountAs|a1SameAccountAs|tauri\.localhost/;
  *
  * `becomeANewDevice` is the primitive that wipes it and `PORTS.W3` the port itself. A runner reaching
  * W3 by an unlisted door is invisible here, exactly as it is for the phone - so a new one belongs in
- * this pattern the day it is opened.
+ * this pattern the day it is opened. `mintdevice.mjs` opened on 2026-10-25: the device rows mint in
+ * a child process (`archive/devrows.mjs`), so the primitive's name is in the CHILD, not the runner.
  */
-const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice");
+const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice|mintdevice" + "\\." + "mjs");
 
 /**
  * A COMPUTED PORT LOOKUP IS A DOOR TOO, AND FOR A DAY IT WAS NOT.
@@ -73,6 +74,20 @@ const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice");
 const COMPUTED_PORT = /PORTS\[/;
 
 /**
+ * A RUNNER THAT OPENS ITS ROW'S OWN SEATS REACHES EVERY DEVICE ITS ROW TABLE NAMES.
+ *
+ * `big.mjs` opens `openSeats(spec.devices)` from `BIG_ROWS`, so no device is ever spelled in the
+ * file and every literal door above read it as reaching neither A1 nor W3. Its table is the
+ * declaration (`ROW_TABLES` in `checks.mjs`), so the door is the table AND the call that opens it,
+ * never either alone - and only the rows a PHASE selects (`file --row X`): kill.mjs's table also holds
+ * KILL-4, a class-B row run outside its phase, which must not make KILL declare the phone.
+ * Added 2026-10-26 with the BIG phase.
+ */
+const phaseRowsOf = (file) =>
+  Object.values(PHASES).flatMap((p) => p.scripts.map((s) => s.split(' ')).filter((w) => w[0] === file && w[1] === '--row').map((w) => w[2]));
+const OPENS_ROW_SEATS = /openSeats\(spec\.devices\b/;
+
+/**
  * Whether a runner file contains any door to `device`. Throws if the file is unreadable.
  *
  * A DOOR IS CODE, NOT PROSE. `tauri.localhost` in a COMMENT explaining why `publicAppOrigin()`
@@ -82,6 +97,7 @@ const COMPUTED_PORT = /PORTS\[/;
 function drives(file, doors, device) {
   const src = codeOnly(readFileSync(scriptPath(file), "utf8"));
   if (doors.test(src)) return true;
+  if (OPENS_ROW_SEATS.test(src) && phaseRowsOf(file).some((r) => ROW_TABLES[file]?.[r]?.devices?.includes(device))) return true;
   return COMPUTED_PORT.test(src) && new RegExp(`['"]${device}['"]`).test(src);
 }
 
@@ -270,6 +286,17 @@ const cases = [
   { file: "graineauth.mjs", args: ["--only", "6"], phase: "GRAINE", a1: false, w3: true },
   { file: "graineauth.mjs", args: ["--only", "7"], phase: "GRAINE", a1: false, w3: false },
   { file: "graineauth.mjs", args: ["--only", "1"], phase: "GRAINE", a1: false, w3: false },
+  // A 1.4.1 ROW THAT NAMES A1 IN ITS OWN TABLE IS PREFLIGHTED WITH A1, though no phase lists it -
+  // that preflight is what stamps `a1Build` (OFF-5 recorded without one, 2026-10-25). Controls: the
+  // same scripts' browser rows stay browser-only.
+  { file: "offline.mjs", args: ["--row", "OFF-5"], phase: "OFFLINE", a1: true },
+  { file: "offline.mjs", args: ["--row", "OFF-3"], phase: "OFFLINE", a1: false },
+  { file: "admit.mjs", args: ["--row", "ADM-5"], phase: "ADMIT", a1: true },
+  { file: "admit.mjs", args: ["--row", "ADM-1"], phase: "ADMIT", a1: false },
+  { file: "kill.mjs", args: ["--row", "KILL-4"], phase: "KILL", a1: true },
+  { file: "kill.mjs", args: ["--row", "KILL-3"], phase: "KILL", a1: false },
+  { file: "floor.mjs", args: ["--row", "3"], phase: "FLOOR", a1: true },
+  { file: "floor.mjs", args: ["--row", "2"], phase: "FLOOR", a1: false },
 ];
 for (const c of cases) {
   const got = devicesFor(c.file, c.args);
@@ -293,6 +320,40 @@ for (const c of cases) {
     problems.push(
       `devicesFor(${label}) -> ${got.devices.join(" ")}; both browsers are always owed.`,
     );
+  }
+}
+
+// ------------------------------------------------------------------- fileRefusal, by case
+//
+// `devicesFor` still ANSWERS a file in no phase (W1 W2, `phase: null`); what `run.mjs --file` does
+// with that answer is `fileRefusal`, and it must refuse. A path is the spelling that reached a chain
+// on 2026-10-25 and preflighted fourteen rows with two browsers - FLOOR-2 went VACUOUS on an
+// unpreflighted W5. `recon.mjs` is a real script in no phase (`RECON`, deliberately): the control that
+// a refusal is not only for names that do not exist. It was `big.mjs` until BIG got its phase.
+const refusalCases = [
+  { file: "archive/floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
+  { file: "archive\\floor.mjs", args: ["--row", "2"], refused: /not a path.*--file floor\.mjs/ },
+  { file: "nosuchscript.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "recon.mjs", args: [], refused: /belongs to no phase/ },
+  { file: "big.mjs", args: ["--row", "BIG-1-noI1"], refused: null },
+  { file: "floor.mjs", args: ["--row", "2"], refused: null },
+  { file: "devrows.mjs", args: ["--row", "DUP-7"], refused: null },
+  { file: "del.mjs", args: ["--only", "7", "--destructive"], refused: null },
+];
+for (const c of refusalCases) {
+  const got = fileRefusal(c.file, c.args);
+  const label = [c.file, ...c.args].join(" ");
+  if (c.refused === null && got !== null) problems.push(`fileRefusal(${label}) refused a declared script: ${got}`);
+  if (c.refused !== null && (got === null || !c.refused.test(got))) {
+    problems.push(`fileRefusal(${label}) -> ${JSON.stringify(got)}; expected a refusal matching ${c.refused}.`);
+  }
+}
+// EVERY SCRIPT A PHASE NAMES MUST PASS - a refusal that bit a declared row would teach a bypass.
+for (const [name, phase] of Object.entries(PHASES)) {
+  for (const s of phase.scripts) {
+    const [file, ...rest] = s.split(" ");
+    const got = fileRefusal(file, rest);
+    if (got !== null) problems.push(`fileRefusal refuses ${s} of phase ${name}: ${got}`);
   }
 }
 

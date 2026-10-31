@@ -45,6 +45,12 @@ export interface FormItem {
   showIf?: AudienceCondition | null;
 }
 
+/** Cotisation tiers of the beneficiary association; `null` is the base tier. */
+export interface CotisationCriterion {
+  anyTier?: boolean;
+  variantKeys?: (string | null)[];
+}
+
 /**
  * One set of criteria, ANDed across whatever is present; absent means no constraint.
  *
@@ -52,7 +58,14 @@ export interface FormItem {
  * submit at all - one shape, because it is one predicate on the server.
  */
 export interface AudienceCondition {
-  cotisation?: { anyTier?: boolean; variantKeys?: (string | null)[] };
+  cotisation?: CotisationCriterion;
+  /**
+   * The person holds NONE of these tiers - "ne detient pas" (owner, 2026-10-30, so nobody pays a
+   * cotisation twice). Its own key, never beside `cotisation` (the server refuses the pair): an
+   * older editor spreads an unknown key through untouched, where it would have dropped a flag.
+   * Judged by the server alone, like every profile criterion (`maySubmit`, `hiddenItemIds`).
+   */
+  notCotisation?: CotisationCriterion;
   /** Promos (ENTRY years) accepted - the promo 2024 entered the school in 2024. */
   promo?: { values: number[] };
   formation?: { values: string[] };
@@ -311,6 +324,11 @@ export async function checkSubmission(formId: string): Promise<{
   hiddenItemIds: string[];
   /** False when a `submitCondition` excludes them. */
   maySubmit: boolean;
+  /**
+   * Why `submitCondition` excludes them, typed (`FORM_COTISATION_HELD`, `FORM_NOT_OPEN_TO_YOU`),
+   * or null. Absent from a server older than it, which reads as null.
+   */
+  refusalCode?: string | null;
 }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw await refusal(res, 'Failed to check submission status');

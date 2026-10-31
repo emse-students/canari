@@ -22,7 +22,6 @@ import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
-import { FollowsService } from '../follows/follows.service';
 import { ModerationService } from '../moderation/moderation.service';
 import {
   CreatePostDto,
@@ -43,7 +42,6 @@ export class PostsController {
     private readonly interactions: PostInteractionsService,
     private readonly notifications: PostNotificationsService,
     private readonly associationsService: AssociationsService,
-    private readonly followsService: FollowsService,
     private readonly moderationService: ModerationService
   ) {}
 
@@ -174,32 +172,6 @@ export class PostsController {
     });
   }
 
-  // ── User follows (under /api/posts/users/:userId/follow) ─────────────────
-
-  /** Follows a user. */
-  @UseGuards(NginxAuthGuard)
-  @HttpPost('users/:userId/follow')
-  followUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    if (userId === xUserId) throw new BadRequestException('Cannot follow yourself');
-    return this.followsService.followUser(xUserId, userId);
-  }
-
-  /** Unfollows a user. */
-  @UseGuards(NginxAuthGuard)
-  @Delete('users/:userId/follow')
-  unfollowUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    return this.followsService.unfollowUser(xUserId, userId);
-  }
-
-  /** Returns whether the calling user follows the given user. */
-  @UseGuards(NginxAuthGuard)
-  @Get('users/:userId/follow-status')
-  getUserFollowStatus(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    return this.followsService
-      .isFollowingUser(xUserId, userId)
-      .then((following) => ({ following }));
-  }
-
   /** Creates a new post on behalf of the calling user or a managed association. */
   @UseGuards(NginxAuthGuard)
   @HttpPost()
@@ -304,6 +276,10 @@ export class PostsController {
    * ADDS something (a vote, a reaction, a comment, a like), it is refused with the read's own 404
    * on a post the caller may not see (WP6b): an id is not a permission. Taking back one's own
    * reaction or comment is not gated - it adds nothing.
+   *
+   * A vote is refused wherever opening the post would be (`assertMayVote`, the gate `getById`
+   * uses, with the vote's grant-free audience), and the answer is the post served to this reader
+   * (`serveToReader`), like every other route answering with one post.
    */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/polls/:pollId/vote')
@@ -311,10 +287,15 @@ export class PostsController {
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('pollId') pollId: string,
-    @Body() body: VotePollDto
+    @Body() body: VotePollDto,
+    @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    await this.service.assertVisible(postId, xUserId, 'VOTE');
-    return this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
+    await this.service.assertMayVote(postId, xUserId);
+    const stored = await this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
+    return this.service.serveToReader(stored, {
+      viewerId: xUserId,
+      isGlobalAdmin: xGlobalAdmin === 'true',
+    });
   }
 
   /** Adds an emoji reaction from the calling user to a post. */

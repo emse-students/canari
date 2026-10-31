@@ -44,6 +44,13 @@
  *
  * Registered sends never need the mutex themselves (`encryptForSend` is a direct client call), so an
  * advance holding the mutex can wait for them to land.
+ *
+ * **A LOAN DOES NOT CHANGE THE ORDER.** While its request is on the network the commit lends the
+ * mutex to the drain, one frame of ANOTHER group at a time (`MlsPerGroupScheduler.lendMlsLockWhile`),
+ * so a borrower can now observe this group's barrier raised. It never waits on it: the drain applies
+ * frames and sends nothing it awaits - a send from the pipeline is deferred past the frame (the
+ * history answers run after the mailbox drained), which it already had to be, since a send can
+ * settle a commit and settling takes the mutex the drain holds.
  */
 
 /** Groups whose epoch a local commit is currently moving; the promise resolves at the merge. */

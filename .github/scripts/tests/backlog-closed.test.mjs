@@ -28,7 +28,7 @@
  * forbid the words in a BODY: it forbids a heading that announces closure, because the heading is
  * what a reader scanning the file actually sees.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, '..', '..', '..'));
@@ -59,14 +59,33 @@ function readsAsClosed(heading) {
   return text.startsWith('~~') || CLOSED_WORDS.test(text) || SELF_DECLARED.test(text);
 }
 
+/**
+ * The closed headings of one file. `backlog.md` is read at `###` (its `##` are partly group titles
+ * such as "Decided by the user on ..."); a fragment of `backlog.d/` IS one entry, so its `##` title
+ * is read too - a shipped entry must not survive by moving into its own file.
+ * @param {string} path
+ * @param {string} label
+ * @param {RegExp} level
+ */
+function closedHeadings(path, label, level) {
+  const found = [];
+  let inFence = false;
+  for (const [i, line] of readFileSync(path, 'utf8').split('\n').entries()) {
+    // A fenced block can hold anything, including a log line with the word FIXED in it.
+    if (/^\s*```/.test(line)) inFence = !inFence;
+    if (inFence || !level.test(line)) continue;
+    if (readsAsClosed(line)) found.push(`  ${label}:${i + 1}  ${line.replace(/^#+\s*/, '').slice(0, 120)}`);
+  }
+  return found;
+}
+
 const lines = readFileSync(FILE, 'utf8').split('\n');
-const offenders = [];
-let inFence = false;
-for (const [i, line] of lines.entries()) {
-  // A fenced block can hold anything, including a log line with the word FIXED in it.
-  if (/^\s*```/.test(line)) inFence = !inFence;
-  if (inFence || !line.startsWith('###')) continue;
-  if (readsAsClosed(line)) offenders.push(`  backlog.md:${i + 1}  ${line.replace(/^#+\s*/, '').slice(0, 120)}`);
+const offenders = closedHeadings(FILE, 'backlog.md', /^###/);
+const FRAGMENTS = join(ROOT, 'docs', 'wiki', 'backlog.d');
+if (existsSync(FRAGMENTS)) {
+  for (const f of readdirSync(FRAGMENTS).filter((n) => n.endsWith('.md') && n !== 'README.md')) {
+    offenders.push(...closedHeadings(join(FRAGMENTS, f), `backlog.d/${f}`, /^##/));
+  }
 }
 
 if (offenders.length > 0) {
