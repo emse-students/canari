@@ -50,6 +50,14 @@ describe('PostMediaDto.placeholder', () => {
     expect(dto.placeholder).toBe('YJqGPQw7sFlslqhFafSE+Q6oJ1h2iHB2Rw==');
   });
 
+  it('refuses a value that is not base64 - markup or a URL is never painted as a picture', () => {
+    for (const bad of ['<svg onload=x>', 'data:image/png;base64,AA==', 'AA==AA']) {
+      expect(validate({ ...MEDIA, placeholder: bad }).map((e) => e.property)).toEqual([
+        'placeholder',
+      ]);
+    }
+  });
+
   it('refuses a value too long to be a ThumbHash', () => {
     expect(validate({ ...MEDIA, placeholder: 'a'.repeat(129) }).map((e) => e.property)).toEqual([
       'placeholder',

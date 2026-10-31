@@ -92,6 +92,12 @@
      * glyph poster: a loading reel shows its picture, never a play button (owner, 2026-10-31).
      */
     poster?: string | null;
+    /**
+     * Told once when this video will NOT play by itself and the reader has to act: the engine
+     * refused the autoplay or failed it (`refused`, the play button is shown), or refused the
+     * bytes (`unplayable`). The reel viewer stops waiting on it then, so the next reel preloads.
+     */
+    onPlaybackBlocked?: (cause: 'refused' | 'unplayable') => void;
   }
 
   let {
@@ -105,6 +111,7 @@
     safeBottom = true,
     minimal = false,
     poster = null,
+    onPlaybackBlocked,
   }: Props = $props();
 
   /**
@@ -146,8 +153,13 @@
    * answer to a refusal, never a loading state.
    */
   let autoplayRefused = $state(false);
-  /** The explicit autoplay attempt is made once per mount. */
-  let autoplayTried = false;
+  /** The autoplay has an answer (playing, or a decided failure): it is not asked again. */
+  let autoplayDone = false;
+  /** A `play()` is pending: a second load event does not ask twice. */
+  let autoplayInFlight = false;
+  let autoplayAttempts = 0;
+  /** An interrupted autoplay (`AbortError`) is asked ONCE more, at the next load event. */
+  const AUTOPLAY_MAX_ATTEMPTS = 2;
   let controlsVisible = $state(true);
   /** Bumped by every interaction: the fade timer restarts from it. */
   let poke = $state(0);
@@ -344,20 +356,45 @@
    */
   function tryAutoplay() {
     // The full player draws its button on any pause already; only the minimal one needs the answer.
-    if (!minimal || !autoplay || autoplayTried || !video) return;
-    autoplayTried = true;
-    if (!video.paused) return;
-    video.play().catch((err: unknown) => {
-      const name = err instanceof Error ? err.name : String(err);
-      if (name === 'NotAllowedError') {
-        console.warn('[VideoPlayer] autoplay refused by the engine - the play button is shown', {
-          muted: video?.muted,
-        });
+    if (!minimal || !autoplay || autoplayDone || autoplayInFlight || !video) return;
+    if (!video.paused) {
+      autoplayDone = true;
+      return;
+    }
+    autoplayInFlight = true;
+    autoplayAttempts += 1;
+    const attempt = autoplayAttempts;
+    video
+      .play()
+      .then(() => {
+        autoplayDone = true;
+      })
+      .catch((err: unknown) => {
+        const name = err instanceof Error ? err.name : String(err);
+        if (name === 'AbortError' && attempt < AUTOPLAY_MAX_ATTEMPTS) {
+          // A new load interrupted it: the next `canplay` / `loadeddata` of that load asks again.
+          console.debug(
+            `[VideoPlayer] autoplay interrupted (${name}) - asked again at the next load event`
+          );
+          return;
+        }
+        autoplayDone = true;
+        if (name === 'NotAllowedError') {
+          console.warn('[VideoPlayer] autoplay refused by the engine - the play button is shown', {
+            muted: video?.muted,
+          });
+        } else {
+          console.warn(
+            `[VideoPlayer] autoplay failed (${name}, attempt ${attempt}) - the play button is shown`,
+            err
+          );
+        }
         autoplayRefused = true;
-      } else {
-        console.debug(`[VideoPlayer] autoplay interrupted (${name})`);
-      }
-    });
+        onPlaybackBlocked?.('refused');
+      })
+      .finally(() => {
+        autoplayInFlight = false;
+      });
   }
 
   function onVideoError() {
@@ -367,6 +404,7 @@
       msg: video?.error?.message,
     });
     unplayable = true;
+    onPlaybackBlocked?.('unplayable');
   }
 </script>
 
@@ -407,6 +445,7 @@
     onloadeddata={() => {
       frameReady = true;
       sync();
+      tryAutoplay();
     }}
     oncanplay={tryAutoplay}
     ondurationchange={sync}

@@ -121,22 +121,50 @@
   let loaded = $state(false);
   /** The player on this slide has started playing. */
   let playing = $state(false);
+  /**
+   * The media will not show by itself (`PostMedia`'s `onPlaybackBlocked`: an autoplay refused or
+   * failed, bytes the engine refused, a download that failed). A decided failure SETTLES the reel
+   * too: waiting on it would withhold the next reel's preload for good.
+   */
+  let blocked = $state<string | null>(null);
+  /**
+   * The decrypted URL of the reel on screen, whole, whose first frame is still to be kept. Decoded
+   * only once the reel LEAVES the screen: a frame decode is a second WebCodecs decoder, and it
+   * must not run beside the player of the reel being watched (review of #2822).
+   */
+  let posterSource: string | null = null;
 
   $effect(() => {
     if (active) return;
     loaded = false;
     playing = false;
+    blocked = null;
+    const source = posterSource;
+    posterSource = null;
+    if (source && video) {
+      console.debug(`[reel-viewer] ${post.id} left the screen - keeping its first frame`);
+      void captureReelPoster(video.mediaId, source);
+    }
   });
 
-  /** The whole file is in: keep its first frame, so a swipe back lands on it. */
+  /** The whole file is in: its first frame is kept once the reel leaves, so a swipe back lands on it. */
   function onMediaLoaded(url: string) {
     loaded = true;
-    if (video) void captureReelPoster(video.mediaId, url);
+    if (video) posterSource = url;
+  }
+
+  function onPlaybackBlocked(cause: string) {
+    console.debug(`[reel-viewer] ${post.id} will not play by itself (${cause})`);
+    blocked = cause;
   }
 
   $effect(() => {
-    if (!active || !loaded || (page === 'reel' && !playing)) return;
-    console.debug(`[reel-viewer] ${post.id} settled - the next reel may preload`);
+    if (!active) return;
+    const whole = loaded && (page !== 'reel' || playing);
+    if (!whole && !blocked) return;
+    console.debug(
+      `[reel-viewer] ${post.id} settled${blocked ? ` on a failure (${blocked})` : ''} - the next reel may preload`
+    );
     untrack(() => onReady?.());
   });
   /** The media's own shape when it was recorded, else the canonical frame. */
@@ -263,6 +291,7 @@
             {authToken}
             galleryMode
             onLoaded={active ? onMediaLoaded : undefined}
+            onPlaybackBlocked={active ? onPlaybackBlocked : undefined}
           />
         {/if}
       {:else if active && video}
@@ -274,6 +303,7 @@
           playerSafeBottom={frameReachesBottom}
           poster={posterUrl}
           onLoaded={onMediaLoaded}
+          {onPlaybackBlocked}
         />
       {:else if video}
         <!-- A NEIGHBOUR DRAWS ITS FIRST FRAME, NO PLAYER: a mounted player claims playback. -->

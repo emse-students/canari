@@ -13,6 +13,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   Validate,
@@ -117,6 +118,7 @@ export class PostMediaDto {
   @IsString()
   @IsOptional()
   @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
+  @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
   placeholder?: string;
 }
 

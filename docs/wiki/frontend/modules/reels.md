@@ -577,7 +577,7 @@ mounted player claims playback (`followVideoSound`) and would pause the reel bei
 Its video is then fetched and decrypted into the media cache, so when the swipe lands its player
 takes the WARM path and the first frame is there. Before 2026-10-31 the preload started at the
 mount, beside the current reel's own download: on a weak link the two shared it and the reel being
-watched paid. A reel whose autoplay is refused never settles, so nothing is preloaded behind it. A reel is never fetched twice: if it becomes current before its preload
+watched paid. A DECIDED FAILURE settles it too (`onPlaybackBlocked`: an autoplay refused or failed, bytes the engine refuses, a download that failed), or nothing would ever be preloaded behind it. Every step CLEARS the settle, so a reel returned to must settle again before its neighbour is fetched. A reel is never fetched twice: if it becomes current before its preload
 has finished, the preload is ABORTED and the player fetches (or streams) it alone. One cost is
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
@@ -591,8 +591,9 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
 
 1. **The sharp first frame this device decoded** (`reels/reelPosters.svelte.ts`): decoded by
    mediabunny from a reel already in the decrypted pool (`reels/reelFirstFrame.ts`, 720 px JPEG,
-   eight kept per session, oldest revoked) - the next reel when its preload is in, the reel on
-   screen once its file is whole (so a swipe BACK lands on it too). mediabunny, not a detached
+   eight kept per session, oldest revoked) - the next reel when its preload is in, and the reel on
+   screen once it LEAVES the screen with its file whole (so a swipe BACK lands on it) - never while
+   it plays, since a frame decode is a second WebCodecs decoder beside its player. mediabunny, not a detached
    `<video>`: iOS fires no `loadeddata` without a `play()`, and a mounted element claims playback.
 2. **The publisher's ThumbHash of it** (`MediaRef.placeholder`, ~25 bytes): made at publish from
    the PREPARED file's first frame (`publishReel`'s `placeholder` step) and stored in the post's
@@ -604,8 +605,9 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
 
 **The play button answers a REFUSAL, never a load.** The minimal reel player asks `play()` itself at
 `canplay` (the `autoplay` attribute fails silently) and draws its amber button only on a
-`NotAllowedError` (iOS with sound on, a browser policy); an `AbortError` is an interruption and
-draws nothing. Pinned by `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
+`NotAllowedError` (iOS with sound on, a browser policy) or any other failure, with a warning. An
+`AbortError` is an interruption by a new load: it is asked ONCE more at that load's next
+`loadeddata` / `canplay`, and a second one draws the button. Pinned by `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
 `ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`.
 
 **Owed on the bench phones** (none of this was read on a device): see

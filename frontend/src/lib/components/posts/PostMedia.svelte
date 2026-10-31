@@ -108,6 +108,12 @@
     poster?: string | null;
     /** Called with the decrypted URL once the WHOLE file is in this device's media pool. */
     onLoaded?: (url: string) => void;
+    /**
+     * `galleryMode` only: told once the media will not show by itself - its player was refused or
+     * failed the autoplay (`refused`), refused the bytes (`unplayable`), or the download failed
+     * (`failed`). The reel viewer stops waiting on it then.
+     */
+    onPlaybackBlocked?: (cause: 'refused' | 'unplayable' | 'failed') => void;
   }
 
   let {
@@ -123,7 +129,13 @@
     playerSafeBottom = true,
     poster = null,
     onLoaded,
+    onPlaybackBlocked,
   }: Props = $props();
+
+  // A failed download is decided: the caller stops waiting on this media.
+  $effect(() => {
+    if (failure && onPlaybackBlocked) untrack(() => onPlaybackBlocked('failed'));
+  });
 
   // The whole file is in the pool: the caller may draw from it (a reel's first frame).
   $effect(() => {
@@ -406,6 +418,7 @@
         minimal={minimalPlayer}
         safeBottom={playerSafeBottom}
         {poster}
+        {onPlaybackBlocked}
       />
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">

@@ -123,9 +123,37 @@ describe('ReelViewer', () => {
     expect(preloads).toEqual([]);
     await settleCurrent();
     expect(preloads).toEqual(['m-a']);
-    // The reel just loaded keeps its first frame, so a swipe back lands on it.
-    expect(captured).toEqual(['m-b']);
+    // Its first frame is NOT decoded beside its own player.
+    expect(captured).toEqual([]);
     expect(document.querySelectorAll('[data-reel-slide]').length).toBe(2);
+  });
+
+  it('keeps the first frame of the reel it leaves, so a swipe back lands on it', async () => {
+    const { key, settleCurrent } = await render();
+    await settleCurrent();
+    expect(captured).toEqual([]);
+    await key('ArrowDown');
+    expect(captured).toEqual(['m-b']);
+  });
+
+  it('a reel that will not play by itself (autoplay refused) still lets the next one preload', async () => {
+    await render();
+    const stub = document.querySelector('[data-post-media-stub]')!;
+    stub.dispatchEvent(new Event('stubblocked'));
+    await settle();
+    expect(preloads).toEqual(['m-a']);
+  });
+
+  it('a reel returned to has not settled until it settles again', async () => {
+    const { key, settleCurrent } = await render();
+    await settleCurrent();
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(1);
+    await key('ArrowDown');
+    await key('ArrowUp');
+    // Back on b: the earlier visit's settle does not count - a is not fetched again yet.
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(1);
+    await settleCurrent();
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(2);
   });
 
   it('steps down to the next reel and back up', async () => {
