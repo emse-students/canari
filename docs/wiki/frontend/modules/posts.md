@@ -76,6 +76,17 @@ The user's two decisions, for posts, reels and comments alike:
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
 
+**The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
+band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
+pill (the conversation header's recipe and tokens: `--glass-chrome-*`, nothing new) and the CanaReels
+entry is the matching round glass button (`size-11`, 44 px). The sticky wrapper has NO background and
+no horizontal inset, so both edges are the feed column's own gutters and cards scroll under the glass;
+it is `pointer-events-none` with its buttons `auto`, so the gaps stay the feed's. The glass is drawn at
+every width, unlike the phone-only conversation chrome (`usesGlassChrome`), because on desktop the row
+floats over scrolling cards too, and a desktop-only opaque twin would be a second look for one
+control. The active tab keeps its amber fill, plus `font-semibold`; chips have the `tap-target` 44 px
+hit box on touch. The reveal logic below is unchanged.
+
 **The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
 only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
 `.page-scroll-wrap` (the one scroller, at every width, so desktop behaves the same) and slides out
