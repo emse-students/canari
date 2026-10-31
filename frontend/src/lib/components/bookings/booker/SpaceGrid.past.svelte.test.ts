@@ -42,17 +42,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function open(units: SlotUnit[]) {
+async function open(units: SlotUnit[], onPick = vi.fn(), blockMode = false, days = ['2026-11-02']) {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   app = mount(SpaceGrid, {
     target: document.body,
     props: {
       space,
       resource,
-      layout: weekLayout(units, ['2026-11-02'], space, NOW),
+      layout: weekLayout(units, days, space, NOW),
       mode: 'day',
+      blockMode,
       nowMs: NOW,
-      onPick: vi.fn(),
+      onPick,
     },
   });
   flushSync();
@@ -67,6 +68,29 @@ describe('SpaceGrid - past and unavailable units', () => {
     const written = cells.map((c) => c.textContent?.trim() ?? '');
     expect(written.slice(0, 2)).toEqual(['', '']);
     expect(written.slice(2)).toEqual([m.bookings_cell_closed(), '', '']);
+  });
+
+  it('does not offer a unit the booking window refuses: disabled, and a tap picks nothing', async () => {
+    const onPick = vi.fn();
+    // 10-11 is refused (24 h notice); 2026-11-03 11:00Z is past the notice and bookable.
+    const later = {
+      ...unit(0),
+      date: '2026-11-03',
+      startMs: NOW + 25 * HOUR,
+      endMs: NOW + 26 * HOUR,
+    } as SlotUnit;
+    const cells = await open([unit(2), later], onPick, false, ['2026-11-02', '2026-11-03']);
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(true);
+    cells[0].click();
+    expect(onPick).not.toHaveBeenCalled();
+    expect((cells[1] as HTMLButtonElement).disabled).toBe(false);
+    cells[1].click();
+    expect(onPick).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps such a unit a control on the organiser's block grid", async () => {
+    const cells = await open([unit(2)], vi.fn(), true);
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('still names the state of a past unit for a screen reader', async () => {

@@ -118,6 +118,25 @@ describe('freeRunFrom', () => {
     expect(freeRunFrom(units, units[2], 5)).toEqual([]);
   });
 
+  it('runs across the midnight between two whole open days, as the server accepts', () => {
+    // Monday's window ends at 24:00, Tuesday's starts at 00:00: one continuous opening.
+    const night = [
+      {
+        date: '2026-11-02',
+        startMs: at('2026-11-02T22:00:00Z'),
+        endMs: at('2026-11-02T23:00:00Z'),
+        state: 'free' as const,
+      },
+      {
+        date: '2026-11-03',
+        startMs: at('2026-11-02T23:00:00Z'),
+        endMs: at('2026-11-03T00:00:00Z'),
+        state: 'free' as const,
+      },
+    ];
+    expect(freeRunFrom(night, night[0], 4)).toHaveLength(2);
+  });
+
   it('books a slot whole and steps up to maxSteps (D3)', () => {
     expect(bookingUnitLimit({ slotMode: 'slots', maxSteps: 4 })).toBe(1);
     expect(bookingUnitLimit({ slotMode: 'step', maxSteps: 4 })).toBe(4);
