@@ -41,7 +41,8 @@ export class PostNotification {
   /**
    * Structured facts of a notice that a client draws in its own locale; NULL for every row written
    * before migration 117 and every type that carries none. A booking notice holds
-   * `{ place, startsAt, timeZone }` (`BookingNoticeMeta`); `text` is never parsed.
+   * `{ place, startsAt, timeZone, word }` (`BookingNoticeMeta`); `text` keeps the word, else the
+   * place, for older clients, and is never parsed.
    */
   @Column({ type: 'jsonb', nullable: true })
   meta: Record<string, unknown> | null;

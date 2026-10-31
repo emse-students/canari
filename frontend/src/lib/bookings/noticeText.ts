@@ -2,7 +2,7 @@ import { intlLocale } from '$lib/bookings/grid';
 
 /** The structured facts of a booking notice (`post_notifications.meta`, migration 117). */
 export interface BookingNoticeMeta {
-  /** The space's name (empty on a space reached by its link only, Q-R5). */
+  /** The place, as `bookingPlace` names it: the space and the resource (empty on a link-only space, Q-R5). */
   place: string;
   /** The slot's start, an ISO instant. */
   startsAt: string;

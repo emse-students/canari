@@ -476,7 +476,7 @@
         {#if !isBookingReminder}{BOOKING_TEXT[notif.type]()}{/if}
         {#if bookingNotice}
           <!-- The space, then the slot on the space's clock in the reader's locale; the organiser's
-               word (`text`, plain text) on its own line. -->
+               word (`meta.word`, plain text) on its own line. -->
           {#if bookingNotice.place}<span class="italic"
               ><EmojiText text={bookingNotice.place} /></span
             >{#if bookingSlot}&#32;&#183;&#32;{/if}{/if}{bookingSlot ?? ''}
