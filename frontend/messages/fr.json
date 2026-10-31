@@ -4148,6 +4148,26 @@
       }
     }
   ],
+  "profile_hub_lists_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} liste",
+        "countPlural=other": "{count} listes"
+      }
+    }
+  ],
+  "profile_hub_institutions_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} institution",
+        "countPlural=other": "{count} institutions"
+      }
+    }
+  ],
   "profile_hub_career_summary": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

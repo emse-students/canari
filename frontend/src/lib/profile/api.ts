@@ -12,8 +12,8 @@ export interface UserMembershipRow {
   logoUrl: string | null;
   role: string;
   isAdmin: boolean;
-  /** 'association' or 'list' - lets the client hide finished campaign lists. */
-  type?: 'association' | 'list';
+  /** The row's kind - lets the client hide finished campaign lists and count by kind. */
+  type?: 'association' | 'list' | 'institution';
   /** Lists only: campaign year; null for associations. */
   promo?: number | null;
 }
