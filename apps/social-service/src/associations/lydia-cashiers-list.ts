@@ -23,7 +23,10 @@ export interface LydiaCashierView {
    * not show 0 rights - the row stays, Lydia may still list the person.
    */
   state: 'confirmed' | 'unconfirmed' | 'revoke-unconfirmed';
-  /** A Responsable's OLD number (last two digits) whose removal at Lydia is not confirmed yet. */
+  /**
+   * A Responsable's OTHER number (last two digits): the old one after a confirmed number change,
+   * or a new one Lydia did not confirm. Lydia may still list it, so it is shown for removal.
+   */
   previousPhoneEnd: string | null;
   /** ISO instant of the add (or of the last re-add). */
   addedAt: string;

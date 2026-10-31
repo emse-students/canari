@@ -174,13 +174,14 @@
           accepte ce rôle ; Canari peut aussi l'en avertir par une notification. Canari garde
           l'identifiant du membre, celui de la personne qui l'a ajouté, son rôle, les dates, et le
           numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers chiffres sont
-          affichés. Quand le Responsable change de numéro, l'ancien numéro est gardé chiffré de la
-          même façon, le temps que Lydia confirme qu'il a été retiré. Quand un caissier est retiré,
-          Canari demande à Lydia de lui ôter ses droits et vérifie auprès de Lydia qu'il n'en a plus
-          ; ses numéros sont alors effacés. Ils le sont aussi quand le compte Lydia est délié de
-          l'association. Les deux identifiants restent jusqu'à la suppression de votre compte Canari
-          : avant de supprimer la ligne, Canari demande à Lydia de retirer vos numéros de caissier.
-          Lydia conserve ses propres données selon sa politique.
+          affichés. Quand le Responsable change de numéro, l'autre numéro (l'ancien, ou le nouveau
+          tant que Lydia ne l'a pas confirmé) est gardé chiffré de la même façon, jusqu'à ce que
+          Lydia confirme qu'il a été retiré. Quand un caissier est retiré, Canari demande à Lydia de
+          lui ôter ses droits et vérifie auprès de Lydia qu'il n'en a plus ; ses numéros sont alors
+          effacés. Ils le sont aussi quand le compte Lydia est délié de l'association. Les deux
+          identifiants restent jusqu'à la suppression de votre compte Canari : avant de supprimer la
+          ligne, Canari demande à Lydia de retirer vos numéros de caissier. Lydia conserve ses
+          propres données selon sa politique.
         </dd>
       </div>
       <div>

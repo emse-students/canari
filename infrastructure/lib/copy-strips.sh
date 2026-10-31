@@ -118,6 +118,11 @@ apply_copy_strips() {
   # is a property of a secret). "vendorToken" is NOT NULL, so it is blanked rather than nulled.
   # Guarded on the table: a dump taken before migration 118 reached production has none.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_cashiers') IS NOT NULL THEN UPDATE lydia_cashiers SET \"phoneSealed\" = NULL, \"vendorToken\" = '' WHERE \"phoneSealed\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
+  # Migration 119: the claim's token (the copy holds no claim, like the marker above) and a
+  # Responsable's OTHER number, sealed like `phoneSealed`. Guarded on the columns: a dump taken
+  # before migration 119 reached production has neither.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaCashierClaimToken') THEN UPDATE associations SET \"lydiaCashierClaimToken\" = NULL WHERE \"lydiaCashierClaimToken\" IS NOT NULL; END IF; END \$\$;" "$database"
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'lydia_cashiers' AND column_name = 'previousPhoneSealed') THEN UPDATE lydia_cashiers SET \"previousPhoneSealed\" = NULL WHERE \"previousPhoneSealed\" IS NOT NULL; END IF; END \$\$;" "$database"
   printf '%s   payment identifiers cleared: 19 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an

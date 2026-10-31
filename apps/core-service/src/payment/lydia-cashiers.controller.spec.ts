@@ -1,9 +1,11 @@
 import axios from 'axios';
 import { HttpException, Logger } from '@nestjs/common';
 import { LydiaCashiersController } from './lydia-cashiers.controller';
+import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import {
   LYDIA_CASHIER_ADD_DISABLED,
   LYDIA_CASHIER_ADD_ENABLED,
+  LYDIA_CASHIER_HOLDER_RIGHTS_MISSING,
   LYDIA_CASHIER_REVOKE_UNCONFIRMED,
   LYDIA_CASHIER_RIGHTS_INCOMPLETE,
   LYDIA_UNREACHABLE,
@@ -19,6 +21,7 @@ const ASSO = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
 const ROW = '5b0b7d0e-4f8e-4d3a-9c55-0d6b7c0f1a11';
 const PHONE = '+33612345678';
 const HOLDER = '+33698765432';
+const TOKEN = '2d0b7c6a-3f4e-4d5c-9b8a-7f6e5d4c3b2a';
 const req = { headers: { 'x-user-id': 'treasurer' } } as never;
 
 /** social-service's answers by route suffix; a value that is an Error is a refusal with that body. */
@@ -95,7 +98,7 @@ describe('LydiaCashiersController - the owner gate (lot 3)', () => {
 describe('LydiaCashiersController - adding and changing a role (gate opened for the spec)', () => {
   it('claims, adds the role at Lydia, then records the row CONFIRMED with the actor as adder', async () => {
     social({
-      '/lydia-cashier-add-claim': { vendorToken: 'vendor-1' },
+      '/lydia-cashier-add-claim': { vendorToken: 'vendor-1', claimToken: TOKEN },
       '/lydia-cashier': { cashier: { id: ROW } },
     });
     const addLydiaCashier = jest.fn().mockResolvedValue(undefined);
@@ -114,12 +117,13 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
       role: 'vendeur',
       addedByUserId: 'treasurer',
       confirmed: true,
+      claimToken: TOKEN,
     });
   });
 
   it('a read-back that differs from the role records the row UNCONFIRMED, then answers the typed 502', async () => {
     social({
-      '/lydia-cashier-add-claim': { vendorToken: 'vendor-1' },
+      '/lydia-cashier-add-claim': { vendorToken: 'vendor-1', claimToken: TOKEN },
       '/lydia-cashier': { cashier: { id: ROW } },
     });
     const mismatch = new LydiaCashierAddedUnconfirmedException(
@@ -136,7 +140,7 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
   });
 
   it('a typed refusal before the add answered releases the claim; no answer keeps it', async () => {
-    social({ '/lydia-cashier-add-claim': { vendorToken: 'vendor-1' } });
+    social({ '/lydia-cashier-add-claim': { vendorToken: 'vendor-1', claimToken: TOKEN } });
     await expect(
       make(
         { addLydiaCashier: jest.fn().mockRejectedValue(new HttpException({ code: 'X' }, 502)) },
@@ -144,6 +148,8 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
       ).addCashier(ASSO, { userId: 'u2', phone: PHONE, role: 'vendeur' }, req)
     ).rejects.toBeInstanceOf(HttpException);
     expect(postsTo('/lydia-cashier-release')).toHaveLength(1);
+    // The release carries the claim's token: social-service clears only THAT claim.
+    expect(postsTo('/lydia-cashier-release')[0][1]).toEqual({ claimToken: TOKEN });
     mockedAxios.post.mockClear();
     await expect(
       make(
@@ -160,18 +166,32 @@ describe('LydiaCashiersController - adding and changing a role (gate opened for 
 
   it('a role change re-adds the SAME number with the new role and records it on the row', async () => {
     social({
-      '/lydia-cashier-role-claim': { vendorToken: 'vendor-1', phone: PHONE, userId: 'u2' },
+      '/lydia-cashier-role-claim': {
+        vendorToken: 'vendor-1',
+        phone: PHONE,
+        userId: 'u2',
+        claimToken: TOKEN,
+      },
       '/lydia-cashier': { cashier: { id: ROW } },
     });
     const addLydiaCashier = jest.fn().mockResolvedValue(undefined);
     await make({ addLydiaCashier }, true).changeRole(ASSO, ROW, { role: 'tresorier' }, req);
     expect(addLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', PHONE, 'tresorier');
-    expect(postsTo('/lydia-cashier')[0][1]).toMatchObject({ cashierId: ROW, role: 'tresorier' });
+    expect(postsTo('/lydia-cashier')[0][1]).toMatchObject({
+      cashierId: ROW,
+      role: 'tresorier',
+      claimToken: TOKEN,
+    });
   });
 });
 
 describe('LydiaCashiersController.revokeCashier - every removal verified (live, not gated)', () => {
-  const claim = { vendorToken: 'vendor-1', cashierPhone: PHONE, actorPhone: HOLDER };
+  const claim = {
+    vendorToken: 'vendor-1',
+    cashierPhone: PHONE,
+    actorPhone: HOLDER,
+    claimToken: TOKEN,
+  };
 
   it('a re-read at 0 of 13 closes the row (recorded verified) and answers ok', async () => {
     social({ '/lydia-cashier-revoke-claim': claim });
@@ -185,7 +205,25 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
       number: 'current',
       verified: true,
       actorId: 'treasurer',
+      cashierPhone: PHONE,
+      claimToken: TOKEN,
     });
+  });
+
+  it('a refusal before any change at Lydia (the control read) releases the claim with its token', async () => {
+    social({ '/lydia-cashier-revoke-claim': claim });
+    await expect(
+      make({
+        removeLydiaCashier: jest
+          .fn()
+          .mockRejectedValue(new HttpException({ code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING }, 409)),
+      }).revokeCashier(ASSO, ROW, { number: 'current' }, req)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_CASHIER_HOLDER_RIGHTS_MISSING },
+    });
+    expect(postsTo('/lydia-cashier-release')[0][1]).toEqual({ claimToken: TOKEN });
+    expect(postsTo('/lydia-cashier-revoke')).toHaveLength(0);
   });
 
   it('a re-read that still shows rights: recorded NOT verified (row live, flagged) and the typed 502', async () => {
@@ -211,12 +249,27 @@ describe('LydiaCashiersController.revokeCashier - every removal verified (live, 
     ).rejects.toMatchObject({ status: 409, response: { code: 'LYDIA_CASHIER_LAST_HOLDER' } });
     expect(removeLydiaCashier).not.toHaveBeenCalled();
   });
+});
 
-  it('the erasure route asks for the internal secret before anything', async () => {
+describe('InternalLydiaCashiersController - the erasure removal is internal only', () => {
+  it('is declared under internal/, which nginx does not route', () => {
+    expect(Reflect.getMetadata('path', InternalLydiaCashiersController)).toBe(
+      'internal/lydia-cashiers'
+    );
+    // The public controller no longer carries any route of it.
+    expect(
+      (LydiaCashiersController.prototype as unknown as Record<string, unknown>).revokeForErasure
+    ).toBeUndefined();
+  });
+
+  it('asks for the internal secret before anything', async () => {
     process.env.INTERNAL_SECRET = 'it-secret';
     const removeLydiaCashier = jest.fn();
+    const controller = new InternalLydiaCashiersController({
+      removeLydiaCashier,
+    } as unknown as PaymentService);
     await expect(
-      make({ removeLydiaCashier }).revokeForErasure('wrong', {
+      controller.revokeForErasure('wrong', {
         associationId: ASSO,
         vendorToken: 'vendor-1',
         actorPhone: HOLDER,

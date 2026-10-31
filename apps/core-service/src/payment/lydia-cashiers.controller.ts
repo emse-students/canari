@@ -3,7 +3,6 @@ import {
   Body,
   ConflictException,
   Controller,
-  Headers,
   HttpCode,
   HttpException,
   Logger,
@@ -15,7 +14,6 @@ import {
 import type { Request } from 'express';
 import { PaymentService } from './payment.service';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { assertInternalSecret } from '../internal/internal-secret.util';
 import { assertCanManageAssociation } from './manage-permission';
 import { LydiaCashierOps, type LydiaCashierNumber } from './lydia-cashier-ops';
 import {
@@ -30,9 +28,6 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** What a `vendor_token` may look like in the internal removal's body: printable ASCII, bounded. */
-const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
-
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
 function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> | null {
   return value === 'tresorier' || value === 'vendeur' ? value : null;
@@ -41,8 +36,8 @@ function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> |
 /**
  * THE CASHIERS OF AN ASSOCIATION'S LYDIA BUSINESS BEYOND THE RESPONSABLE (Lydia enrolment lot 3,
  * docs/wiki/frontend/modules/payments.md): add a Tresorier or a Vendeur, change their role, remove
- * a number - for MANAGE_PAYOUT_ACCOUNT holders - and the removal an account's erasure asks for
- * (internal secret). social-service holds the rows, the sealed numbers and the claim; Lydia is
+ * a number - for MANAGE_PAYOUT_ACCOUNT holders (the removal an account's erasure asks for is
+ * `InternalLydiaCashiersController`, not routed by nginx). social-service holds the rows, the sealed numbers and the claim; Lydia is
  * called from here only. Adding and changing a role are behind {@link LYDIA_CASHIER_ADD_ENABLED}
  * (OFF until one production removal has been observed); removing is live.
  */
@@ -99,16 +94,23 @@ export class LydiaCashiersController {
         message: 'The phone number must be written +33...',
       });
     }
-    const { vendorToken } = await this.ops.socialStep<{ vendorToken: string }>(
-      associationId,
-      'lydia-cashier-add-claim',
-      { userId, phone, role }
-    );
-    const confirmed = await this.addAtLydia(associationId, vendorToken, phone, role);
+    const { vendorToken, claimToken } = await this.ops.socialStep<{
+      vendorToken: string;
+      claimToken: string;
+    }>(associationId, 'lydia-cashier-add-claim', { userId, phone, role });
+    const confirmed = await this.addAtLydia(associationId, vendorToken, phone, role, claimToken);
     const data = await this.ops.socialStep<{ cashier: unknown }>(
       associationId,
       'lydia-cashier',
-      { vendorToken, userId, phone, role, addedByUserId: actorId, confirmed: confirmed === true },
+      {
+        vendorToken,
+        userId,
+        phone,
+        role,
+        addedByUserId: actorId,
+        confirmed: confirmed === true,
+        claimToken,
+      },
       true
     );
     if (confirmed !== true) throw confirmed;
@@ -138,12 +140,19 @@ export class LydiaCashiersController {
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
     const role = addableRole(body?.role);
     if (!role) throw new BadRequestException('role is required');
-    const pre = await this.ops.socialStep<{ vendorToken: string; phone: string; userId: string }>(
+    const pre = await this.ops.socialStep<{
+      vendorToken: string;
+      phone: string;
+      userId: string;
+      claimToken: string;
+    }>(associationId, 'lydia-cashier-role-claim', { cashierId, role });
+    const confirmed = await this.addAtLydia(
       associationId,
-      'lydia-cashier-role-claim',
-      { cashierId, role }
+      pre.vendorToken,
+      pre.phone,
+      role,
+      pre.claimToken
     );
-    const confirmed = await this.addAtLydia(associationId, pre.vendorToken, pre.phone, role);
     const data = await this.ops.socialStep<{ cashier: unknown }>(
       associationId,
       'lydia-cashier',
@@ -155,6 +164,7 @@ export class LydiaCashiersController {
         addedByUserId: actorId,
         confirmed: confirmed === true,
         cashierId,
+        claimToken: pre.claimToken,
       },
       true
     );
@@ -173,7 +183,8 @@ export class LydiaCashiersController {
     associationId: string,
     vendorToken: string,
     phone: string,
-    role: Exclude<LydiaCashierRole, 'responsable'>
+    role: Exclude<LydiaCashierRole, 'responsable'>,
+    claimToken: string
   ): Promise<true | LydiaCashierAddedUnconfirmedException> {
     try {
       await this.paymentService.addLydiaCashier(associationId, vendorToken, phone, role);
@@ -189,7 +200,7 @@ export class LydiaCashiersController {
       const code =
         answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
       if (err instanceof HttpException && code !== LYDIA_UNREACHABLE) {
-        await this.ops.release(associationId);
+        await this.ops.release(associationId, claimToken);
       } else {
         this.logger.error(
           `Lydia cashiers of ${associationId}: the add's outcome is unknown - the claim stays ` +
@@ -223,38 +234,5 @@ export class LydiaCashiersController {
     const number: LydiaCashierNumber = body?.number === 'previous' ? 'previous' : 'current';
     await this.ops.revoke(associationId, cashierId, number, actorId);
     return { ok: true };
-  }
-
-  /**
-   * The removal an account's ERASURE asks for (social-service, internal secret): the numbers come
-   * in the body - opened by social-service, which owns them - and nothing is recorded here; the
-   * answer is the re-read (`{ verified, held }`). Phones are never logged.
-   */
-  @Post('lydia-cashier-revoke-internal')
-  @HttpCode(200)
-  async revokeForErasure(
-    @Headers('x-internal-secret') secret: string | undefined,
-    @Body()
-    body: {
-      associationId?: unknown;
-      vendorToken?: unknown;
-      actorPhone?: unknown;
-      cashierPhone?: unknown;
-    }
-  ) {
-    assertInternalSecret(secret);
-    const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
-    const associationId = text(body?.associationId);
-    const vendorToken = text(body?.vendorToken);
-    if (!UUID_RE.test(associationId) || !VENDOR_TOKEN_SHAPE.test(vendorToken)) {
-      throw new BadRequestException('associationId and vendorToken are required');
-    }
-    this.logger.log(`Lydia cashiers of ${associationId}: removal asked by an account erasure`);
-    return this.paymentService.removeLydiaCashier(
-      associationId,
-      vendorToken,
-      text(body?.actorPhone),
-      text(body?.cashierPhone)
-    );
   }
 }

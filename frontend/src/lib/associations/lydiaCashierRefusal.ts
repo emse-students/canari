@@ -12,6 +12,14 @@ export function lydiaCashierCodeText(code: string | null | undefined): string | 
       return m.asso_lydia_cashier_err_add_disabled();
     case LYDIA_CASHIER_REFUSAL.REVOKE_UNCONFIRMED:
       return m.asso_lydia_cashier_err_revoke_unconfirmed();
+    case LYDIA_CASHIER_REFUSAL.READBACK_INVALID:
+      return m.asso_lydia_cashier_err_rights();
+    case LYDIA_CASHIER_REFUSAL.HOLDER_RIGHTS_MISSING:
+      return m.asso_lydia_cashier_err_removal_refused();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST:
+      return m.asso_lydia_cashier_err_interrupted();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.NUMBER_CHANGED:
+      return m.asso_lydia_cashier_err_number_changed();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT:
       return m.asso_lydia_cashier_err_in_flight();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.NOT_A_MEMBER:

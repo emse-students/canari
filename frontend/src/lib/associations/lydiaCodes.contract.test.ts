@@ -57,6 +57,10 @@ describe('Lydia codes follow the shared contract', () => {
     expect(LYDIA_CASHIER_REFUSAL).toEqual({
       ADD_DISABLED: CONTRACT.core.cashierAddDisabled,
       REVOKE_UNCONFIRMED: CONTRACT.core.cashierRevokeUnconfirmed,
+      READBACK_INVALID: CONTRACT.core.cashierReadbackInvalid,
+      HOLDER_RIGHTS_MISSING: CONTRACT.core.cashierHolderRightsMissing,
+      RESPONSABLE_NUMBER_CHANGE_DISABLED: CONTRACT.core.responsableNumberChangeDisabled,
+      RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: CONTRACT.core.responsableNumberChangeForbidden,
     });
     expect(LYDIA_CASHIER_SOCIAL_REFUSAL).toEqual({
       IN_FLIGHT: CONTRACT.social.cashierInFlight,
@@ -67,6 +71,9 @@ describe('Lydia codes follow the shared contract', () => {
       LAST_HOLDER: CONTRACT.social.cashierLastHolder,
       NOT_FOUND: CONTRACT.social.cashierNotFound,
       ROLE_FIXED: CONTRACT.social.cashierRoleFixed,
+      CLAIM_LOST: CONTRACT.social.cashierClaimLost,
+      NUMBER_CHANGED: CONTRACT.social.cashierNumberChanged,
+      CONFIRMED_REQUIRED: CONTRACT.social.cashierConfirmedRequired,
     });
   });
   it('the bell knows the new cashier notice by its contract type', () => {

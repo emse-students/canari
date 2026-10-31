@@ -18,6 +18,7 @@ import {
 import { ProductsService } from '../associations/products.service';
 import { LYDIA_ENROLMENT_PENDING } from '../associations/lydia-readiness';
 import { assertInternalSecret } from './internal-secret.util';
+import { claimTokenOf } from '../associations/lydia-cashier-claim';
 
 /** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
 const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
@@ -137,6 +138,7 @@ export class InternalLydiaEnrolmentController {
     phoneMatches: boolean;
     numberChange: boolean;
     claimed: boolean;
+    claimToken: string | null;
   }> {
     assertInternalSecret(headerSecret);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
@@ -148,17 +150,22 @@ export class InternalLydiaEnrolmentController {
     });
   }
 
-  /** Releases the Responsable step's claim after a typed outcome core-service knows. */
+  /** Releases the Responsable step's claim after a typed outcome core-service knows (its token). */
   @Post(':id/lydia-responsable-release')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   async responsableRelease(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string
-  ): Promise<{ ok: true }> {
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { claimToken?: unknown }
+  ): Promise<{ ok: true; released: boolean }> {
     assertInternalSecret(headerSecret);
-    await this.associationsService.releaseLydiaResponsable(id);
-    return { ok: true };
+    const claimToken = claimTokenOf(body?.claimToken);
+    if (!claimToken) throw new BadRequestException('claimToken is required');
+    return {
+      ok: true,
+      released: await this.associationsService.releaseLydiaResponsable(id, claimToken),
+    };
   }
 
   /**
@@ -185,9 +192,10 @@ export class InternalLydiaEnrolmentController {
   }
 
   /**
-   * Records the Responsable Lydia confirmed (sealed phone; only its last two digits answered). Also
-   * answers the row's id and whether an OLD number awaits its removal (a number change, lot 3), so
-   * core-service asks Lydia to remove it next.
+   * Records the Responsable Lydia confirmed or not (sealed phone; only its last two digits
+   * answered), under the step's claim token. Also answers the row's id and whether the number it
+   * replaced must now be removed at Lydia (`removeOther`: a confirmed number change, lot 3), so
+   * core-service asks for that removal next.
    */
   @Post(':id/lydia-responsable')
   @HttpCode(200)
@@ -201,28 +209,26 @@ export class InternalLydiaEnrolmentController {
       phone?: unknown;
       addedByUserId?: unknown;
       confirmed?: unknown;
+      claimToken?: unknown;
     }
   ): Promise<{
     responsable: LydiaResponsableView;
-    cashierId: string | null;
-    previousPending: boolean;
+    cashierId: string;
+    removeOther: boolean;
   }> {
     assertInternalSecret(headerSecret);
-    const responsable = await this.associationsService.recordLydiaResponsable(id, {
+    const recorded = await this.associationsService.recordLydiaResponsable(id, {
       vendorToken: body?.vendorToken,
       userId: body?.userId,
       phone: body?.phone,
       addedByUserId: body?.addedByUserId,
       confirmed: body?.confirmed,
+      claimToken: body?.claimToken,
     });
-    const row =
-      typeof body?.vendorToken === 'string'
-        ? await this.associationsService.lydiaResponsableRowOf(id, body.vendorToken.trim())
-        : null;
     return {
-      responsable,
-      cashierId: row?.cashierId ?? null,
-      previousPending: row?.previousPending ?? false,
+      responsable: recorded.view,
+      cashierId: recorded.cashierId,
+      removeOther: recorded.removeOther,
     };
   }
 }

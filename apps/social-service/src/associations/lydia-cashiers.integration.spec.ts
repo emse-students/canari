@@ -27,12 +27,9 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import { AssociationsService, LYDIA_CASHIER_PHONE_PURPOSE } from './associations.service';
-import {
-  LYDIA_CASHIER_ALREADY_SET,
-  LYDIA_CASHIER_IN_FLIGHT,
-  LydiaCashiersService,
-} from './lydia-cashiers.service';
+import { LYDIA_CASHIER_IN_FLIGHT, LydiaCashiersService } from './lydia-cashiers.service';
 import { listLydiaCashiers } from './lydia-cashiers-list';
+import { LYDIA_CASHIER_CLAIM_LOST, LYDIA_CASHIER_NUMBER_CHANGED } from './lydia-cashier-claim';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -131,9 +128,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
   /** A clean association: no cashier, no claim, and a CONFIRMED Responsable. */
   const reset = async () => {
     await ds.query(`DELETE FROM lydia_cashiers`);
-    await ds.query(`UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`, [
-      ASSO,
-    ]);
+    await ds.query(
+      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL
+        WHERE id = $1`,
+      [ASSO]
+    );
     await ds.query(
       `INSERT INTO lydia_cashiers ("associationId", "vendorToken", "userId", "phoneSealed",
          "phoneEnd", role, "addedByUserId", "confirmedAt")
@@ -141,7 +140,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       [ASSO, VENDOR, sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO, HOLDER_PHONE)]
     );
   };
-  const record = (userId: string, phone: string, confirmed = true) =>
+  const recordUnder = (claimToken: string, userId: string, phone: string, confirmed = true) =>
     cashiers.record(ASSO, {
       vendorToken: VENDOR,
       userId,
@@ -149,7 +148,55 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       role: 'vendeur',
       addedByUserId: 'treasurer',
       confirmed,
+      claimToken,
     });
+  /** An add as core-service runs it: the claim, then the record carrying its token. */
+  const record = async (userId: string, phone: string, confirmed = true) => {
+    const { claimToken } = await cashiers.claimAdd(ASSO, { userId, phone, role: 'vendeur' });
+    return recordUnder(claimToken, userId, phone, confirmed);
+  };
+  /** A removal as core-service runs it: the claim, then the record of what Lydia's re-read showed. */
+  const revoke = async (cashierId: string, number: 'current' | 'previous', verified: boolean) => {
+    const target = await cashiers.claimRevoke(ASSO, { cashierId, number });
+    await cashiers.recordRevoke(ASSO, {
+      cashierId,
+      number,
+      verified,
+      actorId: 'treasurer',
+      cashierPhone: target.cashierPhone,
+      claimToken: target.claimToken,
+    });
+    return target;
+  };
+  /** The Responsable asking for `phone`, as core-service runs it: the claim, then the record. */
+  const responsableTo = async (phone: string, confirmed: boolean) => {
+    const claim = await associations.claimLydiaResponsable(ASSO, 'holder', phone, {
+      mode: 'add',
+      allowNumberChange: true,
+    });
+    expect(claim.claimed).toBe(true);
+    return associations.recordLydiaResponsable(ASSO, {
+      vendorToken: VENDOR,
+      userId: 'holder',
+      phone,
+      addedByUserId: 'treasurer',
+      confirmed,
+      claimToken: claim.claimToken,
+    });
+  };
+  const responsableNumbers = async () => {
+    const [row] = await ds.query(
+      `SELECT id, "phoneSealed", "previousPhoneSealed" FROM lydia_cashiers
+        WHERE role = 'responsable' AND "removedAt" IS NULL`
+    );
+    const open = (sealed: string | null) =>
+      sealed && openSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO, sealed);
+    return {
+      id: row.id as string,
+      current: open(row.phoneSealed),
+      other: open(row.previousPhoneSealed),
+    };
+  };
   const claimHeld = async () =>
     (
       await ds.query(`SELECT "lydiaResponsableStartedAt" AS at FROM associations WHERE id = $1`, [
@@ -166,6 +213,13 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       [schema]
     );
     expect(cols.n).toBe(4);
+    const [token] = await ds.query(
+      `SELECT count(*)::int AS n FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = 'associations'
+          AND column_name = 'lydiaCashierClaimToken'`,
+      [schema]
+    );
+    expect(token.n).toBe(1);
     const [idx] = await ds.query(
       `SELECT count(*)::int AS n FROM pg_indexes
         WHERE schemaname = $1 AND indexname = 'lydia_cashiers_one_live_member'`,
@@ -177,7 +231,6 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
   it('an add is recorded with the number sealed, listed confirmed, and the member told', async () => {
     await reset();
     tellAdded.mockClear();
-    await cashiers.claimAdd(ASSO, { userId: 'member-2', phone: '+33600000002', role: 'vendeur' });
     const view = await record('member-2', '+33600000002');
     expect(view).toMatchObject({ role: 'vendeur', phoneEnd: '02', state: 'confirmed' });
     expect(view.addedByName).toBe('Tess');
@@ -185,27 +238,81 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     expect(tellAdded).toHaveBeenCalledTimes(1);
   });
 
+  it('the claim is cleared only by its token: a stale release or record never clears a claim taken since', async () => {
+    await reset();
+    const first = await cashiers.claimAdd(ASSO, {
+      userId: 'member-2',
+      phone: '+33600000002',
+      role: 'vendeur',
+    });
+    // A global admin clears it; another operation claims; the first operation's late answers arrive.
+    await ds.query(
+      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL
+        WHERE id = $1`,
+      [ASSO]
+    );
+    const second = await cashiers.claimAdd(ASSO, {
+      userId: 'member-3',
+      phone: '+33600000003',
+      role: 'vendeur',
+    });
+    await expect(cashiers.release(ASSO, first.claimToken)).resolves.toBe(false);
+    await expect(recordUnder(first.claimToken, 'member-2', '+33600000002')).rejects.toMatchObject({
+      response: { code: LYDIA_CASHIER_CLAIM_LOST },
+    });
+    expect(await claimHeld()).toBe(true);
+    expect(
+      await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "userId" = 'member-2'`)
+    ).toEqual([{ n: 0 }]);
+    await expect(cashiers.release(ASSO, second.claimToken)).resolves.toBe(true);
+    expect(await claimHeld()).toBe(false);
+  });
+
+  it('a role change clears the removal flag; one recorded against a number the row no longer holds writes nothing', async () => {
+    await reset();
+    const view = await record('member-2', '+33600000002');
+    await revoke(view.id, 'current', false);
+    const change = await cashiers.claimRoleChange(ASSO, { cashierId: view.id, role: 'tresorier' });
+    const after = await cashiers.record(ASSO, {
+      vendorToken: VENDOR,
+      userId: 'member-2',
+      phone: change.phone,
+      role: 'tresorier',
+      addedByUserId: 'treasurer',
+      confirmed: true,
+      cashierId: view.id,
+      claimToken: change.claimToken,
+    });
+    expect(after).toMatchObject({ role: 'tresorier', state: 'confirmed' });
+    const again = await cashiers.claimRoleChange(ASSO, { cashierId: view.id, role: 'vendeur' });
+    await expect(
+      cashiers.record(ASSO, {
+        vendorToken: VENDOR,
+        userId: 'member-2',
+        phone: '+33600000077',
+        role: 'vendeur',
+        addedByUserId: 'treasurer',
+        confirmed: true,
+        cashierId: view.id,
+        claimToken: again.claimToken,
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NUMBER_CHANGED } });
+    const [row] = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR).then((l) =>
+      l.filter((c) => c.id === view.id)
+    );
+    expect(row.role).toBe('tresorier');
+    expect(await claimHeld()).toBe(false);
+  });
+
   it('a removal Lydia confirmed closes the row and clears every number; an unconfirmed one keeps it live, flagged', async () => {
     await reset();
     const view = await record('member-2', '+33600000002');
-    await cashiers.claimRevoke(ASSO, { cashierId: view.id, number: 'current' });
-    await cashiers.recordRevoke(ASSO, {
-      cashierId: view.id,
-      number: 'current',
-      verified: false,
-      actorId: 'treasurer',
-    });
+    await revoke(view.id, 'current', false);
     let list = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
     expect(list.find((c) => c.id === view.id)?.state).toBe('revoke-unconfirmed');
     expect(await claimHeld()).toBe(false);
 
-    await cashiers.claimRevoke(ASSO, { cashierId: view.id, number: 'current' });
-    await cashiers.recordRevoke(ASSO, {
-      cashierId: view.id,
-      number: 'current',
-      verified: true,
-      actorId: 'treasurer',
-    });
+    await revoke(view.id, 'current', true);
     list = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
     expect(list.map((c) => c.id)).not.toContain(view.id);
     const [closed] = await ds.query(
@@ -218,47 +325,57 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
 
   it('a Responsable number change keeps BOTH numbers until the old one is confirmed removed; halfway nothing is lost', async () => {
     await reset();
-    await associations.recordLydiaResponsable(ASSO, {
-      vendorToken: VENDOR,
-      userId: 'holder',
-      phone: '+33611111111',
-      addedByUserId: 'treasurer',
-      confirmed: true,
+    await expect(responsableTo('+33611111111', true)).resolves.toMatchObject({
+      removeOther: true,
     });
-    const [row] = await ds.query(
-      `SELECT id, "phoneSealed", "previousPhoneSealed", "previousPhoneEnd" FROM lydia_cashiers
-        WHERE role = 'responsable' AND "removedAt" IS NULL`
-    );
-    expect(openSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO, row.phoneSealed)).toBe('+33611111111');
-    expect(openSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO, row.previousPhoneSealed)).toBe(
-      HOLDER_PHONE
-    );
+    const numbers = await responsableNumbers();
+    expect(numbers).toMatchObject({ current: '+33611111111', other: HOLDER_PHONE });
     // The removal of the old number.
-    const target = await cashiers.claimRevoke(ASSO, { cashierId: row.id, number: 'previous' });
+    const target = await revoke(numbers.id, 'previous', false);
     expect(target).toMatchObject({ cashierPhone: HOLDER_PHONE, actorPhone: '+33611111111' });
     // Halfway: Lydia did not confirm - the old number stays, listed, flagged.
-    await cashiers.recordRevoke(ASSO, {
-      cashierId: row.id,
-      number: 'previous',
-      verified: false,
-      actorId: 'treasurer',
-    });
     let [responsable] = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
     expect(responsable).toMatchObject({ phoneEnd: '11', previousPhoneEnd: '32' });
     // The retry is confirmed: the old number is gone, the new one stays.
-    await cashiers.claimRevoke(ASSO, { cashierId: row.id, number: 'previous' });
-    await cashiers.recordRevoke(ASSO, {
-      cashierId: row.id,
-      number: 'previous',
-      verified: true,
-      actorId: 'treasurer',
-    });
+    await revoke(numbers.id, 'previous', true);
     [responsable] = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
     expect(responsable).toMatchObject({
       phoneEnd: '11',
       previousPhoneEnd: null,
       state: 'confirmed',
     });
+  });
+
+  it('a new Responsable number Lydia did NOT confirm: the old number stays the live one, the removal step acts only on the new one', async () => {
+    await reset();
+    await expect(responsableTo('+33611111111', false)).resolves.toMatchObject({
+      view: { phoneEnd: '32', confirmed: true },
+      removeOther: false,
+    });
+    const numbers = await responsableNumbers();
+    expect(numbers).toMatchObject({ current: HOLDER_PHONE, other: '+33611111111' });
+    // Removing "the other number" now removes the unproven new one, never the live one.
+    const target = await revoke(numbers.id, 'previous', true);
+    expect(target).toMatchObject({ cashierPhone: '+33611111111', actorPhone: HOLDER_PHONE });
+    expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
+  });
+
+  it('going BACK to the old number while it is tracked: re-confirmed, then the new one is the one to remove', async () => {
+    await reset();
+    await responsableTo('+33611111111', true);
+    // A third number is not a change while the old one is tracked.
+    await expect(
+      associations.claimLydiaResponsable(ASSO, 'holder', '+33622222222', {
+        mode: 'add',
+        allowNumberChange: true,
+      })
+    ).resolves.toMatchObject({ claimed: false, numberChange: false });
+    await expect(responsableTo(HOLDER_PHONE, true)).resolves.toMatchObject({ removeOther: true });
+    const numbers = await responsableNumbers();
+    expect(numbers).toMatchObject({ current: HOLDER_PHONE, other: '+33611111111' });
+    const target = await revoke(numbers.id, 'previous', true);
+    expect(target).toMatchObject({ cashierPhone: '+33611111111', actorPhone: HOLDER_PHONE });
+    expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
   });
 
   describe('under concurrency (Promise.all, one connection each)', () => {
@@ -275,16 +392,21 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       });
     });
 
-    it('two RECORDS of the same member (past any claim): ONE row, the other the typed ALREADY_SET', async () => {
+    it('two RECORDS under one claim: ONE row, the other the typed CLAIM_LOST', async () => {
       await reset();
+      const { claimToken } = await cashiers.claimAdd(ASSO, {
+        userId: 'member-3',
+        phone: '+33600000003',
+        role: 'vendeur',
+      });
       const settled = await Promise.allSettled([
-        record('member-3', '+33600000003'),
-        record('member-3', '+33600000004'),
+        recordUnder(claimToken, 'member-3', '+33600000003'),
+        recordUnder(claimToken, 'member-3', '+33600000004'),
       ]);
       expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
       const [lost] = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
       expect((lost.reason as HttpException).getResponse()).toMatchObject({
-        code: LYDIA_CASHIER_ALREADY_SET,
+        code: LYDIA_CASHIER_CLAIM_LOST,
       });
       expect(
         await ds.query(

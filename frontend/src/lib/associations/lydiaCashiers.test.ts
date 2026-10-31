@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AssociationPayoutAccount, LydiaCashier } from './api';
-import { LYDIA_CASHIER_ADD_ENABLED, lydiaCashiersView } from './lydiaCashiers';
+import {
+  LYDIA_CASHIER_ADD_ENABLED,
+  lydiaCashiersView,
+  responsableResendText,
+} from './lydiaCashiers';
 
 function cashier(overrides: Partial<LydiaCashier>): LydiaCashier {
   return {
@@ -35,6 +39,16 @@ function account(overrides: Partial<AssociationPayoutAccount> = {}): Association
     ...overrides,
   };
 }
+
+describe('responsableResendText', () => {
+  it('while the gate is off, offers only to resend the SMS and never mentions another number', () => {
+    const off = responsableResendText(false);
+    const on = responsableResendText(true);
+    expect(responsableResendText()).toEqual(off);
+    expect(off.button).not.toBe(on.button);
+    expect(off.hint).not.toBe(on.hint);
+  });
+});
 
 describe('lydiaCashiersView', () => {
   it('ships with adding hidden: the gate stays off until a production removal is observed', () => {

@@ -208,8 +208,8 @@ paiements liste les membres qui utilisent l'application **Lydia Pro** pour l'ass
 deux derniers chiffres du numero, date d'ajout et qui les a ajoutes. Seuls les membres qui gerent le
 compte de versement de l'association la voient.
 
-- **Responsable** : tous les droits, dont l'ajout et le retrait des caissiers. Il n'est pas retire
-  depuis cette liste : l'association n'aurait plus personne pour gerer son compte Lydia.
+- **Responsable** : tous les droits sur le compte de l'association. Son numero n'est pas retire
+  depuis cette liste.
 - **Tresorier** : consulter les releves, rembourser et annuler des paiements.
 - **Vendeur** : encaisser.
 
@@ -220,11 +220,14 @@ Chaque personne ajoutee recoit un SMS de Lydia et une notification Canari qui me
 aupres de Lydia que le retrait a bien eu lieu : sinon la ligne reste affichee avec **"Retrait non
 confirme chez Lydia, reessayez"**, et il suffit de recommencer.
 
-**Changer le numero du Responsable** : dans l'etape Responsable, **"Renvoyer le SMS ou changer de
-numero"**, puis saisissez le nouveau numero. Le nouveau numero est ajoute chez Lydia, puis l'ancien
-est retire. Si ce retrait n'est pas confirme, l'ancien numero reste affiche dans la liste des caissiers
-avec le bouton **"Retirer l'ancien numero"** ; un nouveau changement de numero n'est possible qu'une
-fois l'ancien retire.
+**Changer le numero du Responsable** (pas encore ouvert : d'ici la, le bouton s'appelle **"Renvoyer
+le SMS"** et ne fait que cela). Seul le Responsable lui-meme, ou un administrateur de la plateforme,
+peut changer son numero : dans l'etape Responsable, **"Renvoyer le SMS ou changer de numero"**, puis
+saisissez le nouveau numero. Le nouveau numero est ajoute chez Lydia ; l'ancien ne perd ses droits
+qu'une fois le nouveau confirme par Lydia. Tant que l'autre numero n'est pas retire, il reste affiche
+dans la liste des caissiers ("Un autre numero ... a encore acces au compte Lydia") avec le bouton
+**"Retirer cet autre numero"**. On peut aussi revenir a l'ancien numero en le saisissant a nouveau.
+Un troisieme numero n'est accepte qu'une fois l'autre retire.
 
 > L'ajout d'un tresorier ou d'un vendeur, et le changement de role, ne sont pas encore ouverts : ils le
 > seront une fois qu'un premier retrait aura ete verifie en production.

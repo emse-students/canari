@@ -79,6 +79,20 @@ export function lydiaResponsableErrorText(err: unknown): string {
       // Another cashier operation of the association is under way (lot 3 shares the step's lock).
       case LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT:
         return m.asso_lydia_resp_err_in_flight();
+      // Lot 3: Lydia's answer about the rights could not be trusted - read as not confirmed.
+      case LYDIA_CASHIER_REFUSAL.READBACK_INVALID:
+        return m.asso_lydia_resp_err_rights();
+      // Lot 3: the replaced number's removal was refused before anything was removed.
+      case LYDIA_CASHIER_REFUSAL.HOLDER_RIGHTS_MISSING:
+        return m.asso_lydia_cashier_err_removal_refused();
+      case LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED:
+        return m.asso_lydia_resp_err_number_change_disabled();
+      case LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_FORBIDDEN:
+        return m.asso_lydia_resp_err_number_change_forbidden();
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.CLAIM_LOST:
+        return m.asso_lydia_cashier_err_interrupted();
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.NUMBER_CHANGED:
+        return m.asso_lydia_cashier_err_number_changed();
     }
     if (err.status === 403) return m.asso_lydia_resp_err_forbidden();
   }

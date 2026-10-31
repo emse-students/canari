@@ -154,12 +154,14 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   asked (D38b) is voided (`[voided]`; its bell row, whose actor is the asker, goes with the account's notifications), the rest anonymised -
   [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 - **A cashier of a Lydia Business** (`lydia_cashiers`, migrations 118 and 119): BEFORE the
-  transaction, `LydiaCashiersService.revokeBeforeErasure` asks Lydia (through core-service's internal
-  `lydia-cashier-revoke-internal`) to remove every number of the account's LIVE rows (each needs the
-  association's confirmed Responsable), and counts a removal only when Lydia's re-read shows no right
-  left. Best effort: no claim is taken, every failure is logged, and the erasure goes on whatever
-  Lydia answers. A Responsable's own CURRENT number is never removed (nobody else manages the
-  Business). Then the row naming the account is DELETED, its sealed numbers with it; a row the
+  transaction, `LydiaCashiersService.revokeBeforeErasure` asks Lydia (through core-service's INTERNAL
+  route `POST /api/internal/lydia-cashiers/revoke`, `X-Internal-Secret` guarded and not routed by
+  nginx) to remove every number of the account's LIVE rows, and counts a removal only when Lydia's
+  re-read shows no right left. Per association it takes the cashier claim WITHOUT waiting - another
+  cashier operation in flight skips that association, at ERROR - so the numbers it opens are the
+  numbers it removes, and it releases the claim after. Best effort: every failure is logged, and the
+  erasure goes on whatever Lydia answers. A Responsable's own CURRENT number is never removed (nobody
+  else manages the Business), nor a number another live row holds. Then the row naming the account is DELETED, its sealed numbers with it; a row the
   account ADDED keeps its person and gets `addedByUserId = '[deleted]'`. A LIVE row (`removedAt`
   NULL) it deletes is read first (`liveCashiersErased`): one whose numbers Lydia confirmed removed is
   an `[AUDIT]` LOG line; any other is reported at ERROR, `[AUDIT] [LYDIA] account erasure ... deleted

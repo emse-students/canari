@@ -1,3 +1,4 @@
+import { m } from '$lib/paraglide/messages';
 import type {
   AssociationPayoutAccount,
   LydiaAddableCashierRole,
@@ -16,6 +17,24 @@ import type {
  * `lydiaCodes.contract.test.ts` asserts this equals. Removal is NOT gated: it only takes rights away.
  */
 export const LYDIA_CASHIER_ADD_ENABLED = false;
+
+/**
+ * The Responsable's resend control, in the reader's language. Changing the Responsable's number is
+ * behind the same gate as adding a cashier (core-service refuses it with
+ * `LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED` while off), so while the gate is off the control only
+ * offers to resend the SMS and never mentions another number.
+ */
+export function responsableResendText(enabled: boolean = LYDIA_CASHIER_ADD_ENABLED): {
+  button: string;
+  hint: string;
+} {
+  return enabled
+    ? { button: m.asso_lydia_resp_resend_button(), hint: m.asso_lydia_resp_resend_hint() }
+    : {
+        button: m.asso_lydia_resp_resend_only_button(),
+        hint: m.asso_lydia_resp_resend_only_hint(),
+      };
+}
 
 /** The roles a payout manager may give, in the order the picker lists them. */
 export const LYDIA_ADDABLE_CASHIER_ROLES: readonly LydiaAddableCashierRole[] = [

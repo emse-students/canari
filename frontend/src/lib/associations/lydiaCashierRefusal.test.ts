@@ -6,10 +6,19 @@ import {
   lydiaCashierErrorText,
 } from './lydiaCashierRefusal';
 
+/**
+ * The codes the cashier screen never meets as its own (the Responsable's number change) or that
+ * only a malformed request gets: each falls to the generic sentence.
+ */
+const NOT_OWN: readonly string[] = [
+  LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_DISABLED,
+  LYDIA_CASHIER_REFUSAL.RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
+  LYDIA_CASHIER_SOCIAL_REFUSAL.CONFIRMED_REQUIRED,
+];
 const ALL_CASHIER_CODES = [
   ...Object.values(LYDIA_CASHIER_REFUSAL),
   ...Object.values(LYDIA_CASHIER_SOCIAL_REFUSAL),
-];
+].filter((code) => !NOT_OWN.includes(code));
 
 describe('lydiaCashierErrorText', () => {
   it('gives every cashier code its own plain sentence, never the server prose nor the code', () => {
@@ -20,6 +29,19 @@ describe('lydiaCashierErrorText', () => {
       return text;
     });
     expect(new Set(texts).size).toBe(texts.length);
+  });
+
+  it('the codes that are not the cashier screen own codes fall to the generic sentence', () => {
+    const generic = lydiaCashierErrorText(new Error('x'));
+    for (const code of NOT_OWN) {
+      expect(lydiaCashierErrorText(new SocialApiError('x', code, 409)), code).toBe(generic);
+    }
+  });
+
+  it('an untrusted answer about the rights reads as rights not confirmed, never as done', () => {
+    expect(
+      lydiaCashierErrorText(new SocialApiError('x', LYDIA_CASHIER_REFUSAL.READBACK_INVALID, 502))
+    ).toBe(lydiaCashierErrorText(new SocialApiError('x', 'LYDIA_CASHIER_RIGHTS_INCOMPLETE', 502)));
   });
 
   it('a removal Lydia did not confirm is told apart from a generic failure', () => {

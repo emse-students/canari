@@ -14,7 +14,11 @@
     "responsableNotACashier": "LYDIA_RESPONSABLE_NOT_A_CASHIER",
     "noBusiness": "LYDIA_NO_BUSINESS",
     "cashierAddDisabled": "LYDIA_CASHIER_ADD_DISABLED",
-    "cashierRevokeUnconfirmed": "LYDIA_CASHIER_REVOKE_UNCONFIRMED"
+    "cashierRevokeUnconfirmed": "LYDIA_CASHIER_REVOKE_UNCONFIRMED",
+    "cashierReadbackInvalid": "LYDIA_CASHIER_READBACK_INVALID",
+    "cashierHolderRightsMissing": "LYDIA_CASHIER_HOLDER_RIGHTS_MISSING",
+    "responsableNumberChangeDisabled": "LYDIA_RESPONSABLE_NUMBER_CHANGE_DISABLED",
+    "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN"
   },
   "social": {
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
@@ -32,7 +36,10 @@
     "cashierNoHolder": "LYDIA_CASHIER_NO_HOLDER",
     "cashierLastHolder": "LYDIA_CASHIER_LAST_HOLDER",
     "cashierNotFound": "LYDIA_CASHIER_NOT_FOUND",
-    "cashierRoleFixed": "LYDIA_CASHIER_ROLE_FIXED"
+    "cashierRoleFixed": "LYDIA_CASHIER_ROLE_FIXED",
+    "cashierClaimLost": "LYDIA_CASHIER_CLAIM_LOST",
+    "cashierNumberChanged": "LYDIA_CASHIER_NUMBER_CHANGED",
+    "cashierConfirmedRequired": "LYDIA_CASHIER_CONFIRMED_REQUIRED"
   },
   "notificationTypes": {
     "active": "lydia_payments_active",

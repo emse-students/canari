@@ -69,10 +69,13 @@ export class LydiaCashierOps {
     }
   }
 
-  /** Releases the claim after an outcome core KNOWS; a failure is ERROR and never replaces the answer. */
-  async release(associationId: string): Promise<void> {
+  /**
+   * Releases the claim `claimToken` after an outcome core KNOWS (social-service clears it only while
+   * it still carries that token); a failure is ERROR and never replaces the answer.
+   */
+  async release(associationId: string, claimToken: string): Promise<void> {
     try {
-      await this.socialStep(associationId, 'lydia-cashier-release', {});
+      await this.socialStep(associationId, 'lydia-cashier-release', { claimToken });
     } catch {
       this.logger.error(
         `Lydia cashiers of ${associationId}: the claim could not be released - a global admin clears it`
@@ -83,11 +86,14 @@ export class LydiaCashierOps {
   /**
    * REMOVES ONE NUMBER of cashier row `cashierId` at Lydia, and proves it: social-service checks
    * and claims (`lydia-cashier-revoke-claim`: the row, the last-holder guard, the confirmed
-   * Responsable), Lydia is asked to remove it, and its re-read decides (`removeCashier`). Only 0
+   * Responsable, the numbers opened under the claim's lock), Lydia's control read must show the
+   * Responsable's 13 rights (`LYDIA_CASHIER_HOLDER_RIGHTS_MISSING` otherwise, nothing changed), Lydia
+   * is asked to remove the number, and its re-read decides (`removeCashier`). Only 0
    * rights is a removal: the row is closed (`current`) or the old number cleared (`previous`).
    * Anything else is recorded as a removal NOT confirmed - the row stays live, flagged - and answered
    * 502 `LYDIA_CASHIER_REVOKE_UNCONFIRMED`, at ERROR. Repeating a removal is safe, so every outcome
-   * releases the claim (the record does it); a refusal before any call to Lydia releases it too.
+   * releases the claim (the record does it, for the number removed only); a refusal before any
+   * change at Lydia releases it too.
    */
   async revoke(
     associationId: string,
@@ -100,6 +106,7 @@ export class LydiaCashierOps {
       vendorToken: string;
       cashierPhone: string;
       actorPhone: string;
+      claimToken: string;
     }>(associationId, 'lydia-cashier-revoke-claim', { cashierId, number });
     let removal: { verified: boolean; held: number | null };
     try {
@@ -110,14 +117,22 @@ export class LydiaCashierOps {
         target.cashierPhone
       );
     } catch (err: unknown) {
-      // Refused before any call (no Provider key, a malformed number): nothing changed at Lydia.
-      await this.release(associationId);
+      // Refused before any change (no Provider key, a malformed number, the control read):
+      // nothing changed at Lydia.
+      await this.release(associationId, target.claimToken);
       throw err;
     }
     await this.socialStep(
       associationId,
       'lydia-cashier-revoke',
-      { cashierId, number, verified: removal.verified, actorId },
+      {
+        cashierId,
+        number,
+        verified: removal.verified,
+        actorId,
+        cashierPhone: target.cashierPhone,
+        claimToken: target.claimToken,
+      },
       true
     );
     if (!removal.verified) {
