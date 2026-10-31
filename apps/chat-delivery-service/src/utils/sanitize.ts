@@ -42,6 +42,26 @@ export function parseLeafIdentity(value: unknown): LeafIdentity | null {
 }
 
 /**
+ * THE ONE CANONICAL FORM OF A DEVICE KEY `userId:deviceId` in this service: the user half
+ * ASCII-lowercased (a user id is case-insensitive here - `HeaderAuthGuard` lowercases the caller),
+ * the device half as sent. Every comparison of two device keys goes through it, so two spellings
+ * the service accepts as one device are one device everywhere - and it matches `mls-core`'s
+ * `canonical_identity`, so the server and the clients agree on what "the same device" means.
+ */
+export function canonicalDeviceKey(userId: string, deviceId: string): string {
+  return `${userId.toLowerCase()}:${deviceId}`;
+}
+
+/**
+ * A leaf identity in {@link canonicalDeviceKey} form, or null when it is not one
+ * ({@link parseLeafIdentity}).
+ */
+export function canonicalLeafIdentity(value: unknown): string | null {
+  const leaf = parseLeafIdentity(value);
+  return leaf ? canonicalDeviceKey(leaf.userId, leaf.deviceId) : null;
+}
+
+/**
  * A field that carries a LEAF IDENTITY (`userId:deviceId`), reduced to a log value by
  * {@link cutLeafIdentity}: the user id cut wherever it appears, the device half's embedded copy
  * included, and the rest of the device kept - it is what tells two devices of one person apart. A

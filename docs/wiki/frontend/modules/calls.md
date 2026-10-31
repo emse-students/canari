@@ -280,7 +280,7 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
 
 **Apple, for the stable** (the pre-release half is on [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)):
 
-- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch is gone (the flip PR deleted it from `ios.yml`).
+- **Superseded 2026-10-31:** the committed `Info.plist` now carries `voip` AND `audio` (`CALLS_NATIVE_RING_COMPILED = true` since 2026-10-30), so the review notes below must show the CallKit ring. The earlier line read: `audio`, NOT `voip` (Q1); the pre-release patch is gone (the flip PR deleted it from `ios.yml`).
   `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
   can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
 - `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
@@ -359,9 +359,15 @@ this repository.
 > or switch between the front and back cameras from the call screen, and it is turned off while the
 > app is in the background (the audio continues) and back on when the app returns.
 >
-> This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
-> only while the app is open. From the conversation, a member can report and block the other; a
-> blocked member cannot call.
+> SUPERSEDED 2026-10-31, DO NOT SUBMIT AS WRITTEN: the two sentences that used to stand here ("declares no
+> `voip` background mode, uses neither CallKit nor PushKit, a call rings only while the app is open")
+> are FALSE since the owner's decision of 2026-10-30. The committed `Info.plist` declares `voip`
+> and `canari_push.mm` registers PushKit and reports every VoIP push to CallKit
+> (`CanariReportVoipCall`). Rewrite them to show the reviewer where `voip` is used (a call to a
+> locked iPhone rings on the CallKit screen; see
+> [the native ring](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22)),
+> because 2.5.4 refused a `voip` mode it could not locate. From the conversation, a member can
+> report and block the other; a blocked member cannot call.
 
 **When these notes apply (1.5.2).** The review build talks to PRODUCTION, so the video paragraph is
 true only while `calls_mode` is `audio_video`. If production is still at `audio` when 1.5.2 is
@@ -512,10 +518,12 @@ the server nothing - the stale token is cleared by the next `410`; a `refresh-to
 `ApnsVoipService` (chat-delivery) is the one direct-APNs sender: HTTP/2, an ES256 provider JWT from
 an APNs AUTH KEY (`.p8`), topic `fr.emse.canari.voip`, priority 10, `apns-expiration` = the ring's
 answer deadline. **What exists**: the sender, its five variables (`APNS_VOIP_KEY_P8`, `_KEY_ID`,
-`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` and both serve workflows, and the
+`_TEAM_ID`, `_TOPIC`, `_SANDBOX`) in `docker-compose.prod.yml` AND `docker-compose.dev.yml` (dev's was
+missing until 2026-10-30: the secrets were rendered but never forwarded, so the service logged
+`APNS_VOIP_* is not configured` and a locked iPhone on dev was not rung; `compose-wiring.test.sh` no
+longer allowlists it) and both serve workflows, and the
 three production secrets (repository secrets, set 2026-07-23 - names read, never values). **What is
-missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads (absent on 2026-10-22, so dev
-cannot ring a VoIP device), and any proof that the production key still signs (no VoIP push was ever
+missing**: the three `DEV_APNS_VOIP_*` secrets `serve-dev.yml` reads exist as repository secrets since 2026-10-23 (a missing one makes dev warn and not ring), and any proof that the production key still signs (no VoIP push was ever
 sent). A key is team-wide: no VoIP certificate is needed with token auth. **`APNS_VOIP_SANDBOX`
 stays unset on dev too**: a TestFlight build is signed `aps-environment production` and its tokens
 belong to the production gateway; only an Xcode debug build needs the sandbox.
@@ -560,9 +568,10 @@ the end (each one would have to report a new call).
 
 **Answering from the lock screen, and the audio hand-off.** CallKit's answer cannot start audio:
 the MLS keys are behind the app's PIN in the web view. The answer writes `pending_call_accept.json`
-and fires the `acceptCall` deep link; from the lock screen the user unlocks (Face ID), opens Canari
-from CallKit's button, enters the PIN; the web view drains the accept and joins when the MLS invite
-arrives over the socket. On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
+and opens the conversation's plain link (navigation only); from the lock screen the user unlocks
+(Face ID), opens Canari from CallKit's button, enters the PIN; the web view drains the accept and
+joins once the session has caught up, with no invite awaited
+([below](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30)). On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
 WebKit owns the audio session from then on, and the `audio` background mode (`CALLS_COMPILED`)
 keeps the call alive when the phone locks again (WP-C-BG-I). Cost, accepted by this design: the
 caller hears it ring until the callee has unlocked, inside the 60 s window; Messenger connects at
@@ -656,6 +665,189 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
 
 **Still open:** `didInvalidatePushToken` tells the server nothing (the next APNs `410` clears it);
 a VoIP-pushed ring is announced as audio (`hasVideo = NO`) until the video lot decides otherwise.
+
+### An answer from the ring joins on the ring's facts (2026-10-30)
+
+**The defect (1.5.2-alpha.1, Mi 9T, K7 killed and K8 locked).** The ring rang, Answer opened the
+app, and the call never connected: both sides ended on "Appel sans réponse". The caller's MLS
+`call_invite` is a TRANSPORT frame, and chat-delivery hands a transport frame only to a device online
+when it is sent (`TRANSPORT_SKIPPED_OFFLINE`: no row, no push). A phone the native ring reached was
+closed by construction, so the invite never reached it - and the answer waited for that invite
+(`consumePendingCallAccept`, read only on the invite path) until its 2 min expiry. The iPhone's
+CallKit answer took the same path.
+
+**The design: the answer is the whole answer.** Nothing the invite carries is needed to join:
+- the conversation, the call, video and the caller came with the server's `call_ring`, and ride the
+  answer;
+- every rule the invite's admission applies in the app (`calls_mode`, the conversation's permission,
+  blocks) the server applied before it rang;
+- the room token `acceptCall` asks for first applies them AGAIN and is the authority on lateness: a
+  closed window, or a ring the server already recorded as ended (`cancelled`, `answered`, `ended`:
+  `call:room:<id>:ring_ended`), is its `410`; a block set since is its refusal - an answer from the
+  server, not a guess.
+
+**The native answer is carried by a private intent, never a public URL.** The answer's facts are
+the RING'S, recorded natively when it rang, and reach the web view through ONE door,
+`pending_call_accept.json`, drained by `read_and_clear_pending_call_accept` (the same command on both
+platforms, at mount, on a signed-in resume, on a visible resume still at the PIN gate, and on iOS
+when the native handover says an answer waits, `canari:call-accept` -
+[below](#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31)):
+- **Android** (`CallRingAnswer.kt`): the ring records its facts (group, call, caller, video, the
+  instant it rang) under a per-ring nonce in app-private preferences; the Answer intent carries only
+  the call id and that nonce as extras, its data the plain conversation link. `MainActivity`
+  (`onCreate` on a fresh launch, `onNewIntent`) checks the nonce, forgets the record and writes the
+  file from the RECORDED facts with the instant of the tap, atomically. A dismissed or ended ring
+  forgets its record (`cancelIncomingCallNotification`, `cancelAllMessageNotifications`).
+- **iOS**: CallKit's answer writes the file natively; the link it opens is navigation only.
+- **A link navigates and never answers**: `hooks.client.ts` reads no answer from a URL, whoever
+  opened it (a parameter that looks like one is logged and ignored).
+
+`pendingCallAccept.ts` then HOLDS the intent until the session has caught up and acts on it once.
+"Caught up" is a named signal, `ConnectionDeps.onCaughtUp`, fired by `openGatewayConnection` after
+the post-connect catch-up (`settleUnresolvedCommits` then `fetchPendingMessages`), never on the
+socket merely opening - so the join derives its keys from a group that has absorbed what was queued.
+A closed socket clears it, and the next catch-up acts on what is held. The file carries the native
+instant of the tap (`acceptedAt`); an entry without one is no answer, so a replayed intent is never
+stamped fresh on drain.
+
+`CallService.answerFromSystemSurface` takes the intent and joins: the same call already past
+`incoming` (a duplicate answer) - nothing, logged at debug; already ringing the same call (the invite
+did arrive) - accept it; the ENDED summary - cleared first; in another call - dropped, logged WARN
+(only the user may drop a live call); otherwise the call's facts are set, the state is `incoming`,
+and `acceptCall` runs. An invite that does arrive afterwards meets the call it already is
+(`yieldToOrAnswerBusy`: same callId, ignored).
+
+**One clock exists, and it decides nothing the server decides.** `MAX_PENDING_AGE_MS` (2 min from
+the native tap) bounds how long a held tap may wait for a session that never catches up; whether the
+call can still be joined is the room token's answer alone. A sibling device answering after this one
+gets the `410`: the answering device asks for its token BEFORE it ends the ring as `answered`.
+
+**Two shapes rejected.**
+- *The answering device asks the still-ringing caller to resend the invite.* A new proto frame, a
+  round trip before the join, and callers on any earlier build never answer it - for an invite whose
+  content the callee already holds.
+- *The server keeps the invite for exactly the devices it rang.* The server would have to classify a
+  ciphertext as an invite (it cannot read it) or take a new per-device durability flag, and a stored
+  invite outlives its call unless something else expires it - a second ledger for what the ring
+  already said.
+
+**Covered by** `CallService.p2p.test.ts` ("an answer on the native ring, no invite ever delivered":
+the real gate and the real `acceptCall` - room token first, then the answered frame and the socket;
+a `410` toasts and starts nothing; a duplicate starts nothing), `CallService.answerFromRing.test.ts`,
+`pendingCallAccept.test.ts` (held until the catch-up; no instant, no answer; a link never answers -
+only the native drain records one), `initializeConnection.test.ts` (the catch-up signal fires after
+the settle and the fetch), `calls.service.spec.ts` (the `410` once the ring ended, the sibling case)
+and the text pins in `incomingCallScreen.test.ts` (the nonce, the private file, no answer in a link).
+
+### A decline on the ring reaches the caller (2026-10-30)
+
+The native Decline (`CanariNotificationActionReceiver.handleCallDecline`, which `IncomingCallActivity`
+fires too, and CallKit's `performEndCallAction`) only stopped the local ring: the caller rang its whole
+minute. It now sends the frame the in-app Decline sends - `CallMsg { hangup, end_reason = DECLINED }`
+(`build_call_hangup_app_message`, `proto_fields.rs`), encrypted by the background MLS path and posted
+ONCE (`sendTransportFrameNow` / `CanariSendCallDecline`): silent, not durable, never through the
+outbox mirror, because a hangup replayed after its call ended means nothing. A failure is logged and
+the caller rings out, as before. Calls are 1:1 (lot 1), so declining and ending the caller's ring are
+one act.
+
+**On iOS an End after Answer ends the call for real.** CallKit's End on a call already answered
+removes `pending_call_accept.json` if it names that call (`CanariCancelPendingCallAccept`), so the web
+view joins nothing later, and sends the same hangup. No in-memory intent can exist to cancel: the
+page is told of the file only at the handover, queued behind the `AnsweredElsewhere` ends that
+activation makes (`CanariTellPageOfPendingCallAccept`), so no End can follow a drain.
+
+**The background MLS model the decline inherits.** It is the quick-reply send path, unchanged:
+`encryptQueuedMessages` -> `send_messages_background_with_key` under the MLS state lock, the state
+saved BEFORE any ciphertext leaves, a group whose staged commit is unsettled held (`commit-pending`).
+Two consequences, both a DROP and never a queue: a held group, or a save refused because the
+foreground guard is live (`background_write_mls_bin_compare_and_swap` refuses while the foreground
+heartbeat is fresh, the whole batch discarded), sends no decline - logged, and the caller rings out
+its window. A queued hangup could outlive its call, which is why none is queued.
+
+**Not covered:** the callee's OTHER devices still ringing natively keep ringing to the window
+(`ring-end` needs a session token a receiver does not hold); an in-app sibling stops on the hangup,
+and a sibling's later answer is refused by the room token (`410`).
+
+**Owed on hardware:** K7/K8 Answer joins on the Mi 9T (including a process death between the ring
+and the tap) and on the iPhone (CallKit); an Answer from a warm app still at the PIN gate; CallKit
+End after Answer joins nothing and ends the caller's call; Decline from the Android ring and from
+CallKit ends the caller's ring at once and files "declined". The Objective-C and the JNI/FFI are
+uncompiled here (the iOS CI job is the Objective-C's first compiler).
+
+### The iPhone's answer never joined, and its decline never left (1.5.2-alpha.2, 2026-10-31)
+
+**The readings** (iPhone 12 on TestFlight `1.5.2-alpha.2`, dev, the Mi 9T calling on alpha.1).
+K7 (app killed, Answer on CallKit, then the PIN) and K8 (locked, slide to answer, Face ID, the PIN)
+both landed on the feed: the server saw the device come online and no call-service socket nor room
+token for the call, which rang out `cancelled`. The CallKit Decline of a killed app, and the End
+right after an Answer, logged `encryptQueuedMessages: ok=false` and the caller rang its minute.
+
+**One fact behind both: PushKit launches a killed app in the background, and WKWebView loads its
+page `visible` and keeps it so.** The syslog shows it every time: `view visibility state changed
+0 -> 1` at the launch, `setIsInBackground: 1` 50 ms later with no change back, and the next
+visibility change only when the app, having been active, left (`1 -> 0` at 02:55:03 in K7). So:
+- **No drain after the Answer.** The page mounted 1.5 s after the PushKit launch, before the ring;
+  the Answer wrote the file 30 s later and the app came to the front, and no `visibilitychange`
+  fired - the two resume drains never ran. The file sat on disk until the NEXT process's mount
+  drained it, minutes stale (FSEvents: written 02:53:15, read 03:02:02). In `1.5.2-alpha.1` the
+  Answer's deep link carried `acceptCall`, and `onOpenUrl` fires whatever the visibility: #2765 made
+  the link navigation-only, which removed the one trigger that did not depend on a transition. Not
+  a regression from 1.5.1, where CallKit was compiled out.
+- **The decline's write refused.** At the PIN gate the page's 10 s foreground heartbeat ran (it is
+  paused only by `hidden`), so the guard was always fresh, and `background_write_mls_bin_if_unchanged`
+  refused the hangup's ratchet save; a batch whose save is refused hands out no ciphertext. The MLS
+  state is NOT sealed behind the PIN: the background copy of the device key is in the Keychain
+  (`AfterFirstUnlockThisDeviceOnly`), exactly what the extension and the quick reply use. Rust's
+  reason does not reach the syslog, so this is read from the timings (the guard lives 30 s; the
+  decline came 12 s and the End 10 s after the launch's mount) and the absence of every other cause's
+  line; the native line now carries Rust's reason.
+
+**The fix, at each cause.**
+- **The native side tells the page at the handover.** The `didBecomeActive` observer that ends every
+  CallKit call `AnsweredElsewhere` then queues, on the same main queue, `CanariTellPageOfPendingCallAccept`:
+  if the file exists (a stat), the page gets `canari:call-accept` and drains it
+  (`listenForNativeCallAccept`, `pendingCallAccept.ts`; a repeated event reads an emptied file); a
+  page not loaded yet drains it at mount. NOT at the Answer: until the app is active a CallKit End
+  may still cancel the answer, and the page must not hold it then. "The page was told" is logged in
+  the completion handler, once the page ran the dispatch. Android tells a live page the same way
+  when `MainActivity.onNewIntent` takes an answer (`pushCallAccept`): a warm activity already
+  visible at the PIN gate sees no visibility change either.
+- **The heartbeat holds the guard only over a loaded manager** (`heartbeat_foreground_guard`,
+  `concurrency.rs`). The guard protects the state a foreground manager holds in memory; before a
+  login there is none, and the login's read marks the guard itself first. Whether a manager is
+  loaded is a fact this process holds (`live_manager_flag`), where `visibilityState` is the
+  WebView's opinion. No change for a signed-in page.
+
+**A server-side typed decline was weighed and not taken.** The hangup CAN be sealed without the PIN
+(the background key above), so a second, cleartext path for the same act would be a fallback beside
+a primary path that works, and one more fact handed to the server in clear.
+
+**CallKit shows the answered call as connected ("Canari audio - 00:03") while the caller still
+rings: accepted.** `CXAnswerCallAction` is fulfilled at once. The join waits on Face ID, the open
+and the PIN - an unbounded human step - and an action left unfulfilled is failed by CallKit on its
+own deadline, which would end the call under the user; the screen is the callee's own, the caller's
+ring is true, and the handover ends the CallKit call the moment the app is in front.
+
+**Named limitations.**
+- A page that MOUNTS between the Answer and the activation (a launch slower than the ring) drains
+  the file at mount, so an End in that window removes the file but not the held answer. Not
+  observed: the page mounted 1.5 s after each launch.
+- **A launch that signs in by itself still refuses the Decline.** Biometrics with no prompt due, or
+  "stay signed in" on a hardware-held key, load a manager in the background; that page holds the
+  guard, correctly, and the hangup's write is refused (`ok=false (... foreground active ...)`). The
+  fix is to send the decline through the loaded manager
+  ([backlog](../../backlog.md#p2---a-callkit-decline-is-still-refused-for-a-user-whose-launch-signs-in-by-itself-review-of-2782-2026-10-31)).
+  And with the guard released at the PIN gate, an old-PIN recovery's blind install can erase a
+  background write made during its PIN check
+  ([backlog](../../backlog.md#p2---an-old-pin-recovery-installs-bytes-it-read-before-the-pin-check-with-no-compare-under-the-lock-review-of-2782-2026-10-31)).
+
+**Owed on the iPhone** (TestFlight with this change, against dev, **the app unlocked by its PIN -
+neither biometrics nor "stay signed in"**, which sign in in the background and are the limitation
+above; one more Decline reading with each of those names it): K7 and K8 join after the PIN -
+`[CanariCallKit] an answer waits - the page was told`, then a room token for the call and the
+call-service socket on the server; the Decline of a killed app ends the caller's ring at once -
+`decline call=... sent=1` and the caller's record `declined`; the End right after an Answer joins
+nothing AND ends the caller's ring the same way. Any `ok=false` now names its reason.
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
@@ -2496,8 +2688,8 @@ When the app is killed, CallKit is the only way to show an incoming call UI. The
 1. Caller's client → `POST /api/calls/ring`
 2. Backend sends **direct APNs VoIP push** to iOS devices with a `voipToken` (ES256 JWT, topic `<bundle>.voip`), ids only, while the ring is live.
 3. `PKPushRegistry` delivers the VoIP push → `CanariReportVoipCall` reports a CallKit call. The design, the rules and what is owed: [the native ring on the iPhone](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
-4. User answers → writes `pending_call_accept.json` → fires accept deep link.
-5. App unlocks → TS store drains `pendingCallAccept` → `CallService` auto-accepts when the matching MLS invite arrives over WS.
+4. User answers → writes `pending_call_accept.json` (group, call, caller, video) → fires accept deep link.
+5. App unlocks → TS store drains `pendingCallAccept` → `CallService.answerFromSystemSurface` joins on those facts once the socket is up, with no invite awaited ([an answer from the ring joins on the ring's facts](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30)).
 6. CallKit session ended on `didBecomeActive` (handed over to in-app WebRTC).
 
 VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/push/register` (`voipToken` field).
@@ -2511,7 +2703,7 @@ VoIP push tokens are persisted to `voip_token.txt` and registered via `/api/mls/
 - Full-screen intent (`USE_FULL_SCREEN_INTENT`) = `IncomingCallActivity`, a screen that asks - never the answer itself
 - `FLAG_INSISTENT` looping ringtone
 - 60 s timeout (`setTimeoutAfter`)
-- Answer = deep link (after the keyguard, from the call screen); decline = local dismiss
+- Answer = deep link carrying group, call, video and caller (after the keyguard, from the call screen); Decline = the ring stops and the in-app hangup (`DECLINED`) reaches the caller ([the decline reaches the caller](#a-decline-on-the-ring-reaches-the-caller-2026-10-30))
 - Caller named from `display_names.json`, photo from the avatar cache first, the network on a miss ([the native ring ships](#the-native-ring-ships-in-152-owner-2026-10-30))
 
 ## Ring-end (stop ringing)

@@ -24,6 +24,7 @@
 {#if kind === 'association' && comment.association}
   <span class="block {box}">
     <AssociationAvatar
+      id={comment.association.id}
       fill
       shape="circle"
       name={comment.association.name}
