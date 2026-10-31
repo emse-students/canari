@@ -80,27 +80,38 @@
   }
 </script>
 
+<!-- ONE FLOATING GLASS PILL, A SEGMENTED CONTROL (owner, 2026-10-31: the row sat on a grey band in the
+     middle of nowhere, margins unequal). The recipe is the conversation chrome's `.glass-chrome`,
+     not a new one; the CanaReels entry is the matching round glass button. The row owns no
+     background and no horizontal inset: the feed column's own gutters are the row's, so both sides
+     match the cards. Glass at EVERY width, unlike the phone-only conversation header, because the
+     row floats over cards that scroll under it on desktop too. -->
 <div class="flex items-center gap-2" data-feed-tab-row>
   <div
-    bind:this={tabs}
-    class="no-scrollbar -my-1.5 flex min-w-0 flex-1 gap-2 overflow-x-auto py-1.5"
-    data-feed-tabs
-    use:scrollFades
+    class="glass-chrome flex h-11 min-w-0 flex-1 rounded-full p-1 md:pointer-fine:h-9.5"
+    data-feed-pill
   >
-    {#each FEED_TABS as tab (tab.feed)}
-      <button
-        type="button"
-        data-feed-tab={tab.feed}
-        onclick={() => onFeed(tab.feed)}
-        aria-pressed={feed === tab.feed}
-        class="tap-target shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors {feed ===
-        tab.feed
-          ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-          : 'border-cn-border text-text-muted hover:text-text-main'}"
-      >
-        {tab.label()}
-      </button>
-    {/each}
+    <div
+      bind:this={tabs}
+      class="no-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      data-feed-tabs
+      use:scrollFades
+    >
+      {#each FEED_TABS as tab (tab.feed)}
+        <button
+          type="button"
+          data-feed-tab={tab.feed}
+          onclick={() => onFeed(tab.feed)}
+          aria-pressed={feed === tab.feed}
+          class="tap-target flex-1 shrink-0 rounded-full border px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===
+          tab.feed
+            ? 'text-text-main border-amber-500/40 bg-amber-500/20 font-semibold'
+            : 'text-text-muted hover:text-text-main border-transparent font-medium'}"
+        >
+          {tab.label()}
+        </button>
+      {/each}
+    </div>
   </div>
   <ReelsEntryButton {authToken} />
 </div>
