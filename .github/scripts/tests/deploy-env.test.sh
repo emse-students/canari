@@ -89,7 +89,8 @@ prod_env() {
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
     LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
     LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
-    LYDIA_ENV=production
+    LYDIA_ENV=production \
+    LYDIA_PROVIDER_PRIVATE_TOKEN=test-provider-private-token
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -702,6 +703,13 @@ for key in LYDIA_PROVIDER_TOKEN LYDIA_PROVIDER_PRIVATE_TOKEN; do
     fail "$key is not rendered in dev - a Lydia onboarding cannot be tried there"
   fi
 done
+# The Provider private token signs `business/addcashier` (enrolment lot 2, the Responsable step):
+# production without it cannot finish an enrolment, so the render refuses the deploy instead.
+if [ "$(manifest_field LYDIA_PROVIDER_PRIVATE_TOKEN 2)" = "required" ]; then
+  pass "LYDIA_PROVIDER_PRIVATE_TOKEN is required in production"
+else
+  fail "LYDIA_PROVIDER_PRIVATE_TOKEN is not required in production - a Responsable could never be added"
+fi
 if grep -qE '^      LYDIA_ENV: homologation$' infrastructure/docker-compose.dev.yml; then
   pass "dev pins LYDIA_ENV=homologation as a literal, so it can never address Lydia's production"
 else

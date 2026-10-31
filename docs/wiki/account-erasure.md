@@ -153,6 +153,10 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   proposal before a post it had reacted to deadlocked against it. A pending request to an author it
   asked (D38b) is voided (`[voided]`; its bell row, whose actor is the asker, goes with the account's notifications), the rest anonymised -
   [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
+- **The Responsable of a Lydia Business** (`lydia_cashiers`, migration 118): the row naming the
+  account is DELETED, its sealed phone with it; a row the account ADDED keeps its person and gets
+  `addedByUserId = '[deleted]'`. The cashier rights at Lydia are Lydia's data, not reached by this
+  erasure (enrolment lot 3) - [payments](frontend/modules/payments.md).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 

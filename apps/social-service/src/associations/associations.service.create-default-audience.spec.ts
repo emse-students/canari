@@ -43,7 +43,7 @@ function makeService(
     save: jest.fn(),
     manager: { transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)) },
   };
-  // POSITIONAL, AND THIRTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
+  // POSITIONAL, AND FOURTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     undefined as never, // memberRepo
@@ -57,7 +57,8 @@ function makeService(
     undefined as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   return { service, manager, assoRepo };
 }

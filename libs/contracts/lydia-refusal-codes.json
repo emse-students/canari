@@ -1,0 +1,27 @@
+{
+  "description": "The typed codes of Lydia enrolment lot 2 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes.",
+  "core": {
+    "businessNotValidated": "LYDIA_BUSINESS_NOT_VALIDATED",
+    "businessBlocked": "LYDIA_BUSINESS_BLOCKED",
+    "signatureRefused": "LYDIA_SIGNATURE_REFUSED",
+    "cashierPermissionsInvalid": "LYDIA_CASHIER_PERMISSIONS_INVALID",
+    "businessTokenRejected": "LYDIA_BUSINESS_TOKEN_REJECTED",
+    "cashierNotConfigured": "LYDIA_CASHIER_NOT_CONFIGURED",
+    "unreachable": "LYDIA_UNREACHABLE",
+    "cashierRightsIncomplete": "LYDIA_CASHIER_RIGHTS_INCOMPLETE",
+    "cashierPhoneInvalid": "LYDIA_CASHIER_PHONE_INVALID",
+    "responsableNotAMember": "LYDIA_RESPONSABLE_NOT_A_MEMBER",
+    "responsableNotACashier": "LYDIA_RESPONSABLE_NOT_A_CASHIER",
+    "noBusiness": "LYDIA_NO_BUSINESS"
+  },
+  "social": {
+    "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
+    "paymentsBlocked": "PAYMENTS_BLOCKED",
+    "enrolmentInFlight": "LYDIA_ENROLMENT_IN_FLIGHT",
+    "responsableAlreadySet": "LYDIA_RESPONSABLE_ALREADY_SET"
+  },
+  "notificationTypes": {
+    "active": "lydia_payments_active",
+    "paused": "lydia_payments_paused"
+  }
+}

@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="30/10/2026"
+  updated="31/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -161,6 +161,18 @@
           attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
           donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
           formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Responsable du compte de paiement Lydia d'une association</dt>
+        <dd>
+          Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
+          de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
+          reçoit un SMS de Lydia et devient caissier de ce compte. Canari garde l'identifiant du
+          membre, celui du trésorier qui l'a désigné, la date, et le numéro chiffré (illisible sans
+          la clé du serveur) ; seuls ses deux derniers chiffres sont affichés. Le numéro chiffré est
+          effacé quand le compte Lydia est délié de l'association, et la ligne est supprimée avec
+          votre compte Canari. Lydia conserve ses propres données selon sa politique.
         </dd>
       </div>
       <div>
@@ -440,7 +452,9 @@
         <p>
           Prestataire de paiement français. Il reçoit le montant, le nom des produits et l'adresse
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
-          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia.
+          conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
+          le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
+          afin de l'ajouter comme caissier de ce compte.
         </p>
       </li>
       <li>

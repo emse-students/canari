@@ -8,6 +8,7 @@ import {
   VirtualColumn,
 } from 'typeorm';
 import { isBdeAssociationSql } from '../../spaces/bde';
+import type { LydiaReadinessCause } from '../lydia-readiness';
 
 /** TypeORM entity representing a student association with optional payout account (Lydia). */
 @Entity('associations')
@@ -46,6 +47,26 @@ export class Association {
 
   @Column({ default: false })
   lydiaOnboardingComplete: boolean;
+
+  /**
+   * Why `lydiaOnboardingComplete` last changed (migration 118): `webhook-validated`, `admin`,
+   * `request-refused` (Lydia's error 5 on a real `request/do`) or `request-blocked` (error 2701).
+   * Written ONLY by `AssociationsService.setLydiaReadiness`, in the statement that flips the flag.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true, insert: false, update: false })
+  lydiaReadinessCause: LydiaReadinessCause | null;
+
+  /** When `lydiaReadinessCause` was written (migration 118). */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaReadinessAt: Date | null;
+
+  /**
+   * The durable "enrolment in flight" marker (migration 118): set atomically BEFORE
+   * `business/create`, cleared by the link or a typed refusal, left set by an unconfirmed create so
+   * a second Business cannot be created until a global admin clears it. Raw SQL writes only.
+   */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaEnrolmentStartedAt: Date | null;
 
   /**
    * The Lydia Business private token, ENCRYPTED (`common/secret-box.ts`, migration 100), that

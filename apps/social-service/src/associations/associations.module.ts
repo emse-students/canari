@@ -35,6 +35,7 @@ import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
+import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationCategoriesController } from './association-categories.controller';
 import { PosterController } from './poster.controller';
@@ -99,6 +100,7 @@ import { PricingModule } from '../pricing/pricing.module';
     // stateless, so a second instance costs nothing and buys the mapping that keeps a push
     // translatable.
     PostNotificationsService,
+    LydiaPaymentsNotifier,
   ],
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
@@ -116,6 +118,7 @@ import { PricingModule } from '../pricing/pricing.module';
     PartnershipsService,
     UserProfileService,
     PosterService,
+    LydiaPaymentsNotifier,
   ],
 })
 export class AssociationsModule {}

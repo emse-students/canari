@@ -101,7 +101,8 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
       none,
       none,
       notifications,
-      none
+      none,
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
     alert = new FormOrganiserAlertService(associations, notifications, push as never);
     forms = new FormsService(

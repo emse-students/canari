@@ -104,6 +104,7 @@ import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
   mapCorePaymentError,
+  lydiaReadinessRefusal,
   PROVIDER_MAX_AMOUNT_CENTS,
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
@@ -1599,9 +1600,11 @@ export class FormsService {
 
       const checkoutUrl = coreUrl('payments/create-checkout-session');
 
+      // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
+      // readiness of the HOLDER of the vendor token the request was sent to.
+      let connectAccountId: string | undefined;
       try {
         // If the form belongs to an association, route payment via its connected account
-        let connectAccountId: string | undefined;
         if (form.associationId) {
           await this.associationsService.assertPaymentsReady(form.associationId);
           const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
@@ -1702,6 +1705,13 @@ export class FormsService {
       } catch (err: unknown) {
         // No request was issued, so nothing is payable: the row stops holding a seat for it.
         await this.releaseUnissuedRow(savedSubmission.id);
+        const cause = lydiaReadinessRefusal(err);
+        if (cause && connectAccountId) {
+          await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
+            path: guest ? 'form-guest' : 'form',
+            id: savedSubmission.id,
+          });
+        }
         throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }

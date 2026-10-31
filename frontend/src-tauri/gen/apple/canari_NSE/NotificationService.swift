@@ -258,6 +258,18 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.form.paid_over_capacity.title", locale: locale),
         Self.localizedFormat("notif.form.paid_over_capacity.body", arg, locale: locale)
       )
+    // An association's Lydia payments became active / were paused, to its payout managers: `arg`
+    // is the association's name only.
+    case "lydia_payments_active":
+      composed = (
+        Self.localized("notif.lydia.payments_active.title", locale: locale),
+        Self.localizedFormat("notif.lydia.payments_active.body", arg, locale: locale)
+      )
+    case "lydia_payments_paused":
+      composed = (
+        Self.localized("notif.lydia.payments_paused.title", locale: locale),
+        Self.localizedFormat("notif.lydia.payments_paused.body", arg, locale: locale)
+      )
     // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
     case "event_proposed":
       composed = (

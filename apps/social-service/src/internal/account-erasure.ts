@@ -134,6 +134,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
   'association_documents.uploadedBy': { action: 'anonymise' },
   'associations.createdBy': { action: 'anonymise' },
+  // A Lydia cashier (migration 118): the person's own row goes, sealed phone included - the rights
+  // Lydia still holds for that number are lot 3's removal (docs/wiki/account-erasure.md).
+  'lydia_cashiers.userId': { action: 'delete' },
+  'lydia_cashiers.addedByUserId': { action: 'anonymise' },
   'poster_projects.createdBy': { action: 'anonymise' },
   'workspace_invites.createdBy': { action: 'anonymise' },
   'channel_workspaces.createdBy': { action: 'anonymise' },
@@ -454,6 +458,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Own content and standing
   { label: 'posts', sql: `DELETE FROM posts WHERE "authorId" = $1` },
   { label: 'association_members', sql: `DELETE FROM association_members WHERE "userId" = $1` },
+  { label: 'lydia_cashiers', sql: `DELETE FROM lydia_cashiers WHERE "userId" = $1` },
+  {
+    label: 'lydia_cashiers_added_by',
+    sql: `UPDATE lydia_cashiers SET "addedByUserId" = $2 WHERE "addedByUserId" = $1`,
+  },
   { label: 'role_history', sql: `DELETE FROM association_role_history WHERE user_id = $1` },
   {
     label: 'user_follows',

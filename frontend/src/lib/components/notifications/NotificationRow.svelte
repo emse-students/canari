@@ -19,6 +19,8 @@
     Bell,
     VideoOff,
     TriangleAlert,
+    CircleCheck,
+    CirclePause,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -240,6 +242,13 @@
     booking_withdrawn: m.notif_booking_withdrawn_text,
     booking_added: m.notif_booking_added_text,
   };
+  /**
+   * An association's Lydia payments became active or were paused (system actor): a whole sentence
+   * naming the association, so the row carries no actor name before it.
+   */
+  const isLydiaPaymentsNotif = $derived(
+    notif.type === 'lydia_payments_active' || notif.type === 'lydia_payments_paused'
+  );
   const isBookingReminder = $derived(notif.type === 'booking_reminder');
   const isBookingNotif = $derived(isBookingReminder || Object.hasOwn(BOOKING_TEXT, notif.type));
   /** The place and slot of a cancellation / withdrawal / booking; null (drawn as before) when `meta` is absent. */
@@ -274,7 +283,7 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : notif.type === 'form_paid_over_capacity'
+            : notif.type === 'form_paid_over_capacity' || notif.type === 'lydia_payments_paused'
               ? 'bg-amber-500 text-cn-ink'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
@@ -352,6 +361,10 @@
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_paid_over_capacity'}
         <TriangleAlert size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'lydia_payments_active'}
+        <CircleCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'lydia_payments_paused'}
+        <CirclePause size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_proposed'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_validated'}
@@ -408,12 +421,20 @@
         <span class="font-semibold">{liveModerationText}</span>
       {:else if isBookingReminder}
         <span class="font-semibold">{m.notif_booking_reminder_text()}</span>
+      {:else if isLydiaPaymentsNotif}
+        <span class="font-semibold"
+          ><EmojiText
+            text={notif.type === 'lydia_payments_active'
+              ? m.notif_lydia_payments_active_text({ name: notif.text })
+              : m.notif_lydia_payments_paused_text({ name: notif.text })}
+          /></span
+        >
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder}
+      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -433,6 +454,8 @@
              from the type and the form's title - the only data the server stores on the row. -->
         {m.notif_form_paid_over_capacity_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isLydiaPaymentsNotif}
+        <!-- The whole sentence is the first span above; nothing follows it. -->
       {:else if isLiveModerationNotif}
         {#if liveModerationReason}&#8212; {liveModerationReason}{/if}
       {:else if isEventNotif}

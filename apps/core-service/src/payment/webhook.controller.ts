@@ -17,6 +17,7 @@ import type { LydiaCallbackVerdict } from './lydia-callback-verification';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
   internalLydiaBusinessOfVendorTokenUrl,
+  internalLydiaReadinessUrl,
   internalSocialRequestConfig,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
@@ -321,15 +322,18 @@ export class PaymentWebhookController {
    * Receives the `webhook` Lydia was given at `business/create` (`LydiaPaymentProvider
    * .createOnboarding`): two fields, `vendor_token` and `event` (`BUSINESS_VALIDATED` or
    * `BUSINESS_UNVALIDATED`), and NO signature (lydia-api.md section 5b). The vendor token is
-   * public, so anyone can send this body: it is a HINT, never a proof, and NOTHING here writes.
+   * public, so anyone can send this body.
    *
-   * Lydia exposes no read of a Business's validation state (the only measured signal is error 5 on
-   * a real `request/do`, which is a payment request, not a probe), so there is no fact this route
-   * could check before marking an onboarding complete. It therefore logs and decides nothing: the
-   * association it names (a read of social-service) at INFO for a validation, WARN for an
-   * unvalidation or anything unrecognised, for a global admin, who keeps "Valider l'onboarding".
-   * Always 200 for a body it read, so Lydia does not retry a hint; bounded and rate-limited like
-   * the request callback (multer limits here, nginx zone `lydia_callback` at the edge).
+   * WHAT IT MAY CHANGE, decided by the owner on 2026-10-30 (lot 2): `BUSINESS_VALIDATED` marks the
+   * holder of the vendor token READY (social-service `markLydiaReady`, cause `webhook-validated`) -
+   * the risk of an unsigned VALIDATED was ACCEPTED, and a forged one cannot make a payer pay into
+   * nothing: a Business that is not validated answers `request/do` with error 5 BEFORE any request
+   * exists, which reverts the readiness at once. `BUSINESS_UNVALIDATED` NEVER changes state (notify
+   * only): a WARN naming the association, for its managers' admin. So no body can turn an
+   * association NOT ready. Anything malformed, an unknown event, no holder or two holders writes
+   * nothing (200: nothing to retry). A VALIDATED that could not be APPLIED answers 503, so Lydia
+   * retries it. Bounded and rate-limited like the request callback (multer limits here, nginx zone
+   * `lydia_callback` at the edge).
    */
   @Post('lydia-business-webhook')
   @HttpCode(200)
@@ -353,21 +357,36 @@ export class PaymentWebhookController {
       );
       return { received: true };
     }
+    if (event === 'BUSINESS_VALIDATED') {
+      let applied: { outcome?: string; associationId?: string | null };
+      try {
+        const { data } = await axios.post<{ outcome?: string; associationId?: string | null }>(
+          internalLydiaReadinessUrl(),
+          { vendorToken, ready: true, cause: 'webhook-validated' },
+          { ...internalSocialRequestConfig(), timeout: 30_000 }
+        );
+        applied = data ?? {};
+      } catch (err: unknown) {
+        this.logger.error(
+          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied - answered 503 so Lydia retries',
+          describeHttpError(err as Error)
+        );
+        throw new ServiceUnavailableException('Failed to apply the business event');
+      }
+      this.logger.log(
+        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) applied: ${applied.outcome ?? 'unknown'}` +
+          `${applied.associationId ? ` for association ${applied.associationId}` : ''}`
+      );
+      return { received: true };
+    }
     const holder = await this.associationOfVendorToken(vendorToken);
     const named = holder
-      ? `association ${holder.associationId} (marked complete here: ${holder.onboardingComplete ? 'yes' : 'no'})`
+      ? `association ${holder.associationId} (marked ready here: ${holder.onboardingComplete ? 'yes' : 'no'})`
       : 'no association of ours';
-    if (event === 'BUSINESS_VALIDATED') {
-      this.logger.log(
-        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned hint) for ${named} - nothing ` +
-          `marked; a global admin validates the onboarding by hand`
-      );
-    } else {
-      this.logger.warn(
-        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned hint) for ${named} - Lydia turns ` +
-          `daily transfers off; nothing changed here, for a global admin to look at`
-      );
-    }
+    this.logger.warn(
+      `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned) for ${named} - Lydia turns daily ` +
+        `transfers off; NOTHING changed here (notify only), for its managers and a global admin to look at`
+    );
     return { received: true };
   }
 

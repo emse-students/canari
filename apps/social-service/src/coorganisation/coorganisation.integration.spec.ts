@@ -232,7 +232,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       redis,
       none,
       notifications,
-      none
+      none,
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
     proposals = new ProposalsService(ds.getRepository(Proposal), associations);
     coorg = new CoorganisationService(

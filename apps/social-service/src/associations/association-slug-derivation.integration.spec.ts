@@ -79,7 +79,8 @@ maybe('association slug derivation against PostgreSQL', () => {
       unused,
       unused,
       unused,
-      unused
+      unused,
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
   });
 

@@ -37,6 +37,14 @@ import { Association } from './entities/association.entity';
 import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import {
+  LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_READINESS_LOG_TAG,
+  paymentsNotReady,
+  type LydiaReadinessCause,
+} from './lydia-readiness';
+import { approvedDelegateIds } from './payment-delegation.util';
+import { LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import {
   AssociationMember,
   AssociationPermissionFlag,
   SUPER_ADMIN_EXCLUDED_FLAGS,
@@ -268,6 +276,43 @@ const LYDIA_BUSINESS_KEY_RE = /^[\x21-\x7e]{8,256}$/;
  */
 export const LYDIA_ACCOUNT_ALREADY_LINKED = 'LYDIA_ACCOUNT_ALREADY_LINKED';
 
+/**
+ * The `code` of the 409 refusing to record a Responsable while another person is the live one:
+ * changing the Responsable is lot 3 (docs/wiki/backlog.md, the Lydia chantier).
+ */
+export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
+
+/** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
+export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
+
+/** What a cashier phone must look like when stored: E.164, as core-service validated it. */
+const E164_RE = /^\+[1-9]\d{7,14}$/;
+
+/** Where a readiness change came from, for its log line. */
+export interface LydiaReadinessRef {
+  /** `shop`, `form`, `form-guest` (a refused request/do), `webhook` or `admin`. */
+  path: 'shop' | 'form' | 'form-guest' | 'webhook' | 'admin';
+  /** The checkout, submission or association the change names, when there is one. */
+  id?: string;
+}
+
+/** What `setLydiaReadiness` did. */
+export type LydiaReadinessOutcome =
+  | {
+      kind: 'transitioned' | 'replay';
+      associationId: string;
+      previousCause: LydiaReadinessCause | null;
+      previousAt: Date | null;
+    }
+  | { kind: 'no-holder' };
+
+/** The confirmed Responsable of an association's CURRENT Business, as the payments screen reads it. */
+export interface LydiaResponsableView {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+}
+
 /** What a Business key is bound to: this association AND this Business. */
 function lydiaBusinessKeyContext(associationId: string, vendorToken: string): string {
   return `${associationId}:${vendorToken}`;
@@ -300,7 +345,8 @@ export class AssociationsService {
     /** Owns the type -> push-content mapping. Writing notification rows directly bypasses it, which
         is how the agenda's push stayed English; go through this. */
     private readonly notifications: PostNotificationsService,
-    private readonly userTagService: UserTagService
+    private readonly userTagService: UserTagService,
+    private readonly lydiaNotifier: LydiaPaymentsNotifier
   ) {}
 
   /** Co-organisation (D39), registered at boot by `CoorganisationModule` - see `co-organisers.port`. */
@@ -3043,7 +3089,8 @@ ${rejectionReason}`
       `UPDATE associations
           SET "lydiaAccountId" = $2,
               "lydiaDashboardUrl" = COALESCE($3, "lydiaDashboardUrl"),
-              "lydiaBusinessKeyCiphertext" = $4
+              "lydiaBusinessKeyCiphertext" = $4,
+              "lydiaEnrolmentStartedAt" = NULL
         WHERE id = $1 AND "lydiaAccountId" IS NULL
         RETURNING id`,
       [id, vendorToken, dashboardUrl, sealed]
@@ -3094,7 +3141,9 @@ ${rejectionReason}`
 
   /**
    * The payout account of an association, for its MANAGE_PAYOUT_ACCOUNT holders only (the
-   * controller checks). Reads the three columns and nothing else of the row.
+   * controller checks): the Business columns, the confirmed Responsable of the CURRENT Business
+   * (name and the phone's last two digits, never more), the last readiness change and the
+   * enrolment-in-flight marker - ONE read the payments screen draws every step from.
    */
   async getPayoutAccount(id: string): Promise<AssociationPayoutAccount> {
     const asso = await this.assoRepo.findOne({
@@ -3104,20 +3153,371 @@ ${rejectionReason}`
         lydiaAccountId: true,
         lydiaDashboardUrl: true,
         lydiaOnboardingComplete: true,
+        lydiaReadinessCause: true,
+        lydiaReadinessAt: true,
+        lydiaEnrolmentStartedAt: true,
       },
     });
     if (!asso) throw new NotFoundException('Association not found');
+    const responsable = asso.lydiaAccountId
+      ? await this.lydiaResponsableOf(id, asso.lydiaAccountId)
+      : null;
     return {
       lydiaAccountId: asso.lydiaAccountId,
       lydiaDashboardUrl: asso.lydiaDashboardUrl,
       lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
+      responsable,
+      readiness:
+        asso.lydiaReadinessCause && asso.lydiaReadinessAt
+          ? { cause: asso.lydiaReadinessCause, at: new Date(asso.lydiaReadinessAt).toISOString() }
+          : null,
+      enrolmentInFlightSince: asso.lydiaEnrolmentStartedAt
+        ? new Date(asso.lydiaEnrolmentStartedAt).toISOString()
+        : null,
     };
   }
 
-  /** Flips lydiaOnboardingComplete to true once the Lydia Business is confirmed ready. */
-  async markLydiaOnboardingComplete(id: string) {
-    await this.assoRepo.update(id, { lydiaOnboardingComplete: true });
+  /**
+   * THE ONE WRITER OF `lydiaOnboardingComplete` (lot 2): turns the HOLDER of `vendorToken` ready or
+   * not, in ONE transaction.
+   *
+   * The holder's row is locked, then `UPDATE ... WHERE "lydiaOnboardingComplete" <> $ready
+   * RETURNING id`: the returned row IS the transition, so idempotence comes from durable state - a
+   * replayed webhook, a second refusal or a double admin click finds the flag already set and writes
+   * nothing. Going to false, the same transaction withholds the on-sale products of the holder and
+   * of its approved delegating children (`approvedDelegateIds`, the release's own predicate):
+   * `isActive=false, activationWithheld=true`, the exact inverse of the release; a product a
+   * manager took off sale (`isActive=false`) is not touched, so it is never released later either.
+   * Requests already issued stay payable and settle as before: no settle path reads `isActive`.
+   *
+   * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`), on every call,
+   * replays included - products cannot be released from here without a cycle between the two
+   * services. Only a transition logs loudly and notifies the payout managers; a replay is a debug
+   * line. No holder, or two (refused, never guessed), writes nothing.
+   */
+  async setLydiaReadiness(
+    vendorToken: string,
+    ready: boolean,
+    cause: LydiaReadinessCause,
+    ref: LydiaReadinessRef
+  ): Promise<LydiaReadinessOutcome> {
+    const where = `${ref.path}${ref.id ? ` ${sanitizeLog(ref.id)}` : ''}`;
+    this.logger.debug(
+      `${LYDIA_READINESS_LOG_TAG} set ready=${ready} cause=${cause} asked by ${where}`
+    );
+    const result = await this.assoRepo.manager.transaction(async (manager) => {
+      const holders: Array<{
+        id: string;
+        name: string;
+        cause: LydiaReadinessCause | null;
+        at: Date | string | null;
+      }> = await manager.query(
+        `SELECT id, name, "lydiaReadinessCause" AS cause, "lydiaReadinessAt" AS at
+           FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
+        [vendorToken]
+      );
+      if (holders.length !== 1) {
+        if (holders.length > 1) {
+          this.logger.error(
+            `${LYDIA_READINESS_LOG_TAG} ${holders.length} associations hold ONE vendor token ` +
+              `(${holders.map((h) => sanitizeLog(h.id)).join(', ')}) - nothing written (${where})`
+          );
+        } else {
+          this.logger.warn(
+            `${LYDIA_READINESS_LOG_TAG} no association holds the vendor token - nothing written (${where})`
+          );
+        }
+        return null;
+      }
+      const [holder] = holders;
+      const updated: unknown[] = await manager.query(
+        `UPDATE associations
+            SET "lydiaOnboardingComplete" = $2, "lydiaReadinessCause" = $3, "lydiaReadinessAt" = now()
+          WHERE id = $1 AND "lydiaOnboardingComplete" <> $2
+          RETURNING id`,
+        [holder.id, ready, cause]
+      );
+      // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+      const rows = Array.isArray(updated[0]) ? (updated[0] as unknown[]) : updated;
+      const transitioned = rows.length > 0;
+      let withheld = 0;
+      if (transitioned && !ready) {
+        const ids = [holder.id, ...(await approvedDelegateIds(manager, holder.id))];
+        const res = await manager.update(
+          AssociationProduct,
+          { associationId: In(ids), isActive: true },
+          { isActive: false, activationWithheld: true }
+        );
+        withheld = res.affected ?? 0;
+      }
+      return { holder, transitioned, withheld };
+    });
+    if (!result) return { kind: 'no-holder' };
+    const { holder, transitioned, withheld } = result;
+    const previousAt = holder.at ? new Date(holder.at) : null;
+    const previous = {
+      associationId: holder.id,
+      previousCause: holder.cause,
+      previousAt,
+    };
+    if (!transitioned) {
+      this.logger.debug(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} already ready=${ready} - replay ` +
+          `of ${cause} (${where}), nothing written`
+      );
+      return { kind: 'replay', ...previous };
+    }
+    const before = `${holder.cause ?? 'nothing recorded'} at ${previousAt ? previousAt.toISOString() : 'no date'}`;
+    const switchedOff = this.lydiaNotifier.enabled()
+      ? ''
+      : ' - managers NOT notified, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off';
+    if (ready) {
+      this.logger.warn(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} marked READY by ${cause} ` +
+          `(${where}); before: ${before}${switchedOff}`
+      );
+    } else {
+      this.logger.error(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
+          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
+          `by ${before}; ${withheld} on-sale product(s) withheld${switchedOff}`
+      );
+    }
     await this.invalidatePostListCaches();
+    try {
+      const recipients = await this.listFlagHolders(
+        holder.id,
+        AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT
+      );
+      await this.lydiaNotifier.tell(
+        { id: holder.id, name: holder.name },
+        ready ? 'active' : 'paused',
+        recipients
+      );
+    } catch (err: unknown) {
+      // The state is committed; a notice that could not be written is said, never retried here.
+      this.logger.error(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)}: the managers' notice could not ` +
+          `be written: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    return { kind: 'transitioned', ...previous };
+  }
+
+  /**
+   * The revert a checkout path runs when Lydia refused its `request/do` because the Business is not
+   * validated (error 5) or blocked (2701): `setLydiaReadiness(vendorToken, false, ...)` on the
+   * HOLDER of the vendor token the request was sent to (an approved parent's, when delegating).
+   * Never throws: the payer's typed refusal is what the caller rethrows, and a failure here is an
+   * ERROR line, not a second answer.
+   */
+  async revertLydiaReadinessAfterRefusal(
+    vendorToken: string,
+    cause: 'request-refused' | 'request-blocked',
+    ref: LydiaReadinessRef
+  ): Promise<void> {
+    try {
+      await this.setLydiaReadiness(vendorToken, false, cause, ref);
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_READINESS_LOG_TAG} revert after ${cause} (${ref.path} ${sanitizeLog(ref.id ?? '')}) ` +
+          `FAILED - the holder still reads ready: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** The vendor token linked to an association, or null; 404 when the association does not exist. */
+  async lydiaVendorTokenOf(id: string): Promise<string | null> {
+    const asso = await this.assoRepo.findOne({
+      where: { id },
+      select: { id: true, lydiaAccountId: true },
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    return asso.lydiaAccountId?.trim() || null;
+  }
+
+  /**
+   * Claims the "enrolment in flight" marker BEFORE core-service calls `business/create`: ONE
+   * statement, only where no marker is set and no Business is linked, so two enrolments cannot both
+   * create a Business. Refused with the typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED` (a Business is
+   * linked) or `LYDIA_ENROLMENT_IN_FLIGHT` (another create's outcome is not known).
+   */
+  async claimLydiaEnrolment(id: string): Promise<void> {
+    const result: unknown[] = await this.assoRepo.query(
+      `UPDATE associations SET "lydiaEnrolmentStartedAt" = now()
+        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NULL AND "lydiaAccountId" IS NULL
+        RETURNING id`,
+      [id]
+    );
+    const written = Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
+    if (written > 0) {
+      this.logger.log(`[LYDIA] enrolment claimed on association ${sanitizeLog(id)}`);
+      return;
+    }
+    const asso = await this.assoRepo.findOne({
+      where: { id },
+      select: { id: true, lydiaAccountId: true, lydiaEnrolmentStartedAt: true },
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    if (asso.lydiaAccountId) {
+      this.logger.warn(
+        `[LYDIA] enrolment refused on association ${sanitizeLog(id)}: a Business is linked`
+      );
+      throw new ConflictException({
+        code: LYDIA_ACCOUNT_ALREADY_LINKED,
+        message: 'A Lydia Business is already linked to this association',
+      });
+    }
+    this.logger.warn(
+      `[LYDIA] enrolment refused on association ${sanitizeLog(id)}: another one is in flight since ` +
+        `${asso.lydiaEnrolmentStartedAt ? new Date(asso.lydiaEnrolmentStartedAt).toISOString() : 'an unknown time'}`
+    );
+    throw new ConflictException({
+      code: LYDIA_ENROLMENT_IN_FLIGHT,
+      message: 'An enrolment of this association is in flight; its outcome must be checked first',
+    });
+  }
+
+  /**
+   * Clears the "enrolment in flight" marker: after a TYPED refusal of `business/create` (nothing
+   * was created), or by a global admin who checked with Lydia that no Business was left behind.
+   * Never on an unconfirmed create. Harmless when a Business is linked (the link cleared it).
+   */
+  async releaseLydiaEnrolment(id: string, why: 'refused' | 'admin'): Promise<void> {
+    await this.assoRepo.query(
+      `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL WHERE id = $1`,
+      [id]
+    );
+    const line = `[LYDIA] enrolment marker cleared on association ${sanitizeLog(id)} (${why})`;
+    this.logger.log(why === 'admin' ? `[AUDIT] ${line}` : line);
+  }
+
+  /**
+   * The confirmed Responsable of `vendorToken`'s Business on association `id`: a live
+   * (`removedAt IS NULL`), confirmed row of THAT Business - a Responsable of an earlier Business is
+   * not one of this one. Name and the phone's last two digits; the sealed phone is never read here.
+   */
+  private async lydiaResponsableOf(
+    id: string,
+    vendorToken: string
+  ): Promise<LydiaResponsableView | null> {
+    const rows: Array<Record<string, unknown>> = await this.assoRepo.query(
+      `SELECT c."userId", c."phoneEnd", u."displayName", u."firstName", u."lastName"
+         FROM lydia_cashiers c LEFT JOIN users u ON u.id = c."userId"
+        WHERE c."associationId" = $1 AND c."vendorToken" = $2 AND c.role = 'responsable'
+          AND c."removedAt" IS NULL AND c."confirmedAt" IS NOT NULL
+        LIMIT 1`,
+      [id, vendorToken]
+    );
+    if (rows.length === 0) return null;
+    const [row] = rows;
+    return {
+      userId: String(row.userId),
+      name: formatUserDisplayNameFromRaw(row) || '',
+      phoneEnd: String(row.phoneEnd),
+    };
+  }
+
+  /**
+   * What core-service needs before asking Lydia to add a Responsable: the Business linked now,
+   * whether the chosen person is a member of the association, and who the live Responsable is
+   * (changing them is lot 3). A read, nothing else.
+   */
+  async lydiaResponsablePrecheck(
+    id: string,
+    userId: string
+  ): Promise<{ vendorToken: string | null; member: boolean; currentUserId: string | null }> {
+    const vendorToken = await this.lydiaVendorTokenOf(id);
+    const member = await this.isMember(userId, id);
+    const current = vendorToken ? await this.lydiaResponsableOf(id, vendorToken) : null;
+    return { vendorToken, member, currentUserId: current?.userId ?? null };
+  }
+
+  /**
+   * Records the Responsable core-service just added at Lydia (or found already a cashier there),
+   * CONFIRMED by Lydia's read-back: the phone sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`, the
+   * association id as context) and only its last two digits readable. Refused when the Business
+   * linked now is not `vendorToken` (it changed meanwhile), or when another person is the live
+   * Responsable (409 `LYDIA_RESPONSABLE_ALREADY_SET`). The same person again (a re-sent SMS)
+   * replaces the phone. The phone is never logged.
+   */
+  async recordLydiaResponsable(
+    id: string,
+    input: { vendorToken: unknown; userId: unknown; phone: unknown; addedByUserId: unknown }
+  ): Promise<LydiaResponsableView> {
+    const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    const vendorToken = text(input.vendorToken);
+    const userId = text(input.userId);
+    const phone = text(input.phone);
+    const addedBy = text(input.addedByUserId);
+    if (!vendorToken || !userId || !addedBy || !E164_RE.test(phone)) {
+      this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`);
+      throw new BadRequestException(
+        'vendorToken, userId, addedByUserId and an E.164 phone are required'
+      );
+    }
+    if (!isSecretBoxConfigured()) {
+      this.logger.error(
+        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
+      );
+      throw new ServiceUnavailableException('Cashier phone storage is not configured');
+    }
+    if ((await this.lydiaVendorTokenOf(id)) !== vendorToken) {
+      this.logger.warn(
+        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the Business changed meanwhile`
+      );
+      throw new ConflictException('The Lydia Business of this association changed meanwhile');
+    }
+    const sealed = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, phone);
+    const phoneEnd = phone.slice(-2);
+    await this.assoRepo.manager.transaction(async (manager) => {
+      const live: Array<{ id: string; userId: string; vendorToken: string }> = await manager.query(
+        `SELECT id, "userId", "vendorToken" FROM lydia_cashiers
+          WHERE "associationId" = $1 AND role = 'responsable' AND "removedAt" IS NULL FOR UPDATE`,
+        [id]
+      );
+      const current = live[0];
+      const sameBusiness = !!current && current.vendorToken === vendorToken;
+      if (sameBusiness && current.userId !== userId) {
+        this.logger.warn(
+          `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: another person is the Responsable`
+        );
+        throw new ConflictException({
+          code: LYDIA_RESPONSABLE_ALREADY_SET,
+          message: 'This association already has a Responsable; changing them is not available yet',
+        });
+      }
+      if (current && !sameBusiness) {
+        // A row of an EARLIER Business: not a cashier of this one. Closed, its phone cleared.
+        await manager.query(
+          `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL WHERE id = $1`,
+          [current.id]
+        );
+      }
+      if (sameBusiness) {
+        await manager.query(
+          `UPDATE lydia_cashiers SET "phoneSealed" = $2, "phoneEnd" = $3, "confirmedAt" = now(),
+                  "addedByUserId" = $4, "addedAt" = now()
+            WHERE id = $1`,
+          [current.id, sealed, phoneEnd, addedBy]
+        );
+      } else {
+        await manager.query(
+          `INSERT INTO lydia_cashiers
+             ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
+              "addedByUserId", "confirmedAt")
+           VALUES ($1, $2, $3, $4, $5, 'responsable', $6, now())`,
+          [id, vendorToken, userId, sealed, phoneEnd, addedBy]
+        );
+      }
+    });
+    this.logger.log(
+      `[AUDIT] Lydia Responsable recorded on association ${sanitizeLog(id)}: user ` +
+        `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ${sanitizeLog(addedBy).slice(0, 8)}`
+    );
+    const view = await this.lydiaResponsableOf(id, vendorToken);
+    if (!view) throw new Error('the Responsable row just written cannot be read back');
+    return view;
   }
 
   /**
@@ -3138,6 +3538,13 @@ ${rejectionReason}`
     );
     this.logger.log(
       `[AUDIT] Lydia Business key cleared on association ${sanitizeLog(id)} (unlink)`
+    );
+    // The cashiers Canari recorded were cashiers of THAT Business: closed, their phone cleared
+    // (retention: a phone is kept only while its holder is a cashier, migration 118).
+    await this.assoRepo.query(
+      `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL
+        WHERE "associationId" = $1 AND "removedAt" IS NULL`,
+      [id]
     );
     await this.invalidatePostListCaches();
   }
@@ -3269,17 +3676,11 @@ ${rejectionReason}`
     if (target.provider === 'disabled') {
       throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
     }
-    if (target.delegated) {
-      throw new BadRequestException(
-        'The parent association this club delegates payments to has not completed onboarding to receive payments.'
-      );
-    }
-    if (!target.connectAccountId) {
-      throw new BadRequestException('No payment account linked to this association.');
-    }
-    throw new BadRequestException(
-      'This association has not yet completed onboarding to receive payments.'
+    this.logger.warn(
+      `[PAYMENTS] association ${sanitizeLog(associationId)} cannot take payments: ` +
+        `delegated=${target.delegated} linked=${!!target.connectAccountId} cause=${target.readinessCause ?? 'none'}`
     );
+    throw paymentsNotReady(target.readinessCause, target.delegated);
   }
 
   // ── Payment delegation (parent-association payment routing) ─────────────────

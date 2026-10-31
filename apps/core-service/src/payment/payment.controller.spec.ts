@@ -1,5 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import axios from 'axios';
-import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import * as provider from './lydia-payment-provider';
+import {
+  BadRequestException,
+  GatewayTimeoutException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import {
   LYDIA_BUSINESS_CREATED_UNLINKED,
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
@@ -8,6 +16,11 @@ import {
 } from './lydia-payment-provider';
 import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
+  LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_NO_BUSINESS,
+  LYDIA_RESPONSABLE_ALREADY_SET,
+  LYDIA_RESPONSABLE_NOT_A_CASHIER,
+  LYDIA_RESPONSABLE_NOT_A_MEMBER,
   PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
@@ -455,34 +468,53 @@ describe('PaymentController.createOnboarding - one Business per association, its
     businessPhone: '+33100000000',
   };
 
-  /** social-service as core reads it: the manager check passes, the payout account is `linked`. */
-  function socialAnswers(linked: string | null) {
-    mockedAxios.get.mockImplementation(async (url: string) =>
-      url.endsWith('/manage-permission')
-        ? { status: 200, data: { ok: true } }
-        : { status: 200, data: { lydiaAccountId: linked } }
-    );
+  /**
+   * social-service as core reads it: the manager check passes; the enrolment claim answers `claim`;
+   * the release answers 200; the link runs `link`.
+   */
+  function socialAnswers(
+    claim: { status: number; data: unknown } | (() => Promise<never>),
+    link: () => Promise<unknown> = async () => ({ status: 201, data: { ok: true } })
+  ) {
+    mockedAxios.get.mockImplementation(async () => ({ status: 200, data: { ok: true } }));
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-enrolment-claim')) {
+        return typeof claim === 'function' ? claim() : claim;
+      }
+      if (url.endsWith('/lydia-enrolment-release')) return { status: 200, data: { ok: true } };
+      return link();
+    });
   }
+  const claimed = { status: 200, data: { ok: true } };
 
-  function makeController() {
+  function makeController(create?: jest.Mock) {
     const paymentService = {
       isConfigured: jest.fn().mockResolvedValue(true),
-      createConnectOnboarding: jest.fn().mockResolvedValue({
-        url: 'https://lydia.example/console/1',
-        accountId: 'vendor-new',
-        businessPrivateToken: 'throwaway-private-key',
-      }),
+      createConnectOnboarding:
+        create ??
+        jest.fn().mockResolvedValue({
+          url: 'https://lydia.example/console/1',
+          accountId: 'vendor-new',
+          businessPrivateToken: 'throwaway-private-key',
+        }),
     };
     return {
       controller: new PaymentController(paymentService as unknown as PaymentService),
       paymentService,
     };
   }
+  const postsTo = (suffix: string) =>
+    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith(suffix));
 
-  afterEach(() => jest.clearAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockedAxios.post.mockReset();
+    mockedAxios.get.mockReset();
+  });
 
   it('refuses a re-run with the TYPED 409 and never calls business/create', async () => {
-    socialAnswers('vendor-already');
+    socialAnswers({ status: 409, data: { code: LYDIA_ACCOUNT_ALREADY_LINKED } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const { controller, paymentService } = makeController();
     await expect(
       controller.createOnboarding({ associationId: id, legalProfile }, req)
@@ -491,19 +523,44 @@ describe('PaymentController.createOnboarding - one Business per association, its
       response: { code: LYDIA_ACCOUNT_ALREADY_LINKED },
     });
     expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
-    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('an enrolment in flight is the TYPED 409 LYDIA_ENROLMENT_IN_FLIGHT, and no second Business', async () => {
+    socialAnswers({ status: 409, data: { code: LYDIA_ENROLMENT_IN_FLIGHT } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, paymentService } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ENROLMENT_IN_FLIGHT } });
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('a TYPED refusal of business/create releases the marker; an unconfirmed one keeps it', async () => {
+    socialAnswers(claimed);
+    const refused = jest.fn().mockRejectedValue(new BadRequestException({ code: 'X' }));
+    await expect(
+      makeController(refused).controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(postsTo('/lydia-enrolment-release')).toHaveLength(1);
+    expect(postsTo('/lydia-enrolment-release')[0][1]).toEqual({ why: 'refused' });
+
+    mockedAxios.post.mockClear();
+    const unknown = jest.fn().mockRejectedValue(new GatewayTimeoutException({ code: 'Y' }));
+    await expect(
+      makeController(unknown).controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toBeInstanceOf(GatewayTimeoutException);
+    expect(postsTo('/lydia-enrolment-release')).toHaveLength(0);
   });
 
   it('links the Business WITH its key, and answers the browser the public pair only', async () => {
-    socialAnswers(null);
-    mockedAxios.post.mockResolvedValue({ status: 201, data: { ok: true } });
+    socialAnswers(claimed);
     const { controller } = makeController();
     const answer = await controller.createOnboarding({ associationId: id, legalProfile }, req);
     expect(answer).toEqual({ url: 'https://lydia.example/console/1', accountId: 'vendor-new' });
     expect(JSON.stringify(answer)).not.toContain('throwaway-private-key');
-    const [url, body] = mockedAxios.post.mock.calls[0];
-    expect(url).toMatch(new RegExp(`/associations/${id}/lydia-account$`));
-    expect(body).toEqual({
+    const [link] = postsTo('/lydia-account');
+    expect(link[0]).toMatch(new RegExp(`/associations/${id}/lydia-account$`));
+    expect(link[1]).toEqual({
       lydiaAccountId: 'vendor-new',
       lydiaDashboardUrl: 'https://lydia.example/console/1',
       businessPrivateToken: 'throwaway-private-key',
@@ -514,21 +571,16 @@ describe('PaymentController.createOnboarding - one Business per association, its
   async function errorsDuring(run: () => Promise<unknown>): Promise<string> {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    try {
-      await run();
-      return error.mock.calls.flat().map(String).join(' | ');
-    } finally {
-      jest.restoreAllMocks();
-    }
+    await run();
+    return error.mock.calls.flat().map(String).join(' | ');
   }
 
   it('a link refused WITH the already-linked code is the 409, and the orphan is still logged', async () => {
-    socialAnswers(null);
-    mockedAxios.post.mockRejectedValue(
-      Object.assign(new Error('conflict'), {
+    socialAnswers(claimed, async () => {
+      throw Object.assign(new Error('conflict'), {
         response: { status: 409, data: { code: LYDIA_ACCOUNT_ALREADY_LINKED } },
-      })
-    );
+      });
+    });
     const { controller } = makeController();
     const logged = await errorsDuring(() =>
       expect(
@@ -547,8 +599,9 @@ describe('PaymentController.createOnboarding - one Business per association, its
   ])(
     'a link failing with %s is the ONE typed 502 LYDIA_BUSINESS_CREATED_UNLINKED, orphan logged',
     async (_label, shape) => {
-      socialAnswers(null);
-      mockedAxios.post.mockRejectedValue(Object.assign(new Error('link failed'), shape));
+      socialAnswers(claimed, async () => {
+        throw Object.assign(new Error('link failed'), shape);
+      });
       const { controller } = makeController();
       const logged = await errorsDuring(() =>
         expect(
@@ -564,16 +617,14 @@ describe('PaymentController.createOnboarding - one Business per association, its
     }
   );
 
-  it('an unreadable payout account is a typed 503 and never reaches business/create', async () => {
-    for (const read of [
-      async () => ({ status: 500, data: {} }),
+  it('an unreadable claim is a typed 503 and never reaches business/create', async () => {
+    for (const claim of [
+      { status: 500, data: {} },
       async () => {
         throw new Error('ECONNREFUSED');
       },
     ]) {
-      mockedAxios.get.mockImplementation(async (url: string) =>
-        url.endsWith('/manage-permission') ? { status: 200, data: { ok: true } } : read()
-      );
+      socialAnswers(claim as never);
       const { controller, paymentService } = makeController();
       await errorsDuring(() =>
         expect(
@@ -585,11 +636,7 @@ describe('PaymentController.createOnboarding - one Business per association, its
   });
 
   it('an unknown association is a 404 and never reaches business/create', async () => {
-    mockedAxios.get.mockImplementation(async (url: string) =>
-      url.endsWith('/manage-permission')
-        ? { status: 200, data: { ok: true } }
-        : { status: 404, data: {} }
-    );
+    socialAnswers({ status: 404, data: {} });
     const { controller, paymentService } = makeController();
     await errorsDuring(() =>
       expect(
@@ -600,8 +647,7 @@ describe('PaymentController.createOnboarding - one Business per association, its
   });
 
   it('bounds each social-service call by its step budget, so nginx never answers first', async () => {
-    socialAnswers(null);
-    mockedAxios.post.mockResolvedValue({ status: 200, data: {} });
+    socialAnswers(claimed);
     const { controller } = makeController();
     await controller.createOnboarding({ associationId: id, legalProfile }, req);
     const getTimeouts = mockedAxios.get.mock.calls.map(
@@ -611,11 +657,163 @@ describe('PaymentController.createOnboarding - one Business per association, its
       'manage-permission',
       LYDIA_ONBOARDING_STEP_TIMEOUT_MS.permission,
     ]);
-    expect(getTimeouts.map(([, t]) => t)).toContain(LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead);
-    const [, , linkConfig] = mockedAxios.post.mock.calls[0];
-    expect((linkConfig as { timeout?: number }).timeout).toBe(
-      LYDIA_ONBOARDING_STEP_TIMEOUT_MS.link
+    const [claim] = postsTo('/lydia-enrolment-claim');
+    expect((claim[2] as { timeout?: number }).timeout).toBe(
+      LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead
     );
+    const [link] = postsTo('/lydia-account');
+    expect((link[2] as { timeout?: number }).timeout).toBe(LYDIA_ONBOARDING_STEP_TIMEOUT_MS.link);
+  });
+});
+
+describe('PaymentController.setLydiaResponsable - enrolment step 2 (lot 2)', () => {
+  const id = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+  const req = { headers: { 'x-user-id': 'treasurer' } } as unknown as Parameters<
+    PaymentController['setLydiaResponsable']
+  >[2];
+  const PHONE = '+33612345678';
+  const allRights = { access_cashier: true };
+
+  function setup(pre: {
+    vendorToken: string | null;
+    member: boolean;
+    currentUserId: string | null;
+  }) {
+    mockedAxios.get.mockResolvedValue({ status: 200, data: { ok: true } });
+    mockedAxios.post.mockImplementation(async (url: string) =>
+      url.endsWith('/lydia-responsable-precheck')
+        ? { status: 200, data: pre }
+        : { status: 200, data: { responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' } } }
+    );
+    const paymentService = {
+      addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+      readLydiaCashierRights: jest.fn().mockResolvedValue(allRights),
+    };
+    return {
+      controller: new PaymentController(paymentService as unknown as PaymentService),
+      paymentService,
+    };
+  }
+  const stores = () =>
+    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith('/lydia-responsable'));
+
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockedAxios.post.mockReset();
+    mockedAxios.get.mockReset();
+  });
+
+  it('adds at Lydia, THEN stores the confirmed row with the actor as adder', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    const answer = await controller.setLydiaResponsable(
+      id,
+      { userId: 'u1', phone: PHONE, mode: 'add' },
+      req
+    );
+    expect(paymentService.addLydiaBusinessHolder).toHaveBeenCalledWith(id, 'vendor-1', PHONE);
+    expect(stores()[0][1]).toEqual({
+      vendorToken: 'vendor-1',
+      userId: 'u1',
+      phone: PHONE,
+      addedByUserId: 'treasurer',
+    });
+    expect(answer).toEqual({
+      ok: true,
+      responsable: { userId: 'u1', name: 'Ada', phoneEnd: '78' },
+    });
+  });
+
+  it('a person who is not a member is refused before any call to Lydia', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: false,
+      currentUserId: null,
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 400, response: { code: LYDIA_RESPONSABLE_NOT_A_MEMBER } });
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
+    expect(stores()).toHaveLength(0);
+  });
+
+  it('no Business linked: 409 LYDIA_NO_BUSINESS', async () => {
+    const { controller } = setup({ vendorToken: null, member: true, currentUserId: null });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_NO_BUSINESS } });
+  });
+
+  it('a phone that is not E.164 is refused before anything', async () => {
+    const { controller } = setup({ vendorToken: 'vendor-1', member: true, currentUserId: null });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: '06 12', mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('record mode READS the rights, never adds, and refuses a number that does not manage cashiers', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: null,
+    });
+    paymentService.readLydiaCashierRights.mockResolvedValue({ access_cashier: false });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'record' }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_NOT_A_CASHIER } });
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
+    expect(stores()).toHaveLength(0);
+
+    paymentService.readLydiaCashierRights.mockResolvedValue({ access_cashier: true });
+    await controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'record' }, req);
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
+    expect(stores()).toHaveLength(1);
+  });
+
+  it('a social-service REFUSAL of the store is passed on with its code; no answer is a 503 at ERROR', async () => {
+    const { controller } = setup({ vendorToken: 'vendor-1', member: true, currentUserId: null });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const precheck = { vendorToken: 'vendor-1', member: true, currentUserId: null };
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-precheck')) return { status: 200, data: precheck };
+      throw Object.assign(new Error('conflict'), {
+        response: { status: 409, data: { code: LYDIA_RESPONSABLE_ALREADY_SET } },
+      });
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_RESPONSABLE_ALREADY_SET } });
+
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/lydia-responsable-precheck')) return { status: 200, data: precheck };
+      throw new Error('ECONNREFUSED');
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 503 });
+    expect(error.mock.calls.flat().map(String).join(' | ')).toContain(
+      'AFTER Lydia added the cashier - a retry is safe'
+    );
+  });
+
+  it('a second person while one is the Responsable is refused (changing is lot 3)', async () => {
+    const { controller, paymentService } = setup({
+      vendorToken: 'vendor-1',
+      member: true,
+      currentUserId: 'someone-else',
+    });
+    await expect(
+      controller.setLydiaResponsable(id, { userId: 'u1', phone: PHONE, mode: 'add' }, req)
+    ).rejects.toMatchObject({ status: 409 });
+    expect(paymentService.addLydiaBusinessHolder).not.toHaveBeenCalled();
   });
 });
 
@@ -650,5 +848,32 @@ describe('PaymentController.completeLydiaAccount - reads the internal payment-ac
 
     await expect(controller.completeLydiaAccount(id)).rejects.toThrow(/No Lydia account/);
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+});
+
+describe('the Lydia codes core-service answers follow the shared contract (lot 2)', () => {
+  it('every core code, and the two social codes core passes through, equal libs/contracts', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
+        'utf8'
+      )
+    ) as { core: Record<string, string>; social: Record<string, string> };
+    expect({
+      businessNotValidated: provider.LYDIA_BUSINESS_NOT_VALIDATED,
+      businessBlocked: provider.LYDIA_BUSINESS_BLOCKED,
+      signatureRefused: provider.LYDIA_SIGNATURE_REFUSED,
+      cashierPermissionsInvalid: provider.LYDIA_CASHIER_PERMISSIONS_INVALID,
+      businessTokenRejected: provider.LYDIA_BUSINESS_TOKEN_REJECTED,
+      cashierNotConfigured: provider.LYDIA_CASHIER_NOT_CONFIGURED,
+      unreachable: provider.LYDIA_UNREACHABLE,
+      cashierRightsIncomplete: provider.LYDIA_CASHIER_RIGHTS_INCOMPLETE,
+      cashierPhoneInvalid: provider.LYDIA_CASHIER_PHONE_INVALID,
+      responsableNotAMember: LYDIA_RESPONSABLE_NOT_A_MEMBER,
+      responsableNotACashier: LYDIA_RESPONSABLE_NOT_A_CASHIER,
+      noBusiness: LYDIA_NO_BUSINESS,
+    }).toEqual(contract.core);
+    expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
+    expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
   });
 });

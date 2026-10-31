@@ -58,7 +58,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(31);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(33);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -66,6 +66,8 @@ describe('notificationHref', () => {
       const noHref =
         type === 'repost_proposed' ||
         type === 'coorganise_proposed' ||
+        type === 'lydia_payments_active' ||
+        type === 'lydia_payments_paused' ||
         liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
@@ -115,6 +117,18 @@ describe('resolveNotificationHref', () => {
     ).resolves.toBe('/associations/club/edit/republications');
     expect(lookup).toHaveBeenCalledWith('assoc-2');
   });
+
+  it.each(['lydia_payments_active', 'lydia_payments_paused'])(
+    '%s opens the association payments section, by slug',
+    async (type) => {
+      // `postId` is the ASSOCIATION's id.
+      const lookup = vi.fn(async () => 'bde');
+      await expect(resolveNotificationHref({ type, postId: 'assoc-9' }, lookup)).resolves.toBe(
+        '/associations/bde/edit/payments'
+      );
+      expect(lookup).toHaveBeenCalledWith('assoc-9');
+    }
+  );
 
   it('sends a republication to the post, with no lookup', async () => {
     const lookup = vi.fn(async () => 'never');

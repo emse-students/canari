@@ -29,6 +29,8 @@ import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social
 import { socialUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
 import {
+  LYDIA_CASHIER_PHONE_INVALID,
+  LYDIA_CASHIER_PHONE_RE,
   LYDIA_ONBOARDING_STEP_TIMEOUT_MS,
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
@@ -69,6 +71,21 @@ function payoutAccountUnreadable(): ServiceUnavailableException {
     message: 'The payout account could not be read; nothing was created',
   });
 }
+
+/**
+ * The `code` of the 409 refusing an onboarding while another `business/create`'s outcome is not
+ * known (social-service's `associations."lydiaEnrolmentStartedAt"`, migration 118).
+ */
+export const LYDIA_ENROLMENT_IN_FLIGHT = 'LYDIA_ENROLMENT_IN_FLIGHT';
+
+/** The `code` (409) of a Responsable asked for an association with no Business linked. */
+export const LYDIA_NO_BUSINESS = 'LYDIA_NO_BUSINESS';
+/** The `code` (400) of a Responsable who is not a member of the association. */
+export const LYDIA_RESPONSABLE_NOT_A_MEMBER = 'LYDIA_RESPONSABLE_NOT_A_MEMBER';
+/** The `code` (409) of a "record" whose phone Lydia does not list as a cashier managing cashiers. */
+export const LYDIA_RESPONSABLE_NOT_A_CASHIER = 'LYDIA_RESPONSABLE_NOT_A_CASHIER';
+/** The `code` (409) of a second person asked as Responsable: changing them is lot 3. */
+export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
 
 function alreadyLinked(): ConflictException {
   return new ConflictException({
@@ -202,13 +219,22 @@ export class PaymentController {
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
     const returnUrl = body.returnUrl?.trim() || `${frontendUrl}/associations`;
     const refreshUrl = body.refreshUrl?.trim() || returnUrl;
-    const result = await this.paymentService.createConnectOnboarding({
-      associationId: body.associationId ?? '',
-      existingAccountId: body.existingAccountId,
-      refreshUrl,
-      returnUrl,
-      legalProfile,
-    });
+    let result;
+    try {
+      result = await this.paymentService.createConnectOnboarding({
+        associationId: body.associationId ?? '',
+        existingAccountId: body.existingAccountId,
+        refreshUrl,
+        returnUrl,
+        legalProfile,
+      });
+    } catch (err: unknown) {
+      // A REFUSAL (a 400: Lydia's typed refusal, an incomplete profile) created nothing, so the
+      // marker claimed above is released and a corrected retry may run. An unconfirmed (504) or
+      // orphan (502) outcome leaves it set: a second Business must not be created on a guess.
+      if (err instanceof BadRequestException) await this.releaseEnrolmentMarker(assocId, 'refused');
+      throw err;
+    }
 
     // Persist the Business on the association (social-service): its `vendor_token`, its
     // dashboard_url and its private token are each handed out exactly once, at business/create, so
@@ -252,16 +278,22 @@ export class PaymentController {
   }
 
   /**
-   * Refuses an onboarding while the association already has a Business linked: `business/create`
-   * would replace it silently (lydia-api.md section 2). The typed 409 the client maps to its own
-   * sentence; unlinking first is the confirmed "disconnect". social-service refuses the same link
-   * atomically, which closes the race two concurrent onboardings would open here.
+   * CLAIMS THE ENROLMENT before `business/create` (lot 2): social-service sets the durable
+   * "enrolment in flight" marker in ONE statement, only where none is set and no Business is linked
+   * (`AssociationsService.claimLydiaEnrolment`). So a Business already linked is the typed 409
+   * `LYDIA_ACCOUNT_ALREADY_LINKED` (`business/create` would replace it silently, lydia-api.md
+   * section 2), and an earlier create whose outcome is unknown is the typed 409
+   * `LYDIA_ENROLMENT_IN_FLIGHT` until a global admin clears it - a second Business is REFUSED, not
+   * merely discouraged. An unread state is never read as "free": 503 `PAYOUT_ACCOUNT_UNREADABLE`.
    */
   private async assertNoLinkedBusiness(associationId: string): Promise<void> {
     let res;
     try {
-      res = await axios.get<{ lydiaAccountId?: string | null }>(
-        internalPaymentAccountUrl(associationId),
+      res = await axios.post<{ code?: unknown }>(
+        socialUrl(
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-enrolment-claim`
+        ),
+        {},
         {
           ...internalSocialRequestConfig(),
           validateStatus: () => true,
@@ -270,7 +302,7 @@ export class PaymentController {
       );
     } catch (err: unknown) {
       this.logger.error(
-        `Lydia onboarding of association ${associationId}: payout account unreadable`,
+        `Lydia onboarding of association ${associationId}: the enrolment could not be claimed`,
         describeHttpError(err as Error)
       );
       throw payoutAccountUnreadable();
@@ -280,18 +312,198 @@ export class PaymentController {
       this.logger.warn(`Lydia onboarding refused: association ${associationId} not found`);
       throw new NotFoundException('Association not found');
     }
-    if (res.status >= 400) {
-      // NOT "not linked": an unread state never lets a second Business be created.
-      this.logger.error(
-        `Lydia onboarding of association ${associationId}: payout account unreadable (HTTP ${res.status})`
-      );
-      throw payoutAccountUnreadable();
-    }
-    if (res.data?.lydiaAccountId?.trim()) {
+    const code = res.data && typeof res.data === 'object' ? res.data.code : undefined;
+    if (res.status === 409 && code === LYDIA_ACCOUNT_ALREADY_LINKED) {
       this.logger.warn(
         `Lydia onboarding of association ${associationId} refused: a Business is already linked`
       );
       throw alreadyLinked();
+    }
+    if (res.status === 409 && code === LYDIA_ENROLMENT_IN_FLIGHT) {
+      this.logger.warn(
+        `Lydia onboarding of association ${associationId} refused: an enrolment is in flight`
+      );
+      throw new ConflictException({
+        code: LYDIA_ENROLMENT_IN_FLIGHT,
+        message: 'An enrolment of this association is in flight; its outcome must be checked first',
+      });
+    }
+    if (res.status >= 400) {
+      // NOT "free": an unread state never lets a second Business be created.
+      this.logger.error(
+        `Lydia onboarding of association ${associationId}: the enrolment claim answered HTTP ${res.status}`
+      );
+      throw payoutAccountUnreadable();
+    }
+  }
+
+  /** Releases the enrolment marker (a typed refusal, or a global admin); failures are logged. */
+  private async releaseEnrolmentMarker(associationId: string, why: 'refused' | 'admin') {
+    try {
+      await axios.post(
+        socialUrl(
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-enrolment-release`
+        ),
+        { why },
+        { ...internalSocialRequestConfig(), timeout: LYDIA_ONBOARDING_STEP_TIMEOUT_MS.payoutRead }
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `Lydia onboarding of association ${associationId}: the enrolment marker could not be ` +
+          `released (${why}) - a retry is refused until a global admin clears it`,
+        describeHttpError(err as Error)
+      );
+      if (why === 'admin') throw new ServiceUnavailableException('The marker could not be cleared');
+    }
+  }
+
+  /**
+   * Clears the "enrolment in flight" marker (GLOBAL ADMIN only), after the admin checked with
+   * Lydia's support that the unconfirmed `business/create` left no Business behind (or had it
+   * deleted). The association may then enrol again.
+   */
+  @Post('lydia-enrolment-clear/:associationId')
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @HttpCode(200)
+  async clearEnrolmentInFlight(@Param('associationId') associationId: string) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    this.logger.log(`Lydia enrolment marker cleared by a global admin on ${associationId}`);
+    await this.releaseEnrolmentMarker(associationId, 'admin');
+    return { ok: true };
+  }
+
+  /**
+   * Adds (or records) the Responsable of an association's Lydia Business - enrolment step 2
+   * (MANAGE_PAYOUT_ACCOUNT holders). Body `{ userId, phone, mode }`: `phone` E.164 (`+33...`),
+   * never logged; `mode: 'add'` asks Lydia to add the person with every right and its SMS
+   * (`addLydiaBusinessHolder`, the same call re-sends the SMS); `mode: 'record'` is for a Business
+   * linked before lot 2: a READ of the person's rights at Lydia, recorded only when they already
+   * manage cashiers (`access_cashier`), with no SMS and no change at Lydia.
+   *
+   * The person must be a member of the association, and changing the live Responsable is lot 3
+   * (typed refusals, `LYDIA_*` codes in `libs/contracts/lydia-refusal-codes.json`). Only once Lydia's
+   * read-back confirms does social-service store the row, the phone sealed.
+   */
+  @Post('lydia-responsable/:associationId')
+  @UseGuards(NginxAuthGuard)
+  @HttpCode(200)
+  async setLydiaResponsable(
+    @Param('associationId') associationId: string,
+    @Body() body: { userId?: unknown; phone?: unknown; mode?: unknown },
+    @Req() req: Request
+  ) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, associationId);
+    const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
+    const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    const mode = body?.mode === 'record' ? 'record' : body?.mode === 'add' ? 'add' : null;
+    if (!userId || !mode) {
+      throw new BadRequestException('userId and mode (add | record) are required');
+    }
+    if (!LYDIA_CASHIER_PHONE_RE.test(phone)) {
+      this.logger.warn(`Lydia Responsable of ${associationId} refused: the phone is not E.164`);
+      throw new BadRequestException({
+        code: LYDIA_CASHIER_PHONE_INVALID,
+        message: 'The phone number must be written +33...',
+      });
+    }
+    const pre = await this.responsableSocialStep(associationId, 'precheck', () =>
+      axios.post<{
+        vendorToken: string | null;
+        member: boolean;
+        currentUserId: string | null;
+      }>(
+        socialUrl(
+          `internal/associations/${encodeURIComponent(associationId)}/lydia-responsable-precheck`
+        ),
+        { userId },
+        { ...internalSocialRequestConfig(), timeout: 10_000 }
+      )
+    );
+    if (!pre?.vendorToken) {
+      throw new ConflictException({
+        code: LYDIA_NO_BUSINESS,
+        message: 'No Lydia Business is linked to this association',
+      });
+    }
+    if (!pre.member) {
+      this.logger.warn(`Lydia Responsable of ${associationId} refused: not a member`);
+      throw new BadRequestException({
+        code: LYDIA_RESPONSABLE_NOT_A_MEMBER,
+        message: 'The Responsable must be a member of the association',
+      });
+    }
+    if (pre.currentUserId && pre.currentUserId !== userId) {
+      this.logger.warn(`Lydia Responsable of ${associationId} refused: another one is set`);
+      throw new ConflictException({
+        code: LYDIA_RESPONSABLE_ALREADY_SET,
+        message: 'This association already has a Responsable',
+      });
+    }
+    if (mode === 'add') {
+      await this.paymentService.addLydiaBusinessHolder(associationId, pre.vendorToken, phone);
+    } else {
+      const rights = await this.paymentService.readLydiaCashierRights(
+        associationId,
+        pre.vendorToken,
+        phone
+      );
+      if (!rights.access_cashier) {
+        this.logger.warn(
+          `Lydia Responsable of ${associationId} not recorded: that number does not manage cashiers at Lydia`
+        );
+        throw new ConflictException({
+          code: LYDIA_RESPONSABLE_NOT_A_CASHIER,
+          message: 'That number is not a cashier managing cashiers of this Business at Lydia',
+        });
+      }
+    }
+    // Lydia has the cashier now; a failure to STORE is said at ERROR, and a retry is safe (the add
+    // replaces the rights, the record replaces the phone).
+    const data = await this.responsableSocialStep(associationId, 'store', () =>
+      axios.post<{ responsable: unknown }>(
+        socialUrl(`internal/associations/${encodeURIComponent(associationId)}/lydia-responsable`),
+        { vendorToken: pre.vendorToken, userId, phone, addedByUserId: actorId },
+        { ...internalSocialRequestConfig(), timeout: 10_000 }
+      )
+    );
+    this.logger.log(
+      `Lydia Responsable of ${associationId} ${mode === 'add' ? 'added' : 'recorded'}`
+    );
+    return { ok: true, responsable: data?.responsable ?? null };
+  }
+
+  /**
+   * One social-service call of the Responsable route. A 4xx is social-service's ANSWER (a member
+   * check, the live Responsable, a Business changed meanwhile) and is passed on as it was given,
+   * typed code included; a 5xx or no answer is a 503 logged at ERROR, never a bare 500.
+   */
+  private async responsableSocialStep<T>(
+    associationId: string,
+    step: 'precheck' | 'store',
+    call: () => Promise<{ data: T }>
+  ): Promise<T> {
+    try {
+      return (await call()).data;
+    } catch (err: unknown) {
+      const answer = (err as { response?: { status?: unknown; data?: unknown } }).response;
+      if (typeof answer?.status === 'number' && answer.status >= 400 && answer.status < 500) {
+        this.logger.warn(
+          `Lydia Responsable of ${associationId}: social-service refused the ${step} (${answer.status})`
+        );
+        throw new HttpException(answer.data as Record<string, unknown>, answer.status);
+      }
+      this.logger.error(
+        `Lydia Responsable of ${associationId}: the ${step} at social-service failed` +
+          (step === 'store' ? ' AFTER Lydia added the cashier - a retry is safe' : ''),
+        describeHttpError(err as Error)
+      );
+      throw new ServiceUnavailableException('The association service could not be reached');
     }
   }
 
@@ -323,11 +535,9 @@ export class PaymentController {
   }
 
   /**
-   * Validates a Lydia onboarding BY HAND (global admin only).
-   *
-   * Nothing marks `lydiaOnboardingComplete` automatically: `business/create`'s callback carries no
-   * signature, so no receiver was built (see the core-service wiki page). A platform admin who has
-   * seen Lydia accept the club's file says so here. It is NOT open to the club's own managers - they
+   * Validates a Lydia onboarding BY HAND (global admin only) - the backup of Lydia's unsigned
+   * `BUSINESS_VALIDATED` webhook, through the SAME social-service path (`markLydiaReady`, cause
+   * `admin`). A platform admin who has seen Lydia accept the club's file says so here. It is NOT open to the club's own managers - they
    * would be declaring their own account ready, and releasing withheld products onto it - and it
    * needs a linked Lydia account, so it cannot validate an onboarding that never started.
    */

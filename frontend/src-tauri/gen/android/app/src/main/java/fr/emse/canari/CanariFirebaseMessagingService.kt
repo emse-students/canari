@@ -5022,6 +5022,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_form_paid_over_capacity_title),
                 res.getString(R.string.notif_form_paid_over_capacity_body, arg)
             )
+            // An association's Lydia payments became active / were paused, to its payout managers:
+            // `arg` is the association's name, the only data the server sends.
+            "lydia_payments_active" -> Pair(
+                res.getString(R.string.notif_lydia_payments_active_title),
+                res.getString(R.string.notif_lydia_payments_active_body, arg)
+            )
+            "lydia_payments_paused" -> Pair(
+                res.getString(R.string.notif_lydia_payments_paused_title),
+                res.getString(R.string.notif_lydia_payments_paused_body, arg)
+            )
             // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
             // also uses the actor, because it is the only one where WHO acted is the useful half.
             "event_proposed" -> Pair(

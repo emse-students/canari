@@ -503,13 +503,15 @@ describe('the cancel-pending answer core reads from social-service', () => {
 });
 
 /**
- * THE business/create WEBHOOK IS UNSIGNED, SO ITS POST CAN CHANGE NOTHING (lydia-api.md 5b). Every
- * body below reaches the real route through HTTP; whatever it says, the only outbound call allowed
- * is the read of which association holds the token - never `lydia-complete`, `lydia-account`,
- * `lydia-disconnect` or any other write, and no PaymentService method at all.
+ * THE business/create WEBHOOK IS UNSIGNED (lydia-api.md 5b), SO WHAT ITS POST MAY CHANGE IS DECIDED,
+ * NOT INFERRED (owner, 2026-10-30, lot 2): `BUSINESS_VALIDATED` with a well-formed token reaches
+ * social-service's readiness route ONCE, asking `ready: true` and nothing else; `BUSINESS_UNVALIDATED`
+ * is notify only (the read of the holder, a WARN); everything else writes nothing. Every body below
+ * reaches the real route through HTTP, and no PaymentService method is ever called.
  */
-describe('POST /api/payments/lydia-business-webhook - an unsigned hint that writes nothing', () => {
+describe('POST /api/payments/lydia-business-webhook - VALIDATED marks ready, nothing else writes', () => {
   const LOOKUP = '/api/internal/associations/lydia-business-of-vendor-token';
+  const READINESS = '/api/internal/associations/lydia-readiness';
   const ASSO = '44444444-4444-4444-4444-444444444444';
   let app: INestApplication;
   let baseUrl: string;
@@ -542,8 +544,16 @@ describe('POST /api/payments/lydia-business-webhook - an unsigned hint that writ
     }
     jest.clearAllMocks();
     mockedAxios.post.mockImplementation(async (url: string, data?: unknown) => {
-      if (!url.endsWith(LOOKUP)) throw new Error(`unexpected outbound POST ${url}`);
       const token = (data as { vendorToken: string }).vendorToken;
+      if (url.endsWith(READINESS)) {
+        return {
+          data:
+            token === VENDOR
+              ? { outcome: 'transitioned', associationId: ASSO }
+              : { outcome: 'no-holder', associationId: null },
+        };
+      }
+      if (!url.endsWith(LOOKUP)) throw new Error(`unexpected outbound POST ${url}`);
       return {
         data:
           token === VENDOR
@@ -566,10 +576,13 @@ describe('POST /api/payments/lydia-business-webhook - an unsigned hint that writ
       body: new URLSearchParams(fields).toString(),
     });
 
-  /** Nothing but the read of the holder ever left the route. */
-  function expectNoWrite() {
-    const posted = mockedAxios.post.mock.calls.map(([url]) => String(url));
-    expect(posted.every((url) => url.endsWith(LOOKUP))).toBe(true);
+  const posted = (suffix: string) =>
+    mockedAxios.post.mock.calls.filter(([url]) => String(url).endsWith(suffix));
+
+  /** No outbound call but the two allowed ones, no other verb, no PaymentService method. */
+  function expectOnlyAllowedCalls() {
+    const urls = mockedAxios.post.mock.calls.map(([url]) => String(url));
+    expect(urls.every((url) => url.endsWith(LOOKUP) || url.endsWith(READINESS))).toBe(true);
     for (const verb of ['put', 'patch', 'delete', 'get'] as const) {
       expect(mockedAxios[verb]).not.toHaveBeenCalled();
     }
@@ -577,40 +590,79 @@ describe('POST /api/payments/lydia-business-webhook - an unsigned hint that writ
     for (const method of Object.values(paymentService)) expect(method).not.toHaveBeenCalled();
   }
 
-  const bodies: Array<[string, Record<string, string>]> = [
-    [
-      'BUSINESS_VALIDATED for a linked Business',
-      { vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' },
-    ],
+  /** Nothing at all may change: the readiness route is never reached. */
+  function expectNoWrite() {
+    expectOnlyAllowedCalls();
+    expect(posted(READINESS)).toHaveLength(0);
+  }
+
+  const inert: Array<[string, Record<string, string>]> = [
     ['BUSINESS_UNVALIDATED', { vendor_token: VENDOR, event: 'BUSINESS_UNVALIDATED' }],
     ['an unknown event', { vendor_token: VENDOR, event: 'BUSINESS_DELETED' }],
     ['no vendor_token', { event: 'BUSINESS_VALIDATED' }],
-    ['an unknown vendor_token', { vendor_token: 'nobody-holds-it', event: 'BUSINESS_VALIDATED' }],
     ['a malformed vendor_token', { vendor_token: 'has a space', event: 'BUSINESS_VALIDATED' }],
-    [
-      'extra fields, a forged sig and a "complete" claim included',
-      {
-        vendor_token: VENDOR,
-        event: 'BUSINESS_VALIDATED',
-        sig: '0'.repeat(32),
-        lydiaOnboardingComplete: 'true',
-        associationId: ASSO,
-      },
-    ],
     ['an empty body', {}],
   ];
 
-  it.each(bodies)('%s (multipart): 200, and no write of any kind', async (_label, fields) => {
+  it.each(inert)('%s (multipart): 200, and nothing changes', async (_label, fields) => {
     const res = await asMultipart(fields);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ received: true });
     expectNoWrite();
   });
 
-  it.each(bodies)('%s (urlencoded): 200, and no write of any kind', async (_label, fields) => {
+  it.each(inert)('%s (urlencoded): 200, and nothing changes', async (_label, fields) => {
     const res = await asUrlencoded(fields);
     expect(res.status).toBe(200);
     expectNoWrite();
+  });
+
+  it.each([
+    ['multipart', asMultipart],
+    ['urlencoded', asUrlencoded],
+  ] as const)(
+    'BUSINESS_VALIDATED (%s) asks social-service for ready:true ONCE, with that body and no other',
+    async (_label, send) => {
+      const res = await send({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
+      expect(res.status).toBe(200);
+      expectOnlyAllowedCalls();
+      expect(posted(READINESS)).toHaveLength(1);
+      expect(posted(READINESS)[0][1]).toEqual({
+        vendorToken: VENDOR,
+        ready: true,
+        cause: 'webhook-validated',
+      });
+    }
+  );
+
+  it('extra fields (a forged sig, a "complete" claim, an association id) never reach the body sent', async () => {
+    await asMultipart({
+      vendor_token: VENDOR,
+      event: 'BUSINESS_VALIDATED',
+      sig: '0'.repeat(32),
+      lydiaOnboardingComplete: 'false',
+      ready: 'false',
+      associationId: ASSO,
+    });
+    expect(posted(READINESS)).toHaveLength(1);
+    expect(posted(READINESS)[0][1]).toEqual({
+      vendorToken: VENDOR,
+      ready: true,
+      cause: 'webhook-validated',
+    });
+  });
+
+  it('an unknown vendor_token is social-service`s no-holder, answered 200', async () => {
+    const res = await asMultipart({ vendor_token: 'nobody-holds-it', event: 'BUSINESS_VALIDATED' });
+    expect(res.status).toBe(200);
+    expect(lines.join(' | ')).toContain('no-holder');
+  });
+
+  it('a VALIDATED that could not be APPLIED answers 503, so Lydia retries it', async () => {
+    mockedAxios.post.mockRejectedValue(new Error('social unreachable'));
+    const res = await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
+    expect(res.status).toBe(503);
+    expect(lines.join(' | ')).toContain('could not be applied');
   });
 
   it('an oversized body is refused by the bounded parser and writes nothing', async () => {
@@ -631,28 +683,30 @@ describe('POST /api/payments/lydia-business-webhook - an unsigned hint that writ
     expectNoWrite();
   });
 
-  it('logs a validation at INFO naming the association, and never the vendor token', async () => {
+  it('logs an applied validation naming the association, and never the vendor token', async () => {
     const info = jest.spyOn(Logger.prototype, 'log');
     await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
     const logged = info.mock.calls.flat().map(String).join(' | ');
     expect(logged).toContain('BUSINESS_VALIDATED');
     expect(logged).toContain(ASSO);
-    expect(logged).toContain('nothing marked');
     expect(lines.join(' | ')).not.toContain(VENDOR);
   });
 
-  it('logs an unvalidation and an unknown event at WARN', async () => {
+  it('logs an unvalidation (notify only) and an unknown event at WARN', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn');
     await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_UNVALIDATED' });
     await asMultipart({ vendor_token: VENDOR, event: 'SOMETHING\nFORGED' });
     const logged = warn.mock.calls.flat().map(String).join(' | ');
     expect(logged).toContain('BUSINESS_UNVALIDATED');
+    expect(logged).toContain(ASSO);
+    expect(logged).toContain('NOTHING changed');
     expect(logged).toContain('event=SOMETHINGFORGED');
+    expect(lines.join(' | ')).not.toContain(VENDOR);
   });
 
-  it('a failed read of the holder is logged and still decides nothing', async () => {
+  it('an UNVALIDATED whose holder cannot be read is logged and still changes nothing', async () => {
     mockedAxios.post.mockRejectedValue(new Error('social unreachable'));
-    const res = await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_VALIDATED' });
+    const res = await asMultipart({ vendor_token: VENDOR, event: 'BUSINESS_UNVALIDATED' });
     expect(res.status).toBe(200);
     expectNoWrite();
   });

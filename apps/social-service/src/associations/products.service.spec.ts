@@ -232,6 +232,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     const associationsService = {
       uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
+      revertLydiaReadinessAfterRefusal: jest.fn(() => Promise.resolve()),
     };
     // Only reached by a product carrying a pricing grid; the default fixtures carry none.
     const pricingFacts = {
@@ -464,9 +465,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
 
-      await expect((service as any).resolvePurchase('club1', 'prod1', 'user1')).rejects.toThrow(
-        /delegates payments/
-      );
+      // The typed 409 (lot 2), the delegation carried for the payer's sentence.
+      await expect(
+        (service as any).resolvePurchase('club1', 'prod1', 'user1')
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PAYMENTS_NOT_ACTIVATED', delegated: true },
+      });
     });
 
     it('ignores a pending (unapproved) delegation and uses the club own account', async () => {
@@ -4225,6 +4230,71 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const retry = await t.checkout();
       expect(retry.checkoutId).toBe(t.checkouts.rows[1].id);
       expect(t.checkouts.rows[1].status).toBe('open');
+    });
+
+    it.each([
+      ['LYDIA_BUSINESS_NOT_VALIDATED', 'request-refused', 'PAYMENTS_NOT_ACTIVATED'],
+      ['LYDIA_BUSINESS_BLOCKED', 'request-blocked', 'PAYMENTS_BLOCKED'],
+    ])(
+      'core`s %s (error 5 / 2701): the attempt released, the HOLDER reverted (%s), the payer`s typed 409 %s',
+      async (coreCode, cause, payerCode) => {
+        const t = setup();
+        (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
+          throwError(() =>
+            Object.assign(new Error('refused'), {
+              response: { status: 400, data: { code: coreCode, providerCode: '5' } },
+            })
+          )
+        );
+        const refusal = await t.checkout().catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({ code: payerCode });
+        expect(t.checkouts.rows[0].status).toBe('cancelled');
+        expect(t.associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledWith(
+          'acct_1',
+          cause,
+          { path: 'shop', id: t.checkouts.rows[0].id }
+        );
+      }
+    );
+
+    it('any other refusal, or a LOST request, reverts nothing', async () => {
+      const t = setup();
+      (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: {
+              status: 400,
+              data: { code: 'PAYMENT_PROVIDER_REFUSED', providerCode: '104' },
+            },
+          })
+        )
+      );
+      await t.checkout().catch(() => undefined);
+      lostOnce(t);
+      await t.checkout().catch(() => undefined);
+      expect(t.associationsService.revertLydiaReadinessAfterRefusal).not.toHaveBeenCalled();
+    });
+
+    it('a revert landing between the prepare and the decision answers the typed 409, and issues NO request', async () => {
+      const t = setup();
+      const prepare = (t.service as any).preparePurchase.bind(t.service);
+      jest
+        .spyOn(t.service as any, 'preparePurchase')
+        .mockImplementation(async (...args: unknown[]) => {
+          const prepared = await prepare(...args);
+          // The revert commits here: every read after this one sees the holder NOT ready.
+          t.assoRepo.findOne.mockResolvedValue(
+            asso({ lydiaOnboardingComplete: false, lydiaReadinessCause: 'request-blocked' })
+          );
+          return prepared;
+        });
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENTS_BLOCKED',
+      });
+      expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toEqual([]);
+      expect(t.checkouts.rows).toHaveLength(0);
     });
 
     describe('an attempt whose request/do was LOST (no answer) is read by its order_ref', () => {

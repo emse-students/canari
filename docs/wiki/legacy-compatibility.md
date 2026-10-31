@@ -289,6 +289,20 @@ the release carrying #2692 was ACCEPTED (2026-10-29); raising the floor to that 
 stores serve it, is owed after the stable ([backlog](backlog.md#owed-after-the-stable---raise-the-floor-to-the-release-carrying-the-bookings-notices)).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
 
+**Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
+notices telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active or were
+paused (Lydia enrolment lot 2). They ship behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false`
+(`apps/social-service/src/associations/lydia-payments-notifier.service.ts`); while it is off nothing is
+written and the caller's ERROR/WARN line plus the payments screen state carry the fact. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 2 (PR to be numbered), on BOTH
+estates, once Play and the App Store serve it - then a one-line pull request sets the constant to `true` and
+changes the spec that pins it. A client older than that release draws them as the neutral unknown-type row.
+Steps 2-4 are done: the push keys and French legacy sentence, the `forms` push category, the native
+tables (Android, the iOS app and its notification extension), the client row, `KNOWN_NOTIFICATION_TYPES` and the
+`payments` section of the association edit page. The push opens the notifications list (`notifications`
+host): no deep-link host exists for an association's edit section. The type names are shared through
+`libs/contracts/lydia-refusal-codes.json`.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
