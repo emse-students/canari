@@ -280,7 +280,7 @@ below), and every hardware reading (B8-B10) - each is its own blocker.
 
 **Apple, for the stable** (the pre-release half is on [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)):
 
-- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch is gone (the flip PR deleted it from `ios.yml`).
+- **Superseded 2026-10-31:** the committed `Info.plist` now carries `voip` AND `audio` (`CALLS_NATIVE_RING_COMPILED = true` since 2026-10-30), so the review notes below must show the CallKit ring. The earlier line read: `audio`, NOT `voip` (Q1); the pre-release patch is gone (the flip PR deleted it from `ios.yml`).
   `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
   can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
 - `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
@@ -359,9 +359,15 @@ this repository.
 > or switch between the front and back cameras from the call screen, and it is turned off while the
 > app is in the background (the audio continues) and back on when the app returns.
 >
-> This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
-> only while the app is open. From the conversation, a member can report and block the other; a
-> blocked member cannot call.
+> SUPERSEDED 2026-10-31, DO NOT SUBMIT AS WRITTEN: the two sentences that used to stand here ("declares no
+> `voip` background mode, uses neither CallKit nor PushKit, a call rings only while the app is open")
+> are FALSE since the owner's decision of 2026-10-30. The committed `Info.plist` declares `voip`
+> and `canari_push.mm` registers PushKit and reports every VoIP push to CallKit
+> (`CanariReportVoipCall`). Rewrite them to show the reviewer where `voip` is used (a call to a
+> locked iPhone rings on the CallKit screen; see
+> [the native ring](#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22)),
+> because 2.5.4 refused a `voip` mode it could not locate. From the conversation, a member can
+> report and block the other; a blocked member cannot call.
 
 **When these notes apply (1.5.2).** The review build talks to PRODUCTION, so the video paragraph is
 true only while `calls_mode` is `audio_video`. If production is still at `audio` when 1.5.2 is

@@ -866,9 +866,12 @@ over", closes), anything else (a retry, the dialog stays open). Only a report th
 "block the person who is broadcasting" through `showConfirm` (danger) and `blockUser(broadcasterId)`;
 a block leaves the live through the viewer's own dismissal. The offer says "the person", not the
 name: on an association's live the displayed name is the association's, the block lands on the member
-who broadcasts. **Not built, by the server's contract:** reporting ONE chat line - `content_reports`
-accepts `contentType: 'live'` only ([lives](../../services/lives.md#an-erased-account-and-a-single-message-reported)),
-so a viewer reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
+who broadcasts. **Reporting ONE chat line is built (WP-L8b client half, 2026-10-21):** a `Flag` button
+(`data-live-chat-report`) on every numbered line that is not the reader's own in `LiveChatPanel`, wired
+by `LiveViewer` (`report={(line) => (reportedLine = line)}`) to `LiveChatReportDialog`
+([decisions of 2026-10-21](#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half),
+[lives](../../services/lives.md#a-reported-chat-line-wp-l8b)). The viewer's TOP-BAR control still
+reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
 `LiveViewer.svelte.test.ts`.
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
