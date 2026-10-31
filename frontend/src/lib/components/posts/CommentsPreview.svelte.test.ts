@@ -131,6 +131,43 @@ describe('CommentsPreview', () => {
     expect(thumb!.className).toContain('max-w-32');
   });
 
+  it('holds the picture back until the card comes near the viewport', () => {
+    const observers: { cb: IntersectionObserverCallback }[] = [];
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          observers.push({ cb });
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+    try {
+      const gif = {
+        type: 'image' as const,
+        mediaId: 'g2',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'image/gif',
+        size: 10,
+        width: 200,
+        height: 150,
+      };
+      const { target } = mountPreview([comment('g', 1, { text: '', media: gif })]);
+      const stub = () => target.querySelector('[data-post-media-open]')!;
+      expect(stub().getAttribute('data-deferred')).toBe('true');
+      for (const o of observers) {
+        o.cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      }
+      flushSync();
+      expect(stub().getAttribute('data-deferred')).toBe('false');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('draws no picture slot for a text-only comment', () => {
     const { target } = mountPreview([comment('t', 1)]);
     expect(target.querySelector('[data-comment-media]')).toBeNull();
