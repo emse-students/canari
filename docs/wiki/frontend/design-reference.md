@@ -205,6 +205,12 @@ avatar in ONE 40px box that the avatar fills (it used to draw a 48px avatar insi
 and the phone apps' glass title pill, being a `rounded-full` surface, holds a CIRCLE avatar so the
 two corners are concentric - a squircle inscribed in a pill was the mismatch.
 
+**The native pill's avatar is a bitmap and must paint the same gradient (2026-10-31).** Placeholders
+are `background-image` gradients since #2776, so `avatarBitmap.ts` can no longer read a
+`backgroundColor` (transparent: bare initials on dark, white on white in light). It reads the
+computed `--avatar-hue-from/to` of the `.avatar-placeholder` and paints a 135deg canvas gradient,
+person, group glyph and association alike; `app.css` stays the only copy of the palette.
+
 ---
 
 ## 7. The target - what the redesign adopted (SHIPPED, see section 9)
