@@ -541,6 +541,61 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
   });
 
+  describe('a booking across the midnight between two whole open days', () => {
+    /** The setup's space, reopened 00:00-24:00 every day, with `exceptions` closed. */
+    async function wholeDays(exceptions: [string, string][] = []) {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await q(`DELETE FROM booking_availability_rules WHERE "resourceId" = $1`, [r]);
+      for (let weekday = 1; weekday <= 7; weekday++) {
+        await q(
+          `INSERT INTO booking_availability_rules ("resourceId", weekday, "startTime", "endTime")
+           VALUES ($1, $2, '00:00', '24:00')`,
+          [r, weekday]
+        );
+      }
+      for (const [fromDate, toDate] of exceptions) {
+        await q(
+          `INSERT INTO booking_availability_exceptions ("resourceId", "fromDate", "toDate")
+           VALUES ($1, $2, $3)`,
+          [r, fromDate, toDate]
+        );
+      }
+      return { space, r };
+    }
+    const night = (spaceId: string, r: string) =>
+      service.book(
+        spaceId,
+        { resourceId: r, startsAt: on('23:00'), endsAt: on('01:00', '2026-11-03') },
+        as(ALICE),
+        NOW
+      );
+
+    it('books 23:00-01:00 Monday to Tuesday through book()', async () => {
+      const { space, r } = await wholeDays();
+      await expect(night(space.id, r)).resolves.toHaveProperty('id');
+    });
+
+    it('refuses it when a closure takes the Tuesday', async () => {
+      const { space, r } = await wholeDays([['2026-11-03', '2026-11-03']]);
+      expect(await refusal(night(space.id, r))).toEqual({ code: 'outside-availability' });
+    });
+
+    it('refuses an over-long range before any window is built', async () => {
+      const { space, r } = await wholeDays();
+      expect(
+        await refusal(
+          service.book(
+            space.id,
+            { resourceId: r, startsAt: on('23:00'), endsAt: on('23:00', '2066-11-02') },
+            as(ALICE),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'too-many-steps' });
+    });
+  });
+
   describe('cancelling and withdrawing (D5, decided by the user 2026-10-17)', () => {
     it('the holder cancels five minutes before the start, whatever the participants delay', async () => {
       const { space, resourceIds } = await setup({ participantWithdrawMinMinutes: 120 });

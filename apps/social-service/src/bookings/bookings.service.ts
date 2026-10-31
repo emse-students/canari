@@ -29,7 +29,13 @@ import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
 import { BookingBlock } from './entities/booking-block.entity';
 import { BookingSlotsService, type SlotView } from './booking-slots.service';
-import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
+import {
+  availabilityWindows,
+  checkRangeShape,
+  datesAround,
+  rangeLengthRefusal,
+  type Range,
+} from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import {
   bookingView,
@@ -794,7 +800,14 @@ export class BookingsService {
           throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
         }
 
-        // The shape (D3): one slot, or 1..maxSteps steps of one window.
+        // The shape (D3): one slot, or 1..maxSteps consecutive steps of one opening. The length
+        // bound comes first, from the settings alone: an over-long range is refused before any
+        // window is built.
+        const tooLong = rangeLengthRefusal(space, range);
+        if (tooLong) {
+          this.logger.debug(`[BOOKINGS] book refused before any window: ${tooLong}`);
+          throw new BadRequestException({ code: tooLong });
+        }
         const [from, to] = datesAround(range, space.timeZone);
         const [rules, exceptions] = await Promise.all([
           m.query(

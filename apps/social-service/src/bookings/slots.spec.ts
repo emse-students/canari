@@ -6,6 +6,7 @@ import {
   bookingsOutsideAvailability,
   checkRangeShape,
   datesAround,
+  rangeLengthRefusal,
   slotUnits,
   unitStates,
 } from './slots';
@@ -387,6 +388,31 @@ describe('a window crosses AT MOST ONE midnight (review of #1993)', () => {
     ],
   ])('%s', (_case, config, lines, exceptions, start, end, refusal) => {
     expect(shapeOf(config, lines, exceptions, start, end)).toBe(refusal);
+  });
+
+  describe('an over-long range is refused before any window is built', () => {
+    // Forty years on a 24/7 resource in 5-min steps: the bound answers from the settings alone.
+    const decades = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2066-11-02T22:00:00Z') };
+
+    it.each<[string, SlotConfig, string]>([
+      ['a step space: longer than maxSteps x step', step(5, 12), 'too-many-steps'],
+      ['a slots space: longer than any slot can last', SLOTS, 'outside-availability'],
+    ])('%s', (_case, config, refusal) => {
+      expect(rangeLengthRefusal(config, decades)).toBe(refusal);
+      const started = Date.now();
+      // No window is passed: the bound must not need one.
+      expect(checkRangeShape(config, [], decades)).toBe(refusal);
+      expect(
+        bookingsOutsideAvailability(config, allWeek, [], [{ id: 'x', ...decades }])
+      ).toHaveLength(1);
+      expect(Date.now() - started).toBeLessThan(1_000);
+    });
+
+    it('keeps a range exactly maxSteps long, and an empty one is misaligned', () => {
+      const twoHours = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2026-11-03T00:00:00Z') };
+      expect(rangeLengthRefusal(step(60, 2), twoHours)).toBeNull();
+      expect(rangeLengthRefusal(step(60, 2), { startMs: 1, endMs: 1 })).toBe('misaligned');
+    });
   });
 
   it('D29 keeps a booking across midnight while both days stay open, and names it when one closes', () => {

@@ -223,6 +223,29 @@ function insideOneOpening(windows: readonly Window[], range: Range): boolean {
 }
 
 /**
+ * The longest a predefined slot can last: a slot crosses at most one midnight (see
+ * {@link availabilityWindows}), so it is under two local days, plus the hour a fall-back night adds.
+ */
+const LONGEST_SLOT_MS = 49 * 60 * MINUTE_MS;
+
+/**
+ * THE LENGTH BOUND, read from the settings alone: an over-long range is refused before any window
+ * is built, so the work a range costs never grows with its length. A step space takes at most
+ * `maxSteps` x `stepMinutes`; a slots space at most {@link LONGEST_SLOT_MS}. An empty or reversed
+ * range is `misaligned`, a step space without a step too.
+ */
+export function rangeLengthRefusal(config: SlotConfig, range: Range): RangeRefusal | null {
+  const length = range.endMs - range.startMs;
+  if (!(length > 0)) return 'misaligned';
+  if (config.slotMode === 'slots') {
+    return length > LONGEST_SLOT_MS ? 'outside-availability' : null;
+  }
+  const step = (config.stepMinutes ?? 0) * MINUTE_MS;
+  if (step <= 0) return 'misaligned';
+  return length > (config.maxSteps ?? 1) * step ? 'too-many-steps' : null;
+}
+
+/**
  * Whether `range` is a bookable shape: one slot exactly, or 1..maxSteps consecutive steps, each
  * starting where the previous one ends. Consecutive steps may belong to two windows that TOUCH - a
  * booking from 23:00 to 01:00 between two whole days, or a several-day booking when `maxSteps`
@@ -235,7 +258,8 @@ export function checkRangeShape(
   windows: readonly Window[],
   range: Range
 ): RangeRefusal | null {
-  if (range.endMs <= range.startMs) return 'misaligned';
+  const bound = rangeLengthRefusal(config, range);
+  if (bound) return bound;
   if (config.slotMode === 'slots') {
     return windows.some((w) => w.startMs === range.startMs && w.endMs === range.endMs)
       ? null
@@ -248,8 +272,6 @@ export function checkRangeShape(
   // is not a multiple of the step ends on a piece that is no step, so no booking runs past it.
   const starts = new Set(slotUnits(config, windows).map((u) => u.startMs));
   if (!starts.has(range.startMs) || (range.endMs - range.startMs) % step !== 0) return 'misaligned';
-  const count = (range.endMs - range.startMs) / step;
-  if (count > (config.maxSteps ?? 1)) return 'too-many-steps';
   for (let s = range.startMs + step; s < range.endMs; s += step) {
     if (!starts.has(s)) return 'misaligned';
   }
@@ -309,6 +331,8 @@ export function bookingsOutsideAvailability<T extends Occupation>(
   bookings: readonly T[]
 ): T[] {
   return bookings.filter((b) => {
+    // Longer than the new settings allow: named before any window is built.
+    if (rangeLengthRefusal(config, b)) return true;
     const [from, to] = datesAround(b, config.timeZone);
     const windows = availabilityWindows(config, lines, exceptions, from, to);
     // A booking longer than maxSteps under the NEW settings is outside them too.
