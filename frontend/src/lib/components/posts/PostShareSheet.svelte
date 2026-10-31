@@ -146,9 +146,9 @@
                     </span>
                   {:else}
                     <GroupAvatar
+                      id={cand.conversation.id}
                       imageMediaId={cand.conversation.imageMediaId}
                       name={cand.label}
-                      variant="group"
                       fill
                     />
                   {/if}

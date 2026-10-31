@@ -633,9 +633,9 @@
                 : workspace.name}
             >
               <GroupAvatar
+                id={workspace.id}
                 imageMediaId={workspace.imageMediaId}
                 name={workspace.name}
-                variant="community"
                 size="lg"
               />
             </button>

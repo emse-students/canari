@@ -60,7 +60,7 @@
   {#if row.avatarUserId}
     <Avatar userId={row.avatarUserId} size="sm" />
   {:else if row.logo?.logoUrl}
-    <AssociationAvatar name={row.logo.name} logoUrl={row.logo.logoUrl} size="sm" />
+    <AssociationAvatar id={row.logo.id} name={row.logo.name} logoUrl={row.logo.logoUrl} size="sm" />
   {:else if row.icon}
     {@const Icon = row.icon}
     <Icon size={20} />

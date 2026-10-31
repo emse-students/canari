@@ -398,7 +398,7 @@
         second line instead of ending in an ellipsis.
       -->
         <div class="flex flex-wrap items-start gap-4">
-          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+          <AssociationAvatar id={asso.id} name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           <div class="min-w-0 flex-1 basis-64">
             <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
               {asso.name}
@@ -425,6 +425,7 @@
             {#if hasSecondTheme}
               <div class="mt-1.5 flex items-center gap-2">
                 <AssociationAvatar
+                  id={asso.id}
                   name={secondName || asso.name}
                   logoUrl={secondLogoUrl}
                   size="sm"

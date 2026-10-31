@@ -327,7 +327,12 @@
         <VideoOff size={24} />
       </span>
     {:else if actorIsAssociation}
-      <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
+      <AssociationAvatar
+        id={notif.associationId ?? notif.actorId}
+        name={notif.actorName}
+        logoUrl={notif.associationLogoUrl}
+        fill
+      />
     {:else}
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
     {/if}

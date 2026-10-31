@@ -3293,3 +3293,12 @@ and a tap on the reel slide it out on the drag release snap, the reel growing ba
 comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
 never a page of older comments, never the swap of the reader's local id for the server's row), and
 the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.
+
+## Avatar placeholders: eight gradient hues, picked from the entity's ID (user, 2026-10-30)
+
+Every avatar without a photo or logo (a person, a group or community, an association) used to be yellow initials on the same navy disc. It is now ONE component, `AvatarPlaceholder.svelte`, used by `Avatar`, `GroupAvatar` and `AssociationAvatar` (the anonymous-post avatar stays an icon on navy on purpose: it is nobody).
+
+- **The palette** is `--avatar-hue-0..7-from/to` in `app.css` (orange, pink, violet, blue, cyan, green, red, amber) drawn as a plain 135deg `linear-gradient` on the element. Theme-independent: white initials on every stop in both themes. No `background-clip` text trick (WebKit draws it badly). Every stop keeps white at >= 3:1 (WCAG AA large text); the amber is darkened for it, and `avatar.test.ts` recomputes the ratio from `app.css`.
+- **The pick** is `avatarHueIndex(id)` (FNV-1a mod 8), seeded by the ID: user id, conversation / group / workspace id, association id. NEVER the display name, which changes. `GroupAvatar` and `AssociationAvatar` therefore take a required `id`. Known gap: a channel-invitation card carries no workspace id on the wire, so it seeds on the channel id.
+- **Shapes** are unchanged: the caller passes `circle` or `squircle`. A real photo or logo is untouched.
+- Not converted: the Carte poster canvas (`trombinoscope.ts`) still draws its own `generateAvatarColor` tiles.

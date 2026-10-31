@@ -266,13 +266,7 @@
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
-            <GroupAvatar
-              {imageMediaId}
-              name={displayName}
-              variant="group"
-              size="md"
-              shape="circle"
-            />
+            <GroupAvatar id={groupId} {imageMediaId} name={displayName} size="md" shape="circle" />
           </span>
         {:else}
           <span
@@ -339,7 +333,7 @@
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" fill />
+      <GroupAvatar id={groupId} {imageMediaId} name={displayName} fill />
     </div>
   {:else}
     <div class="relative flex h-10 w-10 shrink-0 items-center justify-center">

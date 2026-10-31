@@ -320,7 +320,7 @@
         title={m.chat_group_change_photo_label()}
         class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
-        <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
+        <GroupAvatar id={groupId} {imageMediaId} name={effectiveDisplayName} fill />
         <span
           class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
         >

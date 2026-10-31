@@ -263,7 +263,12 @@
               <section class="space-y-4">
                 <!-- Association header -->
                 <div class="flex items-center gap-3">
-                  <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
+                  <AssociationAvatar
+                    id={asso.id}
+                    name={asso.name}
+                    logoUrl={asso.logoUrl}
+                    size="md"
+                  />
                   <div>
                     <a
                       href="/associations/{asso.slug}"
@@ -318,7 +323,7 @@
             <section class="space-y-4">
               <!-- Association header -->
               <div class="flex items-center gap-3">
-                <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
+                <AssociationAvatar id={asso.id} name={asso.name} logoUrl={asso.logoUrl} size="md" />
                 <div>
                   <a
                     href="/associations/{asso.slug}"

@@ -234,6 +234,7 @@
                 <th class="text-text-main min-w-48 px-4 py-2 text-left text-sm font-medium">
                   <span class="flex items-center gap-2.5">
                     <AssociationAvatar
+                      id={association.id}
                       name={association.name}
                       logoUrl={association.logoUrl}
                       size="sm"

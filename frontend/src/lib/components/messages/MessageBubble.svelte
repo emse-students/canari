@@ -795,9 +795,9 @@
              generic building icon. -->
         <div class="h-5 w-5 shrink-0 overflow-hidden rounded-md">
           <GroupAvatar
+            id={channelInvite.channelId}
             imageMediaId={channelInvite.workspaceImageMediaId ?? null}
             name={channelInvite.workspaceName || channelInvite.channelName}
-            variant="community"
             fill
           />
         </div>

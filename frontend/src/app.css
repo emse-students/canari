@@ -306,6 +306,27 @@
   /* THE TWO LINES THAT DO NOT MOVE, IN EITHER THEME. */
   --cn-yellow: #f6c232;
   --cn-yellow-hover: #e4af1b;
+  /* AVATAR PLACEHOLDER PALETTE (user, 2026-10-30, Telegram-style): eight hues, a diagonal pair of
+     stops each, picked by `avatarHueIndex(id)`. THEME-INDEPENDENT ON PURPOSE: the initials are
+     white on every hue in both themes, so the stops are the same in light and dark. Every stop keeps
+     white text at >= 3:1 (WCAG AA large text) - the amber is darkened for it, and
+     `avatar.test.ts` recomputes the ratio so a lighter stop cannot slip in. */
+  --avatar-hue-0-from: #ea6a10;
+  --avatar-hue-0-to: #c2410c;
+  --avatar-hue-1-from: #ec4899;
+  --avatar-hue-1-to: #be185d;
+  --avatar-hue-2-from: #8b5cf6;
+  --avatar-hue-2-to: #6d28d9;
+  --avatar-hue-3-from: #3b82f6;
+  --avatar-hue-3-to: #1d4ed8;
+  --avatar-hue-4-from: #0891b2;
+  --avatar-hue-4-to: #0e7490;
+  --avatar-hue-5-from: #16a34a;
+  --avatar-hue-5-to: #15803d;
+  --avatar-hue-6-from: #ef4444;
+  --avatar-hue-6-to: #b91c1c;
+  --avatar-hue-7-from: #d08200;
+  --avatar-hue-7-to: #b45309;
   --cn-bg: #f0f2f5;
   --cn-surface: #ffffff; /* measured, 68% of the handset thread in light mode */
   /* A HAIRLINE, NOT A LINE. The reference draws six visible borders on an entire page, all
@@ -2650,4 +2671,47 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     overflow: hidden;
     box-shadow: none;
   }
+}
+
+/* The avatar placeholder fill: a plain two-stop linear-gradient on the element itself, no
+   `background-clip` text trick (WebKit draws it badly). */
+.avatar-placeholder {
+  background-image: linear-gradient(
+    135deg,
+    var(--avatar-hue-from, var(--avatar-hue-0-from)),
+    var(--avatar-hue-to, var(--avatar-hue-0-to))
+  );
+  color: var(--color-white);
+}
+.avatar-placeholder[data-hue='0'] {
+  --avatar-hue-from: var(--avatar-hue-0-from);
+  --avatar-hue-to: var(--avatar-hue-0-to);
+}
+.avatar-placeholder[data-hue='1'] {
+  --avatar-hue-from: var(--avatar-hue-1-from);
+  --avatar-hue-to: var(--avatar-hue-1-to);
+}
+.avatar-placeholder[data-hue='2'] {
+  --avatar-hue-from: var(--avatar-hue-2-from);
+  --avatar-hue-to: var(--avatar-hue-2-to);
+}
+.avatar-placeholder[data-hue='3'] {
+  --avatar-hue-from: var(--avatar-hue-3-from);
+  --avatar-hue-to: var(--avatar-hue-3-to);
+}
+.avatar-placeholder[data-hue='4'] {
+  --avatar-hue-from: var(--avatar-hue-4-from);
+  --avatar-hue-to: var(--avatar-hue-4-to);
+}
+.avatar-placeholder[data-hue='5'] {
+  --avatar-hue-from: var(--avatar-hue-5-from);
+  --avatar-hue-to: var(--avatar-hue-5-to);
+}
+.avatar-placeholder[data-hue='6'] {
+  --avatar-hue-from: var(--avatar-hue-6-from);
+  --avatar-hue-to: var(--avatar-hue-6-to);
+}
+.avatar-placeholder[data-hue='7'] {
+  --avatar-hue-from: var(--avatar-hue-7-from);
+  --avatar-hue-to: var(--avatar-hue-7-to);
 }

@@ -21,6 +21,7 @@
 
 {#if post.association}
   <AssociationAvatar
+    id={post.association.id}
     name={post.association.name}
     logoUrl={post.association.logoUrl}
     {size}

@@ -191,7 +191,7 @@
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
+      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="lg" />
     {/if}
   </div>
 

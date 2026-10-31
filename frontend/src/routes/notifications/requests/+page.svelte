@@ -119,6 +119,7 @@
         <li class="border-cn-border bg-cn-surface space-y-2 rounded-xl border p-4">
           <div class="flex items-center gap-2">
             <AssociationAvatar
+              id={request.from.id}
               name={request.from.name}
               logoUrl={request.from.logoUrl}
               size="sm"
