@@ -1922,6 +1922,7 @@ number on `main` before naming a file. Its CI is verified running:
 
 ## Calls, and their record -> [call-service](services/call-service.md#the-call-record)
 
+- **`visibilityState` IS THE WEBVIEW'S OPINION, NEVER THE APP'S STATE.** PushKit launches a killed iPhone app in the background and WKWebView holds its page `visible` until the app has been active and left: an answer waiting for a `visibilitychange` was never drained, and a heartbeat paused only by `hidden` held the foreground guard over a PIN gate that had nothing to guard. Carry the native fact (the handover, a loaded manager) to where the decision is made. [calls](frontend/modules/calls.md#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31)
 - **A failure seen in HALVES is attributed by the one witness that sees both, or not at all** - the SFU is that witness, so its record carries what separates the causes it cannot itself distinguish, one line per socket.
 - **`duration_ms` alone cannot say whether a call happened** - it is read next to `connected_ms`, and `connected_ms=-` is a STATEMENT, never a missing value.
 - **A disposition is set ONCE and the first cause wins** - recording the last event reports the consequence and hides the cause.
