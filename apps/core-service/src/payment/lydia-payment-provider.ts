@@ -642,7 +642,8 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   /**
    * Reads one cashier's rights on the Business (`business/getpermission`): each `access_*` as
-   * `"0"`/`"1"`; a right absent from the answer reads false.
+   * `"0"`/`"1"` under the answer's `data` object (`{error, data: {access_*...}}`, read in production
+   * 2026-10-30 and on homologation 2026-10-31); a right absent from it reads false.
    * Errors are typed like `addBusinessHolder`'s. Read-only: no SMS, no change at Lydia.
    */
   async readCashierRights(
@@ -656,9 +657,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
       cashier_phone: phone,
     });
     const source =
-      data.permissions && typeof data.permissions === 'object'
-        ? (data.permissions as Record<string, unknown>)
-        : data;
+      data.data && typeof data.data === 'object' ? (data.data as Record<string, unknown>) : {};
     const rights = Object.fromEntries(
       LYDIA_CASHIER_PERMISSIONS.map((name) => [name, String(source[name] ?? '0') === '1'])
     ) as LydiaCashierRights;
