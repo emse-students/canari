@@ -1389,6 +1389,64 @@ _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une re
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
 about a decision nobody makes.
 
+### A major bump of a data store is refused, and which images may cross a major is an allowlist (#2742, 2026-10-31)
+
+Dependabot proposed `library/postgres 16-alpine -> 18-alpine` for the identity provider's stack
+(#2742), and `arm-auto-merge.yml` armed it. **Arming is not a verdict, and that was not the defect**:
+it arms every pull request and GitHub merges only once `CI passed` is green. The required check
+held, but for the wrong reason, and the reason it would have given was wrong too:
+
+- **The ceiling's self-test failed before the deciding step ran.** `ceiling.test.sh` asserts the
+  `compile-android-app` job in `ci.yml` (2026-10-30), and the job's sparse checkout did not carry
+  `ci.yml`. So every Dependabot pull request was red, and none of them showed its real decision.
+- **The deciding step would have passed it.** A `pull_request` checkout is the MERGE ref, which
+  already carries Dependabot's new pin. The datastore arm reads the major the stack runs from the
+  compose file, so it read 18 out of the bumped file and saw no crossing. It only ever refused
+  `postgres 15 -> 18` on #309 because that pull request changed a DIFFERENT file from the one the arm
+  read. The job now checks out `github.event.pull_request.base.sha`. `dependency-ceiling.test.sh`
+  runs #2742's exact trailer against both readings. **That checkout also means the job runs the
+  BASE's scripts**, so a pull request cannot change the gate that judges it: its own changes to
+  `lib/ceiling.sh` apply from the next pull request after it merges (`test-ci-scripts` still tests
+  them on the pull request itself).
+
+**Which images may cross a major unattended is an allowlist.** `ceiling_image_may_cross_major` in
+`.github/scripts/lib/ceiling.sh` lets an image cross a major only when it is PROVEN stateless:
+
+- it is not a named data store (`postgres`, `redis`, `garage`), with any registry prefix removed
+  first (`mirror.gcr.io/library/postgres` is postgres);
+- every watched compose file could be read AND parsed to at least one image (production, dev,
+  local and the identity provider, in `CEILING_WATCHED_COMPOSES`);
+- and none of those files mounts data for the image (`ceiling_compose_image_data`). Every mount is
+  data except a bind mount marked read-only: a named volume, an anonymous one, a writable bind,
+  quoted or not, short or long syntax, at any indentation. `volumes_from` is data too, and a file
+  that uses `extends` or a top-level `include` is refused outright, because it takes services from
+  a file nothing here reads.
+
+The reduction to an image name (dropping the registry, the tag and `library/`) is applied only in
+the docker ecosystems (`ceiling_dependency_subject`). A Gradle coordinate keeps its artifact:
+`com.google.firebase:firebase-messaging-ktx` is not cut down to `com.google.firebase`.
+
+The first draft counted only `- <word>:` lines at two-space indentation. A review of #2779 found
+that it read a hyphenated volume, a quoted entry, an anonymous volume, a writable bind and a
+four-space file as stateless. Each of those is now a fixture in `ceiling.test.sh`, driven through
+the branch the way `dependency-ceiling.sh` is. **One cost is accepted:** a branch for the local
+stack is compared with PRODUCTION's file (`ceiling_compose_from_ref`). So a data store that only
+the local stack runs has no readable major, and even its minor is refused.
+
+Before this, the arm matched the three names. A data store added to the dev or local stack, or one
+under a name nobody typed (`mariadb`, `valkey`), crossed a major like any stateless image. A
+Dockerfile base (`node`, `rust`) and `nginx`, `adminer` or `coturn` stay allowed across a major,
+because the suite builds them and they hold no data directory. A patch or minor of a data store
+stays allowed (`garage v2.4.1 -> v2.5.0`, `postgres 16.4 -> 16.5`), because an on-disk format is
+stable within a major.
+
+**The refusal is check output, and it names what lifts it.** It begins *"a migration plan, because a
+MAJOR bump of an image that holds data cannot be judged by any gate here"*. It ends with the remedy:
+rehearse the upgrade in place and record it in `infrastructure/dev/version-gap.yml` with
+`evidence: in_place_upgrade`. That lifts production's arm only. The identity provider's database
+has no rehearsal mechanism, so its major moves by a person's pull request, which carries the data
+migration.
+
 ### A Dependabot cargo bump that is incomplete by construction is completed and merged (WP-RUST-LOCK-AUTOMERGE, 2026-10-18)
 
 `frontend/mls-wasm` and `frontend/src-tauri` commit a `Cargo.lock` and consume `frontend/mls-core` (no lock, on purpose) by path. Dependabot's one pull request for an `mls-core/Cargo.toml` bump therefore leaves both locks stale and fails CI's `cargo metadata --locked` step. It was the last dependency update that could not merge unattended; the user decided on 2026-10-18 that a machine completes it and `CI passed` stays the only verdict. The one-workspace remedy (one `Cargo.lock` for `frontend/`) stays the structural fix and is not done.

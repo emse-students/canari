@@ -1498,9 +1498,24 @@ jobs:
           # answered empty, so a rehearsal recorded there would have lifted nothing.
           # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
           # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
+          # The dev and local compose files because an image's statefulness is read from EVERY
+          # compose file (`ceiling_image_may_cross_major`), and an absent one refuses every major.
+          # `ci.yml` because `ceiling.test.sh` asserts the `compile-android-app` job behind the
+          # `gen/android` allowance: without it that self-test failed on EVERY Dependabot pull
+          # request from 2026-10-30, so the step that decides never ran (#2742, 2026-10-31).
+          #
+          # THE BASE, NOT THE PULL REQUEST, AND THIS LINE IS WHAT MAKES THE MAJOR COMPARISON MEAN
+          # ANYTHING. A `pull_request` checkout is the MERGE ref, which already carries Dependabot's
+          # new pin - so `16-alpine -> 18-alpine` read the major "the stack runs" as 18 out of the
+          # bumped file and passed as same-major (#2742, measured 2026-10-31). The major running
+          # is the one on the base branch. `ceiling.test.sh` asserts this `ref`.
+          ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
             .github/scripts
+            .github/workflows/ci.yml
             infrastructure/docker-compose.prod.yml
+            infrastructure/docker-compose.dev.yml
+            infrastructure/local/docker-compose.yml
             infrastructure/dev/version-gap.yml
             infrastructure/authentik/compose.yml
 
