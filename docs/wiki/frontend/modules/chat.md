@@ -1265,20 +1265,31 @@ Four defects of one seam, found by a read-only review and fixed together:
   already read `reAddInFlight` and written the row `pending` (`markAwaitingReAdmission`). The send
   gate then took `failPermanently(..., 'evicted')`, and `recordEviction` retired the row, posted
   the removal notice and deleted the entry - three seconds before the Welcome re-admitted the
-  device. Now **a `pending` row over a group this device is out of HOLDS the entry**
-  (`holdForGroup`, no re-add asked: one is in flight, and `requestReAdd` stands down on a held
-  group). The same row is honoured by every later local reader: `recordEviction` declines a
-  `remove-commit` / `inbound-frame` / `membership-check` evidence on a row awaiting re-admission
-  (`awaitsReAdmission`, `eviction.ts`) - which covers a frame after a reload, when the in-memory
-  `reAddInFlight` is gone - and `verifyCurrentUserMembership` answers "not a member" without
-  surfacing a removal or caching it, so a media send in the window is refused with the
-  "session establishing" sentence (the row is re-read after the queue barrier, not taken from the
-  snapshot before it). The server's own refusal (`server-refusal`) is not a re-read and still
-  records.
+  device. Now **the Remove half DROPS the evicted state** (`retireIfEvicted`'s `reAddInFlight`
+  branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
+  `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
+  a group this device does not hold. A send in the window meets an unsendable group and is HELD
+  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
+  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+- **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
+  fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
+  `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
+  re-admission whose Welcome never came was waited on for ever behind a `pending` bubble. With the
+  state dropped, every pass reaches the server: a Welcome owed is waited for, a seat with none is
+  joined, and NO seat retires the row (`stopRecovering` on the roster's 403). The outbox reads the row
+  AFTER its `requestReAdd` and fails a held entry on a `removed` row (`failPermanently(...,
+  'removed')`: the row's banner tells the member, the bubble goes `error`, nothing is re-recorded).
+  The guard and its three readers (`recordEviction`, `verifyCurrentUserMembership`, the outbox) are
+  deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
+  the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
+  an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
+  rare and the inviter's history push covers. Drop before mark, so a kill between them leaves an
+  `active` row over no state, which the restore demotes to `pending` - the same end.
 - **The boot restore undid that row.** It promoted any `pending` row whose group
   `getLocalGroups()` listed, and an evicted group stays listed. `reconcileRestoredLifecycles`
-  (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` keeps the row
-  `pending` and is logged, `null` promotes nothing.
+  (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` DROPS the held
+  evicted state (a row written by the first version, or a kill after the mark) and keeps the row
+  `pending`; `null` promotes nothing.
 - **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
   flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
   after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
@@ -1290,17 +1301,17 @@ Four defects of one seam, found by a read-only review and fixed together:
   count of events, not a clock.
 - **A successful external join raised nothing (P3).** It set the row `active` and called
   `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
-  raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE implementation both
-  a Welcome and an external join reach (resume, statuses, deferred welcome requests, the debounced
-  invitation sweep). **Not covered:** the two `RecoveryDeps` built outside the session -
+  REQUIRED and raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE
+  implementation both a Welcome and an external join reach (resume, statuses, deferred welcome
+  requests, the debounced invitation sweep). The two `RecoveryDeps` built outside the session -
   `verifyCurrentUserMembership`'s direct-conversation repair and `startNewConversation`'s 1:1 repair
-  (`groupCreation.ts`) - carry no `onGroupReady`, so a join landed from one of them resumes the
-  group's held entries only at their backoff.
+  (`groupCreation.ts`) - reach it through `groupReadyAnnouncer.ts`, which the session registers and
+  clears with the outbox; a join landing with no live session says so in a `warn` line.
 
-**Open, and not decided here:** a re-admission whose Welcome never comes. The row stays `pending`
-and its entries are held - nothing is lost - but `requestReAdd` skips a group whose evicted state is
-still held ("already in WASM"), so nothing asks again; before this change the boot promotion turned
-the row `active` and the next send retired it, which terminated the wait by the defect itself.
+Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
+recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no
+seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.test.ts`,
+`admissionState.test.ts` and `setupMessageHandler.test.ts` (`onGroupReady` on both Welcome paths).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

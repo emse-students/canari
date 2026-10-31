@@ -35,7 +35,7 @@ import { refusalStatus } from '$lib/utils/apiRefusal';
 import { uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
-import { awaitsReAdmission, recordEviction } from '$lib/utils/chat/eviction';
+import { recordEviction } from '$lib/utils/chat/eviction';
 import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -1487,7 +1487,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'refused' | 'unpreparable',
+    cause:
+      | 'group-deleted'
+      | 'evicted'
+      | 'evicted-late'
+      | 'too-large'
+      | 'refused'
+      | 'unpreparable'
+      | 'removed',
     /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
     notice?: string
   ): Promise<FlushOutcome> {
@@ -1528,6 +1535,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           );
       } else if (cause === 'group-deleted') {
         deps.markDeletedRemotely?.(terminalId);
+      } else if (cause === 'removed') {
+        // THE ROW ALREADY SAYS IT, written by the recovery from the server's proof: its banner is what
+        // tells the member, and this entry's `error` bubble is the message that will never go. Nothing
+        // is re-recorded - the evidence was not this send's, and naming it here would be a guess.
       } else {
         // `evicted` was read from `isGroupActive` before the wire was touched; `evicted-late` from
         // the server's own refusal, which means the commit never arrived. One disposition, and the
@@ -1953,6 +1964,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         .catch((e) =>
           log(`[OUTBOX] Re-add request for ${terminalId.slice(0, 8)}… failed: ${String(e)}`)
         );
+      // THE RECOVERY'S OWN END IS AN ANSWER FOR THIS ENTRY TOO. `requestReAdd` retires the row when the
+      // server proves this device has no seat left (`stopRecovering`) - the end of a re-admission whose
+      // Welcome never came, among others - and it returns at once on a row already retired. Holding
+      // after that was holding for ever behind a bubble that said `pending`: the row is read AFTER
+      // the call, and a retired one fails the entry visibly (review of #2804).
+      const key = findConversationKeyByGroupId(conversations, terminalId);
+      if (key && conversations.get(key)?.lifecycle === 'removed') {
+        return failPermanently(entry, terminalId, 'removed');
+      }
       // Through `holdForRetry`, which is what this branch did not do: it returned `'retry'` having
       // written nothing, so the entry had neither a clock of its own nor a count of how long it had
       // been held. See that function for what each of the two fields actually decides.
@@ -1984,24 +2004,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'retry';
     }
     if (!stillMember) {
-      // OUT OF THE GROUP, AND WAITING TO BE LET BACK IN - NOT EVICTED. A re-admission is a Remove and
-      // then an Add, three seconds apart, and the Remove half leaves exactly this state: the group
-      // held, the epoch gap cleared, `isGroupActive` false. `retireIfEvicted` already read
-      // `reAddInFlight` when that Remove merged and wrote the row `pending` instead of `removed`
-      // (`markAwaitingReAdmission`), so the fact is in the durable row before anything is sent - and
-      // failing the entry here retired the conversation and lost the message three seconds before
-      // the Welcome re-admitted the device (review, 2026-10-31). Held like a group not sendable yet,
-      // with no re-add asked: one is in flight, and `requestReAdd` stands down on a held group anyway.
-      // The Welcome resumes it (`resumeGroup`).
-      const key = findConversationKeyByGroupId(conversations, terminalId);
-      if (awaitsReAdmission(key ? conversations.get(key) : undefined)) {
-        return holdForGroup(
-          entry,
-          readySeen,
-          (attempts) =>
-            `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… awaits the Welcome of this device's re-admission (attempt ${attempts})`
-        );
-      }
       return failPermanently(entry, terminalId, 'evicted');
     }
 

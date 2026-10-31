@@ -95,6 +95,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       saveConversation: vi.fn().mockResolvedValue(undefined),
       addMessageToChat: vi.fn().mockResolvedValue(undefined),
       loadHistoryForConversation: vi.fn().mockResolvedValue(undefined),
+      // REQUIRED: every installed group is announced ready (`announceGroupReady` in the session).
+      onGroupReady: vi.fn(),
       log: vi.fn(),
       ...overrides,
     };

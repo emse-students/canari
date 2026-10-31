@@ -230,9 +230,10 @@ export interface RecoveryDeps {
   /**
    * The group just became sendable through an external join: the SAME seam a processed Welcome
    * raises (`sessionAuth`'s `announceGroupReady`), so the messages held for the group are resumed at
-   * once. Optional for a caller with no outbox; every session caller supplies it.
+   * once. REQUIRED, so the compiler names every caller: the session's bags pass
+   * `announceGroupReady`, the two built outside it pass `announceGroupReadyToSession`.
    */
-  onGroupReady?: (groupId: string) => void;
+  onGroupReady: (groupId: string) => void;
 }
 
 /**
@@ -857,7 +858,7 @@ export async function requestReAdd(
     // THE GROUP IS SENDABLE NOW, AND THIS PATH NEVER SAID SO: the row went `active` and nothing
     // resumed what the outbox held for it, so a message written while the device was out waited for
     // its own backoff timer (review, 2026-10-31). Raised whether or not the row moved - the group did.
-    deps.onGroupReady?.(groupId);
+    deps.onGroupReady(groupId);
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
     // very path also runs for a device that merely rotated its MLS identity and whose store, keyed

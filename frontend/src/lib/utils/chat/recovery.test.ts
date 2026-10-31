@@ -21,6 +21,7 @@ import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
 import { purgeLocalConversationRecord } from './groupActions';
 import { enumerateNotReadyGroups } from './notReadyRegistry';
+import { retireIfEvicted } from './eviction';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -75,6 +76,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
     externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
     forgetGroup: vi.fn(),
+    // A dropped state is checkpointed (`dropGroupState`) - the Remove half of a re-admission drops one.
+    persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     getDeviceId: vi.fn().mockReturnValue('self-device'),
     // Default = the server holds no PENDING row for this device, so no member owes it a Welcome and
     // the self-service external join is this device's to make. The rows are what separate the two
@@ -144,6 +147,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     setSelectedContact: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),
     deleteConversation: vi.fn().mockResolvedValue(undefined),
+    // REQUIRED on `RecoveryDeps`: a landed external join announces the group ready.
+    onGroupReady: vi.fn(),
     log: vi.fn(),
     ...overrides,
   } as any;
@@ -1011,6 +1016,50 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
     expect(deps.mlsService.getGroupUserMembers).toHaveBeenCalledTimes(1);
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A RE-ADMISSION WHOSE WELCOME NEVER COMES ENDS ON THE SERVER'S ANSWER (review of #2804, F1). The
+   * Remove half used to leave a `pending` row over the HELD evicted state, where this pass stands down
+   * ("already in WASM") - so nothing ever asked again and nothing told the user. The Remove half now
+   * drops the state, and the same row is the ordinary awaiting-Welcome one this pass ends.
+   */
+  it('the Remove half of a re-admission drops the state, so a server with no seat ends the row `removed`', async () => {
+    const notAMember = new ApiRefusalError(403, 'NOT_A_MEMBER', 'getGroupUserMembers failed (403)');
+    let held = new Set(['g1']);
+    const mlsService = declined({
+      getLocalGroups: vi.fn(() => [...held]),
+      forgetGroup: vi.fn((id: string) => {
+        held = new Set([...held].filter((g) => g !== id));
+      }),
+      isGroupActive: vi.fn().mockResolvedValue(false),
+      getGroupUserMembers: vi.fn().mockRejectedValue(notAMember),
+    });
+    const deps = makeDeps({
+      mlsService,
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
+    });
+
+    // The Remove commit of the re-admission this device asked for.
+    await retireIfEvicted({
+      mlsService,
+      conversations: deps.conversations,
+      groupId: 'g1',
+      evidence: 'remove-commit',
+      saveConversation: deps.saveConversation,
+      log: deps.log,
+      reAddInFlight: true,
+    });
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('pending');
+
+    // No Welcome; the next pass (the outbox's hold, the watchdog) reaches the server, which answers
+    // that this account holds no seat - and the roster refuses it.
+    await requestReAdd('g1', deps);
+
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('removed');
+    expect(mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
   });
 
   it('a seat the account list carries but does not answer skips the round, as the first read would (F3)', async () => {

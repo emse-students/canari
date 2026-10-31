@@ -1005,22 +1005,21 @@ describe('outbox flusher', () => {
   });
 
   /**
-   * THE RE-ADMISSION WINDOW (review, 2026-10-31). A re-admission is a Remove and then an Add, about
-   * three seconds apart. After the Remove the group is held, its epoch gap cleared - so
-   * `isGroupHealthy` answers yes - and `isGroupActive` answers no; `retireIfEvicted` has written the
-   * row `pending` because this device asked for the re-add. A message sent in that window was failed
-   * as `evicted`, which retired the row and lost the message the Welcome would have let through.
+   * THE RE-ADMISSION WINDOW (review, 2026-10-31; #2804 F1). A re-admission is a Remove and then an
+   * Add, about three seconds apart. The Remove half drops the evicted state and writes the row
+   * `pending` (`retireIfEvicted`), so a message sent in that window meets an UNSENDABLE group: it is
+   * held and the re-add asked - never failed as `evicted`, which retired the row and lost the message
+   * the Welcome would have let through. Both ends of the wait are answers, and neither is a clock.
    */
-  it('HOLDS a message sent while the row awaits re-admission, then sends it on the Welcome, with no timer', async () => {
+  it('HOLDS a message sent while the row awaits re-admission, then sends it the moment the Welcome lands, with no timer', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
-    let member = false;
-    const mlsService = makeMls({ active: async () => member });
+    let healthy = false;
+    const mlsService = makeMls();
     const requestReAdd = vi.fn().mockResolvedValue(undefined);
     const addMessageToChat = vi.fn().mockResolvedValue(undefined);
     const conversations = new SvelteMap<string, Conversation>([
       ['g1', convoWith('g1', ['m1'], 'pending')],
     ]);
-    const lines: string[] = [];
     const outbox = createOutbox(
       makeDeps({
         mlsService,
@@ -1028,8 +1027,7 @@ describe('outbox flusher', () => {
         conversations,
         requestReAdd,
         addMessageToChat,
-        isGroupHealthy: () => true,
-        log: (l: string) => lines.push(l),
+        isGroupHealthy: () => healthy,
       })
     );
 
@@ -1037,27 +1035,67 @@ describe('outbox flusher', () => {
 
     // Held: nothing on the wire, the entry kept with a clock, the row NOT retired, no notice.
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
     expect(storage._map.get('m1')!.attempts).toBe(1);
     expect(storage._map.get('m1')!.nextAttemptAt).toBeGreaterThan(Date.now());
     expect(conversations.get('g1')!.lifecycle).toBe('pending');
     expect(conversations.get('g1')!.messages[0].status).toBe('pending');
     expect(addMessageToChat).not.toHaveBeenCalled();
-    // A re-add is already in flight; one more would only stand down on the held group.
-    expect(requestReAdd).not.toHaveBeenCalled();
-    expect(lines).toContainEqual(expect.stringContaining('awaits the Welcome'));
 
     // A plain flush respects the backoff - which is why the Welcome must RESUME, not flush.
     await outbox.flush();
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
 
-    // The Welcome: the row goes active (`upsertConversation`), the group is announced ready.
-    member = true;
+    // The Welcome: the group installs, the row goes active (`upsertConversation`), and the group is
+    // announced ready - which resumes this entry at once, whatever its clock says.
+    healthy = true;
     conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'active' });
     await outbox.resumeGroup('g1');
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    outbox.dispose();
+  });
+
+  it('a re-admission whose Welcome never comes FAILS the held message visibly once the server proves no seat', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['m1'], 'pending')],
+    ]);
+    // The first pass finds a Welcome still owed; a later one reads no seat for this account and
+    // retires the row, as `stopRecovering` does on that proof.
+    let seat = true;
+    const requestReAdd = vi.fn(async () => {
+      if (!seat) conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'removed' });
+    });
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        requestReAdd,
+        isGroupHealthy: () => false,
+        log: (l: string) => lines.push(l),
+      })
+    );
+
+    await outbox.flush();
+    expect(storage._map.has('m1')).toBe(true);
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+
+    // The entry's own clock comes due (set, not waited for) and the next attempt asks again.
+    seat = false;
+    storage._map.get('m1')!.nextAttemptAt = 0;
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
+    expect(lines).toContainEqual(expect.stringContaining('removed - permanent failure'));
     outbox.dispose();
   });
 

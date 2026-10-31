@@ -62,7 +62,6 @@ import {
 } from '$lib/utils/chat/pendingGroupExits';
 import {
   membershipIsDurablyLost,
-  awaitsReAdmission,
   readLocalMembership,
   recordEviction,
   type EvictionEvidence,
@@ -82,6 +81,7 @@ import {
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { announceGroupReadyToSession } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
@@ -1903,16 +1903,6 @@ export function useConversations() {
     // Only `false` short-circuits. `null` means the local state could not say - a conversation whose
     // MLS group this device does not hold - and that is exactly the case the server can still answer.
     if (localMembership === false) {
-      // OUT, AND WAITING TO BE LET BACK IN: the row recorded this Remove as the first half of this
-      // device's own re-admission (`markAwaitingReAdmission`). Not a member right now - so a send
-      // that asks is refused - but not removed either: no notice, no `removed` on the composer, and
-      // nothing cached, because the Welcome a few seconds away makes the answer `true`.
-      if (awaitsReAdmission(convo)) {
-        ctx.log(
-          `[VERIFY] ${convo.id.slice(0, 8)}… - out of the group, awaiting the Welcome of this device's re-admission`
-        );
-        return false;
-      }
       cacheMembership(convo.id, false);
       return await surfaceRemoval(contactName, convo, 'membership-check', ctx);
     }
@@ -1978,6 +1968,7 @@ export function useConversations() {
               if (id) selectConversationWithCtx(id, ctx);
             },
             saveConversation: (name: string) => saveConversation(name, ctx),
+            onGroupReady: announceGroupReadyToSession,
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);

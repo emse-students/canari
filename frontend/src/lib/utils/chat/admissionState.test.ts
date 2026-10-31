@@ -76,6 +76,11 @@ describe('syncAdmissionFlags', () => {
  * `active` at boot, and the outbox then failed the next message as evicted.
  */
 describe('reconcileRestoredLifecycles', () => {
+  const mls = (active: () => Promise<boolean>) => ({
+    isGroupActive: vi.fn(active),
+    forgetGroup: vi.fn(),
+    persistCheckpoint: vi.fn(async () => {}),
+  });
   const named = (id: string, lifecycle: Conversation['lifecycle']): Conversation => ({
     ...row(lifecycle),
     id,
@@ -87,39 +92,44 @@ describe('reconcileRestoredLifecycles', () => {
     const out = await reconcileRestoredLifecycles({
       conversations,
       localGroups: new Set(['g1']),
-      mlsService: { isGroupActive: async () => true },
+      mlsService: mls(async () => true),
       log: () => {},
     });
     expect(out).toEqual({ demoted: [], promoted: ['g1'], awaiting: [] });
     expect(conversations.get('g1')?.lifecycle).toBe('active');
   });
 
-  it('keeps PENDING a row whose held group says this device is out - it awaits re-admission', async () => {
+  it('keeps PENDING a row whose held group says this device is out, and drops the evicted state', async () => {
+    // A re-admission awaiting its Welcome, written by a client that kept the evicted state: dropped,
+    // it is the ordinary awaiting-Welcome state the recovery ends - kept, nothing would.
     const conversations = new Map([['g1', named('g1', 'pending')]]);
+    const service = mls(async () => false);
     const out = await reconcileRestoredLifecycles({
       conversations,
       localGroups: new Set(['g1']),
-      mlsService: { isGroupActive: async () => false },
+      mlsService: service,
       log: () => {},
     });
     expect(out).toEqual({ demoted: [], promoted: [], awaiting: ['g1'] });
     expect(conversations.get('g1')?.lifecycle).toBe('pending');
+    expect(service.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(service.persistCheckpoint).toHaveBeenCalled();
   });
 
   it('promotes nothing when the membership cannot be read, and says so', async () => {
+    const unreadable = mls(async () => {
+      throw new Error('unreadable');
+    });
     const conversations = new Map([['g1', named('g1', 'pending')]]);
     const lines: string[] = [];
     const out = await reconcileRestoredLifecycles({
       conversations,
       localGroups: new Set(['g1']),
-      mlsService: {
-        isGroupActive: async () => {
-          throw new Error('unreadable');
-        },
-      },
+      mlsService: unreadable,
       log: (l) => lines.push(l),
     });
     expect(out.promoted).toEqual([]);
+    expect(unreadable.forgetGroup).not.toHaveBeenCalled();
     expect(conversations.get('g1')?.lifecycle).toBe('pending');
     expect(lines.some((l) => l.includes('could not be read'))).toBe(true);
   });
@@ -129,7 +139,7 @@ describe('reconcileRestoredLifecycles', () => {
     const out = await reconcileRestoredLifecycles({
       conversations,
       localGroups: new Set<string>(),
-      mlsService: { isGroupActive: async () => true },
+      mlsService: mls(async () => true),
       log: () => {},
     });
     expect(out.demoted).toEqual(['g1']);

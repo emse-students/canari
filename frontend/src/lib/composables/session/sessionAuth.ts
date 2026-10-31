@@ -199,6 +199,7 @@ import {
 } from '$lib/utils/chat/conversations';
 import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
 import { reconcileRestoredLifecycles } from '$lib/utils/chat/admissionState';
+import { setGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   registerOutbox,
   unregisterOutbox,
@@ -1901,6 +1902,8 @@ export async function loginImpl(
     // Message outbox: register the flusher before loading conversations so that
     // applyOutboxPendingStatuses can restore the "pending" status on restored messages.
     registerOutbox(makeOutboxDeps(ctx, cb));
+    // With the outbox it resumes: the recovery callers built outside the session reach it by name.
+    setGroupReadyAnnouncer((groupId) => announceGroupReady(ctx, cb, groupId));
 
     // Watch for connectivity returning. Registered on every session, not only the offline ones:
     // promoteOfflineSession no-ops on a session that already holds a token, and registering here
@@ -2268,7 +2271,7 @@ export async function loginImpl(
       missingKeys.push(...demoted);
       if (awaiting.length > 0) {
         cb.log(
-          `[INIT] ${awaiting.length} pending conversation(s) hold a group this device is out of - kept pending, awaiting re-admission: ${awaiting.map((k) => k.slice(0, 8)).join(', ')}`
+          `[INIT] ${awaiting.length} pending conversation(s) hold a group this device is out of - evicted state dropped, kept pending for the re-admission recovery: ${awaiting.map((k) => k.slice(0, 8)).join(', ')}`
         );
       }
       if (missingKeys.length > 0) {
@@ -3304,6 +3307,7 @@ export function tearDownLiveSession(
   reason: 'logout' | 'revoked' | 'lost'
 ): Promise<void> {
   unregisterOutbox();
+  setGroupReadyAnnouncer(null);
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
   unregisterOfflinePromotion();
