@@ -287,6 +287,22 @@ describe('the Remove half of our own re-admission drops the evicted state', () =
     expect(conversations.get('g1')!.lifecycle).toBe('pending');
   });
 
+  it('marks the row `pending` and issues its save BEFORE the state is forgotten, so no kill leaves an `active` row over the evicted state', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: true };
+    const order: string[] = [];
+    d.saveConversation.mockImplementation(async () => {
+      order.push('save');
+    });
+    d.mlsService.forgetGroup.mockImplementation(() => {
+      order.push(`forget while ${conversations.get('g1')!.lifecycle}`);
+    });
+
+    await retireIfEvicted(d);
+
+    expect(order).toEqual(['save', 'forget while pending']);
+  });
+
   it('drops nothing on a removal this device never asked for - the evicted state still opens its past', async () => {
     const conversations = new Map([['g1', convo('g1')]]);
     const d = { ...deps(async () => false, conversations), reAddInFlight: false };

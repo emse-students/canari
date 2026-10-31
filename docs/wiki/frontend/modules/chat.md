@@ -1283,8 +1283,11 @@ Four defects of one seam, found by a read-only review and fixed together:
   deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
   the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
   an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
-  rare and the inviter's history push covers. Drop before mark, so a kill between them leaves an
-  `active` row over no state, which the restore demotes to `pending` - the same end.
+  rare and the inviter's history push covers. **Mark before drop** (follow-up review): the drop's
+  checkpoint is `deferred`, so dropping first let a kill leave the row `active` over the unwritten
+  forget - the one pair the restore keeps, and the next send retired it. The mark writes the row
+  `pending` in memory synchronously and issues its save before the drop, so every pair a kill can
+  leave is one the restore ends.
 - **The boot restore undid that row.** It promoted any `pending` row whose group
   `getLocalGroups()` listed, and an evicted group stays listed. `reconcileRestoredLifecycles`
   (`admissionState.ts`) promotes on MEMBERSHIP (`isGroupActive === true`); `false` DROPS the held
@@ -1306,7 +1309,11 @@ Four defects of one seam, found by a read-only review and fixed together:
   requests, the debounced invitation sweep). The two `RecoveryDeps` built outside the session -
   `verifyCurrentUserMembership`'s direct-conversation repair and `startNewConversation`'s 1:1 repair
   (`groupCreation.ts`) - reach it through `groupReadyAnnouncer.ts`, which the session registers and
-  clears with the outbox; a join landing with no live session says so in a `warn` line.
+  clears with the outbox. They CAPTURE it once, when they build their deps
+  (`captureGroupReadyAnnouncer()`), and the captured one announces only while its own session is
+  still the live one: a join that lands after a sign-out or an account switch would otherwise resume
+  the NEXT session's outbox. That case, and a recovery started with no session, say so in a `warn`
+  line.
 
 Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
 recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no

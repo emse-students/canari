@@ -363,19 +363,25 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   // could not send or read anything after this Remove; the past it opened is stored decrypted
   // locally, and the Welcome installs on nothing, as a fresh join does.
   //
-  // DROPPED BEFORE THE ROW IS MARKED, so a kill between the two leaves an `active` row over no
-  // state - which the restore demotes to `pending`, the same end - and never a `pending` row over
-  // the evicted one. `deferred`: the commit path holds the MLS client mutex.
+  // THE ROW IS MARKED BEFORE THE STATE IS DROPPED (review of #2804). The `deferred` drop does not
+  // wait for its checkpoint, so dropping first let a kill land with the forget unwritten and the
+  // row still `active` over the evicted state - the one pair the restore keeps as it is, and the
+  // next send then retires the conversation as an eviction. `markAwaitingReAdmission` writes the row
+  // `pending` in memory synchronously and issues its save before the drop starts, so every pair a
+  // kill can leave is one the restore ends: `pending` over the evicted state is dropped there
+  // (`reconcileRestoredLifecycles`), `pending` over no state is the ordinary awaiting-Welcome row.
+  // `deferred`: the commit path holds the MLS client mutex.
   if (reAddInFlight) {
     const key = findConversationKeyByGroupId(rest.conversations, groupId);
     const row = key ? rest.conversations.get(key) : undefined;
     if (key && row && row.lifecycle !== 'removed') {
+      const marked = markAwaitingReAdmission({ ...rest, key });
       await dropGroupState(mlsService, groupId, {
         reason: "the Remove half of this device's own re-admission - awaiting the Welcome",
         checkpoint: 'deferred',
         log,
       });
-      await markAwaitingReAdmission({ ...rest, key });
+      await marked;
     }
     log(
       `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, state dropped, awaiting the Welcome`

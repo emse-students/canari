@@ -1,27 +1,49 @@
-import { announceGroupReadyToSession, setGroupReadyAnnouncer } from './groupReadyAnnouncer';
+import { captureGroupReadyAnnouncer, setGroupReadyAnnouncer } from './groupReadyAnnouncer';
 
 describe('groupReadyAnnouncer', () => {
-  afterEach(() => setGroupReadyAnnouncer(null));
-
-  it("reaches the live session's announcer, for the callers built outside the session", () => {
-    const announce = vi.fn();
-    setGroupReadyAnnouncer(announce);
-
-    announceGroupReadyToSession('group-1');
-
-    expect(announce).toHaveBeenCalledWith('group-1');
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    setGroupReadyAnnouncer(null);
+    warn.mockRestore();
   });
 
-  it('says so when no session is live, and calls the torn-down announcer no more', () => {
+  it('reaches the session live when the recovery was built, for the callers built outside it', () => {
     const announce = vi.fn();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     setGroupReadyAnnouncer(announce);
+
+    captureGroupReadyAnnouncer()('group-1');
+
+    expect(announce).toHaveBeenCalledWith('group-1');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a recovery started in one session never announces into the next', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    setGroupReadyAnnouncer(first);
+    const onGroupReady = captureGroupReadyAnnouncer();
+
+    // Sign-out and the next sign-in while the join is in flight.
     setGroupReadyAnnouncer(null);
+    setGroupReadyAnnouncer(second);
+    onGroupReady('group-1');
 
-    announceGroupReadyToSession('group-1');
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ended since'));
+  });
 
-    expect(announce).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('with no live session'));
-    warn.mockRestore();
+  it('a recovery built with no live session announces nothing when a session starts later, and says so', () => {
+    const onGroupReady = captureGroupReadyAnnouncer();
+    const later = vi.fn();
+    setGroupReadyAnnouncer(later);
+
+    onGroupReady('group-1');
+
+    expect(later).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('none at the start'));
   });
 });
