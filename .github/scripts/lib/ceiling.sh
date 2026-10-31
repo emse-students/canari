@@ -54,9 +54,25 @@
 # An image reference reduced to the name Dependabot and production both mean. The identity
 # provider's file spells `docker.io/library/postgres`, production's `postgres`; a table matched on
 # one spelling walks past the other, so both sides of every comparison go through this.
-ceiling_image_name() { # <image name>
-  local n="${1:-}"
-  n="${n#docker.io/}"
+#
+# ANY REGISTRY PREFIX GOES, not only `docker.io/`: `mirror.gcr.io/library/postgres` and
+# `index.docker.io/library/postgres` are postgres, and a name list matched on the short spelling
+# walked past both (review of #2779). A first segment is a registry when it carries a `.` or a `:`,
+# or is `localhost` - Docker's own rule. A digest and a tag are not part of the name either.
+ceiling_image_name() { # <image name or reference>
+  local n="${1:-}" first last
+  # A digest and a tag live in the LAST segment; `@nestjs/common` starts with `@` and is a name.
+  last="${n##*/}"
+  case "$last" in *@*) n="${n%@*}"; last="${n##*/}" ;; esac
+  case "$last" in *:*) n="${n%:*}" ;; esac
+  case "$n" in
+    */*)
+      first="${n%%/*}"
+      case "$first" in
+        *.* | *:* | localhost) n="${n#*/}" ;;
+      esac
+      ;;
+  esac
   n="${n#library/}"
   printf '%s' "$n"
 }
@@ -68,9 +84,15 @@ prod_image_major() {
   awk -v want="$(ceiling_image_name "$1")" '
     $1 == "image:" {
       ref = $2
-      name = ref; sub(/:.*$/, "", name); sub(/^docker\.io\//, "", name); sub(/^library\//, "", name)
+      gsub(/^["\047]|["\047]$/, "", ref)
+      # The same reduction as `ceiling_image_name`: digest, tag, any registry, then `library/`.
+      name = ref; sub(/@.*$/, "", name)
+      last = name; sub(/^.*\//, "", last)
+      if (index(last, ":")) sub(/:[^:\/]*$/, "", name)
+      if (match(name, /^[^\/]*[.:][^\/]*\//) || match(name, /^localhost\//)) name = substr(name, RLENGTH + 1)
+      sub(/^library\//, "", name)
       if (name != want) next
-      tag = ref; sub(/^[^:]*:/, "", tag); sub(/@.*$/, "", tag); sub(/^v/, "", tag)
+      tag = ref; sub(/@.*$/, "", tag); sub(/^.*\//, "", tag); sub(/^[^:]*:?/, "", tag); sub(/^v/, "", tag)
       if (match(tag, /^[0-9]+/)) { print substr(tag, 1, RLENGTH); exit }
     }
   ' "${2:-$CEILING_PROD_COMPOSE}" 2>/dev/null
@@ -156,6 +178,62 @@ $(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
 EOF
 }
 
+# EVERY SERVICE OF A COMPOSE FILE THAT NAMES AN IMAGE, as `<data-mount count> <image reference>`,
+# for `ceiling_image_may_cross_major`. It is apart from `compose_stateful_images`, which answers a
+# narrower question (NAMED volumes, for the coverage and dev-gap tests), because this one must FAIL
+# CLOSED, and the first draft did not (review of #2779):
+#   - the indentation is read off the file, so a file indented four spaces per level parses too;
+#   - a mount is DATA unless it is a bind mount marked read-only: a named volume (hyphenated or
+#     not), an anonymous one (`- /var/lib/mysql`), a writable bind (`- ./pgdata:/var/...`), quoted
+#     or not. In the long syntax only `type: bind` with `read_only: true` is exempt, and an inline
+#     list (`volumes: [...]`) that is not empty counts as data because nothing here parses it.
+#   - `tmpfs` is not a mount here: it is empty at every start, so there is no old data to refuse.
+ceiling_compose_image_data() { # <compose file>
+  awk '
+    function indent(l) { match(l, /^ */); return RLENGTH }
+    function unq(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v); return v }
+    function flush_item(   v, n, part, bind, ro) {
+      if (!initem) return
+      v = unq(item)
+      if (v ~ /^[a-z_]+:([ \t]|$)/) {
+        if (!(v ~ /(^|[ \t])type:[ \t]*["\047]?bind/ && v ~ /read_only:[ \t]*true/)) data++
+      } else {
+        n = split(v, part, ":")
+        bind = (n >= 2 && part[1] ~ /^(\.|\/|~|\$)/)
+        ro = (n >= 3 && part[n] ~ /(^|,)ro(,|$)/)
+        if (!(bind && ro)) data++
+      }
+      initem = 0; item = ""
+    }
+    function flush_service() {
+      flush_item()
+      # The count FIRST: an image reference may hold spaces (`${TAG:?TAG is required}`).
+      if (image != "") print data, image
+      image = ""; data = 0; invol = 0; keyind = -1
+    }
+    BEGIN { svc = -1; keyind = -1 }
+    /^[ \t]*(#|$)/ { next }
+    { ind = indent($0); line = substr($0, ind + 1); sub(/[ \t]+#.*$/, "", line) }
+    ind == 0 { flush_service(); inservices = (line ~ /^services:[ \t]*$/); svc = -1; next }
+    !inservices { next }
+    svc < 0 { svc = ind }
+    ind <= svc { flush_service(); next }
+    keyind < 0 { keyind = ind }
+    invol {
+      if (line ~ /^-/ && ind >= volind && (itemind < 0 || ind == itemind)) {
+        flush_item(); itemind = ind; initem = 1; item = line; sub(/^-[ \t]*/, "", item); next
+      }
+      if (initem && ind > itemind) { item = item " " line; next }
+      flush_item(); invol = 0
+    }
+    ind != keyind { next }
+    line ~ /^image:/ { v = line; sub(/^image:[ \t]*/, "", v); image = unq(v); next }
+    line ~ /^volumes:[ \t]*$/ { invol = 1; volind = ind; itemind = -1; next }
+    line ~ /^volumes:[ \t]*\[/ { if (line !~ /\[[ \t]*\]/) data++; next }
+    END { flush_service() }
+  ' "$1"
+}
+
 # MAY A CONTAINER IMAGE MOVE ACROSS A MAJOR WITH NO PERSON IN THE LOOP? Exit 0 only when it is
 # PROVEN stateless; every other answer, unknown included, is no.
 #
@@ -164,26 +242,28 @@ EOF
 # the two compose files it read. A stateful image added to the dev or local stack, or a new
 # datastore under a name nobody typed, crossed a major as a "stateless" image. So the question is
 # turned round: an image may cross a major only when it is not a known datastore AND every watched
-# compose file (`CEILING_WATCHED_COMPOSES`) could be read AND none of them gives it a named volume.
-# A Dockerfile base (`node`, `rust`) is in no compose file and holds no data directory, so it passes;
-# `adminer`, `nginx` and `coturn` mount no named volume and pass. A missing file fails closed.
+# compose file (`CEILING_WATCHED_COMPOSES`) could be read AND parsed to at least one image AND none
+# of them mounts data for it (`ceiling_compose_image_data`). A Dockerfile base (`node`, `rust`) is in
+# no compose file and holds no data directory, so it passes; `adminer` and `nginx` mount read-only
+# configuration and pass. A missing file, or one that parses to no image at all, fails closed.
 ceiling_image_may_cross_major() { # <image name>
-  local want f name vols
+  local want f ref vols rows
   want="$(ceiling_image_name "${1:-}")"
-  want="${want%@sha256*}"
   case "$want" in
     '' | postgres | redis | garage | dxflrs/garage) return 1 ;;
   esac
   for f in $CEILING_WATCHED_COMPOSES; do
     [ -r "$f" ] || return 1
-    while read -r name vols; do
-      [ -z "$name" ] && continue
-      name="$(ceiling_image_name "${name%@sha256*}")"
-      if [ "$name" = "$want" ] && [ "${vols:-0}" -gt 0 ]; then
+    rows="$(ceiling_compose_image_data "$f")"
+    # A readable file that yields no image is a parse that failed, not a file with nothing in it.
+    [ -n "$rows" ] || return 1
+    while read -r vols ref; do
+      [ -z "$ref" ] && continue
+      if [ "$(ceiling_image_name "$ref")" = "$want" ] && [ "${vols:-0}" -gt 0 ]; then
         return 1
       fi
     done <<EOF
-$(compose_stateful_images "$f")
+$rows
 EOF
   done
   return 0

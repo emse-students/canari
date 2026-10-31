@@ -1404,15 +1404,28 @@ held, but for the wrong reason, and the reason it would have given was wrong too
   compose file, so it read 18 out of the bumped file and saw no crossing. It only ever refused
   `postgres 15 -> 18` on #309 because that pull request changed a DIFFERENT file from the one the arm
   read. The job now checks out `github.event.pull_request.base.sha`. `dependency-ceiling.test.sh`
-  runs #2742's exact trailer against both readings.
+  runs #2742's exact trailer against both readings. **That checkout also means the job runs the
+  BASE's scripts**, so a pull request cannot change the gate that judges it: its own changes to
+  `lib/ceiling.sh` apply from the next pull request after it merges (`test-ci-scripts` still tests
+  them on the pull request itself).
 
 **Which images may cross a major unattended is an allowlist.** `ceiling_image_may_cross_major` in
 `.github/scripts/lib/ceiling.sh` lets an image cross a major only when it is PROVEN stateless:
 
-- it is not a named data store (`postgres`, `redis`, `garage`);
-- every watched compose file could be read (production, dev, local and the identity provider, in
-  `CEILING_WATCHED_COMPOSES`);
-- and none of those files gives the image a named volume.
+- it is not a named data store (`postgres`, `redis`, `garage`), with any registry prefix removed
+  first (`mirror.gcr.io/library/postgres` is postgres);
+- every watched compose file could be read AND parsed to at least one image (production, dev,
+  local and the identity provider, in `CEILING_WATCHED_COMPOSES`);
+- and none of those files mounts data for the image (`ceiling_compose_image_data`). Every mount is
+  data except a bind mount marked read-only: a named volume, an anonymous one, a writable bind,
+  quoted or not, short or long syntax, at any indentation.
+
+The first draft counted only `- <word>:` lines at two-space indentation. A review of #2779 found
+that it read a hyphenated volume, a quoted entry, an anonymous volume, a writable bind and a
+four-space file as stateless. Each of those is now a fixture in `ceiling.test.sh`, driven through
+the branch the way `dependency-ceiling.sh` is. **One cost is accepted:** a branch for the local
+stack is compared with PRODUCTION's file (`ceiling_compose_from_ref`). So a data store that only
+the local stack runs has no readable major, and even its minor is refused.
 
 Before this, the arm matched the three names. A data store added to the dev or local stack, or one
 under a name nobody typed (`mariadb`, `valkey`), crossed a major like any stateless image. A
