@@ -19,6 +19,8 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import type { ReelClip } from '$lib/reels/reelCapture';
   import { m } from '$lib/paraglide/messages';
+  // Registered like every media with sound, so a call (`callSoundGate`) and another media pause it.
+  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
 
   interface Props {
     clip: ReelClip;
@@ -97,6 +99,7 @@
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
+        use:arbitratePlayback
         {src}
         autoplay
         loop
