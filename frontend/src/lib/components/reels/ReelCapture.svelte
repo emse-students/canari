@@ -130,7 +130,7 @@
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
    * (`postCameraOpener`); a cap not read yet (offline) keeps them too - a photo needs neither.
    */
-  const canFilm = $derived(!rules.photoOnly && hasMicrophone && limits !== null);
+  const canFilm = $derived(!rules.photoOnly && hasMicrophone && capMs !== null);
   /** Set by the teardown: an answer arriving after it (the discard question) acts on nothing. */
   let destroyed = false;
   /** The "photos only" notice was given for this session's microphone refusal. */
@@ -210,9 +210,19 @@
   async function loadLimits() {
     limitsFault = null;
     try {
-      limits = await getReelLimits();
+      const read = await getReelLimits();
+      if (captureCapMs(read, destination) === null) {
+        // NO FALLBACK TO THE 90 s REEL CAP: an answer without the chat cap is a server this writer
+        // cannot film for. Said at ERROR, and the camera keeps its photos.
+        console.error(
+          `[reel-capture] the server served no chat cap: a ${destination} take cannot film`
+        );
+        limitsFault = 'refused';
+        return;
+      }
+      limits = read;
       console.debug(
-        `[reel-capture] cap ${limits.maxDurationMs} ms, chat cap ${limits.chatMaxDurationMs ?? 'none'} ms (${destination})`
+        `[reel-capture] cap ${limits.maxDurationMs} ms, chat cap ${limits.chatMaxDurationMs} ms (${destination})`
       );
     } catch (err) {
       limitsFault = classifyLimitsFault(refusalStatus(err));

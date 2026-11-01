@@ -76,7 +76,12 @@ async function render(d: PublishReelDeps, onclose = vi.fn(), extra: Record<strin
       target,
       props: {
         clip: { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' },
-        limits: { maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 },
+        limits: {
+          maxDurationMs: 90_000,
+          chatMaxDurationMs: 60_000,
+          retentionDays: 30,
+          warningWindowDays: 7,
+        },
         onclose,
         deps: d,
         ...extra,
