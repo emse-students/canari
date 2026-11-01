@@ -297,7 +297,7 @@ else
   fail "the run did not verify"
 fi
 
-if STUB_LOG="$TMP/short.log" STUB_STREAM="$TMP/short.stream" STUB_PROJECT=canari-dev STUB_USERS=3 \
+if STUB_LEDGER="$stub_ledger" STUB_LOG="$TMP/short.log" STUB_STREAM="$TMP/short.stream" STUB_PROJECT=canari-dev STUB_USERS=3 \
   PATH="$TMP/bin:$PATH" bash "$SCRIPT" </dev/null >"$TMP/short.out" 2>&1; then
   fail "a reset that left the wrong number of users reported success"
 else
