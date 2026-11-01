@@ -549,3 +549,71 @@ alone would therefore be refilled within a day; the fix is the revoke path above
 measured that day. 220 of the 292 belong to a user with a live session on another device, and 1 sent
 a frame in the last 7 days, so a fourth pass must exclude what shows life. **Not run: a fourth pass
 is the owner's decision.**
+
+## Fourth pass - 2026-11-01, and the procedure to run it again
+
+**Run by hand on 2026-11-01** on an allowlist of **286** devices measured read-only that day: the
+292 above, minus those that showed life in the last 7 days.
+
+| What | Count |
+| --- | --- |
+| Revoked through the route, every call answered 200 | **285** |
+| Skipped by the per-device re-check, because a session or a push token had appeared (it came back) | 1, which keeps its 3 queued rows, 5 seats and 1 key package |
+| Queued rows deleted, in total | **71 271** |
+| Pauses on the load guard (1-minute load above 6) | 1, after 84 devices; the run then resumed |
+| Re-count after the run, for the 285 | 0 queued rows, 0 seats, 0 key packages; 285 `revoked_device` rows written |
+
+A full-row backup of every affected table, filtered to the allowlist, was taken just before the run
+and is kept privately, outside the repository.
+
+**The skipped device is the evidence that this stays a hand procedure.** It had no session and no
+push token for days, it was on a measured allowlist, and it came back the same day. A scheduled reaper
+was built for this population and closed unmerged (#2880, owner, 2026-11-01): at the GC's 90 days the
+hourly `detectStaleDevices` / `cleanupStaleDevices` already collect the same devices before it runs,
+and inside them no durable fact the server holds proves that a device was REPLACED rather than merely
+closed (`deviceName` is set only by a manual rename; `device_signature_key.firstSeenAt` exists only for
+devices enrolled after migration 027, with no backfill). So the GC keeps the silent devices, this
+procedure keeps the orphans, and a daily count watches for the next regrowth
+([chat-delivery](../services/chat-delivery.md#orphan-devices-the-gcs-blind-spot-counted-daily-cleaned-by-hand)).
+
+### The procedure, re-runnable
+
+The `[ORPHAN_DEVICES]` line of the delivery log (daily) says when to consider it: it turns WARN above
+43 devices, the smallest population a pass was ever run on. A pass is the owner's decision each time.
+
+1. **Measure the allowlist, read-only**, and save it outside the repository (user id, device id, rows,
+   seats). The predicate: queued rows, no session row, no push token, not revoked, and no life in the
+   last 7 days.
+
+   ```sql
+   SELECT q."recipientId" AS "userId", q."deviceId", count(*) AS rows
+     FROM queued_message q
+    GROUP BY q."recipientId", q."deviceId"
+   HAVING NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = q."deviceId")
+      AND NOT EXISTS (SELECT 1 FROM push_token t WHERE t."deviceId" = q."deviceId")
+      AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                       WHERE r."userId" = q."recipientId" AND r."deviceId" = q."deviceId")
+      -- no life in 7 days: no frame sent, no commit sent, no key package published
+      AND NOT EXISTS (SELECT 1 FROM queued_message m
+                       WHERE m."senderDeviceId" = q."deviceId" AND m."createdAt" > now() - interval '7 days')
+      AND NOT EXISTS (SELECT 1 FROM mls_commit_log c
+                       WHERE c."senderDeviceId" = q."deviceId" AND c."createdAt" > now() - interval '7 days')
+      AND NOT EXISTS (SELECT 1 FROM key_package k
+                       WHERE k."deviceId" = q."deviceId" AND k."createdAt" > now() - interval '7 days')
+      AND NOT EXISTS (SELECT 1 FROM one_time_key_package o
+                       WHERE o."deviceId" = q."deviceId" AND o."createdAt" > now() - interval '7 days');
+   ```
+
+2. **Back up first**: every row of every table the route purges (`queued_message`, the seats in
+   `dm_device_group_memberships`, `key_package`, `one_time_key_package`), filtered to the allowlist,
+   kept privately. The restore is the first pass's ([the backup](#the-backup-and-how-to-restore-it)).
+3. **Call the route, never a `DELETE`**: `DELETE /api/mls/devices/:userId/:deviceId` from inside the
+   delivery container, one device at a time with a 1 s pause, the arguments passed through the
+   environment (`bun -e` drops the first positional argument - the third pass's slip).
+4. **Re-check each device right before its call** (no session, no push token, not revoked) and skip it
+   if the predicate no longer holds - that is how the fourth pass kept the device that came back.
+5. **Stop** on any status other than 200, and on a purge that removed no queued row.
+6. **Load guard**: pause while the 1-minute load is above 6, resume below it.
+7. **One device first**, checked in the database, the Redis routing set and the logs; then the rest.
+8. **Re-count afterwards**: 0 queued rows, 0 seats and 0 key packages for every revoked device, one
+   `revoked_device` row each, and the rows of every OTHER device unchanged.
