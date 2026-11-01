@@ -1,4 +1,5 @@
 import { onAppScreenChange } from '$lib/utils/appForeground';
+import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -88,11 +89,20 @@ function suspendIfIdle(ctx: AudioContext, reason: string): void {
  * scheduling call and makes no sound. `resume()` may stay pending or reject when no gesture has ever
  * happened, which is the browser's decision and is logged, not reported.
  *
+ * A CALL HOLDS THE SOUND (`callSoundGate`): while one rings out, rings in or runs, an `app` tone is
+ * not played at all - no output is opened for it - and the skip is logged. Only the call's own ring
+ * passes `call`.
+ *
  * @param name What the tone is, for the log line.
  * @param score Builds and schedules the tone's oscillators.
+ * @param purpose `app` for every app sound (message, send, read); `call` for the call's own ring.
  */
-export function playTone(name: string, score: ToneScore): void {
+export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call' = 'app'): void {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return;
+  if (purpose === 'app' && callHoldsAppSound()) {
+    Log.d('AUDIO', `${name} tone silenced - a call holds the app's sound`);
+    return;
+  }
   armScreenWatch();
   if (!context) {
     Log.d('AUDIO', `opening the tone output for ${name}`);

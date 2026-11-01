@@ -650,7 +650,8 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
   visible to the reader the same way ([D38 as built](#d38-republication-as-built-2026-10-04)). The
   per-post `post_audiences` rules 6b first built are gone. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
-  with its author. Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
+  with its author - and, since WP-F5, a NON-anonymous one to the author's accepted followers
+  ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)). Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
 - **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
   one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
   feeds), `/search`, `/:postId`, `/:postId/calendar-link` and `/calendar-link/:eventId` apply
@@ -737,7 +738,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Population | Space | Sees student content | State |
 | --- | --- | --- | --- |
 | Student or alumnus (no distinction) | formation x campus (an alumnus keeps the former one) | what their spaces and memberships reach | built |
-| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, not built: [backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | next |
+| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, built 2026-10-31 as WP-F5: [as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)) | built |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
 spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
@@ -750,7 +751,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); never an institution; an admin only by id. Decided 2026-10-25, not built: also the author's ACCEPTED followers, whatever their space, and a member's repost with the author's consent ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | built |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id. Decided 2026-10-25, not built: a member's repost with the author's consent (WP-F6, [backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -769,7 +770,7 @@ box no longer defines anything.
 | Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader - **NOT BUILT: no promo or contributor filter exists in code yet**, so nothing narrows either branch |
 | Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
-| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); until WP-F5 an accepted follow fills Suivis and opens nothing a shared space did not already open |
+| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); an ACCEPTED follow opens the person's non-anonymous personal posts and lives across spaces, in Suivis (WP-F5) |
 | Moderation | global (D23) |
 
 ### Decided last (user, 2026-10-04)
@@ -1384,6 +1385,85 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 | 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
 
 Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+
+### WP-F5 - accepted followers read across spaces, as built (2026-10-31)
+
+Decisions 4 and 5 of the [follow requests](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)
+(user, 2026-10-25, reconfirmed 2026-10-31): a PERSONAL post, and a personal LIVE, are visible to
+the author's ACCEPTED followers whatever their space, campus or formation; the opening reaches
+nobody else.
+
+- **One disjunct, in the personal branch only**: `acceptedFollowerOfAuthorSql`
+  (`spaces/reader-spaces.ts`) is ORed into the personal branch of `postVisibleToUserSql` and of
+  `liveVisibleToUserSql`, never the association branch. It holds when an `accepted` `user_follows`
+  row (`acceptedFollowSql`) links the reader to the author, NO block stands between them either
+  way (checked here rather than trusted to the best-effort severing, so a left-over row cannot
+  re-open anything), and both stand on the same side of the review cohort's boundary.
+- **Never an anonymous post** (`NOT COALESCE(post.anonymous, false)`): a follower reading an
+  anonymous post would learn who wrote it - the same reason the Suivis arm already excluded
+  anonymous posts ("the leak is membership, not the name") and D38b never carries one. A live has no
+  anonymous form.
+- **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
+- **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
+  (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
+  Suivis arm, the Associations arm (where it changes nothing: a personal post is there only through
+  a republication the reader sees), the search, a post by id, its comments, reactions and votes,
+  the D38b request menu, the announcement (`announceRecipientsSql`) and the newly-reached rules -
+  counts the follower.
+- **Monotone in republications, unchanged**: the disjunct reads no republication, so
+  `NEWLY_REACHED_BY_REPUBLICATION_SQL` still computes "after and not before"; an accepted follower
+  already sees the post and is never newly reached. `newlyReachedByPersonalRepublicationSql`'s
+  "never a follower before the first announce" term is now implied by it for every post D38b can
+  carry, and kept as the statement that keeps the two notification paths apart.
+- **Notifications follow from the predicate**: the announcement sweep already narrows a personal post
+  to the author's accepted followers who SEE it, and the live push (`liveAudienceSql`) to followers
+  who may watch it; both now reach the cross-space follower, and neither touches an anonymous post.
+- **Revocation is the row**: unfollowing (`leave`), "Retirer" (`removeFollower`) or a block
+  deletes or overrides the follow, and the next read no longer counts it; the first two also drop
+  the feed cache, as a block already did, so no cached Suivis page outlives them.
+- **A block's left-over follow cannot come back (F2 of the review)**: the block's severing is
+  best-effort and harmless while the block stands (the predicate checks the block itself), so the
+  durable record that a severing is owed is THE BLOCK ROW: `UserBlocksService.unblock`
+  (core-service) severs the pair, both directions, BEFORE deleting it, and a severing that fails
+  refuses the unblock with a 503 and leaves the block in place. Nothing can recreate a follow in
+  between - an ask and an acceptance are both refused across a block inside their own statement.
+  After an unblock the two people follow each other only through a new request.
+- **The feed gate admits a follower (F3 of the review)**: `IN_FEED_AUDIENCE_SQL` also admits the
+  holder of one accepted follow, so a staff member with a campus, no cursus and no
+  membership is not pushed a post the gate then refuses (proved through `FeedAudienceGuard`).
+- **Grandfathered follows open like any other (F1 of the review, owner 2026-11-01: "Ouvrir à tous
+  les abonnés")**: migration 114 recorded every pre-request follow as accepted with
+  `acceptedAt = createdAt`, though nobody answered it. The owner decided they open across spaces
+  exactly like an answered follow, so no predicate tells them apart (a switch prepared for the
+  other answer was deleted unflipped). The privacy policy says so, and each person may prune their
+  followers list; `follower-visibility.integration.spec.ts` proves such a follow opens a post and
+  a live.
+- **No one-time notice (owner, 2026-10-31: "Non, ouvrir directement")**: the backlog planned a
+  notice to every person before the opening, so the grandfathered followers could be pruned first;
+  the owner waived it. The opening ships as is; the followers list pages to its end (below).
+- **The D38b request menu counts the follower, deliberately (2026-10-31)**: a cross-space follower
+  who may post as an association that can ask sees the "ask to carry" entry on a post they read as a
+  follower, and may ASK. Nothing widens before the AUTHOR consents, exactly as for a reader of the
+  same space.
+- **The three follow lists page by cursor (a precondition of the opening)**: the inbox, the
+  followers and the sent requests answer at most `FOLLOW_PAGE_MAX` (100) rows a page, newest first,
+  ordered `(instant DESC, id DESC)`; each entry carries an opaque `cursor` (`follows/follow-cursor.ts`:
+  PostgreSQL's own text of the instant plus the row id - never a JS `Date`, which drops the
+  microseconds) and `?after=<cursor>` starts the next page right after it, so a row answered or
+  removed while the list is read shifts nothing. `offset` is gone (older clients only ever sent 0).
+  The client appends pages behind a "Voir plus" button (`nextFollowCursor`, `appendFollowPage`);
+  a list of 250 is proved reachable whole, server and client.
+- **Proof**: `spaces/follower-visibility.integration.spec.ts` (real PostgreSQL: accepted / pending /
+  none x same space / other space x personal / anonymous / association post, the live, the
+  announcement and the live push, a block either way with the row left behind, a removal, an
+  unfollow, a read grant, Tout against the default for every non-follower, monotone newly-reached);
+  `lives.integration.spec.ts` (an accepted cross-space follower is pushed, listed and let in until a
+  block or a removal; a pending one is not); `posts.service.visibility.spec.ts` (which feed arms
+  carry the follower disjunct); `review-cohort.integration.spec.ts` (a follow across the cohort
+  boundary opens nothing, either way); `follow-requests.integration.spec.ts` (250 rows per list,
+  a removal between two pages, a forged cursor, the unfollow's cache drop);
+  `core-service/src/users/user-blocks.service.spec.ts` (sever before lifting, 503 keeps the block). `reader-spaces` and `personal-republications` PostgreSQL specs were
+  re-pointed where the opening changes who sees or is newly reached.
 
 ### The review cohort - store reviewers in a world of their own (2026-10-31)
 

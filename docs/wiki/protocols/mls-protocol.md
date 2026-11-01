@@ -1385,7 +1385,7 @@ disarmed, so it is merged`) and the commit is MERGED; it then reaches the device
 entry, so it is written and reported as `[UNINVITED_ENTRY]` exactly as described above. Key groups
 are still classified `Open` where they are registered. **No conversation is classified `Closed` any
 more** (`closeConversationAdmission` and its two call sites are deleted); a group a dev build closed
-keeps the classification, which no longer refuses anything. The `MlsError::AdmissionRefused` /
+loses that classification at the next load (see below). The `MlsError::AdmissionRefused` /
 `DecryptErrorKind::AdmissionRefused` variants, the `admission-refused` client kind, the freeze
 (`admissionFreeze.ts`, localStorage `canari_admission_frozen` - now read by nothing, so a freeze a dev
 build wrote deafens nothing) and its announcement are deleted. Pinned by
@@ -1395,13 +1395,22 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 
 **What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
 
-1. **The emission side first.** A user holding no leaf ASKS a member instead of entering alone,
-   mirroring the further-device door, and never in a 1:1 - so the legitimate paths above stop
-   producing the commit before any member refuses it.
-2. **An unfreeze path** - whatever a refusal leaves, a person or a fact lifts it; nothing is permanent.
-3. **Never drop frames.** A refusal may stop a recovery; it may not ACK a conversation's messages away.
-4. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
-   measured before a refusal is re-armed.
+1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
+   measured before anything else is built.
+2. **The emission side.** A user holding no leaf ASKS a member instead of entering alone, mirroring
+   the further-device door, and never in a 1:1 - so the legitimate paths above stop producing the
+   commit before any member refuses it. Each path is pinned by a named test that it is merged today
+   (`admission_policy.rs`: a 1:1 peer whose KeyPackage was skipped, a user whose only device was
+   revoked and swept, an only leaf evicted on a standing seat).
+3. **An unfreeze path** - whatever a refusal leaves, a person or a fact lifts it; nothing is permanent.
+4. **Never drop frames.** A refusal may stop a recovery; it may not ACK a conversation's messages away.
+
+**What stays of the mechanism, and what is pruned** (review of #2817). The setter stays - the app
+still opens every key group it registers, and that classification is what the fix-forward re-arms on
+(the owner's "the mechanism stays"). `forget_group` now forgets a group's classification, so the map
+is bounded by the groups held; a `closed` classification persisted by a dev build is dropped at load,
+and the dev build's `canari_admission_frozen` localStorage key is removed at session setup
+(`setupMessageHandler`), so a dev device stops logging the verdict on legitimate joins.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
 (`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
