@@ -2158,11 +2158,20 @@ Three things the seam carries, each load-bearing:
   strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
   "is the app in front" in the builder would silence a foregrounded app showing another conversation.
 
-**The plain builder is not deleted - it is now web-only** (and desktop, which reaches
-`tauri-plugin-notification` through the same composable). They have nothing else, and they need
-nothing else: neither registers with a push service - every command in `commands/push.rs` is
+**The plain builder is not deleted - it serves the web, the desktop, and an iPhone in the
+foreground** (corrected 2026-11-01: this paragraph said web and desktop only, and an iPhone 12 on
+`1.5.4-alpha.1` showed plugin banners in front - the extension builds every banner of an app in the
+background, and `CanariShowMessageNotification` returns early in front, so the plugin is the one
+builder an iPhone in the foreground has for a socket frame). The web and the desktop need nothing
+else: neither registers with a push service - every command in `commands/push.rs` is
 `#[cfg(any(target_os = "android", target_os = "ios"))]` and the frontend ships no service worker -
-so on both the socket frame is the only trigger there has ever been. (This paragraph named a
+so on both the socket frame is the only trigger there has ever been. **On iOS the plugin banner is
+headed like the extension's** (`pluginMessageBanner`, `nativeNotification.ts`): the group or the
+salon is the title, a direct message is titled by its sender. `tauri-plugin-notification` 2.7.0
+carries no subtitle on iOS (its `Notification` reaches `UNMutableNotificationContent` as title, body,
+thread and summary only), so the sender opens the body (`notif_group_message_line`) where the
+extension writes a subtitle; a true subtitle needs a native builder for the foreground, which this
+path does not have. (This paragraph named a
 `desktop.rs` until 2026-09-22; the only file of that name in the tree is a vendored keystore plugin
 patch, and no desktop notification code has ever lived in one.)
 
@@ -2194,6 +2203,44 @@ dismissed came back every time they opened the app (`G2`, 2026-09-18).
 peer's ARCHIVE being merged into an empty store, which `batchAddMessages` counted as arrivals; the
 caller now says which it is (`MessageBatchOrigin`, required). Two mechanisms because the two paths
 know different things - only the native side ever saw the push.
+
+#### The iOS half: a message is announced once, by id (2026-11-01)
+
+**Measured on an iPhone 12, `1.5.4-alpha.1`.** A tap on a banner from the killed state launched the
+app; the cold start drained three frames the extension had already decrypted and presented (a push
+acknowledges nothing, so the rows were still queued), and `notifyInbound` - an app on `/posts`,
+showing the list - raised a second banner for each: "K2 group killed 0724" twice. A background tap
+did the same to "T1 group bg tap" on the resume after it. Android was spared by the record above;
+iOS had no equivalent, and the app's own decision had no memory at all - its only "seen" test was
+the in-memory map, which a cold start empties.
+
+`notifiedMessages.ts` is that memory: **a durable set of message ids per account** (`localStorage`,
+`ACCOUNT_KEY.notifiedMessages`, the 2000 most recent), asked by `notifyInbound` on both inbound paths
+and claimed in the same tick, so two decisions about one message cannot both pass. Two writers:
+
+- **The app**, for every banner it decides to raise.
+- **The extension, through the push cache.** Every entry the NSE writes to `fcm_message_cache.ndjson`
+  is a message it decrypted for a banner. `consumeFcmCache` records the ids it takes, before the
+  ack erases them; and because the take runs AFTER the drain that decides - at a cold start and at a
+  resume, where `CanariDrainAppGroupFcmCache` only carries the App Group's lines over at the app's
+  activation - the decision also reads the ids still in the cache, the App Group's included
+  (`push_cache_message_ids`, `commands/push.rs`, read-only). **iOS only**: Android's native side
+  writes an entry for a frame it decrypts in the foreground too, where it suppresses its banner and
+  the app's decision is the only one, so an entry there proves nothing about a banner.
+
+Not the shade (`getDeliveredNotifications`): a tapped or swiped notification is gone from it, which
+is exactly the T1 case. Not `sentAt`: the sender's clock orders nothing in a group.
+
+**And the cold start's first pull now waits for the conversation rows.** The same run showed the
+drain BEFORE the restore: `Message for absent conversation ... - retry after restore` three times,
+`3 frame(s) left unacknowledged ... absent-conversation: 3`, then `[RESTORE] 8 conversation row(s)
+seeded` and a second pull. The login opens the socket before the restore (the barrier needs it -
+see `sessionAuth`), and `openGatewayConnection` pulled the mailbox right after it. The post-connect
+catch-up (settle, pull, `onCaughtUp`) is now handed to `IMlsService.deferUntilConversationRowsExist`
+while no row exists, and run by the restore's `notifyConversationRowsSeeded` - which returns it, so
+the history phase starts after that drain instead of pulling from its own barrier first - or by
+`notifyConversationsRestored` when a restore failed before its rows. An order, not a delay; a
+reconnect, whose rows exist, runs it where it always did.
 
 #### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 

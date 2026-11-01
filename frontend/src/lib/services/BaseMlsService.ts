@@ -2142,14 +2142,57 @@ export abstract class BaseMlsService implements IMlsService {
     return this.messageScheduler.waitUntilIdle();
   }
 
+  /**
+   * Whether the conversation rows exist - set by the first {@link notifyConversationRowsSeeded} or
+   * {@link notifyConversationsRestored} of this service, and never cleared: a reconnect reuses the
+   * map the restore filled, and a session that ends takes the service with it.
+   */
+  private conversationRowsExist = false;
+
+  /** What {@link deferUntilConversationRowsExist} holds until the rows exist, in arrival order. */
+  private workOwedToConversationRows: Array<() => Promise<void>> = [];
+
+  /** @inheritdoc */
+  deferUntilConversationRowsExist(work: () => Promise<void>): boolean {
+    if (this.conversationRowsExist) return false;
+    this.workOwedToConversationRows.push(work);
+    return true;
+  }
+
+  /**
+   * Marks the rows as existing and runs the work held for them, sequentially, each failure said
+   * PER PIECE so one cannot discard the others. Resolves when all of it has run; never rejects.
+   */
+  private runWorkOwedToConversationRows(trigger: string): Promise<void> {
+    this.conversationRowsExist = true;
+    const owed = this.workOwedToConversationRows;
+    this.workOwedToConversationRows = [];
+    if (owed.length === 0) return Promise.resolve();
+    console.log(
+      `[QUEUE] ${trigger}: running the ${owed.length} post-connect catch-up(s) held until the conversation rows existed`
+    );
+    return (async () => {
+      for (const work of owed) {
+        try {
+          await work();
+        } catch (e) {
+          console.error(`[QUEUE] a catch-up held until the rows existed failed (${trigger}):`, e);
+        }
+      }
+    })();
+  }
+
   /** @inheritdoc */
   notifyConversationsRestored(): void {
+    void this.runWorkOwedToConversationRows('conversations restored');
     this.refetchFramesLeftBehind('absent-conversation', 'conversations restored');
   }
 
   /** @inheritdoc */
-  notifyConversationRowsSeeded(): void {
+  notifyConversationRowsSeeded(): Promise<void> {
+    const owed = this.runWorkOwedToConversationRows('conversation rows seeded');
     this.refetchFramesLeftBehind('absent-conversation', 'conversation rows seeded');
+    return owed;
   }
 
   /** @inheritdoc */

@@ -982,8 +982,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // to wait for every conversation's history replay. Phase 2 is safe against what this delivers
   // because each of its writes below MERGES into the row instead of replacing it, and each archive
   // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
+  //
+  // AWAITED: at a login it returns the catch-up the socket held until these rows existed (settle,
+  // pull, drain - `deferUntilConversationRowsExist`), so phase 2 starts after that drain instead of
+  // pulling the mailbox from its own barrier first.
   ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
-  ctx.mlsService.notifyConversationRowsSeeded();
+  await ctx.mlsService.notifyConversationRowsSeeded();
 
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared

@@ -65,6 +65,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn(),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       generateKeyPackage: vi.fn(),
       getDeviceMemberships: vi.fn(),
       getLocalGroups: vi.fn().mockReturnValue([]),
@@ -97,6 +99,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn().mockResolvedValue(undefined),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
@@ -174,6 +178,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn().mockResolvedValue(undefined),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
@@ -220,6 +226,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn().mockResolvedValue(undefined),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn(async () => {
         steps.push('settle');
       }),
@@ -246,11 +254,56 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(steps).toEqual(['connected=true', 'settle', 'fetch', 'caught-up']);
   });
 
+  it('at a login, pulls nothing before the conversation rows exist - the restore runs the held catch-up', async () => {
+    // iPhone 12, `1.5.4-alpha.1`, 2026-11-01: this pull ran before the restore, and every frame it
+    // drained was refused `absent-conversation`. Held, it runs when the rows exist, in its order.
+    const steps: string[] = [];
+    let held: (() => Promise<void>) | null = null;
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      deferUntilConversationRowsExist: (work: () => Promise<void>) => {
+        held = work;
+        return true;
+      },
+      settleUnresolvedCommits: vi.fn(async () => {
+        steps.push('settle');
+      }),
+      fetchPendingMessages: vi.fn(async () => {
+        steps.push('fetch');
+      }),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+    };
+    const opened = await openGatewayConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: (v: boolean) => steps.push(`connected=${v}`),
+      onCaughtUp: () => steps.push('caught-up'),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      onStrandedSeat: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    expect(opened).toBe(true);
+    expect(steps).toEqual(['connected=true']);
+    expect(held).not.toBeNull();
+    await held!();
+    expect(steps).toEqual(['connected=true', 'settle', 'fetch', 'caught-up']);
+  });
+
   it('purges WASM and notifies for deleted groups (deletedAt)', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
@@ -305,6 +358,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn().mockResolvedValue(undefined),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
@@ -346,6 +401,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       connect: vi.fn().mockRejectedValue(new Error('gateway down')),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn(),
       fetchPendingMessages: vi.fn(),
       onDisconnect: vi.fn(),
@@ -392,6 +449,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
         .mockRejectedValue(new TransportFailureError('failed to lookup address information')),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       onDisconnect: vi.fn(),
     };
     const log = vi.fn();
@@ -430,6 +489,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       }),
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
+      // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
+      deferUntilConversationRowsExist: () => false,
       settleUnresolvedCommits: vi.fn(async () => {
         order.push('settle');
       }),

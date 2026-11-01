@@ -47,6 +47,8 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
+import { recordNotified, unnotifiedOf } from '$lib/utils/chat/notifiedMessages';
+import { pushCacheMessageIds } from '$lib/utils/chat/fcmCache';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -574,6 +576,11 @@ export function useMessaging() {
     sentAt: number,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /**
+     * The ids of the messages the ONE banner stands for - the key "already notified" is asked by
+     * (`notifiedMessages.ts`). One for a live frame, every inbound one for a catch-up flush.
+     */
+    messageIds: readonly string[],
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
     salonLevelRead = false
   ): void {
@@ -643,6 +650,7 @@ export function useMessaging() {
             isOwn,
             sentAt,
             covers,
+            messageIds,
             true
           );
         });
@@ -697,6 +705,20 @@ export function useMessaging() {
     // said ONCE by `sendSystemNotification`, so silence here is now attributable to that one line
     // rather than to nothing. `default` is not blocked and still narrates: asking is real there.
     if (systemNotificationsBlockedAnnounceOnce()) return;
+    // A MESSAGE IS ANNOUNCED ONCE, WHATEVER CARRIED IT HERE. A cold start or a resume pulls again
+    // every row this device never acknowledged - and a push the iOS extension decrypted and
+    // presented acknowledges nothing - so the same message arrives a second time as an "arrival"
+    // (iPhone 12, `1.5.4-alpha.1`, 2026-11-01: "K2 group killed 0724" presented twice). Asked by
+    // MESSAGE ID against a durable record, and claimed in the same tick, so two decisions about one
+    // message cannot both pass (`notifiedMessages.ts`).
+    const unannounced = unnotifiedOf(ctx.userId, messageIds);
+    if (messageIds.length > 0 && unannounced.length === 0) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already notified on this device; nothing raised.`
+      );
+      return;
+    }
+    recordNotified(ctx.userId, unannounced);
     // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
     // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
     // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message
@@ -717,8 +739,19 @@ export function useMessaging() {
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
-    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
-    void resolveNotificationSenderName(senderId, convo).then((senderName) =>
+    void (async () => {
+      // WHAT THE iOS EXTENSION ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
+      // cache here, at the decision: the take that records it runs after this drain
+      // (`pushCacheMessageIds`). Empty off iOS.
+      const presented = await pushCacheMessageIds();
+      if (unannounced.length > 0 && unannounced.every((id) => presented.has(id))) {
+        console.log(
+          `[NOTIF] Inbound in ${conversationKey} - the notification extension already presented it; nothing raised.`
+        );
+        return;
+      }
+      // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+      const senderName = await resolveNotificationSenderName(senderId, convo);
       ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
         // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
         // plain notification, it asks the native builder for the SAME one a push would raise. See
@@ -731,8 +764,8 @@ export function useMessaging() {
         mentionsMe,
         sentAt,
         covers,
-      })
-    );
+      });
+    })();
   }
 
   /**
@@ -1111,7 +1144,8 @@ export function useMessaging() {
       isSystem,
       isOwn,
       resolvedTimestamp.getTime(),
-      1
+      1,
+      [newMsg.id]
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -1384,7 +1418,8 @@ export function useMessaging() {
         false,
         lastInbound.timestamp.getTime(),
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
-        inbound.length
+        inbound.length,
+        inbound.map((msg) => msg.id)
       );
     }
 

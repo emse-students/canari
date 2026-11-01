@@ -94,6 +94,11 @@ export const ACCOUNT_KEY = {
    */
   deviceNotices: (userId: string) => `canari_device_notices:v1:${userId}`,
   /**
+   * `notifiedMessages.ts`: the message ids this account was already notified of on this device -
+   * by this app or by the iOS notification extension - so no message is announced twice. Ids only.
+   */
+  notifiedMessages: (userId: string) => `canari_notified_messages:v1:${userId}`,
+  /**
    * `feedStoreEpoch.ts`: the account's stored-feed epoch. Called with `''` it is the prefix a
    * sign-out enumerates to end EVERY account's epoch.
    */
@@ -194,6 +199,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.dmReadMarks(userId),
     ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.deviceNotices(userId),
+    ACCOUNT_KEY.notifiedMessages(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),

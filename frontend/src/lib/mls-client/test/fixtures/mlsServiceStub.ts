@@ -69,6 +69,8 @@ export function createMlsServiceStub(
     // is what a stub that publishes nowhere honestly did. A test about a base that LANDS overrides.
     // Default: no commit of this device has an unknown outcome.
     settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+    // Default: the conversation rows exist, so a connection's catch-up runs where it is asked.
+    deferUntilConversationRowsExist: vi.fn(() => false),
     settleUnresolvedCommitFromLog: vi.fn().mockResolvedValue('none'),
     setOwedInvitationReplanner: vi.fn(),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),

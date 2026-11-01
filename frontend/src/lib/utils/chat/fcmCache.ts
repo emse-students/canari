@@ -30,6 +30,8 @@ import type { ConversationIdentity } from '$lib/utils/chat/conversations';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isIosTauriRuntime } from '$lib/utils/appVersion';
+import { recordNotified } from '$lib/utils/chat/notifiedMessages';
 
 /**
  * Shape of one entry in fcm_message_cache.ndjson (written by Android Kotlin and the
@@ -210,6 +212,31 @@ interface TakenFile {
   bytes: number;
 }
 
+/**
+ * The ids of the messages the iOS notification extension decrypted for a banner and the app has
+ * not taken yet - read from the cache files, nothing moved (`push_cache_message_ids`).
+ *
+ * ASKED AT THE DECISION, NOT LEARNED FROM THE TAKE: on a cold start and on a resume alike the drain
+ * that decides a banner runs before the take, so the ids the take records come too late for it.
+ *
+ * iOS ONLY, AND THAT IS NOT A SHORTCUT. On iOS the extension builds the banner for every alert push
+ * it decrypts, so an entry is a banner shown. Android's native side writes an entry for a frame it
+ * decrypts in the FOREGROUND too, where it suppresses its banner and the app's own decision is the
+ * only one - an entry there proves nothing about a banner, and its builder de-duplicates on its own
+ * (`canari_alerted_messages`). Empty elsewhere, and empty - said - when the native side does not
+ * answer: a duplicate banner is the cost, never a missing one.
+ */
+export async function pushCacheMessageIds(): Promise<Set<string>> {
+  if (!isIosTauriRuntime()) return new Set();
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return new Set(await invoke<string[]>('push_cache_message_ids'));
+  } catch (e) {
+    console.warn('[NOTIF] the push cache did not answer - no message is known presented:', e);
+    return new Set();
+  }
+}
+
 /** Nothing read, nothing written - the shape every early return owes. */
 const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
 
@@ -255,6 +282,16 @@ async function consumeFcmCacheOnce(
     return NOTHING;
   }
   const entries = take.entries;
+  // WHAT THE EXTENSION PRESENTED IS RECORDED AS NOTIFIED BEFORE ANYTHING ELSE, whatever the
+  // injection then does with each entry: the take is the moment these ids stop being readable from
+  // the cache (`pushCacheMessageIds`), and a redelivery after it must still find them
+  // (`notifiedMessages.ts`). iOS only - see `pushCacheMessageIds` for why Android is not.
+  if (isIosTauriRuntime()) {
+    recordNotified(
+      userId,
+      entries.map((e) => e.messageId).filter((id): id is string => typeof id === 'string')
+    );
+  }
   /**
    * Deletes what was taken - called once the injection has run, never before. What it closes is a
    * process death between the take and the writes; an entry whose write FAILED is logged and not

@@ -1428,6 +1428,7 @@
   "notif_call_body_named": "{caller} is calling you",
   "notif_call_body_unknown": "A contact is calling you",
   "notif_new_message": "New message",
+  "notif_group_message_line": "{sender}: {body}",
   "chat_forward_error_conversation_missing": "Conversation not found.",
   "chat_forward_error_nothing_to_forward": "Nothing to forward.",
   "chat_forward_error_reel": "A CanaReel cannot be forwarded.",
