@@ -59,6 +59,7 @@ COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
   + (SELECT count(*) FROM posts WHERE \"images\" <> '[]'::jsonb)
   + (SELECT count(*) FROM posts p WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.\"comments\") c WHERE c ? 'media'))
   + (SELECT count(*) FROM channel_messages WHERE \"attachments\" <> '[]'::jsonb)
+  + (SELECT count(*) FROM channel_messages m WHERE to_jsonb(m) ->> 'reelMediaId' IS NOT NULL)
   + (SELECT count(*) FROM association_documents);"
 
 # Applies every strip. $1 = name of the guarded sql function, $2 = database, $3 = log prefix.
@@ -188,6 +189,10 @@ apply_copy_strips() {
   # cosmetic oddity in a copy; an orphaned reply is a broken tree in one.
   "$sql" "UPDATE posts SET \"comments\" = coalesce((SELECT jsonb_agg(c - 'media' ORDER BY ord) FROM jsonb_array_elements(\"comments\") WITH ORDINALITY AS t(c, ord)), '[]'::jsonb) WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(\"comments\") c WHERE c ? 'media');" "$database"
   "$sql" "UPDATE channel_messages SET \"attachments\" = '[]'::jsonb WHERE \"attachments\" <> '[]'::jsonb;" "$database"
+  # A salon message's DECLARED reel file (migration 122, RC-14): an id of an object the copy never
+  # received. Guarded, like the Lydia columns above, because a production older than 122 has no such
+  # column; the residue count reads it through `to_jsonb` for the same reason.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'channel_messages' AND column_name = 'reelMediaId') THEN UPDATE channel_messages SET \"reelMediaId\" = NULL WHERE \"reelMediaId\" IS NOT NULL; END IF; END \$\$;" "$database"
   # `association_documents` is DELETED rather than nulled, because its `mediaId` is NOT NULL: the row
   # has no way to express "the file is gone", nothing holds a foreign key to it (checked), and a row
   # whose entire content is a download that 404s is not a state a real user can be in.

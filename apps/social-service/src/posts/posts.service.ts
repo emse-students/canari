@@ -42,6 +42,7 @@ import {
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
+import type { ReelPurgeReason } from '../internal/reel-media';
 import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 import { publicationTime } from './publication-time';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
@@ -1897,9 +1898,18 @@ export class PostsService {
    * the pencil is drawn from, so a visible control and an accepted write cannot disagree.
    *
    * `mayAct` rather than its batch form: one post, one association.
+   *
+   * @returns in which capacity the caller acts: `publisher` (the post's author, or its association's
+   *   officer) or `moderator` (a content moderator or a global admin acting on someone else's post) -
+   *   what a reel's delete tells the media service (reels-in-chat 15.4: a moderator's purge erases a
+   *   file the take also sent to conversations; the author's releases the post's hold alone).
    */
-  private async assertMayManage(post: Post, userId: string, isGlobalAdmin: boolean): Promise<void> {
-    if (isGlobalAdmin) return;
+  private async assertMayManage(
+    post: Post,
+    userId: string,
+    isGlobalAdmin: boolean
+  ): Promise<'publisher' | 'moderator'> {
+    if (isGlobalAdmin) return post.authorId === userId ? 'publisher' : 'moderator';
     if (!userId) throw new UnauthorizedException('Not your post');
     const isPublisher = post.associationId
       ? await this.associationsService.mayAct(
@@ -1915,13 +1925,14 @@ export class PostsService {
       );
       throw new UnauthorizedException('Not your post');
     }
+    return isPublisher ? 'publisher' : 'moderator';
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */
   async deletePost(postId: string, userId: string, isAdmin: boolean) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    await this.assertMayManage(post, userId, isAdmin);
+    const capacity = await this.assertMayManage(post, userId, isAdmin);
     // Read before the row goes: its media ids are only in the row.
     const orphanedMedia = [...postMediaIds(post), ...commentMediaIds(post.comments)];
     await this.postRepo.remove(post);
@@ -1929,7 +1940,11 @@ export class PostsService {
     // a failure here costs is objects kept past the moment they stopped being referenced, which
     // the next `release` or a manual sweep still reaches.
     if (post.kind === 'reel') {
-      await this.discardReelBlobs(post, orphanedMedia);
+      await this.discardReelBlobs(
+        post,
+        orphanedMedia,
+        capacity === 'moderator' ? 'moderation' : 'author'
+      );
     } else {
       await this.mediaRetention.release(orphanedMedia);
     }
@@ -1938,20 +1953,30 @@ export class PostsService {
 
   /**
    * The blobs of a reel that was just deleted by hand: deleted NOW, as the worker would at expiry,
-   * because a reel's storage is the whole reason it expires.
+   * because a reel's storage is the whole reason it expires. `reason` says by whom: the publisher's
+   * delete (`author`) releases the post's hold, so a file the take also sent to conversations stays
+   * for them until its 30 days (D-postdelete); a moderator's (`moderation`) erases it everywhere
+   * (reels-in-chat 15.4).
    *
    * Whatever is not confirmed gone (`failed`, or an unreachable media service) falls back to the
    * idle clock through `release` - the row no longer exists, so the worker will never come back for
    * it, and an object left in class `reel` would be exempt from the sweep for ever. `refused` is a
    * blob that was not the uploader's: left alone on purpose and logged.
    */
-  private async discardReelBlobs(post: Post, allMediaIds: string[]): Promise<void> {
+  private async discardReelBlobs(
+    post: Post,
+    allMediaIds: string[],
+    reason: Extract<ReelPurgeReason, 'author' | 'moderation'>
+  ): Promise<void> {
     const items = [
       ...postMediaIds(post).map((mediaId) => ({ mediaId, ownerId: post.authorId })),
       ...commentMediaOwners(post.comments),
     ];
+    this.logger.log(
+      `[REEL] delete of ${post.id} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
+    );
     try {
-      const results = await this.mediaRetention.purgeReelBlobs(items);
+      const results = await this.mediaRetention.purgeReelBlobs(items, reason);
       const notGone = items
         .filter(({ mediaId }) => (results[mediaId] ?? 'failed') === 'failed')
         .map(({ mediaId }) => mediaId);

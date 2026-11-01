@@ -507,24 +507,30 @@ are for one engineer including tests, in days.
 | RC-11 | *Later*: prepare while the member reviews | measured battery cost on discarded takes | 1.5 | RC-5 |
 | **RC-12** | **The "Envoyer à..." sheet** (15.1, 15.8): the tab's review action, `ReelSendSheet` with "Publier sur CanaReels" first, the list source and its permission filter, the search, multi-select and the server's target cap, the hand-over to `ReelPublishSheet` when the feed row is ticked, i18n, accessibility | component tests: the feed row is first and alone reproduces today's path byte for byte; a read-only or muted salon is not listed; the cap; Back returns to the take; a press writes ONE take and N sends (asserted on the outbox fake) | 3 | RC-13 (to send); RC-8 for the salon rows |
 | **RC-13** | **The multi-target outbox** (15.2, 15.7): the take row and N send rows written in one transaction, the take withdrawn when no send names it (durable reference, no counter), per-send failure and retry, the "expired before it was sent" refusal, the sent-take record and "Supprimer partout", the encoder lease shared with `publishReel`; the take ADOPTING the publish step's upload (`awaitsPublish`, the ref written before the post, the chat hold before the first send - 15.5); **RC-5's single-target entry becomes the one-send case** (one path) | the RC-5 kill-at-each-stage suite re-run with 3 sends, plus: a kill between the take and its sends (impossible by the transaction, asserted), one send refused for good while two go, a cancel of one send keeps the take, the last cancel releases the session and deletes the blob, a send held past its hint fails for good; feed + chats: ONE upload on the fake server, a post refused after the upload still sends the chats, a publish step left before its upload makes the take upload its own | 5 | RC-5, RC-14 |
-| **RC-14** | **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**an additive migration, APPROVED by the owner 2026-10-30**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
+| **RC-14** | **BUILT 2026-11-01 ([section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01)).** **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**an additive migration, APPROVED by the owner 2026-10-30**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
 **Total for the first usable version (RC-0 to RC-9): about 21-23 engineer-days; send-to-many
 (RC-12 to RC-14 and the RC-6/RC-9 amendments) adds about 15.** The ordering puts the
 two server/contract packages (RC-1, RC-2) first because everything else is blind without them, and the
 pipeline (RC-5) before the UI polish because a reel that cannot survive a weak network is a feature
 that works in the office.
 
-**What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30).** Built and
+**What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30, re-read against
+the owner's decisions of 2026-11-01, D-salons-later and D-sheet-after in 9.1).** Built and
 merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
 `prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01), and (2) the session-leak P2 (the
-durable release mark of section 14, 2026-11-01). Owed, in this order:
-(3) RC-14 then **RC-13 - before the switch, not after: once a reel is written in the field, a
+durable release mark of section 14, 2026-11-01). Built: (3) RC-14 (section 16, 2026-11-01), deployed
+on both estates before any client creates a hold. Owed, in this order:
+(3b) **RC-13 - before the switch, not after: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
-since a shared blob can vanish under any tile); (5) RC-8 with RC-14's allowlist, or the salons left
-out of both entries until it lands; (6) the readers at the `minClientVersion` floor. **RC-12 (the
-sheet) may follow the switch**: the in-conversation camera is a complete writer on its own, and the
-sheet only adds targets to the same outbox shape. RC-9 closes both.
+since a shared blob can vanish under any tile); (5) **the salons stay out of the writer until RC-8
+lands (D-salons-later)**: the switch turns on for DMs and groups, a salon keeps its photo-only camera
+(`reelMessages = !isChannel`, section 13), so RC-8 is NOT a precondition of the switch; (6) the
+readers at the `minClientVersion` floor. **RC-12 (the sheet) follows the switch, in the NEXT release
+(D-sheet-after)**: the first visible version is "film from a conversation, send to that
+conversation" - the in-conversation camera is a complete writer on its own, and the sheet only adds
+targets to the same outbox shape. **The switch is turned on in a PRE-RELEASE, read on both bench
+phones (the Mi 9T and the iPhone 12), before any stable carries it.** RC-9 closes both.
 
 **Release shape.** The reader (RC-1 contract + RC-6 tile, so every client can DRAW a reel message and
 its tombstone) ships before the writer (RC-4 camera entry), the order used for Graine v2 and the
@@ -608,6 +614,8 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
 | D-delete-one | "Supprimer pour tout le monde" on a take sent to several conversations | **That conversation's message only**, and the file only when it was the take's last send; **"Supprimer partout" is a separate action, offered on the sending device** | the owner, 2026-10-30 (the recommended option, Q2) | 15.7 |
 | D-postdelete | The author deletes the feed post of a take also sent to chats | **The chat copies stay until their 30 days**: the delete releases the post's hold only; "Supprimer partout" remains the gesture that ends everything | the owner, 2026-10-30 (the recommended option, Q4) | 15.7 |
 | D-photo | A PHOTO taken in the camera tab | **Also goes through "Envoyer à..."**: an ordinary post and/or ordinary images in the chats | the owner, 2026-10-30 (the recommended option, Q3) | 15.1; the tab's photo publish step |
+| D-salons-later | Which conversations the writer switch opens first | **DMs and groups first; the salons stay photo-only until RC-8 lands** - the option section 7 already allowed ("or the salons left out of both entries until it lands") | the owner, 2026-11-01 | 7 ("What must exist before the switch": RC-8 is no longer a precondition) |
+| D-sheet-after | What the first visible version is | **"Film from a conversation, send to that conversation"**; the "Envoyer à..." sheet (RC-12, on the main camera tab: "Publier" / send to conversations) follows in the NEXT release. **The switch is turned on in a pre-release read on the bench phones before a stable** | the owner, 2026-11-01 | 7 (RC-12 follows the switch, one release later) |
 
 **What the save button changes elsewhere.** Forwarding stays not offered (it copies the `MediaRef`,
 so the CEK). A save writes the DECRYPTED video to the gallery through the plugin that already saves a
@@ -893,6 +901,9 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
   goes through "Envoyer à..." too (15.7, 15.1). **The salon `mediaId` migration is APPROVED** (15.4).
   Every question of 15.9 is answered.
 
+**The server half (RC-14) is built** (2026-11-01, [section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01));
+the client halves (RC-12, RC-13, the RC-6 amendment) are not.
+
 **What this breaks in the sections above, on purpose.** Until now a reel message was filmed inside
 ONE conversation (section 1) and its blob served that conversation alone: 2.2 and media-service
 justify the sender's `DELETE` by "a reel message cannot be forwarded, so no other conversation can
@@ -1025,6 +1036,14 @@ last one goes (RC-14):
   `chat-reel` (which every build since RC-2 sweeps at 30 days by age), and the post claim accepts
   `chat-reel` -> `reel` when it finds a chat hold. No client creates a hold before that server is
   deployed on both estates.
+- **Rollback hazard, the post half:** an old social-service with an old media-service ends a
+  published reel the only way they know - a `reel-purge` that DELETES. On the author's post delete
+  or on the post's retention, a `reel` file that also carries a chat hold is then deleted outright,
+  and the conversations it was sent to read `410` before their 30 days. An old social-service beside
+  the NEW media-service is safe (it names no reason, and a file a live chat hold keeps has its post
+  hold released and is kept - the [legacy shim](../../legacy-compatibility.md)). Both halves are why no client creates a hold
+  before RC-14 is on both estates, and why a rollback past RC-14 once holds exist must take both
+  services back together, knowingly.
 
 ### 15.4 A moderator's delete in one place erases the file everywhere
 
@@ -1184,3 +1203,60 @@ sender's own fan-out. **Decided by the owner on 2026-10-30, the recommended opti
 | Q3 | A PHOTO taken in the tab: the same "Envoyer à..." sheet? | **Yes**: an ordinary post and/or ordinary images in the chats (D-photo, 15.1) |
 | Q4 | Does the author's delete of the feed post also erase the copies sent in chats? | **No**: the chat copies stay until their 30 days; "Supprimer partout" remains the gesture that ends everything (D-postdelete, 15.7) |
 | M1 | The migration of 15.4: "the salon message row records the reel's `mediaId` so a moderator only deletes what is in their salon" | **"Oui" - APPROVED** (additive, a nullable column on `channel_messages`) |
+
+## 16. What the shared-file server package (RC-14) built (2026-11-01)
+
+The server half of section 15, so RC-13 has something to call. **Nothing sends to it yet**: the
+writer switch is off and no client creates a hold, and this build must be on both estates before one
+does (15.3, the rollback hazard). The mechanism is on
+[media-service](../../services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01),
+the only copy; what each piece is for:
+
+- **media-service HOLDS** (`post`, `chat {heldAt, dueAt}`), read by one function; an entry with no
+  written holds reads them from its class, so the index needs no migration. The class stays written,
+  DERIVED from the holds, for the stats and for an older build.
+- **`POST /api/media/chat-reel/:id/hold`** - the take's chat hold before its first send (15.2):
+  owner-only, idempotent, on a `reel-pending`, `chat-reel` or `reel` of the caller's; moves a
+  `reel-pending` to `chat-reel`; answers `{dueAt}`; charges the daily budget once, at the hold.
+- **The claim** keeps a chat hold (`chat-reel` -> `reel`, both holds).
+- **`reel-purge` carries its REASON**: social-service's post delete sends `author` for the
+  publisher and `moderation` for a moderator or an admin acting on someone else's reel; the reel
+  worker sends `retention`. `author`/`retention` answer `released` for a file a chat still holds, and
+  social-service reads that as done (the row goes, nothing is put on the idle clock). A body with NO
+  reason is an older social-service during a deploy (the
+  [legacy shim](../../legacy-compatibility.md)): the old delete, or, for a file a live chat hold
+  keeps, the post hold released and `refused` answered.
+- **Every delete writes its tombstone before awaiting the store**, so a hold or a claim placed during
+  the await meets the tombstone and refuses; a failed delete restores the entry for the retry. A
+  lapsed chat hold keeps nothing: not counted as shared, re-placed by a new take, refused by the
+  salon purge.
+- **The sender's `DELETE /api/media/chat-reel/:id`** releases the chat hold, the file only with the
+  last hold (15.7).
+- **The salon declaration**: `POST .../channels/:id/messages` accepts `reelMediaId` (a UUID, else
+  `CHANNEL_REEL_MEDIA_ID_INVALID`), stored on `channel_messages."reelMediaId"` (migration 122,
+  APPROVED by the owner 2026-10-30, M1). An ordinary column of the entity, written by the send's own
+  INSERT inside its transaction: the deploy applies migrations before it replaces the services, so no
+  build naming the column runs without it.
+- **The moderator's purge** (`deleteChannelMessage`): a delete by someone other than the author, who
+  holds `channel.moderate` in the salon's community, takes the declaration from the row it loads (by
+  id AND salon) and, after the delete commits and the salon is told, calls `internal/chat-reel-purge`
+  for the ROW's author - in the background, never holding the answer, tracked with the fan-outs so
+  a SIGTERM waits for it. The media service refuses a file that author did not upload or that no
+  live chat hold keeps. Every failure is logged (`[CHANNEL_REEL_PURGE]`) and never keeps the
+  message; the file then lasts until its chat hold lapses.
+- **`chatReelMaxTargets`** (15) in `GET /api/posts/reel-limits`, for RC-12's sheet.
+
+**Tests**: `media.service.chat-holds.spec.ts` (a published-and-sent file survives its post's author
+delete and its post's retention and lives on its chat hold alone, survives its 30-day chat hold while
+the post holds it, goes with the last hold and at once on either moderation purge, `410` after; a
+held `reel-pending` not swept at 24 h; the hold route's owner, idempotence, budget and refusals; the
+sender's release; the salon purge's owner and hold checks; both delete-during-await races, the
+failed delete's restore, the no-reason shim, the lapsed hold), `media.controller.reel-purge.spec.ts`;
+social-service `channel.service.spec.ts` (the declaration's write and refusal, the purge's caller,
+its order after the answer and its failures), `posts.service.reels.spec.ts` and `reel-retention.scheduler.spec.ts` (the reasons,
+`released`), `reel-rules.spec.ts`, and `channel-reel-purge.integration.spec.ts` on a real PostgreSQL
+(migration 122 twice; salon S's moderator cannot purge a file only salon T names; a lying declaration
+of another member's file is refused; the author's own delete purges nothing).
+
+**Owed**: the bench run against a real media-service over HTTP (with RC-2's); the salon SEND of a reel
+(RC-8, after the switch per D-salons-later); RC-13, the client that calls the hold route.

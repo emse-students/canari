@@ -11,6 +11,7 @@ import { BadRequestException } from '@nestjs/common';
 import { assertCreateKindShape, assertReelEditShape } from './reel-rules';
 import {
   CHAT_REEL_MAX_DURATION_MS,
+  CHAT_REEL_MAX_TARGETS,
   REEL_MAX_DURATION_MS,
   isExpiredReel,
   reelLimits,
@@ -136,5 +137,10 @@ describe('reelLimits - the numbers a client reads', () => {
     });
     expect(CHAT_REEL_MAX_DURATION_MS).toBe(60_000);
     expect(CHAT_REEL_MAX_DURATION_MS).toBeLessThan(REEL_MAX_DURATION_MS);
+  });
+
+  it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {
+    expect(reelLimits().chatReelMaxTargets).toBe(CHAT_REEL_MAX_TARGETS);
+    expect(CHAT_REEL_MAX_TARGETS).toBe(15);
   });
 });
