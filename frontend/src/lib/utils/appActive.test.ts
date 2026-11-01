@@ -79,13 +79,29 @@ describe('the page asks whether the iPhone app is active', () => {
     expect(errors).toHaveBeenCalledTimes(1);
   });
 
-  it('asks on install and on every visibilitychange', async () => {
+  it('asks on install, on every visibilitychange, and on every window focus (an inactive-only return changes no visibility)', async () => {
     const ask = vi.fn(async () => true);
     const uninstall = installIosActiveQuery(ask);
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(ask).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(new Event('focus'));
+    expect(ask).toHaveBeenCalledTimes(3);
     uninstall();
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(ask).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(new Event('focus'));
+    expect(ask).toHaveBeenCalledTimes(3);
+  });
+
+  it('a lost YES after Control Center is recovered on focus, with no visibility change', async () => {
+    let uikit = false;
+    const uninstall = installIosActiveQuery(async () => uikit);
+    await new Promise((r) => setTimeout(r, 0));
+    told(false); // Control Center pulled down: told.
+    uikit = true; // Pushed away again: UIKit is active, but the told YES is lost.
+    expect(isIosAppInactive()).toBe(true);
+    window.dispatchEvent(new Event('focus'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(flag()).toBe(true);
+    expect(isIosAppInactive()).toBe(false);
+    uninstall();
   });
 });

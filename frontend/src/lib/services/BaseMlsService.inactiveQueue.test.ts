@@ -178,6 +178,79 @@ describe('a queued frame while the iPhone app is inactive', () => {
     expect(pushNow).not.toHaveBeenCalled();
   });
 
+  describe('a released group holds its live frames behind the release pull', () => {
+    /** The real pull, its server answered by `serve` - which may deliver live frames meanwhile. */
+    const realPull = (serve: () => Promise<void>) => {
+      Object.assign(svc, {
+        fetchPendingMessages: BaseMlsService.prototype.fetchPendingMessages,
+        delivery: {
+          ackMessages: ack,
+          pushQueuedNow: pushNow,
+          pullPendingMessagesJson: vi.fn(serve),
+        },
+      });
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+
+    it('a live frame arriving during the release pull is applied AFTER the pull brought the withheld one', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      realPull(async () => {
+        // The socket is still open: the next message lands live before the pull's page does.
+        inner(svc).enqueueMessage(row('q-live'), 'live');
+        await tick();
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      active(true);
+      await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+    });
+
+    it('a withheld COMMIT, then a live next-epoch frame: read in epoch order, nothing refused, nothing to heal', async () => {
+      let epoch = 1;
+      const refused: string[] = [];
+      Object.assign(svc, {
+        messageCallback: vi.fn(async (...args: unknown[]) => {
+          const id = (args[6] as { queuedMessageId: string }).queuedMessageId;
+          if (id === 'q-commit') epoch = 2;
+          if (id === 'q-epoch2' && epoch < 2) {
+            refused.push(id);
+            return false;
+          }
+          applied.push(id);
+          return true;
+        }),
+      });
+      active(false);
+      await deliver({ ...row('q-commit'), isCommit: true });
+      realPull(async () => {
+        inner(svc).enqueueMessage(row('q-epoch2'), 'live');
+        await tick();
+        inner(svc).enqueueMessage({ ...row('q-commit'), isCommit: true }, 'pull');
+      });
+      active(true);
+      await vi.waitFor(() => expect(applied).toEqual(['q-commit', 'q-epoch2']));
+      expect(refused).toEqual([]);
+    });
+
+    it('a FAILED release pull keeps the group parked: a live frame waits for the next pull that completes', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      realPull(async () => {
+        throw new Error('server error');
+      });
+      active(true);
+      await tick();
+      await tick();
+      await deliver(row('q-live'));
+      expect(applied).toEqual([]);
+      realPull(async () => {
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      await svc.fetchPendingMessages();
+      await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+    });
+  });
+
   describe('the group of a live call', () => {
     afterEach(() => setIosLiveCallGroup(null));
 

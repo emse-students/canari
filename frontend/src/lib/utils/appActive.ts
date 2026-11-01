@@ -10,8 +10,8 @@
  *
  * TOLD AND ASKED. `CanariPushActiveToPage` (canari_ios.mm) writes the global on `didBecomeActive` /
  * `willResignActive` and after every page load. A push can be lost (`evaluateJavaScript` failed), so
- * the page also ASKS the native side - `ios_app_active`, the App Group flag the extension reads - on
- * load and on every `visibilitychange` ({@link installIosActiveQuery}). NOT `isAppInForeground()`
+ * the page also ASKS the native side - `ios_app_active`, UIKit's own `applicationState` - on load,
+ * on every `visibilitychange` and on every window `focus` ({@link installIosActiveQuery}). NOT `isAppInForeground()`
  * (`appForeground.ts`): ten other iOS consumers read that one with its own meaning.
  *
  * ONE EXCEPTION, BY GROUP: the group of a LIVE CALL ({@link setIosLiveCallGroup}). A call runs with
@@ -157,11 +157,17 @@ export function installIosActiveQuery(ask: AskNativeActive = askNative): () => v
     activeEvents += 1;
   };
   const onVisibility = () => void syncIosActiveFromNative('visibilitychange', ask);
+  const onFocus = () => void syncIosActiveFromNative('focus', ask);
   window.addEventListener(APP_ACTIVE_EVENT, count);
   document.addEventListener('visibilitychange', onVisibility);
+  // AN INACTIVE-ONLY RETURN CHANGES NO VISIBILITY (Control Center, a system prompt, the app
+  // switcher): the page stays "visible" throughout. What moves is WebKit's window activation, and
+  // the window's `focus` is the page event that follows it back.
+  window.addEventListener('focus', onFocus);
   void syncIosActiveFromNative('page load', ask);
   return () => {
     window.removeEventListener(APP_ACTIVE_EVENT, count);
     document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('focus', onFocus);
   };
 }
