@@ -1402,7 +1402,10 @@ jobs:
           echo "E2E_TURN_URL=turn:$ip:3478?transport=udp" >> "$GITHUB_ENV"
           echo "E2E_TURN_PASSWORD=$password" >> "$GITHUB_ENV"
           # Ready is a FACT, read from coturn's own log: the UDP listener on the address we gave it.
-          until docker logs e2e-coturn 2>&1 | grep -q "UDP listener opened on: $ip:3478"; do
+          # The log is read into a variable first: `docker logs | grep -q` under `pipefail` is
+          # never true, because grep's early exit hands `docker logs` a SIGPIPE (141) - the first
+          # run of this job waited on it until it was cancelled.
+          until log="$(docker logs e2e-coturn 2>&1)" && [[ "$log" == *"UDP listener opened on: $ip:3478"* ]]; do
             if [ "$(docker inspect -f '{{.State.Running}}' e2e-coturn)" != "true" ]; then
               docker logs e2e-coturn; echo "::error::coturn exited before it listened"; exit 1
             fi
