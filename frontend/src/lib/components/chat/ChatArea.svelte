@@ -43,7 +43,13 @@
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadForUser, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import {
+    lastRowAbove,
+    resolveAnchor,
+    viewportBottom,
+    type VisibleAnchor,
+  } from '$lib/utils/chat/visibleRow';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -364,6 +370,12 @@
    * observers, the unread pill.
    */
   let isNearBottom = $state(true);
+  /**
+   * The last message row at least partly in view (id + display index), written by `measureScroll` with the flag
+   * above. The unread pill counts the unread rows AFTER it (`countUnreadBelow`), so it is a statement
+   * about what lies below the reader and not about the conversation as a whole.
+   */
+  let lastVisibleAnchor = $state<VisibleAnchor | null>(null);
   let _isMobile = $state(false);
   let _composerFocused = $state(false);
   let lastConversationKey = $state('');
@@ -537,10 +549,40 @@
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     isNearBottom = isPinnedToBottom(chatContainer);
+    lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < 80) {
       void loadOlderGroups();
     }
+  }
+
+  /**
+   * The last message row whose top edge is above the bottom of what the reader sees - the scroller's
+   * bottom MINUS its padding, which is the floating composer's height - or `null`. Rows are in DOM
+   * order, so it is a binary search over `messageRows` (O(log n) rects); a row above the drawn window
+   * is above by definition, one below it or not mounted yet is below.
+   */
+  function measureLastVisibleAnchor(): VisibleAnchor | null {
+    if (!chatContainer || messageRows.length === 0) return null;
+    const drawn = visibleMessageGroups.filter(isMessageGroupRow);
+    if (drawn.length === 0) return null;
+    const drawnStart = messageRows.findIndex((msg) => msg.id === drawn[0].message.id);
+    if (drawnStart < 0) return null;
+    const limit = viewportBottom(
+      chatContainer.getBoundingClientRect().bottom,
+      parseFloat(getComputedStyle(chatContainer).paddingBottom)
+    );
+    const index = lastRowAbove(
+      messageRows.length,
+      (i) => {
+        if (i < drawnStart) return -Infinity;
+        const row = drawn[i - drawnStart];
+        const el = row ? document.getElementById(`msg-${row.message.id}`) : null;
+        return el ? el.getBoundingClientRect().top : Infinity;
+      },
+      limit
+    );
+    return index < 0 ? null : { id: messageRows[index].id, index };
   }
 
   function clearStickyDateTimer() {
@@ -724,10 +766,12 @@
    * 2026-10-02). Computed over every group, sorted, never the render window: a window ending above
    * a reader's true anchor would pin the head to its last row. A DM keeps its own receipt shape.
    */
+  /** Every message row in DISPLAY order, derived once: the seen heads and the unread pill read it. */
+  let messageRows = $derived(messageGroups.filter(isMessageGroupRow).map((g) => g.message));
   let seenBy = $derived(
     chatView && !chatView.isDirect
       ? seenByAnchors(
-          messageGroups.filter(isMessageGroupRow).map((g) => g.message),
+          messageRows,
           chatView.conversation.readWatermarks,
           currentUserId,
           chatView.conversation.serverReadWatermarks
@@ -748,10 +792,12 @@
    * dressed up as a fact about the conversation.
    */
   let unreadBelowCount = $derived.by(() => {
+    // The pill is only drawn away from the live end: nothing to count while pinned.
+    if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
     const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
-    return countUnreadForUser(convo.messages, mine.stamped, mine.server);
+    return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
   });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
@@ -966,6 +1012,40 @@
   $effect(() => {
     void conversationId;
     untrack(() => editSession.reset());
+  });
+  // THE READER'S POSITION IS RE-MEASURED WHEN THE THREAD CHANGES, NOT ONLY ON SCROLL: a row deleted,
+  // a list reloaded or a local id swapped for the server's moves rows under a reader who never
+  // scrolled, and a conversation switch must not carry the last thread's anchor into the next.
+  let anchorConversationId: string | null = null;
+  let anchorLoggedMissing = false;
+  $effect(() => {
+    void messageRows;
+    void visibleMessageGroups;
+    const switched = conversationId !== anchorConversationId;
+    untrack(() => {
+      if (switched) {
+        anchorConversationId = conversationId;
+        anchorLoggedMissing = false;
+        lastVisibleAnchor = null;
+      }
+      if (isNearBottom) return;
+      void tick().then(() =>
+        requestAnimationFrame(() => (lastVisibleAnchor = measureLastVisibleAnchor()))
+      );
+    });
+  });
+  // A vanished anchor is resolved to the nearest row, which is right but means the re-measure above
+  // has not landed yet; if it ever does not land, say so once instead of counting from a guess.
+  $effect(() => {
+    const resolved = resolveAnchor(
+      messageRows.map((msg) => msg.id),
+      lastVisibleAnchor
+    );
+    if (resolved.exact || anchorLoggedMissing) return;
+    anchorLoggedMissing = true;
+    console.warn(
+      `[ChatArea] unread-pill anchor ${lastVisibleAnchor?.id.slice(0, 8)} left the thread - counting from row ${resolved.index}`
+    );
   });
   // The page holding this composer unmounts on any route change (/chat <-> /communities, a profile
   // link, a notification's landing) while the drafts outlive it in `useMessaging`: an edit left open
