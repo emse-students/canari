@@ -7,8 +7,9 @@
  * - File selection + validation
  */
 import { isAppInForeground } from '$lib/utils/appForeground';
+import { isIosAppInactive } from '$lib/utils/appActive';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
-import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
@@ -54,7 +55,6 @@ import {
   unnotifiedOf,
 } from '$lib/utils/chat/notifiedMessages';
 import { pushCacheMessageIds } from '$lib/utils/chat/fcmCache';
-import { bannerVerdicts } from '$lib/utils/chat/bannerOwnership';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -619,6 +619,18 @@ export function useMessaging() {
       return;
     }
 
+    // OUT OF FRONT ON AN iPHONE, THE SERVER ANNOUNCES (`appActive.ts`). A salon message is pushed to
+    // every member and the extension raises its banner, so the page raising one too was the second
+    // banner - silent here. A private conversation's frame is not consumed at all while inactive
+    // (`BaseMlsService.processQueue`), so the only one that reaches this line began decrypting while
+    // the app was active: it was ACKed, no push follows, and the page's banner is the only one.
+    if (category !== 'messages' && isIosAppInactive()) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - the iPhone app is inactive and the salon's push announces it; nothing raised.`
+      );
+      return;
+    }
+
     // THE CONVERSATION'S OWN LEVEL (all / mentions / none), the salon's three for a private
     // conversation. The server applies `none` to every push and hands `mentions` to the device; a
     // frame received here involves no push, so this is the client's half - the ONE place it decides,
@@ -744,33 +756,6 @@ export function useMessaging() {
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
     void (async () => {
-      // OUT OF FRONT ON AN iPHONE, THE BANNER IS THE PAGE'S OR THE PUSH'S - AND THE SERVER'S ACK
-      // ANSWER SAYS WHICH (`bannerOwnership.ts`). The server pushes a row whose ACK has not arrived
-      // after ten seconds, and the extension announces that push; the ACK and the push are made
-      // exclusive there, so this waits for the answer - from this ACK or from the retry that
-      // finally lands - and announces only what the page owns. An ACK that never lands keeps this
-      // silent: its row is pushed, and the extension announces it.
-      let ownedIds = messageIds;
-      if (isIosTauriRuntime() && !isAppInForeground() && messageIds.length > 0) {
-        const verdicts = await bannerVerdicts(messageIds);
-        const pushed = messageIds.filter((id) => verdicts.get(id) === 'push');
-        // The extension announced these: recorded as such, so no later delivery announces them.
-        recordNotified(ctx.userId, pushed);
-        ownedIds = messageIds.filter((id) => verdicts.get(id) !== 'push');
-        if (ownedIds.length === 0) {
-          console.log(
-            `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) announced by their push (the server's ACK answer); nothing raised.`
-          );
-          return;
-        }
-        // The wait may have outlasted the background: a reader now looking at it is not told again.
-        if (canSeeArrival(ctx, conversationKey)) {
-          console.log(
-            `[NOTIF] Inbound in ${conversationKey} - the app came to the front while the ACK answered; nothing raised.`
-          );
-          return;
-        }
-      }
       // WHAT THE iOS SYSTEM ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
       // cache here, at the decision: the take that records it runs after this drain
       // (`pushCacheMessageIds`). Empty off iOS.
@@ -785,7 +770,7 @@ export function useMessaging() {
       // meanwhile, and nothing between this check and the claim yields, so only one passes. A CLAIM,
       // NOT A RECORD: the record is written once the banner exists (`settleAnnouncement`), so a
       // throttle, a refusal or a throw leaves the message announceable.
-      const owed = claimAnnouncement(ctx.userId, ownedIds);
+      const owed = claimAnnouncement(ctx.userId, messageIds);
       if (messageIds.length > 0 && owed.length === 0) {
         console.log(
           `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already announced (by the extension or another notification); nothing raised.`

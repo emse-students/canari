@@ -629,9 +629,9 @@ export function resolveConversationListPresentation(
  *
  * Returns the deduplicated, normalised list of `ConversationMeta` objects.
  *
- * @param owedServerDeletes when given, a merged duplicate's server-side delete is OWED into it
- *   instead of sent here - the login's seed runs before the inbound gate and must wait on no
- *   network (`seedConversationRows`), so the history phase sends them
+ * @param owedServerDeletes receives each merged duplicate whose server-side delete is OWED: the
+ *   merge never sends it, because the login's seed runs before the inbound gate and must wait on no
+ *   network (`seedConversationRows`); the history phase sends them once its replay is done
  *   ({@link deleteMergedDuplicatesOnServer}).
  */
 export async function mergeDirectConversationDuplicates(
@@ -640,8 +640,7 @@ export async function mergeDirectConversationDuplicates(
   deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
-  mlsService?: IMlsService,
-  owedServerDeletes?: string[]
+  owedServerDeletes: string[]
 ): Promise<ConversationMeta[]> {
   const directByPeer = new Map<string, ConversationMeta[]>();
   for (const meta of convMetas) {
@@ -717,16 +716,7 @@ export async function mergeDirectConversationDuplicates(
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
-      if (owedServerDeletes) {
-        owedServerDeletes.push(duplicate.id);
-      } else if (mlsService) {
-        try {
-          await mlsService.deleteGroupOnServer(duplicate.id);
-        } catch (e) {
-          // Non-blocking: cleaned up at the next server GC
-          logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
-        }
-      }
+      owedServerDeletes.push(duplicate.id);
       log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);
     } catch (error) {
       log(`Direct-conversation merge error: ${String(error)}`);
@@ -903,7 +893,6 @@ export async function seedConversationRows(
     ctx.deviceKeyB64,
     ctx.storage,
     ctx.log,
-    undefined,
     owedServerDeletes
   );
 
@@ -1059,7 +1048,6 @@ export async function replayConversationHistories(
   seeded: SeededConversations
 ): Promise<void> {
   const mergedConvMetas = seeded.metas;
-  await deleteMergedDuplicatesOnServer(ctx.mlsService, seeded.owedServerDeletes);
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
@@ -1299,6 +1287,12 @@ export async function replayConversationHistories(
     (commits) => {
       for (const commit of commits) commit();
     }
+  );
+  // AFTER THE REPLAY, AND NOT AWAITED: a best-effort cleanup the next server GC repeats, so the
+  // login does not wait on it. Each failure is said by `deleteMergedDuplicatesOnServer`; the
+  // `catch` is only there so a rejection can never be unhandled.
+  void deleteMergedDuplicatesOnServer(ctx.mlsService, seeded.owedServerDeletes).catch(
+    (e: unknown) => ctx.log(`[WARN] merged duplicate 1:1 server deletes stopped: ${String(e)}`)
   );
 }
 

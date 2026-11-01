@@ -757,10 +757,10 @@ export function useNotifications() {
           // front (#2843), and `CanariShowMessageNotification` returns early there, so this plugin
           // call is the one banner an iPhone in front gets for a message. The extension still writes
           // its push-cache entry, marked `presented: false`, so that entry suppresses nothing
-          // (`notifiedMessages.ts`). OUT OF FRONT this is reached too, and only for a message whose
-          // banner the server's ACK answer gave the page: a row a push already owns is announced by
-          // the extension, and `notifyInbound` waits for that answer before it calls here
-          // (`bannerOwnership.ts`). Then WEB
+          // (`notifiedMessages.ts`). OUT OF FRONT the server announces (`appActive.ts`): the page
+          // consumes no queued frame while the app is inactive, so the extension decrypts and shows
+          // its push, and a salon's push is shown by the extension too. The one message that still
+          // reaches here inactive began decrypting while active, was ACKed and is never pushed. Then WEB
           // and DESKTOP, where the plugin is the only builder there is. Desktop is a different
           // implementation again (notify-rust) that no session has measured.
           //

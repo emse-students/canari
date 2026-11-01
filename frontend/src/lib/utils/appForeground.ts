@@ -15,8 +15,8 @@
  *
  * `MainActivity.isInForeground` is the honest statement of the fact, maintained across
  * `onResume`/`onPause`, and the activity pushes it into the page as `window.__canariForeground`
- * plus a `canari:foreground` event. iOS writes the same pair from `didBecomeActive` /
- * `willResignActive` and after every page load (`CanariPushForegroundToPage`, canari_ios.mm).
+ * plus a `canari:foreground` event. iOS does NOT write it - its active/inactive fact is a separate
+ * signal read only by the banner and queue decisions (`appActive.ts`).
  *
  * ON EVERY OTHER RUNTIME THIS IS `true` AND MEANS NOTHING. Web and desktop have a working
  * visibility API and callers keep using it; this exists for the one platform where that API lies,
@@ -24,7 +24,7 @@
  * is the behaviour every non-mobile runtime already has from its own checks.
  */
 
-/** The global the Android activity and the iOS bootstrap write on every foreground transition. */
+/** The global the Android activity writes on every foreground transition. */
 const FLAG = '__canariForeground';
 
 /** The event it dispatches at the same moment, for callers that want the transition itself. */

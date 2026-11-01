@@ -485,7 +485,7 @@ static void CanariObserveCallProximity(void) {
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
 /// Re-read at every activation (a reload of the page loses the property) and after every keyboard
 /// resize; portrait only on iPhone, so there is no rotation to follow.
-static void CanariPushForegroundToPage(BOOL inForeground);
+static void CanariPushActiveToPage(BOOL active);
 
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
@@ -502,7 +502,7 @@ static void CanariPushForegroundToPage(BOOL inForeground);
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
-    CanariPushForegroundToPage(g_isInForeground ? YES : NO);
+    CanariPushActiveToPage(g_isInForeground ? YES : NO);
   }
 }
 @end
@@ -655,33 +655,35 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
   }
 }
 
-/// Tells the page whether the app is in front - `window.__canariForeground` and a `canari:foreground`
-/// event, the pair Android's `MainActivity.pushForeground` writes (`appForeground.ts`).
+/// Tells the page whether the app is ACTIVE - `window.__canariActive` and a `canari:active` event,
+/// read by `appActive.ts` and by nothing else.
 ///
-/// ONE FACT FOR EVERY BANNER DECISION. Without it the global was never set on iOS, so the page read
-/// "in front" in every state: with Notification Center pulled down, or in the moment after
-/// `willResignActive` while the socket still lives, it decided as an app on screen. Written from
-/// the same two callbacks that set `g_isInForeground` and the extension's App Group flag, so the
-/// page, the delegate and the extension read one state, and told again after every page load
+/// A DEDICATED SIGNAL, deliberately not `__canariForeground`: that global feeds
+/// `isAppInForeground()`, which ten other iOS consumers read with its current meaning (calls,
+/// tones, playback, the checkpoint flush, reconnects, read-marking). This one answers two questions
+/// only - may the page consume a queued frame now, and may it raise a message banner
+/// (docs/wiki/frontend/mobile.md, "out of front, the server announces"). Written from the same two
+/// callbacks that set `g_isInForeground` and the extension's App Group flag, so the page, the
+/// delegate and the extension read one state, and told again after every page load
 /// (`CanariLoadObserver`), so a page the system loaded in the background does not start on the
-/// global's default ("in front").
-static void CanariPushForegroundToPage(BOOL inForeground) {
+/// global's default ("active").
+static void CanariPushActiveToPage(BOOL active) {
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
-    NSLog(@"[CanariIOS] foreground=%d not told to the page - no WebView yet", inForeground);
+    NSLog(@"[CanariIOS] active=%d not told to the page - no WebView yet", active);
     return;
   }
-  NSString *value = inForeground ? @"true" : @"false";
+  NSString *value = active ? @"true" : @"false";
   NSString *js = [NSString
-      stringWithFormat:@"window.__canariForeground=%@;window.dispatchEvent(new CustomEvent("
-                       @"'canari:foreground',{detail:{foreground:%@}}));",
+      stringWithFormat:@"window.__canariActive=%@;window.dispatchEvent(new CustomEvent("
+                       @"'canari:active',{detail:{active:%@}}));",
                        value, value];
   [webView evaluateJavaScript:js
             completionHandler:^(__unused id result, NSError *error) {
               if (error != nil) {
                 // A page that cannot be told keeps its last value - said, because a silent failure
                 // here reads exactly like the defect this exists to fix.
-                NSLog(@"[CanariIOS] foreground=%d not told to the page: %@", inForeground,
+                NSLog(@"[CanariIOS] active=%d not told to the page: %@", active,
                       CanariErrorReason(error));
               }
             }];
@@ -867,7 +869,7 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
-  CanariPushForegroundToPage(YES);
+  CanariPushActiveToPage(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
@@ -906,7 +908,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
-  CanariPushForegroundToPage(NO);
+  CanariPushActiveToPage(NO);
   canari_ios_on_pause();
   // Snapshot the latest decrypt state into the App Group container before suspending, so a push
   // arriving while backgrounded is decrypted by the NSE against fresh state.

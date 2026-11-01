@@ -690,19 +690,18 @@ jobs:
       # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
       # 6) against the production Redis this job already runs: its point is that the check and the
       # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
-      # read and a skipped or absent test fails the step. The banner claim (push-claim.ts) rides the
-      # same step: its SET NX GET is one atomic Redis step, which no fake can judge either.
+      # read and a skipped or absent test fails the step.
       - name: Addressed publish script against Redis
         if: ${{ matrix.service == 'apps/chat-delivery-service' }}
         working-directory: ${{ matrix.service }}
         env:
           CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
         run: |
-          node --run test -- "addressing.redis|push-claim.redis" --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
           node -e '
             const r = require(process.argv[1]);
-            if (r.numPendingTests > 0 || r.numPassedTests < 8) {
-              console.error(`addressing.redis + push-claim.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
+            if (r.numPendingTests > 0 || r.numPassedTests < 5) {
+              console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
               process.exit(1);
             }
           ' "$RUNNER_TEMP/addressing-it.json"
