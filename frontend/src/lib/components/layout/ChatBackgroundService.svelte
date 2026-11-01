@@ -410,8 +410,15 @@
     void globalConvs.conversations.size;
     setNativeQuickReplySender({
       accountId,
+      // How the queue SETTLED it, not merely that it was queued (review of #2843, H1).
       send: async (reply) =>
-        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).queued,
+        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).outcome,
+      tell: (kind) =>
+        showToast(
+          kind === 'waiting' ? m.chat_quick_reply_waiting() : m.chat_quick_reply_lost(),
+          kind === 'waiting' ? 'info' : 'error',
+          8000
+        ),
     });
     return () => setNativeQuickReplySender(null);
   });

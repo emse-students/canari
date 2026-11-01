@@ -51,7 +51,7 @@ import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
-import { MessageWrittenError } from './messageWrittenError';
+import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -60,6 +60,11 @@ import { MessageWrittenError } from './messageWrittenError';
 export interface SendMessageDeps {
   userId: string;
   conversation: Conversation;
+  /**
+   * Shows (and, unless told otherwise, stores) a message. Calls `onPairWritten` when the message
+   * and its `outboxEntry` reached disk in one write; a failed pair write THROWS
+   * `MessagePairWriteError`; with no storage, neither.
+   */
   addMessageToChat: (
     senderId: string,
     content: string,
@@ -73,6 +78,8 @@ export interface SendMessageDeps {
       skipDbSave?: boolean;
       /** Written in the same transaction as the message - see `AddMessageToChatOptions`. */
       outboxEntry?: OutboxEntry;
+      /** The pair reached disk - see `AddMessageToChatOptions`. */
+      onPairWritten?: () => void;
       /** A salon echo, shown before the server has a row - see `AddMessageToChatOptions`. */
       salonEcho?: boolean;
     }
@@ -631,7 +638,7 @@ export async function sendChatMessage(
   contactName: string,
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
-): Promise<{ success: boolean; error?: string; echoed?: boolean }> {
+): Promise<{ success: boolean; error?: string; echoed?: boolean; messageId?: string }> {
   const { userId, conversation, addMessageToChat } = deps;
 
   deps.log(
@@ -709,10 +716,11 @@ export async function sendChatMessage(
   // the click and reproduced it on 2026-09-05: the console showed `sendChatMessage` with no
   // `[OUTBOX] Queued` after it, the peer had nothing, the sender had the message.
   //
-  // `alreadyDurable` below is exact rather than optimistic: `addMessageToChat` writes the pair
-  // whenever it has a storage layer, and the outbox's own `enqueue` returns early on exactly the
-  // same condition - one `storage`, so the two cannot disagree. With no storage neither wrote
-  // before this change either.
+  // `alreadyDurable` below is exact rather than optimistic: it is what `addMessageToChat` REPORTS
+  // it wrote (`onPairWritten`), never inferred. With no storage it wrote nothing and says so; a pair
+  // write that failed is thrown typed (`MessagePairWriteError`), and the outbox then writes its own
+  // row - the message still leaves (review of #2843, M1: it used to be swallowed, and the row was
+  // marked durable when nothing was on disk).
   const entry: OutboxEntry = {
     id: messageId,
     conversationId: conversation.id,
@@ -733,22 +741,30 @@ export async function sendChatMessage(
     createdAt: sentAt,
   };
   const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
-  await addMessageToChat(userId, envelope, contactName, {
-    messageId,
-    status: 'pending',
-    timestamp: new Date(sentAt),
-    outboxEntry: entry,
-    ...(replyToData ? { replyTo: replyToData } : {}),
-  });
-  // The durable half is already done; this is the mirror and the flush - and a throw from it is
-  // about a message that EXISTS, typed so no caller sends it again.
+  let pairWritten = false;
   try {
-    await enqueueOutboxMessage(entry, { alreadyDurable: true });
+    await addMessageToChat(userId, envelope, contactName, {
+      messageId,
+      status: 'pending',
+      timestamp: new Date(sentAt),
+      outboxEntry: entry,
+      onPairWritten: () => {
+        pairWritten = true;
+      },
+      ...(replyToData ? { replyTo: replyToData } : {}),
+    });
   } catch (e) {
-    throw new MessageWrittenError(messageId, e);
+    if (!(e instanceof MessagePairWriteError)) throw e;
+    deps.log(
+      `[SEND] ${messageId.slice(0, 8)}… its echo and entry were NOT written together - the outbox writes its own row: ${String(e.cause)}`
+    );
   }
+  // Written beside the echo: only the mirror and the flush are owed. Otherwise the outbox writes the
+  // row. Either way it classifies its own failures at the throw: `MessageWrittenError` once the row
+  // is on disk, `OutboxEnqueueError` before.
+  await enqueueOutboxMessage(entry, pairWritten ? { alreadyDurable: true } : undefined);
   deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
-  return { success: true };
+  return { success: true, messageId };
 }
 
 /** Minimal dependencies shared by reaction, edit, delete, and read-receipt helpers. */

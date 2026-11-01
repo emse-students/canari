@@ -129,7 +129,8 @@ bool canari_ios_page_rings_in_app(void);
    natively, where the foreground guard would refuse it. */
 bool canari_ios_page_holds_mls(void);
 char *canari_native_seal_quick_reply_line(const char *cache_key_b64, const char *line);
-void canari_ios_set_quick_reply_ack_listener(void (*listener)(const char *reply_id, bool queued));
+/* outcome: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost (`QuickReplyOutcome` in push.rs). */
+void canari_ios_set_quick_reply_ack_listener(void (*listener)(const char *reply_id, int32_t outcome));
 
 /* Whether the page is ringing THIS call itself (its CallService is `incoming` on it, Rust
    `page_ring`). The handover ends an unanswered CallKit ring only on this: a page holding the

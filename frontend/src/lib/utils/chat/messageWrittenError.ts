@@ -17,3 +17,24 @@ export class MessageWrittenError extends Error {
     this.name = 'MessageWrittenError';
   }
 }
+
+/**
+ * The one write of an own message and the outbox entry that sends it FAILED - nothing of the pair
+ * is on disk (`IStorage.saveMessageWithOutboxEntry` is one transaction). Thrown by
+ * `addMessageToChat` instead of being swallowed: the send path then lets the outbox write its own
+ * row, rather than telling it the row is already durable (review of #2843, M1).
+ */
+export class MessagePairWriteError extends Error {
+  constructor(
+    readonly messageId: string,
+    cause: unknown
+  ) {
+    super(
+      `message ${messageId.slice(0, 8)} and its outbox entry were not written: ${String(cause)}`,
+      {
+        cause,
+      }
+    );
+    this.name = 'MessagePairWriteError';
+  }
+}

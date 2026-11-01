@@ -99,7 +99,13 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
+import {
+  awaitOutboxSettled,
+  enqueueOutboxMessage,
+  isEnqueueQuotaFailure,
+  type OutboxSettlement,
+} from '$lib/utils/chat/outbox';
+import { MessagePairWriteError } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -1115,6 +1121,7 @@ export function useMessaging() {
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
+    let pairWriteFailure: MessagePairWriteError | null = null;
     if (ctx.storage && !skipDbSave) {
       try {
         const row = {
@@ -1132,7 +1139,19 @@ export function useMessaging() {
         // message the sender could see and no queue would ever send (TAB-5, 2026-09-05). Every other
         // caller - an inbound message, an FCM upgrade - has no entry and takes the single-store path.
         if (options.outboxEntry) {
-          await ctx.storage.saveMessageWithOutboxEntry(row, options.outboxEntry, ctx.deviceKeyB64);
+          try {
+            await ctx.storage.saveMessageWithOutboxEntry(
+              row,
+              options.outboxEntry,
+              ctx.deviceKeyB64
+            );
+            options.onPairWritten?.();
+          } catch (e) {
+            // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
+            // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
+            console.error('[DB] the message and its outbox entry were NOT written:', e);
+            pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+          }
         } else {
           await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
         }
@@ -1141,6 +1160,7 @@ export function useMessaging() {
         console.error('[DB] Failed to persist message:', e);
       }
     }
+    if (pairWriteFailure) throw pairWriteFailure;
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
     // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
@@ -2571,11 +2591,18 @@ export function useMessaging() {
     text: string,
     targetName: string,
     ctx: MessagingContext
-  ): Promise<{ queued: boolean; error?: string }> {
+  ): Promise<{ outcome: OutboxSettlement | 'not-queued'; error?: string }> {
     const convo = ctx.conversations.get(targetName);
-    if (!convo) return { queued: false, error: 'conversation not loaded' };
+    if (!convo) return { outcome: 'not-queued', error: 'conversation not loaded' };
     const result = await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
-    return { queued: result.success || result.echoed === true, error: result.error };
+    if (!(result.success || result.echoed === true)) {
+      return { outcome: 'not-queued', error: result.error };
+    }
+    // QUEUED IS NOT SENT (review of #2843, H1): the enqueue only starts the flush. A caller that
+    // holds a process for this message waits for the queue to SETTLE it. A salon's text is not in
+    // the queue; a notification never offers a reply into a salon, so it is only said pending.
+    if (!result.messageId) return { outcome: 'pending' };
+    return { outcome: await awaitOutboxSettled(result.messageId) };
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────

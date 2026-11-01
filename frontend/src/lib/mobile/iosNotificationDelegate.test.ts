@@ -219,7 +219,9 @@ describe('a quick reply over a page holding the MLS state is handed to the page'
     expect(fact).toBeGreaterThan(-1);
     expect(fact).toBeLessThan(q.indexOf('CanariSendQuickReplyNatively('));
     const branch = q.slice(fact, q.indexOf('\n  }\n', fact));
-    expect(branch).toContain('CanariHandQuickReplyToPage(groupId, text, notifiedAt, completion);');
+    expect(branch).toContain(
+      'CanariHandQuickReplyToPage(recipientId, groupId, text, notifiedAt, completion);'
+    );
     expect(branch.trimEnd().endsWith('return;')).toBe(true);
     expect(bridge).toContain('bool canari_ios_page_holds_mls(void);');
     expect(ffiRs).toContain('crate::concurrency::live_manager_in_process()');
@@ -258,26 +260,117 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     expect(branch).not.toContain('completionHandler();');
   });
 
-  it('holds a background task whose expiry tells the user and accuses, never a clock of ours', () => {
+  it('holds a background task whose expiry reads as pending and accuses, never a clock of ours', () => {
     const h = body('static void CanariHoldQuickReply(');
     expect(h).toContain('beginBackgroundTaskWithName:@"canari-quick-reply"');
     const expiry = h.slice(h.indexOf('expirationHandler:'));
     expect(expiry).toContain('ERROR quick reply');
-    expect(expiry).toContain('CanariReleaseQuickReplyHold(replyId, NO,');
+    expect(expiry).toContain('CanariReleaseQuickReplyHold(replyId, CanariQuickReplyPending,');
     expect(h).not.toMatch(/dispatch_after|NSTimer|asyncAfter/);
     const release = body('static void CanariReleaseQuickReplyHold(');
-    expect(release).toContain('CanariShowPendingSyncNotification();');
+    expect(release).toContain('CanariTellQuickReplyOutcome(outcome);');
     expect(release).toContain('hold.completion();');
-    expect(release).toContain('endBackgroundTask:task');
+    expect(release).toContain('CanariEndQuickReplyTask(hold);');
+    expect(body('static void CanariEndQuickReplyTask(')).toContain('endBackgroundTask:task');
   });
 
-  it("is released by the page's acknowledgement, through a listener registered at setup", () => {
+  it('stores the task id before the expiry can run, and the expiry ends its own task (L1)', () => {
+    const h = body('static void CanariHoldQuickReply(');
+    // Begun, stored and published in ONE block on the main thread, where iOS runs the expiry.
+    expect(h).toContain('dispatch_sync(dispatch_get_main_queue(), begin);');
+    const begin = h.slice(
+      h.indexOf('void (^begin)(void) = ^{'),
+      h.indexOf('if ([NSThread isMainThread])')
+    );
+    const stored = begin.indexOf('hold.task = task;');
+    expect(stored).toBeGreaterThan(begin.indexOf('beginBackgroundTaskWithName'));
+    expect(begin.indexOf('g_quickReplyHolds[replyId] = hold;')).toBeGreaterThan(stored);
+    // Whoever released first, the expiry ends its own task before it returns.
+    expect(h.slice(h.indexOf('expirationHandler:'))).toContain('CanariEndQuickReplyTask(hold);');
+    // And a task is ended once: whoever takes the id from the hold first.
+    expect(body('static void CanariEndQuickReplyTask(')).toContain(
+      'hold.task = UIBackgroundTaskInvalid;'
+    );
+  });
+
+  it("is released by the page's SETTLEMENT, through a listener registered at setup (H1)", () => {
     expect(setup()).toContain(
-      'canari_ios_set_quick_reply_ack_listener(CanariPageAcknowledgedQuickReply);'
+      'canari_ios_set_quick_reply_ack_listener(CanariPageSettledQuickReply);'
     );
     expect(bridge).toContain('void canari_ios_set_quick_reply_ack_listener(');
+    expect(bridge).toContain('int32_t outcome');
     expect(ffiRs).toContain('pub extern "C" fn canari_ios_set_quick_reply_ack_listener(');
-    expect(pushRs).toContain('tell_quick_reply_acknowledged(&reply_id, queued);');
+    expect(pushRs).toContain('tell_quick_reply_settled(&reply_id, parsed);');
+  });
+
+  it('names the same five outcome codes on both sides', () => {
+    for (const [name, code] of [
+      ['Sent', 0],
+      ['Failed', 1],
+      ['Pending', 2],
+      ['Returned', 3],
+      ['Lost', 4],
+    ] as const) {
+      expect(push).toContain(`CanariQuickReply${name} = ${code},`);
+      expect(pushRs).toContain(`    ${name} = ${code},`);
+    }
+  });
+
+  it('a pending reply schedules the retry and the pending notice, as the native path does', () => {
+    const tell = body('static void CanariTellQuickReplyOutcome(');
+    const pending = tell.slice(tell.indexOf('case CanariQuickReplyPending:'));
+    expect(pending.slice(0, pending.indexOf('return;'))).toContain(
+      'CanariMaybeNotifyPendingSync(1);'
+    );
+    // Lost is told in front too: nothing else would say it.
+    const lost = tell.slice(tell.indexOf('case CanariQuickReplyLost:'));
+    expect(lost.slice(0, lost.indexOf('return;'))).not.toContain('canari_ios_is_in_foreground');
+  });
+});
+
+describe('a reply is sent as the account its notification was addressed to (review of #2843, M3)', () => {
+  const nse = readFileSync(
+    resolve(SRC_TAURI, 'gen/apple/canari_NSE/NotificationService.swift'),
+    'utf8'
+  );
+
+  it('both posters stamp the recipient under the same key', () => {
+    expect(push).toContain('kCanariRecipientKey = @"recipientId";');
+    expect(body('static void CanariShowLocalNotification(')).toContain(
+      'userInfo[kCanariRecipientKey] = recipient;'
+    );
+    expect(nse).toContain('content.userInfo["recipientId"] = recipient');
+  });
+
+  it('the reply reads the recipient from the notification, never from the context at reply time', () => {
+    const r = didReceive();
+    const branch = r.slice(r.indexOf('isEqualToString:kCanariReplyActionId'));
+    expect(branch).toContain('userInfo[kCanariRecipientKey]');
+    const h = body('static void CanariHandQuickReplyToPage(');
+    expect(h).toContain('CanariSealQuickReply(replyId, recipientId, groupId, text, notifiedAt)');
+    expect(h).not.toContain('CanariLoadPushContext');
+    expect(body('static NSString *CanariSealQuickReply(')).not.toContain('CanariLoadPushContext');
+  });
+
+  it('refuses VISIBLY a reply naming no recipient, or another account than the context', () => {
+    const q = body('static void CanariHandleQuickReplyAction(');
+    const none = q.slice(q.indexOf('if (recipientId.length == 0) {'));
+    expect(none.slice(0, none.indexOf('return;'))).toContain('CanariShowQuickReplyNotSent();');
+    const other = q.slice(q.indexOf('![ctx.userId isEqualToString:recipientId]'));
+    expect(other.slice(0, other.indexOf('return;'))).toContain('CanariShowQuickReplyNotSent();');
+  });
+
+  it('a sign-out removes every delivered notification', () => {
+    expect(body('+ (BOOL)endForSignOut {')).toContain('removeAllDeliveredNotifications');
+  });
+
+  it('the "not sent" notice is presented in front, on its own thread', () => {
+    expect(body('static void CanariShowQuickReplyNotSent(void) {')).toContain(
+      'kCanariThreadQuickReply'
+    );
+    expect(body('static UNNotificationPresentationOptions CanariOwnLocalPresentation(')).toContain(
+      'kCanariThreadQuickReply'
+    );
   });
 });
 
@@ -289,7 +382,7 @@ describe('a reply is sealed and names its account (review of #2843, A2)', () => 
     expect(ffiRs).toContain('crate::native_cache::Purpose::QuickReply');
     // The hand-over writes only what the seal returned.
     const h = body('static void CanariHandQuickReplyToPage(');
-    expect(h).toContain('CanariSealQuickReply(replyId, groupId, text, notifiedAt)');
+    expect(h).toContain('CanariSealQuickReply(replyId, recipientId, groupId, text, notifiedAt)');
     expect(h).not.toContain('NSJSONSerialization');
   });
 });

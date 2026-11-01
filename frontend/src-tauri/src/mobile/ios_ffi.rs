@@ -645,9 +645,9 @@ pub unsafe extern "C" fn canari_native_seal_quick_reply_line(
     }
 }
 
-/// Registers the native listener told when the page acknowledges a quick reply it was handed
-/// (`commands::push::acknowledge_quick_reply`). Registered by `CanariPushSetup` rather than linked,
-/// since this crate is linked into the notification extension too.
+/// Registers the native listener told what became of a quick reply the page was handed - its
+/// `QuickReplyOutcome` code (`commands::push::acknowledge_quick_reply`). Registered by
+/// `CanariPushSetup` rather than linked, since this crate is linked into the notification extension.
 #[no_mangle]
 pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
     listener: Option<crate::commands::push::QuickReplyAckListener>,
