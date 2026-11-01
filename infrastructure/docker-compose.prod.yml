@@ -154,6 +154,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     build:
@@ -226,6 +227,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3010
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     build:
@@ -398,6 +400,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3012
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
     build:
@@ -474,6 +477,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3014
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
     restart: always
     build:
@@ -548,6 +552,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:-latest}
     restart: always
     environment:
@@ -581,6 +586,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
     environment:
@@ -593,6 +599,12 @@ services:
       # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
     # NO HOST PORT SINCE 2026-10-17 - the edge below holds it, so a release can start this
     # container's successor beside it (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    # WHICH REPLICAS THIS nginx MAY CHOOSE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out of this list - by a reload, proven - before it is
+    # stopped. The edge reads the same directory through its own mount of edge/.
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
+    volumes:
+      - ./edge/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
