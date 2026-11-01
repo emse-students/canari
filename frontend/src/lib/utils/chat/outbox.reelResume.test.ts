@@ -46,6 +46,7 @@ import { uploadCaption } from './uploadLabel';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
 import { releaseUploadSession, uploadResumable } from '$lib/utils/resumableUpload';
 import { UploadAbortedError } from '$lib/utils/uploadXhr';
+import { prepareQueuedChatReel } from './prepareQueuedChatReel';
 import { decryptSegmentedMediaBuffer } from '$lib/mediaSegmented';
 import { hexEncode } from '$lib/mediaCrypto';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -515,6 +516,30 @@ describe('a chat reel through the outbox (RC-5)', () => {
     expect([...w.server.sessions.values()][0].closed).toBe(true);
     await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
     expect(sends(l)).toBe(0);
+  });
+
+  it('THE CHAT CAP CANNOT BE READ (offline): the real preparer parks the take as an error, KEPT, nothing encoded or sent', async () => {
+    const w = world();
+    const encoder = vi.fn();
+    const l = life(w, {
+      prepare: (signal) =>
+        prepareQueuedChatReel(
+          rawTakeEntry().media!,
+          { signal, onProgress: () => undefined },
+          {
+            uploadLimits: async () => ({ maxPlaintextBytes: 50_000_000 }),
+            reelLimits: () => Promise.reject(new TypeError('Failed to fetch')),
+            prepare: encoder,
+          }
+        ),
+    });
+    await l.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(uploadViewOf(ID)?.phase).toBe('error'));
+    expect(w.sql.rows.has(ID)).toBe(true);
+    const kept = (await w.storage.getOutboxEntry(ID, KEY))!;
+    expect(sameBytes(kept.media?.fileBytes, RAW)).toBe(true);
+    expect(encoder).not.toHaveBeenCalled();
+    expect(w.server.sent).toEqual([]);
   });
 
   it('a take the encoder REFUSES is parked as an error with the take KEPT; Retry prepares it again and sends it', async () => {

@@ -100,9 +100,11 @@ import {
   registerUploadReleaseDrain,
   releaseUploadDurably,
   unregisterUploadReleaseDrain,
-  type ReleaseAnswer,
+  ownerBoundToken,
+  type SessionReleaser,
 } from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   forgetProvenDeadEnds,
@@ -216,9 +218,8 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
-  OutboxPrepareRefusedError,
-  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
+import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
@@ -462,80 +463,23 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
     // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      await releaseUploadDurably(ctx.getUserId(), uploadId, why, releaseResumableSession, cb.log);
+      const ownerId = ctx.getUserId();
+      await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
   };
 }
 
-/** One media-service `DELETE` of a resumable session, under the signed-in owner's token. */
-async function releaseResumableSession(uploadId: string, why: string): Promise<ReleaseAnswer> {
-  const { MediaService } = await import('$lib/media');
-  return new MediaService().releaseResumableUpload(uploadId, getToken, why);
-}
-
 /**
- * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget), at the CHAT
- * profile and under the server's chat cap (RC-3, `chatReelPrepareOptions`). A cap that cannot be read
- * (offline) throws an ordinary failure: the take is kept and parked, never prepared without its cap. A cancel is
- * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
- * failure of the take.
+ * The releaser of `ownerId`'s resumable sessions: one media-service `DELETE` each, under a token that
+ * is `ownerId`'s and nobody else's (`ownerBoundToken`). Another account signed in meanwhile gets
+ * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
-async function prepareQueuedChatReel(
-  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<PreparedOutboxMedia> {
-  const [
-    { MediaService },
-    { prepareVideoForUpload, isVideoPrepareError },
-    { UploadAbortedError },
-    { videoPrepareFailureMessage, isUnpreparableFault },
-    { getReelLimits },
-    { chatReelPrepareOptions },
-  ] = await Promise.all([
-    import('$lib/media'),
-    import('$lib/video/prepareVideoForUpload'),
-    import('$lib/utils/uploadXhr'),
-    import('$lib/video/videoPrepareMessages'),
-    import('$lib/posts/api'),
-    import('$lib/reels/chatReelWriter'),
-  ]);
-  const raw = media.fileBytes ?? new Uint8Array(0);
-  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
-    type: media.mimeType,
-  });
-  const [limits, reelLimits] = await Promise.all([
-    new MediaService().uploadLimits(),
-    getReelLimits(),
-  ]);
-  try {
-    const prepared = await prepareVideoForUpload(source, {
-      ...chatReelPrepareOptions(reelLimits, limits?.maxPlaintextBytes),
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
-    return {
-      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
-      mimeType: prepared.file.type,
-      fileName: prepared.file.name,
-      width: prepared.width,
-      height: prepared.height,
-      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
-    };
-  } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
-      throw new UploadAbortedError(opts.signal.reason);
-    }
-    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
-    // good with the composer's own sentence for it, never a retry that is refused the same way.
-    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
-      throw new OutboxPrepareRefusedError(
-        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
-        e
-      );
-    }
-    throw e;
-  }
+function releaserFor(ownerId: string): SessionReleaser {
+  const token = ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+  return async (uploadId, why) => {
+    const { MediaService } = await import('$lib/media');
+    return new MediaService().releaseResumableUpload(uploadId, token, why);
+  };
 }
 
 /**
@@ -1952,11 +1896,11 @@ export async function loginImpl(
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
     // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
-    registerUploadReleaseDrain({
-      getUserId: () => ctx.getUserId(),
-      release: releaseResumableSession,
-      log: cb.log,
-    });
+    // The owner is FIXED here: a pass started for this account never sends under the next one's token.
+    {
+      const ownerId = ctx.getUserId();
+      registerUploadReleaseDrain({ ownerId, release: releaserFor(ownerId), log: cb.log });
+    }
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),

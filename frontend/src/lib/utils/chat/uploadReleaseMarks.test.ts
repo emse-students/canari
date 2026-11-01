@@ -1,6 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** The reconnect edge, held so a test can fire it and see it detached. */
+const reconnect = vi.hoisted(() => ({
+  listeners: new Set<() => void>(),
+}));
+vi.mock('$lib/stores/connectivity.svelte', () => ({
+  connectivity: {
+    onReconnect: (fn: () => void) => {
+      reconnect.listeners.add(fn);
+      return () => reconnect.listeners.delete(fn);
+    },
+  },
+}));
+
 import {
+  ReleaseOwnerChangedError,
   UPLOAD_RELEASE_MARKS_KEY,
+  flushUploadReleaseMarks,
+  ownerBoundToken,
+  registerUploadReleaseDrain,
+  unregisterUploadReleaseDrain,
   dropUploadReleaseMarksOf,
   markUploadForRelease,
   releaseUploadDurably,
@@ -165,5 +184,133 @@ describe('the durable release of an upload session', () => {
     expect(uploadReleaseMarksOf('alice', (l) => lines.push(l), store)).toEqual([]);
     expect(lines.some((l) => l.includes('ERROR'))).toBe(true);
     expect(store.map.has(UPLOAD_RELEASE_MARKS_KEY)).toBe(false);
+  });
+});
+
+/** A release whose answer the test hands over, to hold a pass in flight. */
+function heldRelease() {
+  const calls: string[] = [];
+  const answers: Array<(a: ReleaseAnswer) => void> = [];
+  const release = vi.fn(
+    (id: string) =>
+      new Promise<ReleaseAnswer>((resolve) => {
+        calls.push(id);
+        answers.push(resolve);
+      })
+  );
+  return { calls, release, answer: (a: ReleaseAnswer = 'answered') => answers.shift()!(a) };
+}
+
+const flushMicrotasks = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+describe('the drain: one pass at a time, bound to the session that started it', () => {
+  let store: ReturnType<typeof memoryStore>;
+  beforeEach(() => {
+    store = memoryStore();
+    vi.stubGlobal('localStorage', store);
+  });
+  afterEach(() => {
+    unregisterUploadReleaseDrain();
+    vi.unstubAllGlobals();
+  });
+
+  it("A's pass in flight, then B signs in: A's remaining marks are KEPT and nothing is DELETEd under B", async () => {
+    markUploadForRelease('alice', 'a1', quiet);
+    markUploadForRelease('alice', 'a2', quiet);
+    const a = heldRelease();
+    const b = heldRelease();
+    registerUploadReleaseDrain({ ownerId: 'alice', release: a.release, log: quiet });
+    const passA = flushUploadReleaseMarks();
+    await flushMicrotasks();
+    expect(a.calls).toEqual(['a1']);
+
+    // Bob signs in while alice's first DELETE is on the wire.
+    unregisterUploadReleaseDrain();
+    registerUploadReleaseDrain({ ownerId: 'bob', release: b.release, log: quiet });
+    const passB = flushUploadReleaseMarks();
+
+    a.answer('answered');
+    await passA;
+    await passB;
+    // Alice's pass stopped before its next DELETE: a2 is still hers, owed for her next sign-in.
+    expect(a.calls).toEqual(['a1']);
+    expect(uploadReleaseMarksOf('alice', quiet)).toEqual(['a2']);
+    // Bob owes nothing, so nothing at all went out under him.
+    expect(b.release).not.toHaveBeenCalled();
+  });
+
+  it('a token that is not the owner one sends NOTHING: the release is unanswered and the mark stays', async () => {
+    const bound = ownerBoundToken(
+      'alice',
+      async () => 'token-of-bob',
+      () => 'bob'
+    );
+    await expect(bound()).rejects.toBeInstanceOf(ReleaseOwnerChangedError);
+    const sent = vi.fn();
+    const port = {
+      request: async () => {
+        await bound();
+        sent();
+        // What media-service would answer bob for alice's session: a JSON 403.
+        return new Response('{}', { status: 403, headers: { 'Content-Type': 'application/json' } });
+      },
+    };
+    const release = (id: string, why: string) =>
+      releaseUploadSession(port as never, id, why, quiet);
+    expect(await releaseUploadDurably('alice', 's1', 'withdrawn', release, quiet)).toBe(
+      'unanswered'
+    );
+    expect(sent).not.toHaveBeenCalled();
+    expect(uploadReleaseMarksOf('alice', quiet)).toEqual(['s1']);
+    await expect(
+      ownerBoundToken(
+        'alice',
+        async () => 't',
+        () => 'alice'
+      )()
+    ).resolves.toBe('t');
+  });
+
+  it('two flushes at once JOIN: one pass, one DELETE per mark', async () => {
+    markUploadForRelease('alice', 'a1', quiet);
+    const a = heldRelease();
+    registerUploadReleaseDrain({ ownerId: 'alice', release: a.release, log: quiet });
+    const one = flushUploadReleaseMarks();
+    const two = flushUploadReleaseMarks();
+    await flushMicrotasks();
+    a.answer('answered');
+    await Promise.all([one, two]);
+    expect(a.calls).toEqual(['a1']);
+    expect(uploadReleaseMarksOf('alice', quiet)).toEqual([]);
+  });
+
+  it('the reconnect edge runs a pass while registered, and is DETACHED by the unregister', async () => {
+    markUploadForRelease('alice', 'a1', quiet);
+    const release = vi.fn(async (): Promise<ReleaseAnswer> => 'unanswered');
+    registerUploadReleaseDrain({ ownerId: 'alice', release, log: quiet });
+    expect(reconnect.listeners.size).toBe(1);
+    for (const fn of reconnect.listeners) fn();
+    await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+
+    unregisterUploadReleaseDrain();
+    expect(reconnect.listeners.size).toBe(0);
+    await flushUploadReleaseMarks();
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(uploadReleaseMarksOf('alice', quiet)).toEqual(['a1']);
+  });
+
+  it('an EMPTY owner id: no drain attached, no mark written, the DELETE still tried, and both accused', async () => {
+    const lines: string[] = [];
+    const release = vi.fn(async (): Promise<ReleaseAnswer> => 'unanswered');
+    registerUploadReleaseDrain({ ownerId: '', release, log: (l) => lines.push(l) });
+    expect(reconnect.listeners.size).toBe(0);
+    expect(await releaseUploadDurably('', 's1', 'withdrawn', release, (l) => lines.push(l))).toBe(
+      'unanswered'
+    );
+    expect(release).toHaveBeenCalledWith('s1', 'withdrawn');
+    expect(store.map.has(UPLOAD_RELEASE_MARKS_KEY)).toBe(false);
+    expect(lines.filter((l) => l.includes('ERROR'))).toHaveLength(2);
   });
 });
