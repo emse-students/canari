@@ -289,12 +289,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
       );
     });
 
-    it('refuses a hidden post (404) and a promo list as the republisher (400)', async () => {
+    it('refuses a hidden post (404); a campaign list is a valid republisher since 2026-10-31', async () => {
       await expect(republications.republish(P(4), A2, 'eSe', false)).rejects.toBeInstanceOf(
         NotFoundException
-      );
-      await expect(republications.republish(P(5), L, 'lister', false)).rejects.toBeInstanceOf(
-        BadRequestException
       );
     });
 
@@ -318,12 +315,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
   });
 
   describe('the push: a proposal the other association decides', () => {
-    it('only the post publishers propose (403), never to a list (400) nor to itself (400)', async () => {
+    it('only the post publishers propose (403), never to its own association (400)', async () => {
       await expect(republications.propose(P(5), A2, 'dSe', false)).rejects.toBeInstanceOf(
         ForbiddenException
-      );
-      await expect(republications.propose(P(5), L, 'aSe', false)).rejects.toBeInstanceOf(
-        BadRequestException
       );
       await expect(republications.propose(P(5), A1, 'aSe', false)).rejects.toBeInstanceOf(
         BadRequestException
@@ -452,6 +446,22 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         [P(6)]
       );
       expect(p6[0].n).toBe(0);
+    });
+  });
+
+  describe('a campaign list republishes and receives proposals (owner, 2026-10-31)', () => {
+    it('lets a publisher of the list republish a post into it, and withdraw it', async () => {
+      const result = await republications.republish(P(5), L, 'lister', false);
+      expect(result).toBeDefined();
+      await republications.unrepublish(P(5), L, 'lister', false);
+    });
+
+    it('lets an association propose a post to the list, and withdraw the proposal', async () => {
+      const proposal = await republications.propose(P(5), L, 'aSe', false);
+      expect(proposal).toMatchObject({ status: 'pending', fromAssociationId: A1 });
+      const queue = await proposals.listPending(L, 'lister', false);
+      expect(queue.incoming.map((p) => p.subjectId)).toContain(P(5));
+      await proposals.withdraw(proposal.id, 'aSe', false);
     });
   });
 });
