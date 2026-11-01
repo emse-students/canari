@@ -100,7 +100,8 @@ function suspendIfIdle(ctx: AudioContext, reason: string): void {
 export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call' = 'app'): void {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return;
   if (purpose === 'app' && callHoldsAppSound()) {
-    Log.d('AUDIO', `${name} tone silenced - a call holds the app's sound`);
+    // `Log.i`: the wiki promises this line, and `Log.d` never reaches the in-app log.
+    Log.i('AUDIO', `${name} tone silenced - a call holds the app's sound`);
     return;
   }
   armScreenWatch();

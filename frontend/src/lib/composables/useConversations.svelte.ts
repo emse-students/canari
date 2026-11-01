@@ -741,7 +741,20 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder). A salon that left memory meanwhile has no row to write and no page to
+    // keep: it is not stored, and that is said.
+    if (!conversations.has(channelConversationId)) {
+      ctx.log(
+        `[CHANNEL] page of ${channelConversationId.slice(0, 16)} not stored - the salon left memory meanwhile`
+      );
+      return;
+    }
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {

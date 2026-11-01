@@ -50,7 +50,9 @@ export function reportCallSoundPhase(holder: string, phase: string): void {
   else holders.delete(holder);
   const after = holders.size > 0;
   if (before === after) return;
-  Log.d(
+  // `Log.i`, NOT `Log.d`: the in-app log records no debug, so this line was unreadable on a device
+  // (iPhone 12, 2026-10-30). One line per CHANGE of the gate, which is what `Log.i` is for.
+  Log.i(
     'AUDIO',
     after
       ? `a call holds the app's sound (${holder} is ${phase}) - tones, media and notification sounds are silenced`
