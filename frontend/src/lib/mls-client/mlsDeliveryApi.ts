@@ -22,6 +22,7 @@ import {
   refusalOrigin,
 } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { readServerInstant, type ServerInstant } from './serverInstant';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
 import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
@@ -1831,27 +1832,33 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * When the server accepted the commit built on `baseEpoch` (`GET /api/mls/commits/:groupId/
-   * accepted-at`), in Unix ms, or `null` when the commit log holds no such row. Throws on a non-2xx
-   * (a refusal or an outage is no answer about the commit) and on an unparseable instant.
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch`
+   * (`GET /api/mls/commits/:groupId/accepted-at`, members only), as a {@link ServerInstant}.
+   * Throws when the server gave no answer about the commit (transport, 5xx, 429).
    */
-  async fetchCommitAcceptedAt(groupId: string, baseEpoch: number): Promise<number | null> {
+  async fetchCommitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}/accepted-at?baseEpoch=${baseEpoch}`,
       { headers: await this.auth() }
     );
-    if (!res.ok) {
-      throw await refusalFromResponse(res, 'Commit accepted-at HTTP error');
-    }
-    const body = (await res.json()) as { acceptedAt?: string | null };
-    if (body.acceptedAt === null || body.acceptedAt === undefined) return null;
-    const ms = Date.parse(body.acceptedAt);
-    if (!Number.isFinite(ms) || ms <= 0) {
-      throw new Error(
-        `commit accepted-at: unparseable instant ${String(body.acceptedAt).slice(0, 40)}`
-      );
-    }
-    return ms;
+    const answer = await readServerInstant(res, 'acceptedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Commit accepted-at HTTP error');
+    return answer;
+  }
+
+  /**
+   * When THIS device's own seat in `groupId` was removed (`GET /api/mls/groups/:groupId/own-removal`,
+   * read of the requester's own rows, so a removed device may ask), as a {@link ServerInstant}.
+   * Throws when the server gave no answer (transport, 5xx, 429).
+   */
+  async fetchOwnRemovalAt(groupId: string): Promise<ServerInstant> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/own-removal`,
+      { headers: await this.auth() }
+    );
+    const answer = await readServerInstant(res, 'removedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Own removal HTTP error');
+    return answer;
   }
 
   /**

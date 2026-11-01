@@ -138,7 +138,8 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/messages/ack` | Acknowledge messages |
 | POST | `/api/mls/commit` | Submit a commit: validate epoch + store in the commit-log + fan out (one atomic call) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits `baseEpoch >= N` to catch up a lagging device |
-| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only: when the commit built on epoch N was accepted (its log row `createdAt`), the date of a device notice |
+| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only, never before the requester's admitting commit: when the commit built on epoch N was accepted (its log row `createdAt`), the date of a device notice |
+| GET | `/api/mls/groups/:groupId/own-removal` | When the requester's own seat was removed, read of their own rows - the date of a removal notice |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo (external-join base) - membership-gated, returns `{ groupInfo, baseEpoch }` or null |
 | POST | `/api/mls/group-info/:groupId` | Holder repair of a stale stored GroupInfo - membership-gated, monotonic write-if-newer. Commits do NOT use it: they carry their base in `POST /api/mls/commit` (see [below](#the-base-travels-inside-every-commit-submission-comm-22)) |
 

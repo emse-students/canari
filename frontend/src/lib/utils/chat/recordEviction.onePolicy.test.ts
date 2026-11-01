@@ -20,6 +20,7 @@
  */
 import type { Conversation } from '$lib/types';
 import type { EvictionEvidence } from './eviction';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
 
 // ---------------------------------------------------------------- module stubs
 // The union of what the five sites need to load at all. Every one of them spreads the real module
@@ -186,6 +187,7 @@ function pipelineWorld(over: Record<string, unknown> = {}) {
     getLocalGroups: vi.fn().mockReturnValue([GROUP]),
     // The Remove commit merged: OpenMLS is the authority and it says this device is out.
     isGroupActive: vi.fn().mockResolvedValue(false),
+    ownRemovalAt: vi.fn().mockResolvedValue({ kind: 'at', at: SEAT_REMOVED_AT }),
     ...over,
   });
   const deps = {
@@ -264,6 +266,7 @@ async function runOutbox(opts: { active: boolean; send?: () => Promise<void> }):
     isGroupActive: vi.fn(async () => opts.active),
     sendMessage: vi.fn(opts.send ?? (async () => {})),
     waitForMessageQueueIdle: vi.fn(async () => {}),
+    ownRemovalAt: vi.fn(async () => ({ kind: 'at', at: SEAT_REMOVED_AT })),
   } as never;
   const outbox = createOutbox({
     mlsService,
@@ -282,7 +285,13 @@ async function runOutbox(opts: { active: boolean; send?: () => Promise<void> }):
 
   await outbox.flush();
   for (let i = 0; i < 10; i++) await Promise.resolve();
-  return { row: conversations.get(GROUP), saved: r.saved, notices: r.notices, lines: r.lines };
+  return {
+    row: conversations.get(GROUP),
+    saved: r.saved,
+    notices: r.notices,
+    dated: r.dated,
+    lines: r.lines,
+  };
 }
 
 /** The selection check, entered through the composable that owns it. */
@@ -301,7 +310,11 @@ async function runSelectionCheck(opts: {
   );
   const ctx = {
     storage: { saveConversation: r.saveConversation } as never,
-    ensureMls: () => ({ isGroupActive: vi.fn(opts.local) }) as never,
+    ensureMls: () =>
+      ({
+        isGroupActive: vi.fn(opts.local),
+        ownRemovalAt: vi.fn(async () => ({ kind: 'at', at: SEAT_REMOVED_AT })),
+      }) as never,
     userId: 'me',
     deviceKeyB64: 'k',
     historyBaseUrl: 'https://hist',
@@ -315,6 +328,7 @@ async function runSelectionCheck(opts: {
     row: convs.conversations.get(GROUP),
     saved: r.saved,
     notices: r.notices,
+    dated: r.dated,
     lines: r.lines,
   };
 }
@@ -331,9 +345,16 @@ async function runSelectionCheck(opts: {
 const REMOVED_AT = 1_700_000_000_000;
 
 /**
+ * When the server removed this device's seat, as its own record says (`ownRemovalAt`) - the date
+ * of the notice an evidence with no time of its own writes. Distinct from REMOVED_AT so a test
+ * reads WHICH source dated it.
+ */
+const SEAT_REMOVED_AT = REMOVED_AT + 7;
+
+/**
  * The evidences that carry WHEN the removal happened. Every other one is learnt after it (a later
- * frame, a check, a refusal) and the commit log that would say is members-only - so its notice is
- * refused rather than dated by when this device found out (the banner still tells the user).
+ * frame, a check, a refusal), so it asks the server for its own seat's removal instead - never the
+ * instant this device found out.
  */
 const DATED: readonly EvictionEvidence[] = ['remove-commit', 'system-event'];
 
@@ -371,6 +392,7 @@ const sites: { name: string; evidence: EvictionEvidence; run: () => Promise<Site
       const r = recorders(conversations);
       await handleSystemEvent('memberRemoved', { targetUser: 'me' }, {
         mlsService: {
+          ownRemovalAt: vi.fn(async () => ({ kind: 'at', at: SEAT_REMOVED_AT })),
           forgetGroup: vi.fn(),
           persistCheckpoint: vi.fn().mockResolvedValue(undefined),
         },
@@ -448,25 +470,15 @@ describe('every site records a learnt eviction the same way', () => {
         expect(out.saved).toContain(GROUP);
       });
 
-      if (DATED.includes(site.evidence)) {
-        it('tells the user once, in the thread, dated by the removal', async () => {
-          const out = await site.run();
+      it('tells the user once, in the thread, dated by the removal - never by finding out', async () => {
+        const out = await site.run();
+        const expected = DATED.includes(site.evidence) ? REMOVED_AT : SEAT_REMOVED_AT;
 
-          expect(out.notices).toHaveLength(1);
-          expect(out.notices[0]).toBeTruthy();
-          expect(out.dated?.[0]?.timestamp?.getTime()).toBe(REMOVED_AT);
-          expect(out.dated?.[0]?.serverTimestamp).toBe(REMOVED_AT);
-        });
-      } else {
-        it('refuses the notice, accusing, rather than date it by when this device found out', async () => {
-          const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-          const out = await site.run();
-
-          expect(out.notices).toHaveLength(0);
-          expect(error).toHaveBeenCalledWith(expect.stringContaining('removal notice REFUSED'));
-          error.mockRestore();
-        });
-      }
+        expect(out.notices).toHaveLength(1);
+        expect(out.notices[0]).toBeTruthy();
+        expect(out.dated?.[0]?.timestamp?.getTime()).toBe(expected);
+        expect(out.dated?.[0]?.serverTimestamp).toBe(expected);
+      });
 
       it('names the evidence in one line', async () => {
         const out = await site.run();
@@ -586,5 +598,64 @@ describe('what the disposition itself promises', () => {
 
     expect(conversations.get(GROUP)?.lifecycle).toBe('removed');
     expect(r.lines.join(' ')).toContain('removal notice not posted');
+  });
+});
+
+describe('an evidence with no time of its own asks the server, and never the clock', () => {
+  /** A group of its own per case: an undatable answer is remembered per group for the session. */
+  const groupOf = (n: number) => `22222222-2222-4222-8222-00000000000${n}`;
+  function world(groupId: string) {
+    const conversations = new Map<string, Conversation>([
+      [groupId, { ...liveConversation(groupId), id: groupId } as Conversation],
+    ]);
+    return { r: recorders(conversations), conversations };
+  }
+
+  it('a server with no record of the removal: REFUSED once, and not asked again', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const groupId = groupOf(1);
+    const { r, conversations } = world(groupId);
+    const askRemovedAt = vi.fn(async () => ({ kind: 'none' as const }));
+    for (const evidence of ['membership-check', 'inbound-frame', 'server-refusal'] as const) {
+      await recordEviction({
+        conversations,
+        groupId,
+        evidence,
+        askRemovedAt,
+        saveConversation: r.saveConversation,
+        addMessageToChat: r.addMessageToChat,
+        log: r.log,
+      });
+    }
+    expect(r.notices).toEqual([]);
+    expect(askRemovedAt).toHaveBeenCalledTimes(1);
+    expect(
+      error.mock.calls.filter((c) => String(c[0]).includes('removal notice REFUSED'))
+    ).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it('a server that could not be asked: a later evidence asks again and writes the line', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const groupId = groupOf(2);
+    const { r, conversations } = world(groupId);
+    const askRemovedAt = vi
+      .fn<() => Promise<ServerInstant>>()
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ kind: 'at', at: SEAT_REMOVED_AT });
+    for (const evidence of ['membership-check', 'server-refusal'] as const) {
+      await recordEviction({
+        conversations,
+        groupId,
+        evidence,
+        askRemovedAt,
+        saveConversation: r.saveConversation,
+        addMessageToChat: r.addMessageToChat,
+        log: r.log,
+      });
+    }
+    expect(r.notices).toHaveLength(1);
+    expect(r.dated[0]?.serverTimestamp).toBe(SEAT_REMOVED_AT);
+    error.mockRestore();
   });
 });

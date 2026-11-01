@@ -60,6 +60,13 @@ export interface SystemEnvelope {
     starterId: string;
     startedAt: number;
     /**
+     * Where the call started on the clocks a DURATION may subtract (see `callDurationMs`):
+     * `server` the server's acceptance of the invite, when known, and `local` this device's clock when
+     * it wrote the row. `startedAt` dates the row and is the INVITER's clock; subtracting this
+     * device's end from it measured one phone against another.
+     */
+    startClocks?: { server?: number; local: number };
+    /**
      * Set once the call has ended and its duration has been baked into `text`.
      * Presence of this field (not the display text) is what marks a call message
      * as finalized, so the "ended" state survives translation of `text`.
@@ -204,6 +211,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 callId: ce.callId,
                 starterId: ce.starterId,
                 startedAt: ce.startedAt,
+                ...readStartClocks(ce.startClocks),
                 ...(typeof ce.endedAt === 'number' ? { endedAt: ce.endedAt } : {}),
                 ...(isCallEndReason(ce.outcome) ? { outcome: ce.outcome } : {}),
               }
@@ -442,17 +450,31 @@ export function mkChannelInviteSentEnvelope(
   };
 }
 
-/** Build a system envelope for a call that just started, at `startedAt` - the instant its invite frame dates (never this device's clock). */
+/**
+ * Build a system envelope for a call that just started, at `startedAt` - the instant its invite frame
+ * dates (never this device's clock) - with the clocks its duration will be measured on.
+ */
 export function mkCallStartedEnvelope(
   starterName: string,
   callId: string,
   starterId: string,
-  startedAt: number
+  startedAt: number,
+  startClocks?: { server?: number; local: number }
 ): SystemEnvelope {
   return {
     kind: 'system',
     text: m.chat_system_call_started({ starter: starterName }),
-    callEvent: { callId, starterId, startedAt },
+    callEvent: { callId, starterId, startedAt, ...(startClocks ? { startClocks } : {}) },
+  };
+}
+
+/** Reads a stored `startClocks`, or `null` when the row carries none (a row of an older build). */
+function readStartClocks(v: unknown): { startClocks: { server?: number; local: number } } | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.local !== 'number') return null;
+  return {
+    startClocks: { local: o.local, ...(typeof o.server === 'number' ? { server: o.server } : {}) },
   };
 }
 

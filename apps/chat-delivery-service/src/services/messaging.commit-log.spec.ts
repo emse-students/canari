@@ -2761,43 +2761,134 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
   /**
    * THE INSTANT A DEVICE NOTICE IS DATED BY (`deviceNotices.svelte.ts`): the commit log's
-   * `createdAt` of the commit that admitted the device, read by members only.
+   * `createdAt` of the commit that admitted the device, read by members only, and never a commit
+   * older than the one that admitted the requester.
    */
   describe('getCommitAcceptedAt (the commit that admitted a device, by its log row)', () => {
+    const manager = groupRepo.manager as unknown as Record<string, jest.Mock>;
+    const ARRIVAL = new Date('2026-11-01T08:00:00.000Z');
+    let errorSpy: jest.SpyInstance;
+    beforeEach(() => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 9 });
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      // The requester's open stretch began at ARRIVAL.
+      manager.findOne = jest.fn().mockResolvedValue({ joinedAt: ARRIVAL, admittedAt: null });
+      errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => errorSpy.mockRestore());
+
+    /** The log: commits at bases 2..8, base 4 the one that admitted the requester. */
+    const log = (missing: number[] = []) =>
+      commitLogRepo.findOne.mockImplementation(
+        async ({
+          where,
+          order,
+        }: {
+          where: { baseEpoch?: number; createdAt?: unknown };
+          order?: { baseEpoch: 'ASC' | 'DESC' };
+        }) => {
+          if (where.createdAt) return { baseEpoch: 4 }; // the admitting commit
+          if (order?.baseEpoch === 'ASC') return { baseEpoch: 2 }; // the oldest retained
+          const b = where.baseEpoch as number;
+          if (b < 2 || b > 8 || missing.includes(b)) return null;
+          return { baseEpoch: b, createdAt: new Date(Date.UTC(2026, 10, 1, b)) };
+        }
+      );
+
     it('forbids a non-member', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       groupMemberRepo.findOne.mockResolvedValue(null);
-      await expect(service.getCommitAcceptedAt('group-1', 4, 'stranger')).rejects.toBeInstanceOf(
+      log();
+      await expect(service.getCommitAcceptedAt('group-1', 6, 'stranger')).rejects.toBeInstanceOf(
         ForbiddenException
       );
-      expect(commitLogRepo.findOne).not.toHaveBeenCalledWith({
-        where: { groupId: 'group-1', baseEpoch: 4 },
-      });
     });
 
     it('answers the log row createdAt for the commit built on baseEpoch', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
-      commitLogRepo.findOne.mockResolvedValue({
-        baseEpoch: 4,
-        createdAt: new Date('2026-11-01T09:00:00.000Z'),
+      log();
+      await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')).resolves.toEqual(
+        { acceptedAt: new Date(Date.UTC(2026, 10, 1, 6)).toISOString() }
+      );
+    });
+
+    it('answers the commit that admitted the requester, and refuses every older one', async () => {
+      log();
+      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
+        acceptedAt: new Date(Date.UTC(2026, 10, 1, 4)).toISOString(),
       });
+      for (const before of [0, 2, 3]) {
+        await expect(
+          service.getCommitAcceptedAt('group-1', before, 'member-1')
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      }
+    });
 
-      const res = await service.getCommitAcceptedAt('group-1', 4, 'member-1');
-
-      expect(res).toEqual({ acceptedAt: '2026-11-01T09:00:00.000Z' });
-      expect(commitLogRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'group-1', baseEpoch: 4 },
+    it('a key-distribution seat with no stretch is floored by the requesting device row', async () => {
+      manager.findOne = jest.fn().mockResolvedValue(null);
+      deviceGroupRepo.findOne.mockResolvedValue({ createdAt: ARRIVAL });
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 3, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', userId: 'member-1', deviceId: 'dev-1' },
       });
     });
 
-    it('answers null when the log holds no row (pruned or never recorded)', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
-      commitLogRepo.findOne.mockResolvedValue(null);
-
+    it('answers null without an ERROR when the row was pruned or the commit is not made yet', async () => {
+      // Arrival before every retained commit: no floor.
+      commitLogRepo.findOne.mockImplementation(
+        async ({ where, order }: { where: { createdAt?: unknown }; order?: unknown }) =>
+          where.createdAt ? null : order ? { baseEpoch: 5 } : null
+      );
       await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
         acceptedAt: null,
+      });
+      await expect(service.getCommitAcceptedAt('group-1', 9, 'member-1')).resolves.toEqual({
+        acceptedAt: null,
+      });
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('a HOLE inside the retained range answers null and is logged at ERROR', async () => {
+      log([6]);
+      await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1')).resolves.toEqual({
+        acceptedAt: null,
+      });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HOLE in the commit log'));
+    });
+  });
+
+  /** The date of the "you were removed" line, read of the requester's OWN rows. */
+  describe('getOwnRemovalAt (when the requester was removed)', () => {
+    const manager = groupRepo.manager as unknown as Record<string, jest.Mock>;
+    const LEFT = new Date('2026-11-01T09:00:00.000Z');
+    const KICKED = new Date('2026-11-01T10:00:00.000Z');
+
+    it('a person removed: their last closed stretch', async () => {
+      manager.find = jest
+        .fn()
+        .mockResolvedValue([{ leftAt: new Date('2026-10-01T00:00:00.000Z') }, { leftAt: LEFT }]);
+      await expect(service.getOwnRemovalAt('group-1', 'user-1', 'dev-1')).resolves.toEqual({
+        removedAt: LEFT.toISOString(),
+      });
+      expect(manager.find).toHaveBeenCalledWith(expect.anything(), {
+        where: { groupId: 'group-1', userId: 'user-1' },
+      });
+    });
+
+    it("a person still a member: this device's kick", async () => {
+      manager.find = jest.fn().mockResolvedValue([{ leftAt: LEFT }, { leftAt: null }]);
+      deviceGroupRepo.findOne.mockResolvedValue({ kickedAt: KICKED });
+      await expect(service.getOwnRemovalAt('group-1', 'user-1', 'dev-1')).resolves.toEqual({
+        removedAt: KICKED.toISOString(),
+      });
+    });
+
+    it('nothing removed it (or a stranger asking): null', async () => {
+      manager.find = jest.fn().mockResolvedValue([]);
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+      await expect(service.getOwnRemovalAt('group-1', 'stranger', 'dev-9')).resolves.toEqual({
+        removedAt: null,
       });
     });
   });

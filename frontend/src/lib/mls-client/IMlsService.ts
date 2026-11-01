@@ -8,6 +8,7 @@ import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPac
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
+import type { ServerInstant } from './serverInstant';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
@@ -1181,6 +1182,21 @@ export interface IMlsService {
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('./historyTypes').HistoryPage>>;
   /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` - the commit log row's
+   * `createdAt`, the one durable and shared statement of when a commit happened - as a
+   * {@link ServerInstant}. A line derived from a merged commit (a device notice) is dated by it, never
+   * by when this device merged the commit. Cached for the session: a log row never changes once
+   * written, and a route this server does not serve is not asked again. Throws when the server gave
+   * no answer (transport, 5xx).
+   */
+  commitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant>;
+  /**
+   * When THIS device's own seat in `groupId` was removed, as a {@link ServerInstant} - the date of
+   * the "you were removed" line when the evidence of the removal carries none. Throws when the
+   * server gave no answer.
+   */
+  ownRemovalAt(groupId: string): Promise<ServerInstant>;
+  /**
    * Rung-1 replay: fetches the ordered, CONTIGUOUS commits this device missed
    * (`baseEpoch >= sinceEpoch`) so a gap can be healed by re-applying them instead of dropping local
    * state. `activeEpoch` is the epoch to reach after replay.
@@ -1189,14 +1205,6 @@ export interface IMlsService {
    * the intermediate commits were pruned, `gapAt` when an epoch inside the range was never recorded
    * at all - `commits` then carries only the applicable prefix.
    */
-  /**
-   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` (Unix ms) - the commit
-   * log row's `createdAt`, the one durable and shared statement of when a commit happened - or `null`
-   * when the log holds no such row (pruned, or never recorded). Throws on a transport failure or a
-   * refusal: neither says anything about the commit. A line derived from a merged commit (a device
-   * notice) is dated by it, never by when this device merged the commit.
-   */
-  commitAcceptedAt(groupId: string, baseEpoch: number): Promise<number | null>;
   fetchCommitsSince(
     groupId: string,
     sinceEpoch: number

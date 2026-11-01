@@ -1347,12 +1347,21 @@ export class CallService {
     // event's time - taken once, and carried by both the hangup frame every member dates the record
     // by and this device's own record, so the two cannot disagree.
     const endedAt = Date.now();
+    // The record waits for the hangup's answer, so it carries the server's acceptance of it - the
+    // order key every member's copy has. A hangup that is not sent, or not answered, leaves the act's
+    // own instant alone (said, when the send failed).
+    let hangup: Promise<EventTime> = Promise.resolve({ timestamp: new Date(endedAt) });
     if (notify && groupId && callId) {
-      this.sendMlsNotification(
+      hangup = this.sendMlsNotification(
         groupId,
         mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
         endedAt
-      ).catch(console.error);
+      ).catch((e: unknown): EventTime => {
+        console.error(
+          `[Call] hangup of ${callId} not sent - its record carries no server time: ${String(e)}`
+        );
+        return { timestamp: new Date(endedAt) };
+      });
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
       void this.endServerRing(
@@ -1364,12 +1373,9 @@ export class CallService {
     if (groupId && callId && !remoteOrigin) {
       // The one record writer, told WHY the call ended. A call that failed before its invite
       // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
-      void this.chatNotifier?.onCallEnded(
-        groupId,
-        callId,
-        { timestamp: new Date(endedAt) },
-        outcome,
-        state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined
+      const starterId = state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined;
+      void hangup.then((at) =>
+        this.chatNotifier?.onCallEnded(groupId, callId, at, outcome, starterId)
       );
     }
 

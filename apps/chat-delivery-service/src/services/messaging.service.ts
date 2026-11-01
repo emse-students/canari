@@ -3225,7 +3225,8 @@ export class MessagingService {
   async getCommitAcceptedAt(
     groupId: string,
     baseEpoch: number,
-    requesterUserId: string
+    requesterUserId: string,
+    requesterDeviceId?: string
   ): Promise<{ acceptedAt: string | null }> {
     const group = await this.groupRepo.findOne({ where: { id: groupId } });
     const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
@@ -3239,14 +3240,133 @@ export class MessagingService {
       );
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
+    // A MEMBER IS NOT HANDED THE PAST (user, 2026-10-21): the time of a commit made before they
+    // arrived is the group's history, so the floor is the commit that ADMITTED them - the last one
+    // accepted at or before their arrival - and anything older is refused. `admittedAtEpoch` cannot
+    // say it: it is cleared the moment the device is activated, so an active member holds none.
+    const floor = await this.commitFloorOf(groupId, requesterUserId, requesterDeviceId);
+    if (floor !== null && baseEpoch < floor) {
+      this.logger.warn(
+        `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - before the commit that admitted them (base ${floor})`
+      );
+      throw new ForbiddenException(
+        `Commit ${baseEpoch} of ${groupId} precedes the requester's arrival`
+      );
+    }
     const row = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
     if (!row) {
-      this.logger.log(
-        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - no commit log row (pruned or never recorded)`
-      );
+      await this.reportMissingCommitRow(groupId, baseEpoch, group?.activeEpoch ?? null);
       return { acceptedAt: null };
     }
     return { acceptedAt: row.createdAt.toISOString() };
+  }
+
+  /**
+   * The base epoch of the commit that admitted `userId` to `groupId` in their current stretch of
+   * membership - the last commit accepted at or before their arrival - or `null` when no retained
+   * commit precedes it (everything the log holds is theirs to see).
+   *
+   * Arrival is the open membership stretch's (`admittedAt ?? joinedAt`); a key-distribution group,
+   * whose seats are per device and keep no stretch, falls back to the requesting device's row. Both
+   * are written by this service's clock and the log's `createdAt` by the database's: the two are one
+   * host's UTC, and a skew of a few ms can only move the floor ONE commit earlier, never hide the
+   * admitting commit from the member it admitted.
+   */
+  private async commitFloorOf(
+    groupId: string,
+    userId: string,
+    deviceId: string | undefined
+  ): Promise<number | null> {
+    const open = await this.groupRepo.manager.findOne(GroupMembershipInterval, {
+      where: { groupId, userId, leftAt: IsNull() },
+    });
+    let arrival: Date | null = open ? (open.admittedAt ?? open.joinedAt) : null;
+    if (!arrival && deviceId) {
+      const device = await this.deviceGroupRepo.findOne({
+        where: { groupId, userId, deviceId },
+      });
+      arrival = device?.createdAt ?? null;
+    }
+    if (!arrival) return null;
+    const admitting = await this.commitLogRepo.findOne({
+      where: { groupId, createdAt: LessThanOrEqual(arrival) },
+      order: { baseEpoch: 'DESC' },
+    });
+    return admitting?.baseEpoch ?? null;
+  }
+
+  /**
+   * Says why the log holds no row for a commit a member asked the time of - and at the level the
+   * cause deserves. PRUNED (older than the oldest retained row) is the retention working, so `log`.
+   * A commit not made yet (at or past the active epoch) is a client asking about the future, `warn`.
+   * Anything else is a HOLE: the gate writes the row in the same transaction as the epoch advance,
+   * so an epoch inside the retained range with no row is a commit path that advanced without
+   * logging - a fault, which production has had (a hole at epoch 121), so `error`.
+   */
+  private async reportMissingCommitRow(
+    groupId: string,
+    baseEpoch: number,
+    activeEpoch: number | null
+  ): Promise<void> {
+    if (activeEpoch !== null && baseEpoch >= activeEpoch) {
+      this.logger.warn(
+        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - no such commit yet (active epoch ${activeEpoch})`
+      );
+      return;
+    }
+    const oldest = await this.commitLogRepo.findOne({
+      where: { groupId },
+      order: { baseEpoch: 'ASC' },
+    });
+    if (!oldest || oldest.baseEpoch > baseEpoch) {
+      this.logger.log(
+        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - pruned below the retained floor`
+      );
+      return;
+    }
+    this.logger.error(
+      `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - HOLE in the commit log: retained from base ${oldest.baseEpoch}, active ${activeEpoch ?? '?'}, and this commit was never logged`
+    );
+  }
+
+  /**
+   * WHEN THE REQUESTER'S OWN SEAT IN `groupId` WAS REMOVED, or `null` when nothing removed it.
+   *
+   * The date of the "you were removed" line a device writes when it learns of its removal by any
+   * evidence that carries no time of its own (a membership check, a later frame, a refused send).
+   * Asked of the requester's OWN rows only, so it needs - and checks - no membership: a removed
+   * device is exactly who asks, and a stranger reads nothing but `null`.
+   *
+   * The person's last closed stretch (`leftAt`) when they hold no open one - the removal of the
+   * person; otherwise the requesting device's `kickedAt` - the removal of this device's leaf while
+   * its owner stays a member. Both written by the server when the removal happened.
+   */
+  async getOwnRemovalAt(
+    groupId: string,
+    userId: string,
+    deviceId: string | undefined
+  ): Promise<{ removedAt: string | null }> {
+    const stretches = await this.groupRepo.manager.find(GroupMembershipInterval, {
+      where: { groupId, userId },
+    });
+    const open = stretches.some((s) => s.leftAt === null);
+    if (!open) {
+      const left = stretches
+        .map((s) => s.leftAt)
+        .filter((d): d is Date => d instanceof Date)
+        .sort((a, b) => b.getTime() - a.getTime())[0];
+      if (left) return { removedAt: left.toISOString() };
+    }
+    if (deviceId) {
+      const device = await this.deviceGroupRepo.findOne({
+        where: { groupId, userId, deviceId },
+      });
+      if (device?.kickedAt) return { removedAt: device.kickedAt.toISOString() };
+    }
+    this.logger.log(
+      `[OWN_REMOVAL] group=${groupId} user=${userId.slice(0, 8)} - no removal recorded (open=${open})`
+    );
+    return { removedAt: null };
   }
 
   /**

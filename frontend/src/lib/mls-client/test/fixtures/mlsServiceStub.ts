@@ -64,7 +64,8 @@ export function createMlsServiceStub(
     // only shows up as `undefined.length` inside whichever case forgot to override it.
     fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
     fetchHistoryBatch: vi.fn().mockResolvedValue(new Map()),
-    commitAcceptedAt: vi.fn().mockResolvedValue(null),
+    commitAcceptedAt: vi.fn().mockResolvedValue({ kind: 'none' }),
+    ownRemovalAt: vi.fn().mockResolvedValue({ kind: 'none' }),
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),

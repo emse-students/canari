@@ -1882,6 +1882,7 @@ export function useConversations() {
       conversations,
       groupId: convo.id,
       evidence,
+      askRemovedAt: () => ctx.ensureMls().ownRemovalAt(convo.id),
       saveConversation: (key) => saveConversation(key, ctx),
       addMessageToChat: ctx.addMessageToChat,
       log: ctx.log,

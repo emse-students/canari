@@ -277,13 +277,34 @@ describe('a call record is dated by its frame, never by when this device drained
     expect(options.serverTimestamp).toBe(late.serverTimestamp);
   });
 
-  it('a duration is the distance between the two frames, not between two drains', async () => {
+  it('a duration is measured on the server clock, never one phone against another', async () => {
     const { ctx, rows } = makeCtx();
     await recordCallStarted(ctx, G, 't3', 'caller', AT);
-    const end = { timestamp: new Date(AT.timestamp.getTime() + 3 * 60_000) };
+    // The hangup sender's clock runs TEN minutes ahead of the inviter's; the server says three.
+    const end = {
+      timestamp: new Date(AT.timestamp.getTime() + 10 * 60_000),
+      serverTimestamp: AT.serverTimestamp + 3 * 60_000,
+    };
     await recordCallEnded(ctx, G, 't3', end);
     expect(rows()[0].callEvent?.endedAt).toBe(end.timestamp.getTime());
-    expect(rows()[0].text).toContain('3');
+    expect(rows()[0].text).toBe('name-of-caller a démarré un appel qui a duré 3 minutes');
+  });
+
+  it("with no server time at the end, it is this device's own start and end", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(AT.timestamp.getTime() + 60_000);
+      const { ctx, rows } = makeCtx();
+      await recordCallStarted(ctx, G, 't5', 'caller', AT);
+      vi.setSystemTime(AT.timestamp.getTime() + 3 * 60_000);
+      // This device's end, stamped by a clock that disagrees with the inviter's by an hour.
+      await recordCallEnded(ctx, G, 't5', {
+        timestamp: new Date(AT.timestamp.getTime() + 3_600_000),
+      });
+      expect(rows()[0].text).toBe('name-of-caller a démarré un appel qui a duré 2 minutes');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a signal with no instant at all is REFUSED with an error and writes nothing', async () => {

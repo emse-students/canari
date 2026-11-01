@@ -12,6 +12,7 @@ import {
   type KeyFirstSight,
 } from '$lib/mls-client/deviceTrust';
 import { reportUninvitedEntry, type UninvitedEntryKind } from '$lib/mls-client/uninvitedEntry';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
 import {
   canonicalIdentity,
   canonicalUserId,
@@ -106,11 +107,11 @@ export interface DeviceNoticeContext {
   removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
   /**
    * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
-   * commitAcceptedAt`, the commit log's `createdAt`), `null` when the log holds none; throws when the
-   * server could not be asked. A line is dated by the commit that admitted the device, never by
-   * when this device merged it.
+   * commitAcceptedAt`, the commit log's `createdAt`), as a {@link ServerInstant}; throws when the
+   * server gave no answer. A line is dated by the commit that admitted the device, never by when
+   * this device merged it.
    */
-  commitAcceptedAt: (groupId: string, baseEpoch: number) => Promise<number | null>;
+  commitAcceptedAt: (groupId: string, baseEpoch: number) => Promise<ServerInstant>;
   /**
    * The groups this device holds MLS state for (`IMlsService.getLocalGroups`) - the authority on
    * where a contact line is owed, whether or not its conversation row is loaded yet.
@@ -704,10 +705,15 @@ function leafStillIn(
   };
 }
 
+/** The dating of a line from its commit, or why it has none (see {@link eventCommitTime}). */
+type CommitDating = { timestamp: Date; serverTimestamp: number } | 'settled' | 'parked';
+
 /**
- * WHEN THE EVENT'S COMMIT HAPPENED: the dating options of a line derived from it, or `null` - logged
- * at ERROR - when the commit log holds no row for it. Throws when the server could not be asked, and
- * the caller keeps the line owed: an outage is no answer about the commit.
+ * WHEN THE EVENT'S COMMIT HAPPENED: the dating options of a line derived from it - or `'settled'`
+ * when the server ANSWERED that no date will come (no log row: logged at ERROR; a refusal: this
+ * device is no longer a member, or the commit predates its arrival), or `'parked'` when this server
+ * does not serve the route (said once by the MLS service; the line stays owed). Throws when the
+ * server gave no answer at all, and the caller keeps the line owed: an outage is no answer.
  *
  * THE COMMIT, NEVER THE MERGE. A device learns of an admission when it merges the commit, which may
  * be days later (a phone opened after a week), and a line dated by that merge sat below everything
@@ -719,22 +725,32 @@ function leafStillIn(
 async function eventCommitTime(
   event: DeviceEvent,
   ctx: DeviceNoticeContext
-): Promise<{ timestamp: Date; serverTimestamp: number } | null> {
+): Promise<CommitDating> {
+  const short = event.groupId.slice(0, 8);
   const baseEpoch = event.epoch - 1;
   if (!Number.isInteger(baseEpoch) || baseEpoch < 0) {
     console.error(
-      `[DEVICE_NOTICE] line REFUSED in ${event.groupId.slice(0, 8)}...: epoch ${event.epoch} names no commit - no durable instant dates it, and this device's clock is not one`
+      `[DEVICE_NOTICE] line REFUSED in ${short}...: epoch ${event.epoch} names no commit - no durable instant dates it, and this device's clock is not one`
     );
-    return null;
+    return 'settled';
   }
-  const at = await ctx.commitAcceptedAt(event.groupId, baseEpoch);
-  if (at === null) {
-    console.error(
-      `[DEVICE_NOTICE] line REFUSED in ${event.groupId.slice(0, 8)}...: the commit log holds no commit at base epoch ${baseEpoch} (pruned or never recorded) - no durable instant dates it, and this device's clock is not one`
-    );
-    return null;
+  const answer = await ctx.commitAcceptedAt(event.groupId, baseEpoch);
+  switch (answer.kind) {
+    case 'at':
+      return { timestamp: new Date(answer.at), serverTimestamp: answer.at };
+    case 'none':
+      console.error(
+        `[DEVICE_NOTICE] line REFUSED in ${short}...: the commit log holds no commit at base epoch ${baseEpoch} (pruned or never recorded) - no durable instant dates it, and this device's clock is not one`
+      );
+      return 'settled';
+    case 'refused':
+      console.log(
+        `[DEVICE_NOTICE] line settled in ${short}...: the server refuses the time of the commit at base epoch ${baseEpoch} (this device left the group, or the commit predates its arrival)`
+      );
+      return 'settled';
+    case 'unserved':
+      return 'parked';
   }
-  return { timestamp: new Date(at), serverTimestamp: at };
 }
 
 /** The message id of an uninvited-entry line: one per conversation, device and key. */
@@ -784,9 +800,23 @@ async function noteUninvitedEntries(
         owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
         continue;
       }
+      if (decided.kind !== 'new-person' && decided.kind !== 'unvouched-device') {
+        reportUninvitedEntry(event, decided.kind);
+        continue;
+      }
+      // THE TIME FIRST, THEN THE ACCUSATION. The report logs at ERROR, and an entry that stays owed
+      // because its commit's time could not be asked (a throw, or a route this server does not
+      // serve) is decided again at every drain: asked after the report, it accused once per drain.
+      const messageId = uninvitedLineId(event.groupId, deviceEventKey(event) ?? event.identity);
+      const present = decided.convo.messages.some((msg) => msg.id === messageId);
+      const dating = present ? 'settled' : await eventCommitTime(event, ctx);
+      if (dating === 'parked') {
+        owedUninvited = [...owedUninvited, event].slice(-MAX_OWED_UNINVITED_LINES);
+        continue;
+      }
       reportUninvitedEntry(event, decided.kind);
-      if (decided.kind === 'new-person' || decided.kind === 'unvouched-device') {
-        await writeUninvitedLine(event, decided.kind, decided.convo, ctx);
+      if (dating !== 'settled') {
+        await writeUninvitedLine(event, decided.kind, messageId, dating, ctx);
       }
     } catch (e) {
       // Nothing is lost - the entry is kept, durably, and decided at the next delivery - so this is
@@ -844,18 +874,14 @@ async function decideUninvitedEntry(
   return { kind: 'new-person', convo };
 }
 
+/** Writes the uninvited-entry line, dated by the commit that let the entrant in. */
 async function writeUninvitedLine(
   event: DeviceEvent,
   kind: 'new-person' | 'unvouched-device',
-  convo: NoticeConversation,
+  messageId: string,
+  at: { timestamp: Date; serverTimestamp: number },
   ctx: DeviceNoticeContext
 ): Promise<void> {
-  const key = deviceEventKey(event) ?? event.identity;
-  const messageId = uninvitedLineId(event.groupId, key);
-  if (convo.messages.some((msg) => msg.id === messageId)) return;
-  // Throws when the server could not be asked: the entry stays owed (`noteUninvitedEntries`).
-  const at = await eventCommitTime(event, ctx);
-  if (!at) return;
   const userId = userIdOfLeaf(event.identity);
   const getName = await ctx.resolveDisplayNames([userId]);
   const user = getName(userId);
@@ -888,10 +914,10 @@ async function writeContactLines(
   const userId = userIdOfLeaf(event.identity);
   const held = new Set(ctx.localGroups());
   let getName: ((id: string) => string) | null = null;
-  // Asked once, at the first conversation that takes the line: `undefined` not asked yet, `null`
-  // refused (no commit log row - nothing written anywhere, nothing owed), `'unasked'` the server
-  // could not be asked (every line stays owed to the next delivery).
-  let at: { timestamp: Date; serverTimestamp: number } | null | 'unasked' | undefined;
+  // Asked once, at the first conversation that takes the line: `undefined` not asked yet,
+  // `'settled'` answered with no date (nothing written anywhere, nothing owed), `'parked'` the route
+  // is not served or `'unasked'` the server gave no answer (every line stays owed).
+  let at: CommitDating | 'unasked' | undefined;
   let written = 0;
   let owed = false;
   const holdsContact = async (groupId: string): Promise<boolean | 'unreadable'> => {
@@ -936,13 +962,13 @@ async function writeContactLines(
         at = 'unasked';
       }
     }
-    if (at === 'unasked') {
+    if (at === 'unasked' || at === 'parked') {
       owed = true;
       continue;
     }
-    // Refused for good (logged in `eventCommitTime`): retrying could only refuse again, so the line
-    // is settled rather than owed.
-    if (at === null) return false;
+    // Answered with no date (logged in `eventCommitTime`): asking again could only answer the same,
+    // so the line is settled rather than owed.
+    if (at === 'settled') return false;
     getName ??= await ctx.resolveDisplayNames([userId]);
     await ctx.addMessageToChat(
       'system',

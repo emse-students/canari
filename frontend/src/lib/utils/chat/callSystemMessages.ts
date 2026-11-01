@@ -85,7 +85,17 @@ export async function recordCallStarted(
   // record is written, and a "started" row now would sit beside it with the same id.
   if (endedCallIds.has(callId)) return;
   const starterName = getName(starterId.toLowerCase());
-  const envelope = mkCallStartedEnvelope(starterName, callId, starterId.toLowerCase(), eventMs(at));
+  // The duration's clocks, taken now: the server's acceptance of the invite, and this device's own.
+  const envelope = mkCallStartedEnvelope(
+    starterName,
+    callId,
+    starterId.toLowerCase(),
+    eventMs(at),
+    {
+      ...(at.serverTimestamp !== undefined ? { server: at.serverTimestamp } : {}),
+      local: Date.now(),
+    }
+  );
   await ctx.addMessageToChat('system', serializeEnvelope(envelope), groupId, {
     isSystem: true,
     messageId,
@@ -136,7 +146,7 @@ export async function recordCallEnded(
     // The timeline may have gained this very row during the await: never write a second one -
     // finalize the one that arrived.
     if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) {
-      await finalizeCallRow(ctx, groupId, callId, endedAt, outcome);
+      await finalizeCallRow(ctx, groupId, callId, at, outcome);
       return;
     }
     appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
@@ -153,7 +163,31 @@ export async function recordCallEnded(
     return;
   }
 
-  await finalizeCallRow(ctx, groupId, callId, eventMs(at), outcome);
+  await finalizeCallRow(ctx, groupId, callId, at, outcome);
+}
+
+/**
+ * HOW LONG A CALL LASTED, measured on ONE clock. The row's `startedAt` is the inviter's clock (it
+ * dates the row as every member dates it), and the end is this device's or the hangup sender's: their
+ * difference was two phones' clocks subtracted, so a callee whose clock ran a minute fast read a
+ * minute too much. The server's two acceptances when both are known; otherwise this device's own
+ * clock at the start row and now - the end is being written NOW, on this device.
+ */
+function callDurationMs(
+  start: { startedAt: number; startClocks?: { server?: number; local: number } },
+  end: EventTime,
+  callId: string
+): number {
+  const clocks = start.startClocks;
+  if (clocks?.server !== undefined && end.serverTimestamp !== undefined) {
+    return end.serverTimestamp - clocks.server;
+  }
+  if (clocks) return Date.now() - clocks.local;
+  // A row an older build wrote carries no clocks: the only measure left subtracts two devices.
+  appendLog(
+    `[CallRecord] ${callId} has no start clocks (written by an older build) - its duration mixes two devices' clocks`
+  );
+  return eventMs(end) - start.startedAt;
 }
 
 /**
@@ -164,9 +198,10 @@ async function finalizeCallRow(
   ctx: CallSystemMessageContext,
   groupId: string,
   callId: string,
-  endedAt: number,
+  end: EventTime,
   outcome: CallEndReason | undefined
 ): Promise<void> {
+  const endedAt = eventMs(end);
   const messageId = callMessageId(callId);
   const convo = ctx.conversations.get(groupId);
   const idx = convo ? convo.messages.findIndex((m) => m.id === messageId) : -1;
@@ -191,7 +226,7 @@ async function finalizeCallRow(
   const curMsg = current.messages[curIdx];
   const nextText = outcome
     ? buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), starterName)
-    : buildCallEndedText(starterName, endedAt - env.callEvent.startedAt);
+    : buildCallEndedText(starterName, callDurationMs(env.callEvent, end, callId));
   appendLog(`[CallRecord] ${callId} finalized as ${outcome ?? 'answered'}`);
   const nextContent = serializeEnvelope({
     ...env,

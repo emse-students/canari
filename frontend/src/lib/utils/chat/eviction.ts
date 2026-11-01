@@ -56,6 +56,7 @@
 
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
@@ -118,14 +119,21 @@ export interface RecordEvictionDeps {
   evidence: EvictionEvidence;
   /**
    * WHEN THE REMOVAL HAPPENED, in server milliseconds, when the evidence carries it - and the date of
-   * the notice. A `remove-commit` carries the server's acceptance of the Remove commit (its delivery's
-   * `queuedCreatedAt`); a `system-event` the server's acceptance of its author's announcement, sent
-   * right after that commit. Every other evidence is learnt AFTER the removal (a later frame, a check,
-   * a refusal) and cannot say when it happened: the commit log that would is members-only, and this
-   * device is no longer one. Absent there, and the notice is then REFUSED rather than dated by when
-   * this device found out - the retired row's banner still tells the user.
+   * the notice. A `remove-commit` delivered live carries the server's acceptance of the Remove commit
+   * (its delivery's `queuedCreatedAt`); a `system-event` the server's acceptance of its author's
+   * announcement, sent right after that commit. A Remove commit applied through the replay
+   * (`commitReplay.ts`) carries no delivery time, and every other evidence is learnt AFTER the
+   * removal (a later frame, a check, a refusal) - those ask {@link askRemovedAt} instead.
    */
   removedAt?: number;
+  /**
+   * Asks the server when THIS device's own seat was removed (`IMlsService.ownRemovalAt`: the
+   * person's closed membership stretch, or this device's kick) - the date of the notice when the
+   * evidence carries none. Read of the device's own rows, so a removed device may ask; the
+   * members-only commit log could not answer it. Asked at most until it answers: an answer with no
+   * instant is kept for the session, so later evidences do not re-ask.
+   */
+  askRemovedAt?: () => Promise<ServerInstant>;
   log: (message: string) => void;
   saveConversation?: (key: string) => Promise<void>;
   /**
@@ -141,6 +149,34 @@ export interface RecordEvictionDeps {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
+}
+
+/** Groups whose removal the server answered with no instant: not asked again this session. */
+const undatableRemovals = new Set<string>();
+
+/**
+ * The instant of this device's removal from `groupId` (Unix ms), or why there is none: the
+ * evidence's own time when it carries one, else the server's record of the seat's removal.
+ */
+async function removalInstant(
+  groupId: string,
+  removedAt: number | undefined,
+  askRemovedAt: RecordEvictionDeps['askRemovedAt']
+): Promise<number | string> {
+  if (typeof removedAt === 'number' && Number.isFinite(removedAt) && removedAt > 0) {
+    return removedAt;
+  }
+  if (!askRemovedAt) return 'this evidence carries no time and its site cannot ask the server';
+  if (undatableRemovals.has(groupId)) return 'the server already answered with no instant';
+  try {
+    const answer = await askRemovedAt();
+    if (answer.kind === 'at') return answer.at;
+    undatableRemovals.add(groupId);
+    return `the server holds no instant of this seat's removal (${answer.kind})`;
+  } catch (e) {
+    // No answer is not an answer: a later evidence asks again.
+    return `the server could not be asked (${String(e).slice(0, 80)}) - a later evidence asks again`;
+  }
 }
 
 /**
@@ -161,8 +197,16 @@ export interface RecordEvictionDeps {
  * says so. Returns whether THIS call performed the transition.
  */
 export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean> {
-  const { conversations, groupId, evidence, removedAt, log, saveConversation, addMessageToChat } =
-    deps;
+  const {
+    conversations,
+    groupId,
+    evidence,
+    removedAt,
+    askRemovedAt,
+    log,
+    saveConversation,
+    addMessageToChat,
+  } = deps;
   const short = groupId.slice(0, 8);
   const { what, missed } = EVICTION_EVIDENCE[evidence];
 
@@ -183,23 +227,25 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
   const retired = await retireConversation({ conversations, key, groupId, saveConversation });
 
   if (!alreadyNoticed && addMessageToChat) {
-    if (typeof removedAt !== 'number' || !Number.isFinite(removedAt) || removedAt <= 0) {
-      // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local
-      // clock at this instant, and a device learning its removal days late (a check on selection, a
-      // refused send) drew "you were removed" below everything said after it. No durable time of the
-      // Remove commit is reachable from this evidence, so the line is refused; a later evidence that
-      // carries one (the Remove commit itself, replayed) still writes it.
-      console.error(
-        `[EVICT] ${short}… - removal notice REFUSED (${evidence}): this evidence carries no durable time of the Remove commit, and this device's clock is not one - the retired row's banner tells the user`
-      );
-    } else {
+    // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local clock
+    // at this instant, and a device learning its removal days late (a check on selection, a refused
+    // send) drew "you were removed" below everything said after it. The evidence's own time first,
+    // then the server's record of this seat's removal.
+    const dated = await removalInstant(groupId, removedAt, askRemovedAt);
+    if (typeof dated === 'number') {
       // Best-effort, and after the retire: the banner is the durable half and must not be held up
       // by a message write. A swallowed branch logs.
       await addMessageToChat('system', notice, key, {
         isSystem: true,
-        timestamp: new Date(removedAt),
-        serverTimestamp: removedAt,
+        timestamp: new Date(dated),
+        serverTimestamp: dated,
       }).catch((e: unknown) => log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`));
+    } else if (retired) {
+      // Said once per group: only the call that retired the row speaks, so a second evidence for
+      // the same removal does not repeat it.
+      console.error(
+        `[EVICT] ${short}… - removal notice REFUSED (${evidence}): ${dated} - no durable instant dates the removal, and this device's clock is not one; the retired row's banner tells the user`
+      );
     }
   }
 

@@ -30,6 +30,7 @@ import {
   sanitizeEpoch,
   sanitizeLeafLogValue,
   sanitizeLogValue,
+  sanitizeOptionalQueryValue,
   sanitizeQueryValue,
 } from '../utils/sanitize';
 
@@ -140,14 +141,44 @@ export class MessagingController {
   @Get('mls/commits/:groupId/accepted-at')
   async getCommitAcceptedAt(
     @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
     @Param('groupId') groupId: string,
     @Query('baseEpoch') baseEpochRaw?: string
   ) {
-    const baseEpoch = sanitizeEpoch(baseEpochRaw, 'baseEpoch');
+    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked.
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
-    return this.messagingService.getCommitAcceptedAt(groupId, baseEpoch, authUserId);
+    const baseEpoch = sanitizeEpoch(baseEpochRaw, 'baseEpoch');
+    return this.messagingService.getCommitAcceptedAt(
+      groupId,
+      baseEpoch,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
+  }
+
+  /**
+   * When the REQUESTER'S OWN seat in a group was removed (`{ removedAt }`, `null` when nothing
+   * removed it) - the date of the "you were removed" line a device writes when it learns of its
+   * removal from an evidence that carries no time. Reads only the requester's own rows, so it is
+   * not membership-gated: a removed device is exactly who asks.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/own-removal')
+  async getOwnRemovalAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
+    @Param('groupId') groupId: string
+  ) {
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getOwnRemovalAt(
+      groupId,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
   }
 
   /**

@@ -1747,6 +1747,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           conversations: deps.conversations,
           groupId: terminalId,
           evidence: cause === 'evicted' ? 'membership-check' : 'outbound-refusal',
+          askRemovedAt: () => mlsService.ownRemovalAt(terminalId),
           saveConversation: deps.saveConversation,
           addMessageToChat: deps.addMessageToChat,
           log,
