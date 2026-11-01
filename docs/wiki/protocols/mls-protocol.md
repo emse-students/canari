@@ -1237,7 +1237,16 @@ winner's outcome without a refresh.
 
 **The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
 conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
-for this device's seat, `deviceMembership.awaitingAdmission`; discovery stores it on the row
+for the ACCOUNT's seat, `awaitingAdmission` on each row - said whether or not this device holds a
+device row there, never while ANY device of the person is `active` in the group - the commit gate's
+own predicate, `seatStillAwaits` (`utils/group-membership.ts`), read for the flagged groups only. The
+per-device `deviceMembership.awaitingAdmission` stays: an older client reads it, and a client facing
+an older server falls back to it with a WARN ([legacy-compatibility](../legacy-compatibility.md)). The ask is the person's, not the
+device's (review of #2442): a joiner's second device, which holds no device row yet, read its row as
+an ordinary `pending` conversation and its recovery fell through to an external join the base refused
+with a 409; it now reads "waiting for a member" like the first device, and `requestReAdd` reads the
+same flag off the list (`[READD] ... the account's seat awaits a member's admission`) and asks a member
+instead. Discovery stores it on the row
 (`Conversation.awaitingAdmission`, IndexedDB and SQLite schema v15, `syncAdmissionFlags`), and a
 `pending` row that carries it (`isNeverAdmitted`, `admissionState.ts`) reads "En attente qu'un membre
 vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming such a row - declined,

@@ -541,6 +541,20 @@ export async function callerSeatStandings(
 export const ADMITTED_SEAT = { awaitingAdmission: false } as const;
 
 /**
+ * Whether a person's seat still awaits a member's admission: its roster flag is set AND none of
+ * their devices is `active` in the group. An active device is in the tree - a Welcome admitted it -
+ * so the person is a member whatever the flag says. THE ONE PREDICATE: the commit gate
+ * (`seatAwaitsAdmission`) and the groups list (`getUserGroups`) both ask it, so a device with no
+ * row is never told "awaiting" while another device of the same person is active (review of #2894).
+ *
+ * @param flagged the roster row's `awaitingAdmission`.
+ * @param activeDevices how many of the person's device rows in the group are `active`.
+ */
+export function seatStillAwaits(flagged: boolean, activeDevices: number): boolean {
+  return flagged && activeDevices === 0;
+}
+
+/**
  * The refusal of a seat still awaiting a member's admission: a 409 `awaiting_admission`, NEVER the
  * 403 of no seat at all - a client reads a 403 on a membership question as "I am not a member" and
  * retires the conversation (`NotAGroupMemberError`), while this person is a pending member who waits.

@@ -9,6 +9,40 @@ Owed, in this order, before any refusal is re-armed:
 
 1. **Read the `[UNINVITED_ENTRY]` count on production, by `kind`** (`new-person`, `returning`,
    `direct-peer`, `unvouched-device`), so the legitimate paths are measured first.
+
+   **First reading, 2026-11-01 (read-only, by the lead).** One chat-delivery replica, started at
+   16:28 UTC that day, so the window is about 4 h: 3 lines `kind=unvouched-device`, 0 `new-person`,
+   0 `unstated`, 0 `invalid`. The window is that short because the reading took only the LIVE
+   container's log (`docker logs`), and a deploy recreates the container. It is not enough to decide
+   anything: it is a 4-hour window, not a measure of the legitimate paths.
+
+   **The gap: the count does not accumulate.** `[UNINVITED_ENTRY]` exists only as a log line, and
+   its dedup set (`reportedUninvitedEntries`, `messaging.controller.ts`) is in memory per replica,
+   so a deploy restarts both. Two facts bound how bad that is:
+
+   - **The deploy archive already holds earlier windows**, and the first reading did not read it:
+     `archive_logs` copies every container's log to `~/deploy-log-archive/canari-prod/<stamp>/`
+     before each deploy, the newest 10 deploys, none older than 30 days
+     ([logging](../infrastructure/logging.md)). Each line carries `group`, `entrant` and `epoch`,
+     the dedup key, so lines from several archives can be merged and deduplicated offline. An
+     archive holds the 30 days before its deploy and is itself kept 30 days, so a line can live
+     about 60 days in it ([logging](../infrastructure/logging.md#the-90-day-ceiling-2026-10-16)),
+     at most 10 deploys back; past that, nothing holds it. Read by hand.
+   - **No persisted report carries it.** The daily jobs of `scheduled.yml` (`hosts`, `backups`,
+     `log-retention`) persist their output only as GitHub Actions run logs, and this repository is
+     public, so those logs are public: such a line could carry counts by `kind` and nothing else,
+     never a group or a user id. The service's own daily or hourly lines (`[ORPHAN_DEVICES]`, the
+     stranded report) are container log lines, so they have the same lifetime as this one.
+
+   Two fixes, NOT built, the choice open:
+
+   - **a durable store**: an additive table (one row per `(group, entrant, epoch)` with its `kind`
+     and first-seen time), which also makes the dedup survive a deploy. It needs a migration the
+     owner approves;
+   - **one line per day in a persisted report**: a `scheduled.yml` job, or a step of an existing
+     one, that reads the live log and the archives on the host, deduplicates by key and prints
+     counts by `kind` only. No migration, but its history lives as long as the Actions log
+     retention, and it is public.
 2. **The emission side.** A user holding no leaf ASKS a member instead of entering alone, mirroring
    the further-device door (`recovery.ts`, `requestReAdd`); never in a 1:1, where the peer whose
    KeyPackage was skipped at creation is the conversation. The three legitimate producers to close:

@@ -649,6 +649,14 @@ export type UserGroupRow = {
     /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
     awaitingAdmission?: boolean;
   } | null;
+  /**
+   * The ACCOUNT's seat awaits a member's admission (an invitation link's ask no member has answered),
+   * said whether or not this device holds a device row in the group, and never while any device of
+   * the person is `active` there (the commit gate's predicate). The ask is the person's, not the device's: a joiner's second device,
+   * which holds no row yet, waits for the same member's Add as the first. Absent from an older
+   * server, which reads as "the server did not say".
+   */
+  awaitingAdmission?: boolean;
 };
 
 /** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */

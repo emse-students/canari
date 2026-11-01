@@ -605,6 +605,14 @@ export async function requestReAdd(
         await stopRecovering(groupId, 'the server lists no seat for this account', deps);
         return;
       }
+    } else if (seat.row.deviceMembership == null && seat.row.awaitingAdmission === true) {
+      // THE ACCOUNT'S SEAT IS AN ASK AND THIS DEVICE HOLDS NO ROW (a joiner's second device, review
+      // of #2442): the list says so, so the door is a member's Add, read here rather than learnt from
+      // the base's 409.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... no row for this device, the account's seat awaits a member's admission`
+      );
+      reading = 'awaiting-admission';
     } else {
       // The account is seated. The list carries this device's seat too when the server has one, read
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no

@@ -1368,7 +1368,7 @@ export async function discoverMissingGroups(params: {
   // Whether each row is an invitation-link ask no member has answered, as the list says of THIS
   // device's seat: the sidebar reads it as waiting rather than established, and the sweep above
   // removes such a row once the list stops naming it.
-  for (const key of syncAdmissionFlags(conversations, activeServerGroups)) {
+  for (const key of syncAdmissionFlags(conversations, activeServerGroups, log)) {
     const state = conversations.get(key)?.awaitingAdmission
       ? 'awaits a member admission'
       : 'no longer awaits a member';

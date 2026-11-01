@@ -65,6 +65,7 @@ import {
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   ADMITTED_SEAT,
+  seatStillAwaits,
   awaitingAdmissionRefusal,
   callerSeatStandings,
   endDeviceMemberships,
@@ -4044,7 +4045,7 @@ export class MessagingService {
     const active = await this.deviceGroupRepo.count({
       where: { groupId, userId, status: 'active' as const },
     });
-    if (active === 0) return true;
+    if (seatStillAwaits(true, active)) return true;
     this.logger.error(
       `[ADMISSION] group=${groupId} user=${sanitizeLogValue(userId)} holds ${active} active device(s) ` +
         `under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`
