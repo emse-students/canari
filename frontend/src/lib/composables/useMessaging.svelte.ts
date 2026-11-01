@@ -9,7 +9,7 @@
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { SvelteMap, SvelteDate } from 'svelte/reactivity';
+import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -597,6 +597,8 @@ export function useMessaging() {
     serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
+    authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
     salonLevelRead = false
   ): void {
@@ -669,6 +671,7 @@ export function useMessaging() {
             sentAt,
             serverAt,
             covers,
+            authorProven,
             true
           );
         });
@@ -758,6 +761,7 @@ export function useMessaging() {
         sentAt,
         serverAt: serverAt ?? 0,
         covers,
+        authorProven,
       })
     );
   }
@@ -1174,7 +1178,8 @@ export function useMessaging() {
       isOwn,
       resolvedTimestamp.getTime(),
       newMsg.serverTimestamp,
-      1
+      1,
+      options.authorProven === true
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -1267,6 +1272,9 @@ export function useMessaging() {
     const toStore: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
+    // The rows whose open proved their author (a salon's v2 session), for the banner - see
+    // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
+    const authorProvenIds = new SvelteSet<string>();
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -1318,6 +1326,7 @@ export function useMessaging() {
         ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
       };
       brandNew.push(newMsg);
+      if (pm.authorProven === true) authorProvenIds.add(id);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
       byId.set(id, newMsg);
 
@@ -1468,7 +1477,9 @@ export function useMessaging() {
         lastInbound.timestamp.getTime(),
         lastInbound.serverTimestamp,
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
-        inbound.length
+        inbound.length,
+        // The banner's message is the LAST one, so its proof is the one that names the speaker.
+        authorProvenIds.has(lastInbound.id)
       );
     }
 

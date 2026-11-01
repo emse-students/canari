@@ -134,6 +134,13 @@ export interface AddMessageToChatOptions {
    * would ever write the row again.
    */
   soleWriter?: boolean;
+  /**
+   * A salon message whose open PROVED its author (a Graine v2 session - `openChannelMessageProving`).
+   * Read by the notification only: the native builder names a salon banner's speaker under this
+   * fact, exactly as the push trigger does, so the two triggers of one message draw one speaker.
+   * Absent is not proven.
+   */
+  authorProven?: boolean;
 }
 
 /**

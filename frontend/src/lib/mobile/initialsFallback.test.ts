@@ -85,11 +85,13 @@ describe('the initials disc, across the three notification implementations', () 
     expect(objc.match(/CanariInitialsImagePath\(/g)).toHaveLength(3); // 2 calls + the definition
   });
 
-  it('draws the SALON, not the speaker, on a channel notification', () => {
-    // The subtle one. A salon notification is titled `<Communaute> - #<salon>`, so a fallback that
-    // took the title's first character would draw the community - or a bare `#` when the community
-    // could not be named. Both platforms pass the salon explicitly instead.
-    expect(kotlin).toContain('generateInitialsBitmap(channelName)');
+  it('draws the SPEAKER on a salon banner, never the title or the salon (Android, 2026-11-01)', () => {
+    // A salon notification is titled `<Communaute> - #<salon>`, so a fallback that took the title's
+    // first character would draw the community - or a bare `#`. Android drew the SALON's letter
+    // until the owner read a "G" for `#général` on `v1.6.0`: it now draws the named speaker's
+    // initials and "?" for anybody else (`ChannelBannerAuthor`, tested in `android-tests`).
+    expect(kotlin).toContain('generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))');
+    expect(kotlin).not.toContain('generateInitialsBitmap(channelName)');
     expect(swift).toContain('attachInitials(content: content, name: channelName)');
     expect(objc).toContain('shownMentionsMe, channelName, YES, NO);');
   });

@@ -66,6 +66,12 @@ describe('channel push payload contract (social-service writer vs the three nati
   const kotlinSource = readFileSync(CANARI_FIREBASE_SERVICE_KT, 'utf8');
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
+  const rustCommand = readFileSync(NOTIFICATIONS_RS, 'utf8');
+  const channelHandler = readFileSync(
+    resolve(here, '../mls-client/messagePipeline/channelEventHandler.ts'),
+    'utf8'
+  );
+  const channelSeal = readFileSync(resolve(here, '../utils/graine/channelSeal.ts'), 'utf8');
 
   const fanOutBody = functionBody(
     serviceSource,
@@ -269,11 +275,38 @@ describe('channel push payload contract (social-service writer vs the three nati
     ]);
     onlyThrough(kotlinHandler, /\bval mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
       'val mentionsMe = attribution.mentionsMe',
-      'attribution.authorId?.let { fetchAvatar(it) }',
-      'if (mentionsMe) "${mentionAuthorLine(',
+      // A face only for a NAMED speaker (`ChannelBannerAuthor.drawsFace`), which a blind banner
+      // never is - and no "<name> mentioned you" prefix since 2026-11-01: the speaker is the line's.
+      'attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }',
     ]);
     expect(kotlinHandler).toContain(
       'channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES'
+    );
+    // THE SPEAKER'S WIRING (2026-11-01, `ChannelBannerAuthor`): the line's Person and key come from
+    // the rule, the conversation is ALWAYS the salon, the key reaches the Person, and a missing or
+    // non-boolean `authorProven` reads as not proven - all JVM-tested, pinned here at the call sites.
+    expect(kotlinHandler).toContain('senderName = line.personName,');
+    expect(kotlinHandler).toContain('groupName  = line.conversationTitle,');
+    expect(kotlinHandler).toContain('senderKey  = line.personKey,');
+    expect(kotlinHandler).toContain(
+      'authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))'
+    );
+    expect(kotlinSource).toContain('.apply { senderKey?.let { setKey(it) } }');
+    // The socket trigger takes the same rule, with the WebView's proof, and the same keys for a
+    // salon - one answer per message, whichever trigger arrives first (review of #2881, HIGH-1).
+    expect(kotlinSource).toContain(
+      'ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId)'
+    );
+    expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
+    expect(kotlinSource).not.toContain('ofSocketFrame');
+    // The proof comes from the WebView's own open, through the Rust command, unchanged.
+    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,/);
+    expect(rustCommand).toContain('ZJJIZ)Z');
+    expect(channelHandler).toContain('authorProven = opening.authorProven;');
+    expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
+    // NEVER A BORROWED FACE: a line not added (the other trigger posted it first) lends no icon.
+    expect(kotlinSource).toMatch(
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,400}style\.messages\.lastOrNull\(\)\?\.person\?\.icon/
     );
 
     // The NSE handler ALONE: the shared slice runs on past it, into the rule's own definition.
