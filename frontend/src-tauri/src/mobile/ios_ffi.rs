@@ -346,10 +346,12 @@ pub unsafe extern "C" fn canari_native_seal_cache_line(
 }
 
 /// Claims the `ownDeviceAdded` keys of a decrypt answer in the device-notice ledger under
-/// `data_dir` (the App Group directory, which the app's own claim uses too) and returns the keys
-/// nobody announced before as a JSON array - free with `canari_free_string`. NULL arguments claim
-/// nothing and answer `[]`. FFI mirror of the Android JNI `nativeClaimDeviceNotices`, and the same
-/// implementation behind it (`mobile::device_notice`).
+/// `data_dir` (the App Group directory, which the app's own claim uses too) and answers
+/// `{"claimed": [keys nobody announced before], "held": n}` - `held` counting the keys of an
+/// account the app has not pre-claimed since the update - free with `canari_free_string`. NULL
+/// arguments claim nothing and answer an empty claim. FFI mirror of the Android JNI
+/// `nativeClaimDeviceNotices`, and the same gated implementation behind it
+/// (`mobile::device_notice::engine_claim_device_notices`).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_claim_device_notices(
     data_dir: *const c_char,
@@ -357,13 +359,14 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
 ) -> *mut c_char {
     if data_dir.is_null() || keys_json.is_null() {
         log::error!("[DEVICE_NOTICE] ffi: null argument - nothing claimed");
-        return json_to_c_string(serde_json::json!([]));
+        return json_to_c_string(serde_json::json!({ "claimed": [], "held": 0 }));
     }
-    let claimed = super::device_notice::claim_device_notices_json(
+    let claim = super::device_notice::engine_claim_device_notices_json(
         &path_from_c_str(data_dir),
         &str_from_c_str(keys_json),
     );
-    let value = serde_json::from_str(&claimed).unwrap_or_else(|_| serde_json::json!([]));
+    let value = serde_json::from_str(&claim)
+        .unwrap_or_else(|_| serde_json::json!({ "claimed": [], "held": 0 }));
     json_to_c_string(value)
 }
 
