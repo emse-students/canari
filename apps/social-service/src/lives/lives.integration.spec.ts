@@ -886,7 +886,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           actorName: 'Alice',
           text: '',
           associationLogoMediaId: null,
-          pushData: { liveId: live.id },
+          pushData: { liveId: live.id, minAppVersion: '1.5.4' },
         },
       ]);
 
@@ -962,7 +962,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           text: '',
           associationId: ASSO,
           associationLogoMediaId: 'logo1',
-          pushData: { liveId: live.id, associationId: ASSO },
+          pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
         },
       ]);
     });
