@@ -98,7 +98,7 @@ describe('SpaceGrid - past and unavailable units', () => {
     // draw it closed while the tap works.
     const booker = await open([unit(3)], vi.fn(), false);
     expect(booker[0].getAttribute('aria-label')).toContain(m.bookings_cell_closed());
-    app && unmount(app, { outro: false });
+    if (app) unmount(app, { outro: false });
     document.body.innerHTML = '';
     const organiser = await open([unit(3)], vi.fn(), true);
     expect(organiser[0].getAttribute('aria-label')).not.toContain(m.bookings_cell_closed());
