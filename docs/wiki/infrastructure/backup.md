@@ -161,11 +161,13 @@ is the rows already written. Rows of 16 KB or more are 8 249 rows and 615 MB.
 
 **It belongs in the archive, so nothing is excluded.** `queued_message` is the encrypted MLS
 history still owed to devices; a restore without it loses every message an offline device has not
-fetched. It has no other home - restic holds the media volumes only. What would shrink the archive
-is deleting the rows no device will ever fetch (the first line of the table), which is a production
-deletion and waits for the user's decision:
-[backlog](../backlog.md#p2---the-nightly-archive-is-mostly-one-groups-undelivered-queue-measured-2026-10-24).
-Left alone, those rows leave at the queue's 90-day bound, around 2027-01-10. The next fan-out of
+fetched. It has no other home - restic holds the media volumes only. **The first line of the table
+is gone since 2026-10-24**: the owner had its 109 devices revoked through the product's revoke path,
+which removed their seats, key packages and 184 457 queued rows, rather than deleting the rows alone
+([third pass](prod-queue-and-epoch-audit-2026-10-12.md#third-pass---2026-10-24-the-key-groups-orphan-devices)).
+Devices with no session and no token still collect rows through their seats, re-measured 2026-11-01
+([audit](prod-queue-and-epoch-audit-2026-10-12.md#re-measured-2026-11-01-the-same-predicate-names-a-new-population)).
+The next fan-out of
 that shape is stored once per frame by #2260 (`queued_payload`, its writer behind
 `QUEUED_PAYLOAD_SHARED_WRITES`, still `false` on 2026-10-24), which rewrites no existing row.
 
