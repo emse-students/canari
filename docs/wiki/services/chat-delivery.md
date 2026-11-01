@@ -38,6 +38,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge soft-deleted groups (> 90 days old), with everything they own |
 | 24h | Purge stale push tokens (> 90 days) |
 | 24h | Purge stale pending invitations (> 30 days) |
+| 24h | Report orphan devices (observation only, deletes nothing) |
 
 ### One way a frame is delivered
 
@@ -248,6 +249,37 @@ Until that window elapses, a churned device id keeps receiving fan-out. That is 
 offline window - a device that is merely off for a fortnight must still get its messages - not a
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
+
+### Orphan devices: the GC's blind spot, counted daily, cleaned by hand
+
+The 90-day GC above covers SILENT devices: one whose key package is older than
+`RETENTION_WINDOW_MS`. It does not cover an **orphan**: a device holding queued rows with no
+`auth_sessions` row, no `push_token`, no ban and no life in the last 7 days, which still connected
+(or kept its seats) inside those 90 days. Nothing can drain its queue, and while it holds active
+seats every fan-out adds to it - four hand passes found 43, 118, 109 and 285 of them
+([audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#fourth-pass---2026-11-01-and-the-procedure-to-run-it-again)).
+
+A scheduled reaper for them was built and closed unmerged (#2880, owner, 2026-11-01): at the GC's 90
+days it is pre-empted by the GC, and inside them no durable fact proves a device was replaced rather
+than closed. So:
+
+- **the GC keeps the silent devices**, unchanged;
+- **`reportOrphanDevices` counts the orphans daily** (`src/utils/orphan-devices.ts`, read-only), one
+  plain line `[ORPHAN_DEVICES] devices= rows= insideGcWindow=`; `insideGcWindow` is the part the GC
+  will never collect. **It has no threshold**: no regrowth rate has been measured, and these lines are
+  that measurement. Every replica runs it (and once at boot), so one line per replica a day is
+  expected - the same as the other reports here;
+- **the hand procedure revokes them** when the owner decides
+  ([the procedure](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#the-procedure-re-runnable)),
+  through the revoke route - the rule of [the answer was a revocation](#the-answer-was-a-revocation-not-a-sweep-2026-08-11).
+  Its allowlist and its re-check are built from the same predicate as the count, so the report counts
+  exactly what a pass would revoke.
+
+**The query shape.** `queued_message` is grouped first, in its own CTE, and each other table is tested
+against the grouped rows with `WHERE NOT EXISTS`, which PostgreSQL plans as hash anti-joins: one scan
+per table. `auth_sessions."deviceId"` has no index and `push_token`'s is `(userId, deviceId)`, so a
+correlated `NOT EXISTS` inside `HAVING` would scan both once per group. No index is added for a daily
+report.
 
 ### The device cap counts LIVE devices, because leaves are what it bounds
 
