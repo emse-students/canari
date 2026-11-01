@@ -567,7 +567,6 @@
   "call_tap_to_hear": "Tap to hear",
   "call_mute_short_label": "Mute",
   "call_camera_short_label": "Camera",
-  "call_incoming_video_label": "Incoming video call",
   "call_switch_camera_label": "Switch camera",
   "call_video_reduced_notice": "Your video is sent at reduced quality (connection or device overloaded)",
   "call_camera_unavailable": "The camera could not open: the call goes on without video.",

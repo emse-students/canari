@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="app_background">#FFF9FBFF</color>
+    <!-- THE INCOMING-CALL SCREEN (IncomingCallActivity), one visual language with the in-app ring
+         (CallOverlay.svelte): each colour is the app.css token of the same role, and the screen is
+         dark in BOTH themes like the `cn-scrim` it mirrors, so no values-night copy exists.
+         call_screen_top = color-cn-ink, call_screen_bottom = color-cn-scrim, call_halo = cn-yellow,
+         call_accept / call_decline = color-call-accept / color-call-decline. -->
+    <color name="call_screen_top">#FF151B2C</color>
+    <color name="call_screen_bottom">#FF0A0A0A</color>
+    <color name="call_halo">#FFF6C232</color>
+    <color name="call_accept">#FF16A34A</color>
+    <color name="call_decline">#FFDC2626</color>
 </resources>

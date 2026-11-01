@@ -1110,7 +1110,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // and answers only on the user's tap.
             val fullScreenPending = PendingIntent.getActivity(
                 context, notifId + 2,
-                IncomingCallActivity.intentFor(context, callId, photoOf, title, body, answerPending, declinePending),
+                IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 

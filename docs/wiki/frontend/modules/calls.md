@@ -2472,7 +2472,7 @@ If a banner still shows in the foreground on the next reading, it is not this pa
 
 | Moment | In-app screen (web, Android, iPhone) | Android native ring (CallStyle + full-screen intent) | iPhone native ring |
 |---|---|---|---|
-| Incoming | name, photo, "Appel entrant", **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
+| Incoming | name, photo, "Appel audio" / "Appel vidéo" ([2026-11-01](#the-incoming-call-screen-in-canaris-look-owner-2026-11-01)), **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right; on a locked phone `IncomingCallActivity`, the same screen as in-app | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
 | Outgoing | name, photo, **"Appel..." / "Calling..."** (was "Sonnerie..." / "Ringing..."), mute, hang-up | - | - |
 | In call | name, photo, `mm:ss`, mute, camera, speaker (apps only), hang-up | the ongoing CallStyle with the same "Calling..." text while dialling (it reads the same `call_ringing_label`) | - |
 
@@ -2481,6 +2481,22 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
 `CallOverlay.svelte.test.ts` ("the screen every platform shows") pins the name, the backdrop, decline-before-accept DOM order, the tokens, "Calling..." and the absence of Accept on an outgoing call.
 
 **Rendered in Chromium** with a stand-in `CallService` on a public route (no estate, no account, so the photo is the initials tile): [incoming at 390x844](assets/call-screen-incoming-390.png), [in call at 390x844](assets/call-screen-live-390.png), [calling at 1280x800](assets/call-screen-calling-1280.png) (the desktop screen is the whole window, as on Messenger web). **Owed to a phone:** a REAL photo behind the blur on the Mi 9T and the iPhone (WebKit's `blur-3xl` on a scaled element is the cost to read), the safe-area on the notch, and the Android speaker button in the screenshot's place.
+
+### The incoming-call screen, in Canari's look (owner, 2026-11-01)
+
+**The request** (owner): *"L'ecran quand on nous appelle est assez moche, avec juste deux gros carres vert et rouge. Refais tout : quelque chose de joli avec ecrit Appel video ou Appel audio, la photo et le nom, dans la belle identite visuelle de Canari."* The squares were Android's locked-phone screen (`IncomingCallActivity`: two flat `Button`s with `setBackgroundColor`); the in-app ring already had round buttons but said only "Appel entrant". Both now draw ONE screen, top to bottom:
+
+| Piece | In-app (`CallOverlay.svelte`, `isIncoming`) | Android locked phone (`IncomingCallActivity.drawScreen`) |
+|---|---|---|
+| Backdrop | Canari's night gradient `from-cn-ink to-cn-scrim`, the caller's photo blurred over it (as before), a veil, and a `cn-yellow/15` glow behind the face (ring only) | the same gradient (`call_screen_top/bottom`), the photo blurred by `RenderEffect` once fetched (API 31+; the gradient alone below), the same veil and radial yellow glow |
+| Photo | 144 px (192 from `md`), a `cn-yellow/60` ring, initials tile until/without a photo | 144dp, the same yellow ring, initials (`initialsOf`) until the photo; the Canari mark for a caller this phone never named |
+| Halo | two `cn-yellow` halos, `animate-call-halo` (2.4 s, scale 1 -> 1.45, fade), half a beat apart, `motion-safe` only | the same two halos (`HALO_MS`, `HALO_SCALE`), skipped when the phone's animations are off (`ValueAnimator.areAnimatorsEnabled`) |
+| Name, kind | `text-3xl` name, then a pill: `Phone` + "Appel audio" or `Video` + "Appel vidéo" (`call_audio_only_label`, `chat_video_call_label`) | 32sp name, the same pill (`call_screen_kind_audio` / `_video`, app locale) |
+| Actions | Refuser (red, `PhoneOff`) left, Accepter (green, `Phone`, or `Video` for a video call) right, 64 px discs, labels under, a coloured shadow | the same order and colours (`call_decline`, `call_accept`), 72dp discs with a ripple, Material glyphs (`ic_call_decline`, `ic_call_answer`, `ic_call_answer_video`), labels under, above the navigation bar's inset |
+
+The Android colours are `res/values/colors.xml` entries that name their `app.css` twin; the screen is dark in both themes, like `cn-scrim`, so they have no night variant. The ring's `call-status` line is gone (the kind pill replaces it, and the live region still announces "Appel entrant"), so `call_incoming_video_label` was deleted; `IncomingCallActivity.intentFor` now takes `hasVideo` instead of the notification's body text. The CallStyle notification itself is the system's and was not touched; the iPhone's lock screen is CallKit's and cannot be drawn.
+
+`CallOverlay.svelte.test.ts` ("the incoming-call screen") pins the audio and video subtitles and glyphs, the name after the photo, the initials fallback, the halo and glow on a ring only, and that Accept and Decline call `acceptCall` and `endCall`. **Rendered in Chromium** at 390x844 with a stand-in `CallService` (no account, so the initials tile): [audio](assets/call-screen-incoming-390.png), [video](assets/call-screen-incoming-video-390.png); light and dark render the same, by design. **Owed to a phone:** the locked-phone ring on the Mi 9T (photo, blur, halo, both buttons, the gesture-bar inset, a caller never named), and the in-app ring on the iPhone 12 (a real photo behind the blur, the halo's cost in WebKit, the notch).
 
 ### Ringing, announcing, hearing
 
