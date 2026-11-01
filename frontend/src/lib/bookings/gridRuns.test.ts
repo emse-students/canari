@@ -119,6 +119,20 @@ describe('buildRuns', () => {
     ]);
   });
 
+  it('keeps two equal-span units of different lanes as two runs, distinguishable by lane', () => {
+    const p = placed(['free', 'free']);
+    p[1] = { ...p[1], unit: { ...p[0].unit }, topMin: p[0].topMin, lane: 1 };
+    p[0].lanes = 2;
+    p[1].lanes = 2;
+    const runs = buildRuns(p, () => 'free');
+    expect(runs).toHaveLength(2);
+    expect(runs[0].startMs).toBe(runs[1].startMs);
+    expect(runs[0].endMs).toBe(runs[1].endMs);
+    // The grid keys its blocks by span AND lane, so these two keys differ.
+    const keys = runs.map((r) => `${r.startMs}-${r.endMs}-${r.lane}`);
+    expect(new Set(keys).size).toBe(2);
+  });
+
   it('is empty for an empty day', () => {
     expect(buildRuns([], () => 'free')).toEqual([]);
   });

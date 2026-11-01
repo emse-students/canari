@@ -406,10 +406,11 @@
           {#if folded(day)}
             <div class="bg-cn-border/20 absolute inset-0 rounded-lg" aria-hidden="true"></div>
           {/if}
-          {#each runsOfDay(dayIndex) as run (`${run.startMs}-${run.endMs}`)}
+          {#each runsOfDay(dayIndex) as run (`${run.startMs}-${run.endMs}-${run.lane}`)}
             {@const r = runReading(run)}
             {@const density = blockDensity(remOf(run.heightMin))}
             {#if run.kind === 'booked' || run.kind === 'blocked'}
+              <!-- No `disabled` guard: `offered` is always true for a booked or blocked unit. -->
               <button
                 type="button"
                 onclick={() => onPick(resource, run.units[0])}
@@ -486,7 +487,7 @@
               </span>
             </div>
           {/if}
-          {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}`)}
+          {#each day.placed as placed, idx (`${placed.unit.startMs}-${placed.unit.endMs}-${placed.lane}`)}
             {@const unit = placed.unit}
             {#if unit.state === 'free'}
               <button
