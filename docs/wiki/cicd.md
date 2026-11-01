@@ -264,35 +264,64 @@ migration is applied only if it is additive, reviewed, and with a backup taken j
 **What holds a migration** (`infrastructure/lib/migration-hold.sh`, the ONE judge, read by the deploy
 and by the release preflight). A file is held when it carries the marker - a line
 `-- canari:hold-for-owner`, any case, trailing text allowed (the author's call: a backfill, a lock on
-a hot table) - or when its SQL, comments stripped and whitespace collapsed, contains a statement that
-is not plainly additive. **That list is an allowlist**: ANY `DROP` except `DROP
-CONSTRAINT|INDEX|TRIGGER|DEFAULT|NOT NULL` (the re-create idiom, a relaxed column), any `RENAME`,
-`TRUNCATE`, `DELETE FROM`, a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`) and `EXECUTE`
-of dynamic SQL (`EXECUTE FUNCTION|PROCEDURE` of a trigger and `GRANT EXECUTE ON` are not). The first
-version matched spellings (`DROP TABLE|COLUMN`) and its review listed what walked past it - `ALTER
-TABLE t DROP foo`, a statement split over lines, `DROP TYPE ... CASCADE`, a materialized view, a
-sequence, `DROP OWNED`, `RENAME COLUMN`; each is a row of `deploy-migrations.test.sh`. Comments are
-stripped by a scanner that knows `'...'` strings (with `''` and `E'\''`), `"..."` identifiers and
-nested `/* */`, so a `--` inside a string does not eat the code after it; an unterminated string or
-comment is HELD, not guessed. An `UPDATE` backfill is not matched: the author marks it. The marker is
-read by ONE `grep` on the file - the first version piped `tr | grep -q`, and under `pipefail` grep's
-early exit made the pipe report a miss on any file above ~64 KB (30 misses in 30).
+a hot table) - when it contains a UTF-8 byte-order mark anywhere (one before `--` hides the marker
+from the line match), or when its SQL, comments stripped, whitespace collapsed and cut into TOKENS,
+contains a statement that is not plainly additive. **That list is an allowlist**: ANY `DROP` except
+`DROP CONSTRAINT`, `DROP DEFAULT`, `DROP NOT NULL` and `DROP INDEX|TRIGGER <name>` (the re-create
+idiom, a relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, a column `TYPE` change (`ALTER
+[COLUMN] x [SET DATA] TYPE`) and `EXECUTE` of dynamic SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a
+trigger and `GRANT EXECUTE ON FUNCTION` are not). The first version matched spellings (`DROP
+TABLE|COLUMN`) and its review listed what walked past it - `ALTER TABLE t DROP foo`, a statement split
+over lines, `DROP TYPE ... CASCADE`, a materialized view, a sequence, `DROP OWNED`, `RENAME COLUMN`.
+The second matched the allowed forms as string PREFIXES, and its review walked past them by naming a
+column after one - `DROP indexed_at`, `DROP default_role`, `DROP trigger_count`, `DROP index2`, a
+PL/pgSQL `EXECUTE on_cmd`; the forms are matched on WHOLE tokens now, and `INDEX`/`TRIGGER` (which
+PostgreSQL also accepts as column names) only when a name other than `CASCADE`/`RESTRICT` follows.
+Every one of those is a row of `deploy-migrations.test.sh`. Comments are stripped by a scanner that
+knows `'...'` strings (with `''` and `E'\''`), `"..."` identifiers, nested `/* */` and dollar quotes
+(`$$`, `$tag$`), so a `--` inside a string or a dollar quote does not eat the code after it
+(`SELECT $x$ -- $x$; DROP TABLE t;` was plain to the first lexer); an unterminated string, comment or
+dollar quote is HELD, not guessed. **A dollar-quoted body is kept verbatim, comments included**: it
+may be code that runs (`DO`, a function) or a literal, and no reader of the outer text can tell, so a
+`DROP` in a comment of a body holds the file - a false hold, never a missed one. An `UPDATE` backfill
+is not matched: the author marks it. The marker is read by ONE `grep` on the file - the first version
+piped `tr | grep -q`, and under `pipefail` grep's early exit made the pipe report a miss on any file
+above ~64 KB (30 misses in 30).
 
 **What lifts it.** A line `<repo-relative path> <sha256 of the file>` in
 `infrastructure/migration-approvals.txt` (the hex compared case-insensitively), bound to the CONTENT:
 a file edited after its approval is held again, and the refusal says so. Chosen over a release input
 because `gh release create` carries none, and over an environment flag because a switch nobody reviews
-is no approval. **A pull request that touches that file is NEVER armed for auto-merge**, whoever opened
-it (`arm-auto-merge.yml`, its first `canari-only` region; a push that adds the file to an armed pull
-request disarms it, and an unreadable file list refuses and disarms): without that, any armed pull
-request adding the line would merge itself on a green CI and the yes would be anybody's. It reaches
-`main` only by the owner's own merge. `arm-auto-merge-app.test.sh` B32 pins it.
+is no approval.
+
+**Only the owner merges it - three locks, one of them his click.**
+- **`arm-auto-merge.yml` never arms a pull request that touches the OWNER'S FILES**, whoever opened it
+  (its first `canari-only` region): the approvals file, and what decides that a line in it means
+  anything - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`), the workflow
+  itself and `.github/CODEOWNERS`. A push that adds one to an armed pull request disarms it; an
+  unreadable file list, or one at GitHub's 3000-file cap (which may be cut short), refuses and
+  disarms.
+- **An arming made by hand is judged too.** The workflow listens to `auto_merge_enabled` (Canari only;
+  `tools/ecosystem-shape` reads it as a declared `# canari-only:shared` line), so a writer's own
+  `gh pr merge --auto` on such a pull request is disarmed again; elsewhere that event does nothing.
+  Its concurrency group is its own, so the event the workflow's own arming raises cannot cancel the
+  run that armed.
+- **`.github/CODEOWNERS` names the owner on the same five paths**, and with the ruleset's "Require
+  review from Code Owners" ticked GitHub refuses the merge without his review, however the pull
+  request was armed - the lock the first two cannot give on a pull request from a fork, which the job
+  skips. That tick is the owner's (backlog, "Owed to the user"). The workflow's list and CODEOWNERS'
+  are asserted equal. `arm-auto-merge-app.test.sh` B32 pins all of it.
 
 **Where it is asked, twice.**
 - **Gate 6 of the release preflight** (`held_migrations_since` in `release-preconditions.sh`): every
-  migration file added, changed or renamed between the latest stable tag and the released commit is
-  judged against the approvals file of the released tree. A held, unapproved one refuses the TAG,
-  before the bump and the store builds - pure repository, no database.
+  migration file added, changed or renamed between the commit production SERVES and the released
+  commit is judged against the approvals file of the released tree. A held, unapproved one refuses
+  the TAG, before the bump and the store builds - pure repository, no database. **The base is
+  `prod-released`**, the tag the production deploy moves itself once it has succeeded (after its
+  migrations ran), so the gate asks the deploy's own question - "what has production's ledger not
+  recorded?" - of the tree. The first version diffed from the latest stable TAG, which asks less: a
+  stable whose deploy failed is in no ledger, and its held files passed. For a pre-release, dev's
+  ledger is at or ahead of production's, so it asks at least what the dev deploy will.
 - **The deploy, and the dev reset**, on the files the ledger has not recorded - the last line. It logs
   every decision (`owner hold: N unrecorded file(s) examined, M held, A approved, R refused`).
 
@@ -306,8 +335,15 @@ release re-reads its own commit, which does not carry an approval merged after i
 **The backup right before.** When an approved held file is due, the loop calls the caller's
 `migration_backup` right before applying it, and applies nothing more if it fails. The deploy's takes
 the nightly backup's own dump (`dump_auth_db`, `infrastructure/backup/dump-auth-db.sh`, shared with
-`backup.sh`, the stream checked with `gzip -t`) into `<BACKUP_DIR>/pre-migration/<project>-<UTC time>-<migration>.sql.gz`,
-kept until removed by hand. A caller that defines none - the dev reset, which truncates dev and holds
+`backup.sh`, the stream checked with `gzip -t`, a failed dump deleted) into
+`<backup dir>/pre-migration/<project>-<UTC time>-<migration>.sql.gz`. **The backup directory is read
+from ONE place, the `BACKUP_DIR=` line of the runner account's crontab** (`canari_backup_dir`) - the
+line cron hands the nightly `backup.sh`, and the one `backup-report.sh` and the host report read -
+with NO default: the first version fell back to `/home/canari/backups`, a path of the box production
+left on 2026-09-24, so an approved migration would have failed its `mkdir` on every deploy. An
+unnamed directory is an `::error::`, and neither that file nor any after it is applied. The dumps are
+kept until removed by hand,
+with no age rule ([backup](infrastructure/backup.md#retention) says why). A caller that defines none - the dev reset, which truncates dev and holds
 only the fictional seed - applies NO approved held file: the next deploy does, with its backup.
 
 **And the schema outside migrations is closed too.** TypeORM `synchronize` used to follow
@@ -1453,7 +1489,10 @@ the release, which is the only place it changes anything.
 pull request in a repository whose written model is that no approval is required (user, 2026-08-31:
 _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
-about a decision nobody makes.
+about a decision nobody makes. **It came back on 2026-11-01 narrowed to the owner's five files** (the
+migration approvals and what judges them, [above](#a-migration-the-owner-must-approve-is-held-2026-11-01)):
+those pull requests never merge themselves and wait for the owner's own decision, so a review request
+there is the decision, not noise. `release-chain.test.sh` refuses any path outside that list.
 
 ### A major bump of a data store is refused, and which images may cross a major is an allowlist (#2742, 2026-10-31)
 

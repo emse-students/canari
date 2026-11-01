@@ -45,7 +45,14 @@ on:
     # `ready_for_review` is what covers a pull request opened as a draft and finished later; without
     # it, taking a draft out of draft raises no event this workflow listens for and the branch sits
     # armed by nothing.
-    types: [opened, reopened, synchronize, ready_for_review]
+    # canari-only:begin
+    # `auto_merge_enabled` (Canari only, a declared difference read by tools/ecosystem-shape): a
+    # pull request that touches the owner's files (the migration approvals and their judge, below) is
+    # never armed by this workflow - and a writer's own `gh pr merge --auto` on one raised no event
+    # here, so it stayed armed. That event now runs the same guard, which disarms it (review of #2873).
+    # canari-only:end
+    # canari-only:shared types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, auto_merge_enabled]
 
 # READ ONLY AT THE TOP, because the write is not done with `GITHUB_TOKEN` at all - it is done with
 # the App token minted below. A `pull_request_target` run gets a WRITE `GITHUB_TOKEN` by default,
@@ -64,7 +71,13 @@ permissions:
 # that would have armed, and #1259 sat green and unarmed (2026-09-30). A draft run now shares a
 # group only with draft runs, so it can never cancel an arming.
 concurrency:
-  group: arm-auto-merge-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}
+  # canari-only:begin
+  # The `auto_merge_enabled` run (Canari only, see `types:`) has a group of its own: the arming this
+  # workflow makes raises that event, and a shared group would let the guard run it starts cancel the
+  # very run that armed - a red "cancelled" row on every pull request.
+  # canari-only:end
+  # canari-only:shared group: arm-auto-merge-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}
+  group: arm-auto-merge-${{ github.event.pull_request.number }}-${{ github.event.pull_request.draft }}-${{ github.event.action == 'auto_merge_enabled' }}
   cancel-in-progress: true
 
 jobs:
@@ -122,28 +135,47 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
           # canari-only:end
         run: |
           set -euo pipefail
 
           # canari-only:begin
-          # A PULL REQUEST THAT APPROVES A HELD MIGRATION IS NEVER ARMED, WHOEVER OPENED IT (review of
-          # #2873, 2026-11-01). `infrastructure/migration-approvals.txt` is the owner's yes to a
-          # migration that is not plainly additive, and the deploy applies what it names
-          # (infrastructure/lib/migration-hold.sh). Armed, such a pull request would merge itself on
-          # a green CI, and the yes would be anybody's. So it reaches `main` only by the owner's own
-          # merge. Read FIRST, for every author, by pull request number only (no branch name, no
-          # checkout); a rename counts by either name. An unreadable file list refuses and disarms,
-          # and a push that adds the file to an armed pull request disarms it.
-          approvals='infrastructure/migration-approvals.txt'
-          if ! touched="$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"; then
-            echo "::error::#$PR: its file list could not be read, so nobody can say whether it approves a held migration - not armed."
+          # A PULL REQUEST THAT TOUCHES THE OWNER'S FILES IS NEVER ARMED, WHOEVER OPENED IT (review
+          # of #2873, 2026-11-01). `infrastructure/migration-approvals.txt` is the owner's yes to a
+          # migration that is not plainly additive, and the deploy applies what it names; the other
+          # four are what decides that yes means anything - the judge (`migration-hold.sh`), the loop
+          # that asks it (`migrations.sh`), this workflow, and `.github/CODEOWNERS`, which names the
+          # owner on all five. Armed, such a pull request would merge itself on a green CI, and the
+          # yes - or the rule behind it - would be anybody's. So it reaches `main` only by the
+          # owner's own merge. THE LIST IS `.github/CODEOWNERS`'s, line for line
+          # (`arm-auto-merge-app.test.sh` B32 asserts it). Read FIRST, for every author and on
+          # every event, by pull request number only (no branch name, no checkout); a rename counts
+          # by either name. An unreadable file list refuses and disarms, and so does one at
+          # GitHub's 3000-file cap, which may have cut the list short; a push that adds a file to an
+          # armed pull request disarms it, and so does an arming made by hand (`auto_merge_enabled`).
+          owner_files='infrastructure/migration-approvals.txt
+          infrastructure/lib/migration-hold.sh
+          infrastructure/lib/migrations.sh
+          .github/workflows/arm-auto-merge.yml
+          .github/CODEOWNERS'
+          owner_files="$(sed 's/^[[:space:]]*//' <<<"$owner_files")"
+          if ! listing="$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo "::error::#$PR: its file list could not be read, so nobody can say whether it touches the owner's files - not armed."
             echo "armable=false" >> "$GITHUB_OUTPUT"
             gh pr merge "$PR" --disable-auto --repo "$REPO" || echo "::error::#$PR: auto-merge could NOT be disabled - check it by hand."
             exit 1
           fi
-          if grep -qxF "$approvals" <<<"$touched"; then
-            echo "::warning::#$PR changes $approvals - an approval of a held migration is merged by the OWNER's own hand, never armed (docs/wiki/cicd.md)."
+          files_listed="$(grep -c . <<<"$listing" || true)"
+          if [ "$files_listed" -ge 3000 ]; then
+            echo "::error::#$PR: GitHub lists $files_listed files, its cap - the list may be cut short, so nobody can say whether it touches the owner's files - not armed."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            gh pr merge "$PR" --disable-auto --repo "$REPO" || echo "::error::#$PR: auto-merge could NOT be disabled - check it by hand."
+            exit 1
+          fi
+          touched="$(tr '\t' '\n' <<<"$listing")"
+          if hit="$(grep -xF -f <(printf '%s\n' "$owner_files") <<<"$touched" | sed -n 1p)" && [ -n "$hit" ]; then
+            echo "::warning::#$PR changes $hit - a change to the owner's files is merged by the OWNER's own hand, never armed (docs/wiki/cicd.md)."
             echo "armable=false" >> "$GITHUB_OUTPUT"
             armed_now="$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" || armed_now=unknown
             if [ "$armed_now" != 'false' ]; then
@@ -153,6 +185,13 @@ jobs:
               fi
               echo "::warning::#$PR: auto-merge is disabled."
             fi
+            exit 0
+          fi
+          # An arming made elsewhere (`auto_merge_enabled`) on a pull request that does not touch
+          # them is not this workflow's to judge or to repeat: it is already armed.
+          if [ "$EVENT_ACTION" = 'auto_merge_enabled' ]; then
+            echo "#$PR was armed, and it does not touch the owner's files - nothing to do."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # canari-only:end

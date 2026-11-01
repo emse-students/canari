@@ -4049,7 +4049,7 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 
 | Workflow | Output |
 |---|---|
-| `release.yml` | the ONE entry point: five gates, then the version bump, then the three arms below as jobs of the same run |
+| `release.yml` | the ONE entry point: six gates, then the version bump, then the three arms below as jobs of the same run |
 | `ios.yml` | `.ipa` to App Store Connect (`altool`), then for a STABLE the App Store version created, the build attached and the whole thing submitted for review |
 | `android.yml` | `.aab` to Google Play - `internal` track for a pre-release, `production` for a stable |
 

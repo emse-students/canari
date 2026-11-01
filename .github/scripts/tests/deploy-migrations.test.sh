@@ -279,6 +279,36 @@ classify held unterminated-string "SELECT 'abc;\n"
 classify held marker-any-case-trailing-text-crlf '-- Canari:Hold-For-Owner: the backfill of 2026-11-02\r\nUPDATE t SET a = 1;\r\n'
 classify held marker-indented-no-space '  --canari:hold-for-owner\nUPDATE t SET a = 1;\n'
 
+# THE SECOND REVIEW (2026-11-01) walked past the allowlist by naming a column after one of its forms:
+# the forms were matched as string PREFIXES and the word class had no digit. Each verified bypass is
+# a row, matched on whole tokens now.
+classify held column-named-like-index 'ALTER TABLE users DROP indexed_at;\n'
+classify held column-named-like-default 'ALTER TABLE users DROP default_role;\n'
+classify held columns-named-like-trigger-and-constraint 'ALTER TABLE users DROP trigger_count, DROP constraint_note;\n'
+classify held column-with-a-digit 'ALTER TABLE users DROP index2;\n'
+classify held dynamic-sql-from-a-variable-named-on 'DO $$ DECLARE on_cmd text; BEGIN SELECT cmd INTO on_cmd FROM pending_ddl LIMIT 1; EXECUTE on_cmd; END $$;\n'
+classify held column-named-index 'ALTER TABLE users DROP index;\n'
+classify held column-named-index-cascade 'ALTER TABLE users DROP index CASCADE;\n'
+classify held dynamic-sql-from-a-variable-named-function 'DO $$ DECLARE function text; BEGIN EXECUTE function USING 1; END $$;\n'
+classify plain drop-index-concurrently 'DROP INDEX CONCURRENTLY IF EXISTS public.i;\nGRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA s TO r;\nCREATE TRIGGER x AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION public.f();\n'
+
+# DOLLAR QUOTES: the outer lexer closes `$x$` wherever it stands, a `--` inside included. The first
+# lexer read that `--` as a comment and stripped the DROP after the closing tag.
+# shellcheck disable=SC2016 # the dollar quotes are SQL, kept literal on purpose
+{
+  classify held dashes-in-a-dollar-literal 'SELECT $x$ -- $x$; DROP TABLE users;\n'
+  classify held block-comment-in-a-dollar-literal 'SELECT $$ /* $$; DROP TABLE users; -- */\n'
+  classify held drop-glued-to-a-dollar-tag 'DO $x$BEGIN DROP TABLE users; END$x$;\n'
+  classify held drop-in-a-dollar-body-over-lines 'DO $body$\nBEGIN\n  DROP TABLE users;\nEND\n$body$;\n'
+  classify held unterminated-dollar-quote 'DO $$ BEGIN PERFORM 1;\n'
+  classify plain dollar-body-additive 'DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = $q$e$q$) THEN CREATE TYPE e AS ENUM ($q$a$q$); END IF; END $$;\n'
+  classify plain dollar-sign-in-an-identifier 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a$b$ int;\n'
+}
+
+# A BYTE-ORDER MARK before `--` hid the marker from the line match: held now, wherever it stands.
+classify held bom-before-the-marker '\357\273\277-- canari:hold-for-owner\nUPDATE t SET a = 1;\n'
+classify held bom-alone '\357\273\277ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n'
+
 # A MARKER IS READ ON A LARGE FILE TOO. The first version piped `tr | grep -q`, and under pipefail
 # grep's early exit SIGPIPE'd tr on anything above ~64 KB: 30 misses in 30 on Linux. One MB, the
 # marker on the LAST line, so the whole file is read.
@@ -308,8 +338,12 @@ printf -- '-- a real commented DROP, in a file nothing else holds: DROP TABLE t;
 held_sum="$(sha256sum "$HOLD/$HMIG/002_held.sql" | cut -d' ' -f1)"
 drop_sum="$(sha256sum "$HOLD/$HMIG/003_drop.sql" | cut -d' ' -f1)"
 HELD_SUM_UPPER="$(printf '%s' "$held_sum" | tr '[:lower:]' '[:upper:]')"
+# The deploy's backup hook, as it ships, and the directory the stub crontab names for it.
+deploy_backup="$(sed -n '/^migration_backup() {/,/^}/p' "$DEPLOY")"
+BACKUPS="$TMP/backups"
+export POSTGRES_USER=canari
 
-# run_hold <approvals file content> <ledger filenames>   (BACKUP=ok|fail|none, LEDGER=ok|fail)
+# run_hold <approvals file content> <ledger filenames>   (BACKUP=ok|fail|none, CRON=ok|none, LEDGER=ok|fail)
 run_hold() {
   (
     cd "$HOLD" || exit 1
@@ -335,12 +369,26 @@ run_hold() {
       esac
       return 0
     }
+    # THE DEPLOY'S OWN `migration_backup`, verbatim, over the real dump library - not a stub (review
+    # of #2873: the stub this replaced hid that the real one wrote to a directory the host does not
+    # have). Stubbed are only what a laptop lacks: the account's crontab, which names the backup
+    # directory (CRON=ok|none), and the compose command `dc`, whose pg_dump answers or fails.
     if [ "${BACKUP:-ok}" != none ]; then
+      # shellcheck disable=SC2034 # read by the deploy's migration_backup, eval'ed below
+      PROJECT=canari-prod
       # shellcheck disable=SC2317,SC2329 # called only from `eval`ed code
-      migration_backup() {
-        printf 'backup-before %s\n' "$1"
-        [ "${BACKUP:-ok}" = ok ]
+      crontab() {
+        [ "${CRON:-ok}" = ok ] && printf 'MAILTO=""\nBACKUP_DIR=%s\n30 3 * * * backup.sh\n' "$BACKUPS"
+        [ "${CRON:-ok}" = ok ] || printf 'MAILTO=""\n'
       }
+      # shellcheck disable=SC2317,SC2329 # called through dump_auth_db's "$@"
+      dc() {
+        [ "${BACKUP:-ok}" = ok ] || return 1
+        printf 'CREATE TABLE t (a int);\n'
+      }
+      # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/backup/dump-auth-db.sh
+      . "$REPO/infrastructure/backup/dump-auth-db.sh"
+      eval "$deploy_backup"
     fi
     eval "$sentinel_decl"
     eval "$ledger_decl"
@@ -350,6 +398,7 @@ run_hold() {
     apply_migrations
   )
 }
+# shellcheck disable=SC2031 # `out` is set by the caller's own assignment; the subshell writes are the sourced dump library's locals
 applied_list() { printf '%s\n' "$out" | sed -n 's/^applying //p' | tr '\n' ' '; }
 
 if [ -n "$(sed -n '/^require_owner_approvals() {/,/^}/p' "$SCRIPT")" ]; then
@@ -390,7 +439,7 @@ if printf '%s\n' "$out" | grep -q '^owner hold: 4 unrecorded file(s) examined, 2
 else
   fail "no decision line counts what the gate examined and held"
 fi
-if [ -z "$(applied_list)" ] && ! printf '%s\n' "$out" | grep -q '^backup-before'; then
+if [ -z "$(applied_list)" ] && ! printf '%s\n' "$out" | grep -q '^backup taken before' && [ ! -e "$BACKUPS" ]; then
   ok "and NOTHING is applied or backed up, not even the plain files before the held one"
 else
   fail "files were touched before the refusal: $(applied_list)"
@@ -411,8 +460,8 @@ if [ "$rc" -eq 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql $HMIG/002_held.
 else
   fail "approved held migrations did not apply (exit $rc, applied: $(applied_list))"
 fi
-order="$(printf '%s\n' "$out" | grep -E '^(backup-before|applying) ' | tr '\n' '|')"
-want="applying $HMIG/001_plain.sql|backup-before $HMIG/002_held.sql|applying $HMIG/002_held.sql|backup-before $HMIG/003_drop.sql|applying $HMIG/003_drop.sql|applying $HMIG/004_plain.sql|"
+order="$(printf '%s\n' "$out" | grep -E '^(backup taken before|applying) ' | sed 's/^\(backup taken before [^:]*\):.*/\1/' | tr '\n' '|')"
+want="applying $HMIG/001_plain.sql|backup taken before $HMIG/002_held.sql|applying $HMIG/002_held.sql|backup taken before $HMIG/003_drop.sql|applying $HMIG/003_drop.sql|applying $HMIG/004_plain.sql|"
 if [ "$order" = "$want" ]; then
   ok "a backup is taken RIGHT BEFORE each approved held file, and only before those"
 else
@@ -423,6 +472,14 @@ if printf '%s\n' "$out" | grep -q '002_held\.sql is held because.*APPROVED'; the
 else
   fail "an approved held migration applied without a line saying so"
 fi
+dumps="$(find "$BACKUPS/pre-migration" -type f -name 'canari-prod-*Z-00[23]_*.sql.gz' 2>/dev/null | sort)"
+# shellcheck disable=SC2086 # two paths with no space, split on purpose
+if [ "$(grep -c . <<<"$dumps")" = 2 ] && [ "$(gzip -dc $dumps | sort -u)" = 'CREATE TABLE t (a int);' ]; then
+  ok "the REAL deploy hook wrote 2 whole dumps into pre-migration/ under the directory the crontab names"
+else
+  fail "the deploy's migration_backup did not write its dumps where the crontab says: $(find "$BACKUPS" -type f 2>/dev/null)"
+fi
+rm -rf "$BACKUPS"
 
 out="$(BACKUP=fail run_hold "$HMIG/002_held.sql $held_sum
 $HMIG/003_drop.sql $drop_sum
@@ -432,6 +489,22 @@ if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && printf '
   ok "a FAILED backup refuses the approved file and everything after it (only the plain 001 ran)"
 else
   fail "a failed backup did not stop the approved migration (exit $rc, applied: $(applied_list))"
+fi
+if [ -z "$(find "$BACKUPS" -type f 2>/dev/null)" ]; then
+  ok "and the failed dump leaves no partial file behind"
+else
+  fail "a failed dump left a file that looks like a restore point: $(find "$BACKUPS" -type f)"
+fi
+rm -rf "$BACKUPS"
+
+out="$(CRON=none run_hold "$HMIG/002_held.sql $held_sum
+$HMIG/003_drop.sql $drop_sum
+" '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && printf '%s\n' "$out" | grep -q '^::error::the crontab of this account .* has no BACKUP_DIR= line' && [ ! -e "$BACKUPS" ]; then
+  ok "a crontab that names NO backup directory refuses the approved file - no default directory is guessed"
+else
+  fail "the backup ran without a named directory, or did not refuse (exit $rc, applied: $(applied_list)): $out"
 fi
 
 out="$(BACKUP=none run_hold "$HMIG/002_held.sql $held_sum
@@ -554,8 +627,10 @@ else
 fi
 if dump_with fail "$TMP/fail.sql.gz"; then
   fail "a failed pg_dump was reported as a backup"
+elif [ -e "$TMP/fail.sql.gz" ]; then
+  fail "a failed pg_dump left a partial file beside the real dumps"
 else
-  ok "a failed pg_dump is a failed backup, not an empty file that looks like one"
+  ok "a failed pg_dump is a failed backup, and it leaves no file that looks like one"
 fi
 if dump_with truncated "$TMP/cut.sql.gz"; then
   fail "a truncated dump stream passed gzip -t"
@@ -563,8 +638,9 @@ else
   ok "a truncated stream is caught by the same gzip -t the dump runs"
 fi
 # shellcheck disable=SC2016 # the patterns are the scripts' literal text
-if grep -qE '^[[:space:]]*if ! dump_auth_db "\$out" dc; then' "$DEPLOY" && grep -qE '^migration_backup\(\) \{' "$DEPLOY"; then
-  ok "the deploy defines migration_backup, and it takes the dump through dump_auth_db"
+if grep -qE '^[[:space:]]*pre_migration_backup "\$1" "\$PROJECT" dc$' "$DEPLOY" && grep -qE '^migration_backup\(\) \{' "$DEPLOY" &&
+  grep -qE '^[[:space:]]*if ! dump_auth_db "\$out" "\$@"; then' "$DUMP_LIB"; then
+  ok "the deploy defines migration_backup, and it takes the dump through pre_migration_backup and dump_auth_db"
 else
   fail "the deploy takes no backup through dump_auth_db before an approved migration"
 fi

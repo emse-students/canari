@@ -273,23 +273,12 @@ psql() {
 # THE BACKUP RIGHT BEFORE A MIGRATION THE OWNER APPROVED (owner, 2026-11-01). The loop calls this
 # before each held file `migration-approvals.txt` approves, and applies nothing more if it fails. The
 # dump is the nightly backup's own (`dump-auth-db.sh`), so a restore reads it the same way; it lands
-# beside the nightly archives, in `pre-migration/`, named after the estate and the migration, and is
-# kept until removed by hand - there is one per approved migration, not one per deploy.
+# in `pre-migration/` under the directory THIS account's crontab names for the nightly backup (no
+# default: an unnamed directory refuses), named after the estate and the migration.
 # shellcheck source-path=SCRIPTDIR source=../backup/dump-auth-db.sh
 . "$DEPLOY_PATH/infrastructure/backup/dump-auth-db.sh"
 migration_backup() {
-  local dir out
-  dir="${BACKUP_DIR:-$CANARI_DEFAULT_BACKUP_DIR}/pre-migration"
-  out="$dir/${PROJECT}-$(date -u '+%Y%m%dT%H%M%SZ')-$(basename "$1" .sql).sql.gz"
-  if ! mkdir -p "$dir"; then
-    printf '::error::cannot create %s for the backup before %s\n' "$dir" "$1"
-    return 1
-  fi
-  if ! dump_auth_db "$out" dc; then
-    printf '::error::the dump of the %s database before %s failed or is truncated (%s)\n' "$ENVIRONMENT" "$1" "$out"
-    return 1
-  fi
-  printf 'backup taken before %s: %s (%s bytes)\n' "$1" "$out" "$(wc -c <"$out" | tr -d ' ')"
+  pre_migration_backup "$1" "$PROJECT" dc
 }
 
 apply_migrations

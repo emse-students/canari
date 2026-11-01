@@ -239,22 +239,25 @@ fi
 
 # -- 6 -------------------------------------------------------------------------------------------
 step 'no migration the owner must approve ships without the approval'
-# Since the latest STABLE, because that is what production has applied: a held file added since then
-# is what this release would bring to a database that has never run it. Read from the release list
-# (this release excluded, since a stable is listed as soon as it is published), then the tag's tree
-# fetched shallow - the comparison needs two trees, not the history between them.
-BASE_TAG="$(gh api "repos/$REPO/releases?per_page=50" \
-  --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | grep -vxF "v${VERSION#v}" | sed -n 1p)" || BASE_TAG=""
-if ! [[ "$BASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  refuse "could not name the latest stable release to compare against (read: '${BASE_TAG:-nothing}')"
-elif ! git fetch -q --depth 1 origin "refs/tags/$BASE_TAG:refs/tags/$BASE_TAG" && ! git rev-parse -q --verify "$BASE_TAG^{commit}" >/dev/null; then
-  refuse "could not fetch $BASE_TAG to compare its migrations with this release's"
+# THE DEPLOY'S QUESTION, ASKED OF THE TREE: "which files has production's ledger not recorded?"
+# becomes "which files changed since the commit production SERVES?". That commit is `prod-released`,
+# the tag the production deploy moves itself once it has succeeded - after `apply_migrations`, so
+# every migration of that commit is in the ledger (`release-shipped.sh` reads the same marker). The
+# latest stable TAG was the first version's base, and it asks less: a stable whose deploy failed is not
+# in production's ledger, and its held files would have passed here (review of #2873). For a
+# pre-release, dev's ledger is at or ahead of production's, so this asks at least what the dev deploy
+# will. The commit is fetched shallow: the comparison needs two trees, not the history between them.
+PROD_SHA="$(gh api "repos/$REPO/git/ref/tags/prod-released" --jq '.object.sha')" || PROD_SHA=""
+if ! [[ "$PROD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  refuse "could not read the prod-released marker, so nothing names what production has applied (read: '${PROD_SHA:-nothing}')"
+elif ! git fetch -q --depth 1 origin "$PROD_SHA" && ! git rev-parse -q --verify "$PROD_SHA^{commit}" >/dev/null; then
+  refuse "could not fetch ${PROD_SHA:0:8} (prod-released) to compare its migrations with this release's"
 else
-  HELD_OUT="$(held_migrations_since "$BASE_TAG" HEAD)"
+  HELD_OUT="$(held_migrations_since "$PROD_SHA" HEAD)"
   HELD_RC=$?
   case "$HELD_RC" in
     0)
-      ok "nothing held and unapproved since $BASE_TAG ($(grep -c . <<<"$HELD_OUT") migration file(s) examined, $(grep -c '^approved ' <<<"$HELD_OUT") approved by the owner)"
+      ok "nothing held and unapproved since production's ${PROD_SHA:0:8} (prod-released; $(grep -c . <<<"$HELD_OUT") migration file(s) examined, $(grep -c '^approved ' <<<"$HELD_OUT") approved by the owner)"
       ;;
     1)
       while read -r _ file sum reason; do

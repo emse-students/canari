@@ -151,7 +151,8 @@ Rules, all of them load-bearing:
 
 - **A migration the owner must see is HELD, never "owed the owner's yes" in prose.** A line of its
   own reading `-- canari:hold-for-owner`, or any statement that is not plainly additive (any `DROP`
-  but `CONSTRAINT|INDEX|TRIGGER|DEFAULT|NOT NULL`, `RENAME`, `TRUNCATE`, `DELETE FROM`, a column
+  but `CONSTRAINT`, `DEFAULT`, `NOT NULL` and `INDEX|TRIGGER <name>`, matched on whole tokens;
+  `RENAME`, `TRUNCATE`, `DELETE FROM`, a column
   `TYPE` change, dynamic `EXECUTE`), refuses the release tag and makes the deploy FAIL before anything
   is applied until `infrastructure/migration-approvals.txt` approves that file's checksum - a line the
   owner merges by hand. An approved one is applied right after a database dump

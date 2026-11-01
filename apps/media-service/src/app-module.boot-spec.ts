@@ -30,9 +30,9 @@ import { AppModule } from './app.module';
  * that social-service and media-service did not have until this was added, which is why they had
  * been shipping 111 and 9 compiled test artefacts into their production images.
  *
- * WHY IT MAY DESTROY A DATABASE: the CI boot job sets `TYPEORM_SYNCHRONIZE=1`
- * (`typeorm-synchronize.ts`), so booting CREATES and ALTERS the schema. It must only ever be pointed at a
- * throwaway database, which is what the service container in CI is.
+ * WHAT IT WRITES: media-service has no TypeORM and no schema, so `TYPEORM_SYNCHRONIZE` means nothing
+ * here (its siblings' boot specs carry the database warning). What it reaches is the S3 endpoint the
+ * `boot-nest-apps` job starts for it, a throwaway like every service container in CI.
  */
 describe('the real AppModule boots', () => {
   it('constructs every module, answers on its health route, and shuts down', async () => {

@@ -142,7 +142,7 @@ run_case() {
   : >"$work/output"
   : >"$work/gh.log"
   out="$(cd "$work" && PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/output" REPO=o/r PR=5 AUTHOR="$2" HEAD_REF="$3" GH_TOKEN=x \
-    HEAD_SHA="${CASE_HEAD:-$M2}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
+    HEAD_SHA="${CASE_HEAD:-$M2}" EVENT_ACTION="${CASE_ACTION:-synchronize}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
   st=$?
 }
 # Armed: by the shared step (`armable=true`), or - the App's path - by the step itself, bound to the
@@ -166,9 +166,9 @@ not_armed "B2 the App from any other branch is not armed"
 for ref in 'deps/lock-refresh/cargo/dependabot-12;touch PWNED' 'deps/lock-refresh/cargo/dependabot-$(touch PWNED)' \
   $'deps/lock-refresh/cargo/dependabot-12\nx' 'deps/lock-refresh/cargo/dependabot-012' 'deps/lock-refresh/npm/dependabot-12'; do
   run_case false "$APP" "$ref"
-  # The ONE call before the branch is read is the held-migration check, by pull request number only
+  # The ONE call before the branch is read is the owner's-files check, by pull request number only
   # (B32); nothing derived from the branch name reaches the API.
-  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep '^api' "$work/gh.log" | grep -vqxF 'api repos/o/r/pulls/5/files?per_page=100 --paginate --jq .[] | .filename, (.previous_filename // empty)'; then
+  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep '^api' "$work/gh.log" | grep -vqxF 'api repos/o/r/pulls/5/files?per_page=100 --paginate --jq .[] | [.filename, (.previous_filename // "")] | @tsv'; then
     pass "B3 a hostile or foreign refresh branch is refused before any API call it names: $(printf '%q' "$ref")"
   else
     fail "B3 the branch $(printf '%q' "$ref") was not refused cleanly (exit $st)" "$out"
@@ -405,6 +405,67 @@ if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.l
   pass "B32 an unreadable file list fails the run, arms nothing and disarms"
 else
   fail "B32 an unreadable file list armed or passed (exit $st)" "$out"
+fi
+
+# The judge and everything that decides what an approval means are the owner's files too (second
+# review of #2873): a pull request weakening the classifier would otherwise merge itself.
+for owned in infrastructure/lib/migration-hold.sh infrastructure/lib/migrations.sh .github/workflows/arm-auto-merge.yml .github/CODEOWNERS; do
+  fixtures
+  edit pulls_5_files_per_page_100 ". += [{filename: \"$owned\"}]"
+  # shellcheck disable=SC2209 # a per-call variable for a shell function
+  FAKE_PERMISSION=admin run_case false 'an-admin' 'fix/x'
+  if [ "$st" = 0 ] && ! armed && grep -qF "changes $owned" <<<"$out"; then pass "B32 a pull request touching $owned is not armed"; else fail "B32 a pull request touching $owned was armed (exit $st)" "$out"; fi
+done
+# AN ARMING MADE BY HAND is an event now (auto_merge_enabled): on the owner's files it is undone,
+# anywhere else it is left alone and not repeated.
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+CASE_ACTION=auto_merge_enabled FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 a hand-made arming (auto_merge_enabled) of a pull request touching the approvals file is DISARMED"
+else
+  fail "B32 a hand-made arming of an approvals pull request stayed (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+CASE_ACTION=auto_merge_enabled FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && ! grep -q '^pr merge' "$work/gh.log" && ! grep -q 'permission' "$work/gh.log"; then
+  pass "B32 a hand-made arming elsewhere is neither undone nor repeated, and asks nothing more"
+else
+  fail "B32 auto_merge_enabled on an ordinary pull request did something (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+# GITHUB LISTS AT MOST 3000 FILES: a list at the cap may have cut the owner's file off.
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+jq -n '[range(3000) | {filename: "f\(.).txt"}]' >"$work/fix/pulls_5_files_per_page_100.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log" && grep -q 'its cap' <<<"$out"; then
+  pass "B32 a file list at GitHub's 3000 cap refuses, arms nothing and disarms"
+else
+  fail "B32 a file list at the cap was trusted (exit $st)" "$out"
+fi
+fixtures
+jq -n '[range(2999) | {filename: "f\(.).txt"}]' >"$work/fix/pulls_5_files_per_page_100.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && armed; then pass "B32 2999 files, none the owner's, is armed as before"; else fail "B32 a 2999-file pull request was not armed (exit $st)" "$out"; fi
+# THE TWO LISTS ARE ONE: the workflow's and .github/CODEOWNERS', line for line.
+wf_list="$(awk -v q="'" '$0 ~ "^owner_files=" q { inside = 1; sub("^owner_files=" q, "") } inside { line = $0; done = sub(q "$", "", line); sub(/^[ \t]+/, "", line); print line; if (done) exit }' "$work/step.raw" | sort)"
+co_list="$(grep -vE '^[[:space:]]*(#|$)' "$here/../../CODEOWNERS" | awk '{ sub(/^\//, "", $1); print $1 }' | sort)"
+co_owners="$(grep -vE '^[[:space:]]*(#|$)' "$here/../../CODEOWNERS" | awk '{ $1 = ""; print }' | sort -u)"
+if [ -n "$wf_list" ] && [ "$wf_list" = "$co_list" ] && [ "$co_owners" = ' @DeMASKe' ]; then
+  pass "B32 the workflow's owner files and .github/CODEOWNERS are the same $(grep -c . <<<"$wf_list") paths, all the owner's"
+else
+  fail "B32 the workflow's owner files and .github/CODEOWNERS differ" "workflow: $wf_list" "CODEOWNERS: $co_list ($co_owners)"
+fi
+if grep -qE '^ +types: \[[a-z_, ]*auto_merge_enabled\]' "$wf"; then
+  pass "B32 the workflow listens to auto_merge_enabled, so an arming made by hand is judged too"
+else
+  fail "B32 arm-auto-merge.yml does not listen to auto_merge_enabled"
 fi
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────

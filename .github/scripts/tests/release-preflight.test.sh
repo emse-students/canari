@@ -290,10 +290,11 @@ for needle in 'ADMIN-MERGED' 'own CI' 'gh run list --branch main' 'gh run rerun'
   fi
 done
 
-printf '\ngate 6: a held migration added since the latest stable refuses the tag without the approval\n'
+printf '\ngate 6: a held migration added since what production serves refuses the tag without the approval\n'
 # =================================================================================================
 # THE DEPLOY REFUSES IT ANYWAY, AT THE END. This asks the tree, before anything moves, through the
-# deploy's own judge. A throwaway repository: a stable with the history, then a release adding files.
+# deploy's own judge. A throwaway repository: the commit production serves (tagged v1.0.0 here; the
+# preflight passes the prod-released commit), then a release adding files.
 HOLD_LIB="$HERE/../../../infrastructure/lib/migration-hold.sh"
 GREPO="$(mktemp -d)"
 trap 'rm -rf "$GREPO"' EXIT
@@ -351,10 +352,20 @@ else
   fail "it judged without the deploy's own judge (rc $hrc)"
 fi
 # shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
-if grep -qF 'held_migrations_since "$BASE_TAG" HEAD' "$PREFLIGHT" && grep -qF 'infrastructure/lib/migration-hold.sh' "$PREFLIGHT"; then
+if grep -qF 'held_migrations_since "$PROD_SHA" HEAD' "$PREFLIGHT" && grep -qF 'infrastructure/lib/migration-hold.sh' "$PREFLIGHT"; then
   pass "release-preflight.sh asks gate 6 through this function and the deploy's hold library"
 else
   fail "release-preflight.sh does not run gate 6"
+fi
+# THE BASE IS WHAT PRODUCTION SERVES, NOT THE LATEST STABLE TAG (review of #2873): a stable whose
+# deploy failed is not in production's ledger, so diffing from its tag skipped its held files.
+# `prod-released` is moved by the production deploy itself, after the migrations ran.
+# shellcheck disable=SC2016 # the patterns are the script's literal text
+if grep -qF 'PROD_SHA="$(gh api "repos/$REPO/git/ref/tags/prod-released" --jq '"'"'.object.sha'"'"')"' "$PREFLIGHT" &&
+  ! grep -qE 'prerelease == false\) \| \.tag_name' "$PREFLIGHT"; then
+  pass "gate 6 diffs from prod-released (what production's ledger has), not from the latest stable tag"
+else
+  fail "gate 6 does not diff from the prod-released marker"
 fi
 
 printf '\n'

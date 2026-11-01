@@ -212,7 +212,8 @@ classify_prerelease_currency() {
 # THE DEPLOY REFUSES SUCH A FILE ANYWAY (`apply_migrations`), but only after the bump has pushed, the
 # images are built and a store has taken the build - a refusal that lands at the end of a release.
 # The same question asked of the TREE, before anything moves, costs a second. It is pure repository:
-# the files `git diff` names between the latest stable tag and the released commit (added, modified
+# the files `git diff` names between the commit production serves (`prod-released`, the caller's
+# $1) and the released commit (added, modified
 # or renamed under `apps/*/src/migrations/`), each judged by `migration_gate_verdict`
 # (infrastructure/lib/migration-hold.sh, the deploy's own judge) against the approvals file of the
 # working tree, which IS the released commit. The caller sources that library first.

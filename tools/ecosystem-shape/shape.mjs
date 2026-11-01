@@ -217,14 +217,14 @@ const SHARED_EVERYWHERE = [
 ];
 
 // TWO FILES ARE COMPARED ACROSS THE THREE SIBLINGS ONLY, and Canari is excluded BY NAME rather than
-// by being quietly absent: its `release-preflight.sh` asks FIVE questions where theirs ask three.
-// The two extra ones are things only Canari has - `dev.canari-emse.fr` must already have served the
-// commit, and `store/whats-new.txt` must name the version, because a stable there reaches the App
-// Store and Play. Making five identical to three would delete a gate; three identical to five would
-// invent one.
+// by being quietly absent: its `release-preflight.sh` asks SIX questions where theirs ask three.
+// The three extra ones are things only Canari has - `dev.canari-emse.fr` must already have served the
+// commit, `store/whats-new.txt` must name the version (a stable there reaches the App Store and
+// Play), and no migration the owner must approve ships without his approval. Making six identical
+// to three would delete a gate; three identical to six would invent one.
 const SHARED_BY_SIBLINGS = [
-  ['.github/scripts/release-preflight.sh', 'Canari asks five questions, not three'],
-  ['.github/scripts/tests/release-preflight.test.sh', 'it tests the five-question version'],
+  ['.github/scripts/release-preflight.sh', 'Canari asks six questions, not three'],
+  ['.github/scripts/tests/release-preflight.test.sh', 'it tests the six-question version'],
 ];
 
 /** Strip full-line comments and blank lines: what is left is what runs. */
@@ -243,23 +243,42 @@ function codeOnly(raw) {
  * markers. The mechanism outside them must stay identical everywhere, so the region is cut BEFORE
  * the comparison rather than the comparison being weakened: an edit outside the markers still forks,
  * and a marker that is opened and never closed is a failure here, not a silently longer region.
+ *
+ * A LINE THE FOUR SHARE AND CANARI EXTENDS is declared by `# canari-only:shared <the shared line>`
+ * right above Canari's own: the comparison reads the declared line in its place. Two lines use it
+ * since 2026-11-01, both for the guard on the owner's files (review of #2873): `types:` gains
+ * `auto_merge_enabled`, so an arming made by hand is judged, and the concurrency group gains that
+ * event, so the run it raises cannot cancel the run that armed. A region cannot carry them: a YAML
+ * key is not repeatable, so the line must be REPLACED, not added.
  */
+const SHARED_MARKER = '# canari-only:shared ';
 function withoutCanariOnly(raw) {
   const out = [];
   let inside = false;
+  let shared = null;
   for (const line of raw.split('\n')) {
     const t = line.trim();
-    if (t === '# canari-only:begin') {
+    if (shared !== null) {
+      // The line a `# canari-only:shared` names must be code: a comment or a blank line there would
+      // let the marker stand for nothing.
+      if (!t || t.startsWith('#')) throw new Error(`# canari-only:shared is not followed by code: ${shared.trim()}`);
+      out.push(shared);
+      shared = null;
+    } else if (t === '# canari-only:begin') {
       if (inside) throw new Error('nested # canari-only:begin');
       inside = true;
     } else if (t === '# canari-only:end') {
       if (!inside) throw new Error('# canari-only:end without a begin');
       inside = false;
+    } else if (t.startsWith(SHARED_MARKER)) {
+      if (inside) throw new Error('# canari-only:shared inside a canari-only region');
+      shared = line.slice(0, line.indexOf('#')) + t.slice(SHARED_MARKER.length);
     } else if (!inside) {
       out.push(line);
     }
   }
   if (inside) throw new Error('# canari-only:begin is never closed');
+  if (shared !== null) throw new Error('# canari-only:shared ends the file');
   return out.join('\n');
 }
 

@@ -474,14 +474,25 @@ else
   fail 'arm-auto-merge.yml is gone - a green pull request would wait for a human who decides nothing'
 fi
 
-# NOBODY IS ASSIGNED TO A PULL REQUEST HERE (user, 2026-09-04: *"je ne veux plus etre assigne aux
-# PR etc, je ne veux plus recevoir les mails"*). CODEOWNERS requested a review from two humans on
-# every pull request, in a repository whose written model is that no approval is required - a
-# mention per pull request, per push, for a queue nobody was ever meant to drain.
-if [ -e "$HERE/../../CODEOWNERS" ]; then
-  fail 'CODEOWNERS is back - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes'
-else
+# NOBODY IS ASSIGNED TO A PULL REQUEST THAT MERGES ITSELF (user, 2026-09-04: *"je ne veux plus etre
+# assigne aux PR etc, je ne veux plus recevoir les mails"*). CODEOWNERS requested a review from two
+# humans on every pull request, in a repository whose written model is that no approval is required -
+# a mention per pull request, per push, for a queue nobody was ever meant to drain. It came back on
+# 2026-11-01 (review of #2873) NARROWED to the owner's files - the migration approvals and what judges
+# them - which are exactly the pull requests that never merge themselves and wait for the owner's own
+# decision by his rule of that day. So what is asserted is the scope: no catch-all, no path outside
+# that list (which arm-auto-merge-app.test.sh B32 pins to the workflow's, line for line).
+codeowners="$HERE/../../CODEOWNERS"
+if [ ! -e "$codeowners" ]; then
   pass 'no CODEOWNERS - nobody is assigned to a pull request that merges itself'
+else
+  stray="$(grep -vE '^[[:space:]]*(#|$)' "$codeowners" | awk '{ print $1 }' |
+    grep -vxE '/infrastructure/migration-approvals\.txt|/infrastructure/lib/migration-hold\.sh|/infrastructure/lib/migrations\.sh|/\.github/workflows/arm-auto-merge\.yml|/\.github/CODEOWNERS' || true)"
+  if [ -z "$stray" ]; then
+    pass "CODEOWNERS names only the owner's files - a review is requested only on a pull request that waits for his own merge anyway"
+  else
+    fail "CODEOWNERS names a path outside the owner's files ($(tr '\n' ' ' <<<"$stray")) - it requests a review on pull requests that merge themselves, a notification about a decision nobody makes"
+  fi
 fi
 
 printf '\nthe release package tells a pre-release from a stable by the EVENT, and refuses a mismatch\n'
