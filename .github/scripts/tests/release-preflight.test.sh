@@ -310,6 +310,9 @@ gitq commit -qm stable
 gitq tag v1.0.0
 printf 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n' >"$GREPO/$MIG/002_additive.sql"
 printf -- '-- canari:hold-for-owner\nUPDATE t SET a = 1;\n' >"$GREPO/$MIG/003_backfill.sql"
+# An EDIT of a file production already applied: the deploy never re-applies it, so gate 6 must not
+# judge it either (final review of #2873 - the first version diffed AMR and would have refused this).
+printf -- '-- a comment added later\nALTER TABLE t DROP COLUMN old;\n' >"$GREPO/$MIG/001_history.sql"
 gitq add -A
 gitq commit -qm release
 held() { # -> sets $hout, $hrc
@@ -324,7 +327,7 @@ else
   fail "the unapproved held file was not refused (rc $hrc): $hout"
 fi
 if grep -q "^plain $MIG/002_additive.sql$" <<<"$hout" && ! grep -q '001_history' <<<"$hout"; then
-  pass "an additive file passes, and a destructive file the stable already shipped is not asked again"
+  pass "an additive file passes, and a destructive file production already applied is not asked again, EDITED or not"
 else
   fail "the comparison judged the wrong files: $hout"
 fi

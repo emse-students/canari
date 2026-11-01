@@ -143,24 +143,34 @@ jobs:
           # canari-only:begin
           # A PULL REQUEST THAT TOUCHES THE OWNER'S FILES IS NEVER ARMED, WHOEVER OPENED IT (review
           # of #2873, 2026-11-01). `infrastructure/migration-approvals.txt` is the owner's yes to a
-          # migration that is not plainly additive, and the deploy applies what it names; the other
-          # three are what decides that yes means anything - the judge (`migration-hold.sh`), the loop
-          # that asks it (`migrations.sh`) and this workflow - and `.github/CODEOWNERS` is listed so
-          # a pull request bringing one back is never armed either (this repository has none,
+          # migration that is not plainly additive, and the deploy applies what it names. The rest
+          # decide what that yes means: the judge (`migration-hold.sh`), the loop that asks it
+          # (`migrations.sh`), the deploy that runs the loop and defines its backup
+          # (`deploy-environment.sh`), the dump it takes (`dump-auth-db.sh`), the release gate that
+          # asks the same question (`release-preflight.sh`, `release-preconditions.sh`) and this
+          # workflow. The three CODEOWNERS locations GitHub reads are listed so a pull request
+          # bringing one back is never armed either (this repository has none,
           # `release-chain.test.sh`). Armed, such a pull request would merge itself on a green CI,
           # and the yes - or the rule behind it - would be anybody's. So automation never merges it.
           # WHAT THIS DOES NOT COVER, accepted by the owner on 2026-11-01: a person with write access
-          # can still merge one BY HAND (docs/wiki/cicd.md). `arm-auto-merge-app.test.sh` B32 pins
-          # the list. Read FIRST, for every author and on
-          # every event, by pull request number only (no branch name, no checkout); a rename counts
-          # by either name. An unreadable file list refuses and disarms, and so does one at
-          # GitHub's 3000-file cap, which may have cut the list short; a push that adds a file to an
-          # armed pull request disarms it, and so does an arming made by hand (`auto_merge_enabled`).
+          # can still merge one BY HAND, and a fork's pull request is skipped by this job and merged
+          # by hand anyway (docs/wiki/cicd.md). `arm-auto-merge-app.test.sh` B32 pins the list.
+          # Read FIRST, for every author and on every event, by pull request number only (no branch
+          # name, no checkout); a rename counts by either name. An unreadable file list refuses and
+          # disarms, and so does one at GitHub's 3000-file cap, which may have cut the list short; a
+          # push that adds a file to an armed pull request disarms it, and so does an arming made by
+          # hand (`auto_merge_enabled`).
           owner_files='infrastructure/migration-approvals.txt
           infrastructure/lib/migration-hold.sh
           infrastructure/lib/migrations.sh
+          infrastructure/deploy/deploy-environment.sh
+          infrastructure/backup/dump-auth-db.sh
+          .github/scripts/release-preflight.sh
+          .github/scripts/lib/release-preconditions.sh
           .github/workflows/arm-auto-merge.yml
-          .github/CODEOWNERS'
+          CODEOWNERS
+          .github/CODEOWNERS
+          docs/CODEOWNERS'
           owner_files="$(sed 's/^[[:space:]]*//' <<<"$owner_files")"
           if ! listing="$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
             echo "::error::#$PR: its file list could not be read, so nobody can say whether it touches the owner's files - not armed."
@@ -193,6 +203,22 @@ jobs:
           # them is not this workflow's to judge or to repeat: it is already armed.
           if [ "$EVENT_ACTION" = 'auto_merge_enabled' ]; then
             echo "#$PR was armed, and it does not touch the owner's files - nothing to do."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # THE LIST MUST DESCRIBE THE HEAD THIS RUN ARMS (final review of #2873). It was read by
+          # pull request number, so it is the list of whatever the head was at that read; the head is
+          # read AFTER it, and arming goes ahead only when it is still the event's own commit. A head
+          # that moved means a newer push, whose own `synchronize` run reads the new list and decides
+          # (and disarms, if that push brought an owner's file). What is left is the instant between
+          # this read and the arming call, and a push landing there raises that same run.
+          if ! head_now="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"; then
+            echo "::error::#$PR: its head could not be read, so nobody can say the file list describes it - not armed."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if [ "$head_now" != "$HEAD_SHA" ]; then
+            echo "#$PR: its head moved since this event ($HEAD_SHA -> $head_now) - not armed here; the run for the new head decides."
             echo "armable=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

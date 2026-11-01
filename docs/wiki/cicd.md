@@ -268,25 +268,31 @@ a hot table) - when it contains a UTF-8 byte-order mark anywhere (one before `--
 from the line match), or when its SQL, comments stripped, whitespace collapsed and cut into TOKENS,
 contains a statement that is not plainly additive. **That list is an allowlist**: ANY `DROP` except
 `DROP CONSTRAINT`, `DROP DEFAULT`, `DROP NOT NULL` and `DROP INDEX|TRIGGER <name>` (the re-create
-idiom, a relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, a column `TYPE` change (`ALTER
-[COLUMN] x [SET DATA] TYPE`) and `EXECUTE` of dynamic SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a
-trigger and `GRANT EXECUTE ON FUNCTION` are not). The first version matched spellings (`DROP
-TABLE|COLUMN`) and its review listed what walked past it - `ALTER TABLE t DROP foo`, a statement split
-over lines, `DROP TYPE ... CASCADE`, a materialized view, a sequence, `DROP OWNED`, `RENAME COLUMN`.
-The second matched the allowed forms as string PREFIXES, and its review walked past them by naming a
-column after one - `DROP indexed_at`, `DROP default_role`, `DROP trigger_count`, `DROP index2`, a
-PL/pgSQL `EXECUTE on_cmd`; the forms are matched on WHOLE tokens now, and `INDEX`/`TRIGGER` (which
-PostgreSQL also accepts as column names) only when a name other than `CASCADE`/`RESTRICT` follows.
-Every one of those is a row of `deploy-migrations.test.sh`. Comments are stripped by a scanner that
-knows `'...'` strings (with `''` and `E'\''`), `"..."` identifiers, nested `/* */` and dollar quotes
-(`$$`, `$tag$`), so a `--` inside a string or a dollar quote does not eat the code after it
-(`SELECT $x$ -- $x$; DROP TABLE t;` was plain to the first lexer); an unterminated string, comment or
-dollar quote is HELD, not guessed. **A dollar-quoted body is kept verbatim, comments included**: it
-may be code that runs (`DO`, a function) or a literal, and no reader of the outer text can tell, so a
-`DROP` in a comment of a body holds the file - a false hold, never a missed one. An `UPDATE` backfill
-is not matched: the author marks it. The marker is read by ONE `grep` on the file - the first version
-piped `tr | grep -q`, and under `pipefail` grep's early exit made the pipe report a miss on any file
-above ~64 KB (30 misses in 30).
+idiom, a relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE` (its `WHEN MATCHED THEN
+DELETE` deletes), a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`), `EXECUTE` of dynamic
+SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger and `GRANT EXECUTE ON FUNCTION` are not), and
+**any backslash outside a string, a comment or a dollar quote**: the deploy pipes each file into
+`psql`, which reads it as a meta-command (`\gexec` runs every row a query returns as SQL, `\!` runs a
+shell). The first version matched spellings (`DROP TABLE|COLUMN`) and its review listed what walked
+past it - `ALTER TABLE t DROP foo`, a statement split over lines, `DROP TYPE ... CASCADE`, a
+materialized view, a sequence, `DROP OWNED`, `RENAME COLUMN`. The second matched the allowed forms as
+string PREFIXES, and its review walked past them by naming a column after one - `DROP indexed_at`,
+`DROP default_role`, `DROP trigger_count`, `DROP index2`, a PL/pgSQL `EXECUTE on_cmd`; the forms are
+matched on WHOLE tokens now, and `INDEX`/`TRIGGER` (which PostgreSQL also accepts as column names)
+only when a name other than `CASCADE`/`RESTRICT` follows. Every one of those is a row of
+`deploy-migrations.test.sh`. Comments are stripped by a scanner that knows `'...'` strings (with `''`
+and `E'\''`), `"..."` identifiers, nested `/* */` and dollar quotes (`$$`, `$tag$`), so a `--` inside
+a string or a dollar quote does not eat the code after it (`SELECT $x$ -- $x$; DROP TABLE t;` was
+plain to the first lexer); an unterminated string, comment or dollar quote is HELD, not guessed.
+**Inside a string or a dollar-quoted body, `"` and `\` are text and leave the scanner as spaces**: the
+token pass read a `"` in a string as the start of a quoted identifier and swallowed everything after
+it (`COMMENT ON COLUMN t.size IS '... 6.1"';` then `DROP COLUMN email` was plain - final review).
+**A dollar-quoted body is kept verbatim otherwise, comments included**: it may be code that runs
+(`DO`, a function) or a literal, and no reader of the outer text can tell, so a `DROP` in a comment of
+a body holds the file - a false hold, never a missed one. An `UPDATE` backfill is not matched: the
+author marks it. The marker is read by ONE `grep` on the file - the first version piped
+`tr | grep -q`, and under `pipefail` grep's early exit made the pipe report a miss on any file above
+~64 KB (30 misses in 30).
 
 **What lifts it.** A line `<repo-relative path> <sha256 of the file>` in
 `infrastructure/migration-approvals.txt` (the hex compared case-insensitively), bound to the CONTENT:
@@ -294,19 +300,37 @@ a file edited after its approval is held again, and the refusal says so. Chosen 
 because `gh release create` carries none, and over an environment flag because a switch nobody reviews
 is no approval.
 
+**A held migration on `main` BLOCKS EVERY RELEASE until it is approved or reverted.** The hold stops a
+migration at the release and at the deploy, never at the merge: the pull request that adds one is an
+ordinary pull request, armed and merged like any other (only the approvals file and what judges it
+are the owner's, below). Once it is on `main`, every pre-release and every stable cut from there is
+refused by gate 6 - and the deploy would refuse it anyway - until the owner merges its approval line
+or the file is reverted. That is the design: the yes is asked where it can no longer be skipped.
+
 **Never merged by automation - two locks, and what they do not cover.**
 - **`arm-auto-merge.yml` never arms a pull request that touches the OWNER'S FILES**, whoever opened it
-  (its first `canari-only` region): the approvals file, and what decides that a line in it means
-  anything - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`) and the workflow
-  itself - plus `.github/CODEOWNERS`, so a pull request bringing one back is never armed either
-  (`release-chain.test.sh` refuses the file outright). A push that adds one of them to an armed pull
-  request disarms it; an unreadable file list, or one at GitHub's 3000-file cap (which may be cut
-  short), refuses and disarms.
-- **An arming made by hand is undone too.** The workflow listens to `auto_merge_enabled` (Canari only;
-  `tools/ecosystem-shape` reads it as a declared `# canari-only:shared` line), so a writer's own
-  `gh pr merge --auto` on such a pull request is disarmed again; elsewhere that event does nothing.
-  Its concurrency group is its own, so the event the workflow's own arming raises cannot cancel the
-  run that armed. `arm-auto-merge-app.test.sh` B32 pins both.
+  (its first `canari-only` region): the approvals file, and everything that decides what a line in it
+  means - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`), the deploy that
+  runs the loop and defines its backup (`deploy-environment.sh`), the dump (`dump-auth-db.sh`), the
+  release gate (`release-preflight.sh`, `release-preconditions.sh`) and the workflow itself - plus the
+  three places GitHub reads a CODEOWNERS from (the root, `.github/`, `docs/`), so a pull request
+  bringing one back is never armed either (`release-chain.test.sh` refuses all three outright). A push
+  that adds one of them to an armed pull request disarms it; an unreadable file list, or one at
+  GitHub's 3000-file cap (which may be cut short), refuses and disarms. **The list is read by pull
+  request number, so it describes whatever the head was at that read**: the head is read after it,
+  and the run arms only while that head is still the event's own commit. A head that moved means a
+  newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
+  owner's file); what is left is the instant between that read and the arming call, and a push there
+  raises that same run.
+- **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
+  its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads
+  it as a declared `# canari-only:shared` line), so a writer's own `gh pr merge --auto` on such a pull
+  request is disarmed again; elsewhere that event does nothing. Its concurrency group is its own, so
+  the event the workflow's own arming raises cannot cancel the run that armed.
+  `arm-auto-merge-app.test.sh` B32 pins the list, the head check, both events and that group.
+- **`pull_request_target` runs `main`'s copy of the workflow**, so a pull request that CHANGES the
+  guard is judged by the guard it replaces - and the one that introduced it (#2873) by none: taking it
+  out of draft armed it, and its merge followed a green CI.
 - **THE RESIDUAL RISK, ACCEPTED BY THE OWNER ON 2026-11-01: a person with write access can still merge
   one of those pull requests BY HAND.** The protection is "never armed by automation", not "only the
   owner". A CODEOWNERS file with the ruleset's "Require review from Code Owners" would close it, and
@@ -317,14 +341,17 @@ is no approval.
 
 **Where it is asked, twice.**
 - **Gate 6 of the release preflight** (`held_migrations_since` in `release-preconditions.sh`): every
-  migration file added, changed or renamed between the commit production SERVES and the released
-  commit is judged against the approvals file of the released tree. A held, unapproved one refuses
-  the TAG, before the bump and the store builds - pure repository, no database. **The base is
-  `prod-released`**, the tag the production deploy moves itself once it has succeeded (after its
-  migrations ran), so the gate asks the deploy's own question - "what has production's ledger not
-  recorded?" - of the tree. The first version diffed from the latest stable TAG, which asks less: a
-  stable whose deploy failed is in no ledger, and its held files passed. For a pre-release, dev's
-  ledger is at or ahead of production's, so it asks at least what the dev deploy will.
+  migration file ADDED, copied or renamed between the commit production SERVES and the released
+  commit - the paths production's ledger has no row for - is judged against the approvals file of the
+  released tree. A held, unapproved one refuses the TAG, before the bump and the store builds - pure
+  repository, no database. **The base is `prod-released`**, the tag the production deploy moves
+  itself once it has succeeded (after its migrations ran), so the gate asks the deploy's own question
+  - "what has production's ledger not recorded?" - of the tree. The first version diffed from the
+  latest stable TAG, which asks less: a stable whose deploy failed is in no ledger, and its held files
+  passed. It also judged files only MODIFIED since then, which the deploy never re-applies (the
+  changed checksum only warns), so it would have refused a release for a file nothing runs. For a
+  pre-release, dev's ledger is at or ahead of production's, so it asks at least what the dev deploy
+  will.
 - **The deploy, and the dev reset**, on the files the ledger has not recorded - the last line. It logs
   every decision (`owner hold: N unrecorded file(s) examined, M held, A approved, R refused`).
 
@@ -345,9 +372,10 @@ line cron hands the nightly `backup.sh`, and the one `backup-report.sh` and the 
 with NO default: the first version fell back to `/home/canari/backups`, a path of the box production
 left on 2026-09-24, so an approved migration would have failed its `mkdir` on every deploy. An
 unnamed directory is an `::error::`, and neither that file nor any after it is applied. The dumps are
-kept until removed by hand,
-with no age rule ([backup](infrastructure/backup.md#retention) says why). A caller that defines none - the dev reset, which truncates dev and holds
-only the fictional seed - applies NO approved held file: the next deploy does, with its backup.
+kept until removed by hand, with no age rule ([backup](infrastructure/backup.md#retention) says why).
+**A caller that defines no `migration_backup` - the dev reset, which truncates dev and holds only the
+fictional seed - REFUSES THE WHOLE RUN when an approved held file is due**: nothing is applied, not
+even the plain files before it, and the next deploy applies them all, with its backup.
 
 **And the schema outside migrations is closed too.** TypeORM `synchronize` used to follow
 `NODE_ENV !== 'production'`, and the production compose file defaults `${NODE_ENV:-production}`: one

@@ -305,6 +305,20 @@ classify plain drop-index-concurrently 'DROP INDEX CONCURRENTLY IF EXISTS public
   classify plain dollar-sign-in-an-identifier 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a$b$ int;\n'
 }
 
+# A DOUBLE QUOTE INSIDE A STRING opened a quoted identifier in the token pass and swallowed every
+# statement after it (final review of #2873): both were plain, applied without approval or backup.
+classify held double-quote-in-a-comment-string 'COMMENT ON COLUMN t.size IS '"'"'screen size in inches, e.g. 6.1"'"'"';\nALTER TABLE users DROP COLUMN email;\n'
+classify held double-quotes-in-two-strings 'SELECT '"'"'x"'"'"'; DROP TABLE users; SELECT '"'"'"'"'"';\n'
+classify held double-quote-in-a-dollar-body 'DO $$ BEGIN RAISE NOTICE '"'"'6.1"'"'"'; END $$;\nDROP TABLE users;\n'
+classify plain backslash-and-quote-in-strings 'COMMENT ON COLUMN t.a IS E'"'"'a \\\\ b "'"'"';\nALTER TABLE t ADD COLUMN IF NOT EXISTS "b" int;\n'
+
+# THE DEPLOY PIPES EACH FILE INTO psql, which runs its own meta-commands (`\gexec` executes every
+# row a query returns as SQL; `\!` runs a shell command). No reader can judge either: held. And
+# MERGE (PostgreSQL 15+) deletes through `WHEN MATCHED THEN DELETE`.
+classify held psql-gexec 'SELECT format('"'"'DROP TABLE %%I'"'"', tablename) FROM pg_tables WHERE false\n\\gexec\n'
+classify held psql-shell '\\! rm -rf /tmp/x\nSELECT 1;\n'
+classify held merge 'MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE;\n'
+
 # A BYTE-ORDER MARK before `--` hid the marker from the line match: held now, wherever it stands.
 classify held bom-before-the-marker '\357\273\277-- canari:hold-for-owner\nUPDATE t SET a = 1;\n'
 classify held bom-alone '\357\273\277ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n'

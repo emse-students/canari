@@ -10,8 +10,9 @@
 #
 #   - `apply_migrations` (infrastructure/lib/migrations.sh), on every deploy and every dev reset,
 #     for the files the ledger has not recorded - the last line of defence;
-#   - `release-preflight.sh`, for the files a release adds since the latest stable - so a tag that
-#     carries a held, unapproved migration is refused BEFORE the bump and the store builds.
+#   - `release-preflight.sh`, for the files a release adds (or renames) since `prod-released`, the
+#     commit production serves - so a tag that carries a held, unapproved migration is refused
+#     BEFORE the bump and the store builds.
 #
 # WHAT HOLDS A MIGRATION, AND WHY IT IS AN ALLOWLIST. A file is held when
 #
@@ -23,10 +24,13 @@
 #   - or its SQL - comments stripped, strings kept, whitespace collapsed, then cut into TOKENS -
 #     contains a statement that is not plainly additive: ANY `DROP` except `DROP CONSTRAINT`,
 #     `DROP DEFAULT`, `DROP NOT NULL` and `DROP INDEX|TRIGGER <name>` (the re-create idiom and a
-#     relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, a column `TYPE` change
-#     (`ALTER [COLUMN] x [SET DATA] TYPE`), and `EXECUTE` of dynamic SQL (whose text no reader can
-#     judge; `EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger and `GRANT EXECUTE ON FUNCTION` are
-#     not dynamic SQL). An `UPDATE` backfill is NOT matched: it is the author's to mark.
+#     relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE` (whose `WHEN MATCHED THEN
+#     DELETE` deletes), a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`), `EXECUTE` of
+#     dynamic SQL (whose text no reader can judge; `EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger
+#     and `GRANT EXECUTE ON FUNCTION` are not dynamic SQL), and ANY backslash outside a string, a
+#     comment or a dollar quote: the deploy pipes the file into psql, which reads it as a
+#     meta-command (`\gexec` runs every row a query returns as SQL, `\!` runs a shell). An `UPDATE`
+#     backfill is NOT matched: it is the author's to mark.
 #
 # The destructive list was a DENYLIST of spellings first (`DROP TABLE|COLUMN`) and a review found the
 # spellings it walked past - `ALTER TABLE t DROP foo`, `DROP TYPE ... CASCADE`, a materialized view,
@@ -42,7 +46,10 @@
 # comment, and stripping from it would eat the code after it. The scanner follows '...' (with ''
 # and E'\'' escapes), "..." identifiers, `--` and nested `/* */` comments, and dollar quotes
 # (`$$ ... $$`, `$tag$ ... $tag$`). An unterminated string, comment or dollar quote is a file it
-# cannot read, and a file it cannot read is HELD (fail closed), never plain.
+# cannot read, and a file it cannot read is HELD (fail closed), never plain. Inside a string or a
+# dollar-quoted body a `"` and a `\` are TEXT and leave the scanner as spaces: the token pass read a
+# `"` in a string as the opening of a quoted identifier, and everything after it vanished into that
+# "name" (final review of #2873: `COMMENT ... IS '... 6.1"';` then a `DROP COLUMN` was plain).
 #
 # A DOLLAR-QUOTED BODY IS KEPT VERBATIM, comments and all. It may be a function body or a `DO` block,
 # whose content IS the SQL that runs, or a plain literal - and no reader of the outer text can tell
@@ -80,6 +87,11 @@ migration_sql_normalized() {
       if (s ~ /^[ \t\r\f\v]$/) { if (last != " ") { printf " "; last = " " } return }
       printf "%s", toupper(s); last = s
     }
+    # Inside a string or a dollar-quoted body, a double quote and a backslash are TEXT: emitted as a
+    # space, so the token pass can never read one as the start of a quoted identifier (which would
+    # swallow the statements after it: a comment string reading 6.1" hid the DROP that followed it)
+    # nor as a psql meta-command.
+    function inert(s) { if (s == "\"" || s == "\\") { emit(" ") } else { emit(s) } }
     {
       line = $0; n = length(line); i = 1
       while (i <= n) {
@@ -89,7 +101,7 @@ migration_sql_normalized() {
           if (substr(line, i, length(dtag)) == dtag) {
             emit(" "); emit(dtag); emit(" "); i += length(dtag); state = 0; continue
           }
-          emit(c); i++; continue
+          inert(c); i++; continue
         }
         if (state == 0) {
           # A dollar quote opens on `$tag$` or `$$` - not inside an identifier (`a$b$`), which
@@ -110,10 +122,10 @@ migration_sql_normalized() {
           emit(c); i++; continue
         }
         if (state == 1) {
-          if (esc && c == "\\") { emit(c); emit(d); i += 2; continue }
+          if (esc && c == "\\") { inert(c); inert(d); i += 2; continue }
           if (c == "\047" && d == "\047") { emit(c); emit(d); i += 2; continue }
           if (c == "\047") { state = 0 }
-          emit(c); i++; continue
+          inert(c); i++; continue
         }
         if (state == 2) {
           if (c == "\"" && d == "\"") { emit(c); emit(d); i += 2; continue }
@@ -218,6 +230,10 @@ migration_unplain_statements() {
           report("RENAME" (isname(a) ? " " a : ""))
         } else if (t == "TRUNCATE") {
           report("TRUNCATE")
+        } else if (t == "MERGE") {
+          report("MERGE")
+        } else if (t == "\\") {
+          report("A PSQL META-COMMAND \\" a)
         } else if (t == "DELETE" && a == "FROM") {
           report("DELETE FROM")
         } else if (t == "ALTER") {
