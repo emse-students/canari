@@ -1,3 +1,3 @@
-version: 1.5.3
+version: 1.6.0
 
-Nouveau : la liste complète des votants d'un sondage en un geste ; un nouvel appareil d'un membre rejoint seul ses conversations ; un nouveau membre d'un groupe ne reçoit plus les messages d'avant son arrivée. Amélioré : le filtre du fil tient dans une pastille flottante ; une réservation peut passer minuit. Corrigé : un message écrit pendant qu'un appareil attend d'être réintégré part ensuite ; le compteur d'associations du profil ; le GIF d'un commentaire replié.
+Nouveau : republiez un post pour vos abonnés, avec l'accord de son auteur ; l'onglet « Tout » devient « Mon espace », et un bouton (i) explique les onglets du fil ; toucher une personne ouvre son profil ; les lives sont redessinés. Amélioré : les messages sont classés à l'heure du serveur ; les appels se connectent plus vite ; la boutique et les réservations suivent votre campus. Corrigé : un souci passager d'ouverture des messages ne propose plus de tout réinitialiser.
