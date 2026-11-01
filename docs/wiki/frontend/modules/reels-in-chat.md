@@ -1038,8 +1038,8 @@ last one goes (RC-14):
   published reel the only way they know - a `reel-purge` that DELETES. On the author's post delete
   or on the post's retention, a `reel` file that also carries a chat hold is then deleted outright,
   and the conversations it was sent to read `410` before their 30 days. An old social-service beside
-  the NEW media-service is safe (it names no reason, and a file a chat holds is `refused` and kept -
-  the [legacy shim](../../legacy-compatibility.md)). Both halves are why no client creates a hold
+  the NEW media-service is safe (it names no reason, and a file a live chat hold keeps has its post
+  hold released and is kept - the [legacy shim](../../legacy-compatibility.md)). Both halves are why no client creates a hold
   before RC-14 is on both estates, and why a rollback past RC-14 once holds exist must take both
   services back together, knowingly.
 
@@ -1222,7 +1222,8 @@ the only copy; what each piece is for:
   worker sends `retention`. `author`/`retention` answer `released` for a file a chat still holds, and
   social-service reads that as done (the row goes, nothing is put on the idle clock). A body with NO
   reason is an older social-service during a deploy (the
-  [legacy shim](../../legacy-compatibility.md)): the old delete, or `refused` for a file a chat holds.
+  [legacy shim](../../legacy-compatibility.md)): the old delete, or, for a file a live chat hold
+  keeps, the post hold released and `refused` answered.
 - **Every delete writes its tombstone before awaiting the store**, so a hold or a claim placed during
   the await meets the tombstone and refuses; a failed delete restores the entry for the retry. A
   lapsed chat hold keeps nothing: not counted as shared, re-placed by a new take, refused by the

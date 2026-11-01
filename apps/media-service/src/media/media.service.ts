@@ -1307,9 +1307,11 @@ export class MediaService {
    *
    * NO REASON is an OLDER social-service (legacy-compatibility, removed once both estates run
    * RC-14): every deploy runs this build beside the previous social-service for a while, and it
-   * names none. It gets exactly the old behaviour - delete - for a file no conversation holds; a file
-   * a chat holds is `refused` and kept by its hold, since that caller cannot say whether it is a
-   * moderator (purge) or the post's end (release). Each such call is logged as the old caller.
+   * names none. It gets exactly the old behaviour - delete - for a file no LIVE chat hold keeps; a
+   * file a live chat hold keeps has its post hold released and is answered `refused`, so the chats
+   * keep it and the sweep still takes it at that hold's due time - that caller cannot say whether
+   * it is a moderator (purge) or the post's end, and the safe reading is the release. Each such
+   * call is logged as the old caller.
    */
   async purgeReels(
     items: Array<{ mediaId: string; ownerId: string }>,
@@ -1351,10 +1353,21 @@ export class MediaService {
         continue;
       }
       const chat = holdsOf(entry)?.chat ?? null;
-      if (!reason && chat) {
+      const liveChat = liveChatHold(entry, now);
+      if (!reason && liveChat) {
+        // The old caller drops its post row on ANY answer it does not retry, so whatever is not
+        // written here is never written: the post hold is RELEASED (the file is left to its chat
+        // hold, which the sweep honours - a `post` hold left behind would be kept for ever). The
+        // answer stays `refused`: an older reel worker counts outcomes by name, and `released` is
+        // a name it does not know.
+        if (holdsOf(entry)?.post) {
+          writeHolds(entry, { post: false, chat: liveChat });
+          changed = true;
+        }
         results.set(mediaId, 'refused');
         this.logger.warn(
-          `Reel purge (${label}) refused for ${mediaId}: a chat holds it, and a caller naming no reason cannot end it`
+          `Reel purge (${label}) of ${mediaId}: a live chat holds it until ${new Date(liveChat.dueAt).toISOString()} - ` +
+            `post hold released, file kept; answered refused, the one outcome an older caller reads as "not deleted"`
         );
         continue;
       }
@@ -1587,6 +1600,10 @@ export class MediaService {
    * these purges answer `failed` so their caller RETRIES, and a retry that met the tombstone would
    * read `absent` and drop the only record of the file - stranding it. Nothing can have changed the
    * entry meanwhile: every reader during the await saw the tombstone and refused.
+   *
+   * The restore is in memory: a process that dies after a failed delete, once another operation has
+   * persisted the index with the tombstone in it, strands the object exactly as the sweep's failed
+   * delete does ({@link tombstoneAndDelete}).
    *
    * @returns true when the object is gone; false (logged) when the store refused.
    */
@@ -2709,7 +2726,9 @@ export class MediaService {
       // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
       // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
       // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
-      // objects on production have no metadata entry at all. Never swallow it silently.
+      // objects on production have no metadata entry at all. Never swallow it silently. The reel
+      // purges' `tombstoneThenDelete` restores the entry instead, but only in memory: a death
+      // after another operation persisted its tombstone strands the object the same way.
       this.logger.warn(
         `Retention delete failed for ${mediaId} (object may be stranded): ${
           err instanceof Error ? err.message : String(err)

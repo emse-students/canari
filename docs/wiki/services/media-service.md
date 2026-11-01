@@ -493,9 +493,12 @@ goes only with the last one.
   `manual_delete` for a reel no conversation ever held. `reel_moderated` is answered `410` like the
   other reel tombstones; no client is told the reason (a DM is not told that a salon was moderated).
   **No reason at all is an older social-service** (a deploy-order window, the
-  [legacy shim](../legacy-compatibility.md)): it gets the old delete for a file no chat holds, and
-  `refused` - logged, the file kept by its hold - for one a chat holds, because that caller cannot say
-  whether it is a moderator or the post's end. Any other value is a `400`.
+  [legacy shim](../legacy-compatibility.md)): it gets the old delete for a file no LIVE chat hold
+  keeps. For one a live chat hold keeps, the post hold is RELEASED and the answer is `refused` -
+  logged; that caller cannot say whether it is a moderator or the post's end, and the release is the
+  safe reading. Released, not merely refused, because the old caller drops its post row on any
+  answer: a `post` hold left behind would keep the file for ever. Answered `refused`, not `released`,
+  because an older reel worker counts outcomes by name. Any other value is a `400`.
 - **`internal/chat-reel-purge`** (`purgeChatReels`) is the salon half. social-service proves what it
   owns - the caller holds `channel.moderate` in the community of the salon whose row it deletes, and
   that row (found by its id AND its salon) declares the file (`channel_messages."reelMediaId"`,

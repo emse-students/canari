@@ -480,7 +480,7 @@ describe('an older social-service naming NO reason (legacy shim)', () => {
     expect(items[FEED_ONLY].purgeReason).toBe('manual_delete');
   });
 
-  it('refuses a file a chat holds: it cannot tell a moderator from the post end, the hold keeps it', async () => {
+  it('a file a LIVE chat hold keeps: the post hold is released, the file kept, the answer `refused`', async () => {
     const items = {
       [FILE]: entry({
         ownerId: ALICE,
@@ -488,12 +488,31 @@ describe('an older social-service naming NO reason (legacy shim)', () => {
         holds: { post: true, chat: { heldAt: NOW, dueAt: NOW + WINDOW } },
       }),
     };
-    const { service, deleted } = serviceWith(items);
+    const { service, deleted, sweep } = serviceWith(items);
     expect(await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], undefined, NOW)).toEqual({
       [FILE]: 'refused',
     });
     expect(deleted).toEqual([]);
-    expect(items[FILE].holds?.post).toBe(true);
+    // The old caller drops its post row now: nothing may be left that keeps the file for ever.
+    expect(items[FILE].holds).toEqual({ post: false, chat: { heldAt: NOW, dueAt: NOW + WINDOW } });
+    expect(items[FILE].retentionClass).toBe('chat-reel');
+    await at(NOW + WINDOW + DAY, sweep);
+    expect(deleted).toEqual([FILE]);
+  });
+
+  it('a file whose chat hold LAPSED is deleted, exactly as before', async () => {
+    const items = {
+      [FILE]: entry({
+        ownerId: ALICE,
+        retentionClass: 'reel',
+        holds: { post: true, chat: { heldAt: NOW - 40 * DAY, dueAt: NOW - 10 * DAY } },
+      }),
+    };
+    const { service, deleted } = serviceWith(items);
+    expect(await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], undefined, NOW)).toEqual({
+      [FILE]: 'deleted',
+    });
+    expect(deleted).toEqual([FILE]);
   });
 });
 
