@@ -59,7 +59,7 @@
   onClose={close}
   popoverWidth="content"
 >
-  <dl class="flex max-w-80 flex-col gap-3 px-3 py-2">
+  <dl class="flex flex-col gap-3 px-3 py-2 sm:max-w-80">
     {#each ENTRIES as entry (entry.title())}
       <div>
         <dt class="text-text-main text-sm font-semibold">{entry.title()}</dt>
