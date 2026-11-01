@@ -2434,6 +2434,23 @@ them. The name never rides the push and is never fetched on the push path (user 
   that shows the decrypted text** (2026-10-22): a blind salon banner draws no author line, no face
   and no mention route, because nothing proved the server's `senderId`
   ([channel-encryption 21.5](../protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
+- **The salon banner names its SPEAKER too, on Android (2026-11-01).** The owner read a `v1.6.0`
+  salon banner with the message, no author name, no photo, and a "G" disc - the first letter of
+  `#général`. Cause: `postChannelNotification` handed the composed title in as `senderName` with an
+  empty `groupName`, so the only Person Android drew was the salon, and the initials fallback was
+  `generateInitialsBitmap(channelName)` by design (the old `initialsFallback.test.ts` row "draws the
+  SALON, not the speaker"). No photo means `fetchAvatar(senderId)` returned null (a remembered 404 or
+  a failed fetch) and the disc fell back to the salon's letter. Now one pure rule,
+  `push/ChannelBannerAuthor` (tested in `android-tests`), reads the same `display_names.json` once
+  per banner and answers: **Named** - the salon becomes the conversation title, the author the
+  Person on the line, the disc their initials (the group shape a DM or MLS group already has);
+  **Unnamed** - an author the open proved but the phone cannot name: the line says "Quelqu'un" with
+  a "?" disc and `[SALON_AUTHOR] proven author UNNAMED reason=<no-sender-id|not-in-name-book|
+  no-name-file|other-account|no-names|unreadable|no-account>` is logged at WARN; **Unproven** - a
+  blind banner, which proves no author: the salon stays the only Person, with its own letter. The
+  name still never rides the push. **iOS has the same defect and is NOT fixed**: the NSE and
+  `canari_push.mm` set no author subtitle except on a mention and draw `attachInitials(...,
+  name: channelName)` ([backlog](../backlog.d/ios-salon-banner-names-no-speaker.md)).
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
   `renderMentions`, `CanariRenderMentions`). This device's own id is "you", anybody else is named

@@ -35,6 +35,7 @@ import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
+import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
@@ -1061,30 +1062,65 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
 
         /**
-         * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
-         * or written for another account than [me] (the file is one per install, two accounts may
-         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
-         * with every name the WebView resolved for this account. [label] says which banner asked.
+         * What one read of `display_names.json` answered: the `names` map, or why there is none.
+         *
+         * @property names  the map, null whenever [unusable] is set.
+         * @property unusable null when the file names this account; otherwise the token
+         *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
+         *   `other-account`, `no-names`, `unreadable`.
+         * @property detail the exception message of an `unreadable` file, for its log line.
          */
-        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? {
-            if (me == null) return null
+        internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
+
+        /**
+         * Reads `display_names.json` for [me] once, keeping the REASON when it cannot be used - absent,
+         * unreadable, or written for another account (the file is one per install, two accounts may
+         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
+         * with every name the WebView resolved for this account. Says nothing: each caller logs the
+         * answer at the level its own question deserves ([loadDisplayNames], the salon author).
+         */
+        internal fun readDisplayNames(context: Context, me: String?): DisplayNamesRead {
+            if (me == null) return DisplayNamesRead(null, "no-account")
             val file = File(MlsContextLoader.tauriDataDir(context), "display_names.json")
-            if (!file.exists()) {
-                Log.d(TAG, "$label no display_names.json yet - nobody is named")
-                return null
-            }
+            if (!file.exists()) return DisplayNamesRead(null, "no-name-file")
             return try {
                 val root = JSONObject(file.readText())
                 if (!root.optString("userId").equals(me, ignoreCase = true)) {
-                    Log.d(TAG, "$label display_names.json belongs to another account - not used")
-                    null
+                    DisplayNamesRead(null, "other-account")
                 } else {
-                    root.optJSONObject("names")
+                    root.optJSONObject("names")?.let { DisplayNamesRead(it, null) }
+                        ?: DisplayNamesRead(null, "no-names")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "$label display_names.json unreadable: ${e.message}")
-                null
+                DisplayNamesRead(null, "unreadable", e.message)
             }
+        }
+
+        /** [read] as the pure salon-author rule takes it. */
+        internal fun nameBookOf(read: DisplayNamesRead): ChannelBannerAuthor.NameBook =
+            read.names?.let { names -> ChannelBannerAuthor.NameBook.Held { id -> names.optString(id).takeIf { it.isNotBlank() } } }
+                ?: ChannelBannerAuthor.NameBook.Unusable(read.unusable ?: "no-names")
+
+        /**
+         * The `names` map of `display_names.json`, or null when it cannot be used - see
+         * [readDisplayNames]. [label] says which banner asked; the reason is logged under it.
+         */
+        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? =
+            logDisplayNamesRead(readDisplayNames(context, me), label).names
+
+        /**
+         * Logs why a read of `display_names.json` names nobody, under [label]; returns [read]. An
+         * unreadable file is a WARN: a writer produced it. The rest are states a banner meets.
+         */
+        internal fun logDisplayNamesRead(read: DisplayNamesRead, label: String): DisplayNamesRead {
+            when (read.unusable) {
+                null, "no-account" -> Unit
+                "no-name-file" -> Log.d(TAG, "$label no display_names.json yet - nobody is named")
+                "other-account" -> Log.d(TAG, "$label display_names.json belongs to another account - not used")
+                "unreadable" -> Log.w(TAG, "$label display_names.json unreadable: ${read.detail}")
+                else -> Log.d(TAG, "$label display_names.json names nobody (${read.unusable})")
+            }
+            return read
         }
 
         /**
@@ -2444,8 +2480,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * Android's one-to-one shape, which names nobody above the other person's text (their
              * name is the title) and names US above our own reply: the user read that asymmetry as
              * a defect (2026-10-01). FALSE - the old shape, unchanged - for a reaction, whose line is
-             * a sentence about the actor and not a message by them, and for a salon, whose "sender"
-             * is the salon's own title: naming either above its line would print the title twice.
+             * a sentence about the actor and not a message by them, and for a BLIND salon banner,
+             * whose "sender" is the salon's own title: naming either above its line would print the
+             * title twice. A salon banner that proved its author passes the salon as [groupName]
+             * and the author as [senderName] instead, which is the group shape (2026-11-01).
              */
             namesEachSender: Boolean = false,
             /**
@@ -2639,7 +2677,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // is the header circle, with the app's small icon as the corner badge. Without one the
                 // header circle was the app's bird while the sender's face sat beside the line, two
                 // round pictures one above the other (user, 2026-10-05). The large icon is therefore
-                // set only where the old, shortcut-less shape is kept (reaction, salon).
+                // set only where the old, shortcut-less shape is kept (reaction, blind salon banner).
                 .apply { if (conversationShortcutId != null) setShortcutId(conversationShortcutId) else setLargeIcon(largeIcon) }
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
@@ -5810,8 +5848,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // language Rust words its own sentences in (empty when none was mirrored: the base locale).
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
-        // The phone's names, read at most once for this banner: the author line and the tokens share it.
-        val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
+        // The phone's names, read at most once for this banner: the speaker, the author line and the
+        // tokens share it. The read keeps its reason, which the speaker's accusing line names.
+        val namesRead = lazy { logDisplayNamesRead(readDisplayNames(this, myUserId?.lowercase()), "[SALON_AUTHOR]") }
+        val nameBook = lazy { namesRead.value.names }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
@@ -5881,19 +5921,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
             Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
         }
-        // A salon banner names no author (its "sender" is the salon's title), so a mention of this
-        // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
+        // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
+        // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
+        // banner named nobody and drew the SALON's letter as a face (owner, `v1.6.0`).
+        val author = ChannelBannerAuthor.of(showsMessage, attribution.authorId) { nameBookOf(namesRead.value) }
+        val speakerName = when (author) {
+            is ChannelBannerAuthor.Author.Named -> author.name
+            is ChannelBannerAuthor.Author.Unnamed -> {
+                // AN AUTHOR PROVEN AND UNNAMED IS A HOLE, NOT A CASE: the WebView mirrors every name
+                // it resolves, so either it never resolved this one, the mirror lost it, or the push
+                // named nobody. The line says "Someone" with a "?" disc, never the salon's letter.
+                Log.w(TAG, "[SALON_AUTHOR] proven author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc")
+                res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
+            }
+            ChannelBannerAuthor.Author.Unproven -> null
+        }
+        // A mention of this reader says WHO above the line - the iOS twin is the banner's subtitle
+        // (WP-MENTION-NAME). Kept beside the named speaker: it is the sentence that says "you".
         val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
         val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
-        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author, channelName))
         val title = buildChannelPushTitle(workspaceName, channelName)
-        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe")
+        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
         return showMessageNotification(
-            // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
-            // conversation title and the Person's name is what the banner shows. A salon has no
-            // human sender to name anyway - the server sends only `senderId`, for the avatar.
-            senderName = title,
-            groupName  = "",
+            // A PROVEN SPEAKER IS THE PERSON AND THE SALON IS THE CONVERSATION - the group shape a
+            // DM or an MLS group already has, so the line carries its author's name and face. With
+            // nothing proved, the salon's title stays the only Person (`groupName` empty), as before.
+            senderName = speakerName ?: title,
+            groupName  = if (speakerName != null) title else "",
             body       = shownBody,
             largeIcon  = largeIcon,
             groupId    = conversationId,
