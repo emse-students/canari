@@ -252,9 +252,12 @@ export class PartnershipsService {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
     if (!card) throw partnershipNotFound();
     this.assertUpdateModeShape(card.claimMode, dto);
-    // Only an edit that ticks the box is asked: an old card left gated by a since-cleared mode can
-    // still be edited, and unticking it is what clears it.
-    if (dto.membersOnly === true) await this.assertMembersOnlyGateable(associationId, true);
+    // Only a TRANSITION to members-only is asked, not a save that repeats it: the editor sends
+    // `membersOnly` on every update, so an old card left ticked by a since-cleared mode can still be
+    // renamed, and unticking it is what clears it.
+    if (dto.membersOnly === true && !card.membersOnly) {
+      await this.assertMembersOnlyGateable(associationId, true);
+    }
     Object.assign(card, dto);
     return this.cardRepo.save(card);
   }

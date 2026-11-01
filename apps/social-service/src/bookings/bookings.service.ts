@@ -227,7 +227,10 @@ export class BookingsService {
    * granted: the audience (D6) is still asked next, so a linked account outside the audience is
    * still refused (403 `audience`) and reads nothing; the space is not LISTED to it; and a WRITE -
    * booking (`book`) or uploading a file answer (`uploadFile`) - from outside the campus answers 404
-   * like any other reader's, since the space never opened its columns to that campus.
+   * like any other reader's, since the space never opened its columns to that campus. The one write
+   * left open to it is `addBlock` on ITS OWN column (D10), which does not go through this check: the
+   * linked account marks its own resource "Indisponible", gated on that column alone
+   * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
    */
   private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
     const visible =
