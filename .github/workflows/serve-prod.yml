@@ -201,7 +201,9 @@ jobs:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash infrastructure/deploy/deploy-environment.sh \
+          # EXEC, so a cancelled job signals the deploy itself and its INT/TERM traps put a service
+          # in flight back in rotation (docs/wiki/cicd.md, the rollback invariant).
+          exec bash infrastructure/deploy/deploy-environment.sh \
             --environment prod \
             --path "${{ env.DEPLOY_PATH }}" \
             --tag "v${{ inputs.version }}" \

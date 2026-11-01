@@ -1,12 +1,16 @@
-# A three-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (the real
-# infrastructure/edge/nginx.conf, the real image) holds the host port, a FRONTEND nginx proxies to an
-# API, and both of those are images "this repository builds" (prefix `rolltest/`) declared overlap.
+# A four-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (the real
+# infrastructure/edge/nginx.conf, production's image) holds the host port, a FRONTEND nginx asks an
+# AUTH service about each API request (as production's asks core-service) and then proxies it to an
+# API, and the frontend and the API are images "this repository builds" (prefix `rolltest/`)
+# declared overlap, each with the rotation that takes its old replica out of the nginx in front
+# before it stops.
 name: canari-rolltest
 
 services:
   api:
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: rolltest/api:${TAG:?TAG is required}
     environment:
       VERSION: ${TAG}
@@ -20,10 +24,33 @@ services:
       start_period: 20s
       start_interval: 1s
 
+  # Never replaced by a release (pinned, a third-party image running a mounted script), so a
+  # subrequest's connection never lands on the replica being retired: auth.mjs says why it exists.
+  auth:
+    labels:
+      canari.deploy.replace: pinned
+    image: oven/bun:1.4.3-alpine
+    command: ["bun", "/fixture/auth.mjs"]
+    volumes:
+      - ${FIX_DIR:?FIX_DIR is required}:/fixture:ro
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+
   frontend:
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: rolltest/frontend:${TAG:?TAG is required}
+    # The replica lists rolling.sh writes, mounted as production mounts them.
+    volumes:
+      - ${EDGE_DIR:?EDGE_DIR is required}/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"
     healthcheck:
@@ -36,11 +63,14 @@ services:
     depends_on:
       api:
         condition: service_started
+      auth:
+        condition: service_started
 
   edge:
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    # Production's edge image, digest included - deploy-replace.test.sh holds the two equal.
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
     volumes:
       - ${EDGE_DIR:?EDGE_DIR is required}:/etc/nginx/edge:ro

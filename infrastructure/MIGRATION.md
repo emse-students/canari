@@ -220,7 +220,14 @@ Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 the first bootstrap of a production box wants a stable one. The run will:
 
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
-2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);
+2. write the proxies' replica lists, `infrastructure/edge/rotation/{frontend,edge}.conf` (each
+   service by its DNS name), BEFORE any container starts - then deploy the Canari stack through
+   `infrastructure/deploy/deploy-environment.sh`, one service at a time
+   ([cicd](../docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)). The frontend and
+   the edge include their list unconditionally, so on a fresh checkout **a hand-run
+   `docker compose -f infrastructure/docker-compose.prod.yml up -d` before the first deploy leaves
+   both unable to start** (`open() ".../rotation/frontend.conf" failed`): let the release run it, and
+   if the directory is ever lost, the next deploy writes the lists again;
 3. apply MiConnect's configuration (`infrastructure/authentik/blueprints/`) to the running MiConnect -
    the `miconnect` stack itself is deployed BY HAND, its `.env` included (see [authentik/](authentik/));
 4. apply SQL migrations (see below) and verify service health.
