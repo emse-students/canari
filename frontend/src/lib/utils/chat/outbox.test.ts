@@ -5413,3 +5413,172 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     await expect(outbox.awaitSettled('m1')).resolves.toBe('failed');
   });
 });
+
+/**
+ * A FILE QUEUED AT THE TAP (backlog item 27, 2026-11-01). The composer no longer waits for the
+ * inbound queue or the membership before it writes a media entry, so what that barrier guarded is
+ * this queue's to guard: the file is sealed at the current epoch (the flush waits for the inbound
+ * queue first), a group that cannot take it yet HOLDS it without paying the upload, an evicted group
+ * retires it, it keeps its place after the texts before it, and it survives a kill. The send side is
+ * `useMessaging.mediaEnqueue.svelte.test.ts`.
+ */
+describe('outbox - a file queued at the tap', () => {
+  const REF = {
+    type: 'file' as const,
+    mediaId: 'mid',
+    key: 'aa',
+    iv: 'bb',
+    mimeType: 'application/pdf',
+    size: 3,
+  };
+
+  function tapEntry(id: string, sentAt = 100): OutboxEntry {
+    return {
+      id,
+      conversationId: 'g1',
+      sentAt,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_UNSPECIFIED,
+        mimeType: 'application/pdf',
+        size: 3,
+        fileName: 'a.pdf',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: sentAt,
+    };
+  }
+
+  beforeEach(() => connectivity.reset());
+  afterEach(() => clearAllUploads());
+
+  it('TAP, KILL, RESUME: an entry written before the kill is uploaded and sent by the next launch', async () => {
+    const storage = makeStorage();
+    // The tap's session: the entry reaches disk, and the process dies before any flush runs.
+    const before = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage, canFlush: () => false, uploadMedia: vi.fn() })
+    );
+    await before.enqueue(tapEntry('k1'));
+    before.dispose();
+    expect(storage._map.get('k1')!.media!.fileBytes).toEqual(new Uint8Array([1, 2, 3]));
+
+    // The next launch: a new controller over the same storage.
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k1'])]]);
+    const after = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+    await after.flush();
+
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    // The bytes the tap wrote are what the upload encrypts; the key travels only once uploaded.
+    expect([...uploadMedia.mock.calls[0][0].fileBytes]).toEqual([1, 2, 3]);
+    expect(storage._map.has('k1')).toBe(false);
+  });
+
+  it('the barrier it replaces: nothing is uploaded before the inbound queue is idle', async () => {
+    const storage = makeStorage([tapEntry('b1')]);
+    const mlsService = makeMls();
+    let idle!: () => void;
+    mlsService.waitForMessageQueueIdle = vi.fn(() => new Promise<void>((r) => (idle = r)));
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['b1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    const flushing = outbox.flush();
+    await outboxIdle();
+    expect(mlsService.waitForMessageQueueIdle).toHaveBeenCalledWith('outbox flush', null);
+    expect(uploadMedia).not.toHaveBeenCalled();
+
+    idle();
+    await flushing;
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('a group awaiting re-admission HOLDS the file without uploading it, then sends it on its Welcome', async () => {
+    const storage = makeStorage([tapEntry('h1')]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    let healthy = false;
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['h1'], 'pending')],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        uploadMedia,
+        requestReAdd,
+        isGroupHealthy: () => healthy,
+      })
+    );
+
+    await outbox.flush();
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('h1')).toBe(true);
+
+    healthy = true;
+    conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'active' });
+    await outbox.resumeGroup('g1');
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('an evicted group retires the file before a byte of it is uploaded', async () => {
+    const storage = makeStorage([tapEntry('e1')]);
+    const mlsService = makeMls({ active: async () => false });
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['e1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    await outbox.flush();
+
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('e1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+  });
+
+  it('a text written before the file goes out before it', async () => {
+    const storage = makeStorage([tapEntry('f1', 200), textEntry('t1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['t1', 'f1'])],
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(2));
+
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['t1', 'f1']);
+  });
+
+  it('a failed upload is shown, logged and kept; a retry sends it', async () => {
+    const storage = makeStorage([tapEntry('r1')]);
+    const mlsService = makeMls();
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new UploadNetworkError('/api/media/upload'))
+      .mockResolvedValue(REF);
+    const log = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['r1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia, log }));
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(uploadViewOf('r1')?.phase).toBe('waiting'));
+    expect(storage._map.has('r1')).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log.mock.calls.some(([l]) => /r1.*upload failed/.test(String(l)))).toBe(true);
+
+    outbox.retryUpload('r1');
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    expect(storage._map.has('r1')).toBe(false);
+  });
+});

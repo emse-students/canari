@@ -1296,8 +1296,8 @@ Four defects of one seam, found by a read-only review and fixed together:
   branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
   `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
   a group this device does not hold. A send in the window meets an unsendable group and is HELD
-  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
-  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+  (`holdForGroup`) with a re-add asked - a file too, since it is queued at the tap like a text
+  ([below](#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
 - **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
   fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
   `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
@@ -1365,6 +1365,35 @@ seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.tes
 `admissionState.test.ts` (an `active` row over a group this device is out of waits on the server),
 `groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
 (`onGroupReady` on both Welcome paths).
+
+### A file is queued at the tap, like a text (2026-11-01)
+
+A DM/group attachment used to wait, in `handleSendChat`, for `waitForMessageQueueIdle('media send')`
+and a `verifyCurrentUserMembership` round trip BEFORE anything was written: 18 s on a stalled link
+(2026-10-31), with no bubble and no clock on screen, and a refusal ("session establishing") for a row
+awaiting re-admission. That barrier answered the questions this queue already asks before every send,
+earlier and slower, and its answer could go stale before the flush ran. It is deleted, with its
+refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.verifyCurrentUserMembership`.
+
+- **At the tap**: the staged files are claimed before the first await (a second Send finds nothing),
+  each file is READ, then its `mediaId: ''` placeholder and its media entry (`fileBytes` included) are
+  written in ONE write (`saveMessageWithOutboxEntry`, `alreadyDurable`), as a text's echo and entry
+  are. A failed pair write lets the queue write its own row (`MessagePairWriteError`); a refused
+  enqueue (`OutboxEnqueueError`) withdraws the placeholder and re-stages the file; a
+  `MessageWrittenError` (the row is on disk, the live queue refused it) keeps both - the next flush
+  sends it. The one refusal left is the text path's: a `removed` row takes nothing new.
+- **What the barrier guarded is the flush's**: the queue-idle barrier before any lane (the file is
+  sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD and resumed by
+  its Welcome), the deleted-group read and `isGroupActive` (an evicted group retires it) - all before
+  the upload is paid, so a file for a group that cannot take it costs no transfer. The CEK is still
+  generated on the device, by the upload the flush starts (`encryptAndUpload`); the entry holds the
+  plaintext under the device key until then.
+- **Order**: every file of one tap is dated by the tap (`tappedAt + index`), so a text typed while a
+  long write runs is dated after all of them; a text sent before the file goes out before it. A text
+  sent AFTER it may still be accepted first while the upload runs (WP-OFF-9, below).
+- Pinned by `useMessaging.mediaEnqueue.svelte.test.ts` (no barrier, tap-then-kill durability, order,
+  the refusals) and `outbox.test.ts` ("a file queued at the tap": kill and resume, the idle barrier,
+  the held and the evicted group, failure then retry).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

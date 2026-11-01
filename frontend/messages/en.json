@@ -366,7 +366,6 @@
   "video_prepare_too_long": "This video is too long to be sent.",
   "video_prepare_unsupported": "This device cannot prepare this video.",
   "video_prepare_failed": "Preparing the video failed. Please try again.",
-  "chat_send_session_establishing": "Secure session being established. Please try again in a moment.",
   "chat_channel_members_title": "Channel members",
   "chat_admins_count_label": "Administrators - {admins}",
   "chat_members_count_label": "Members - {regulars}",

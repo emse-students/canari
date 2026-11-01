@@ -2606,7 +2606,8 @@ passes against the defect too; run against the old placement it fails with `Numb
 never whose. A caller nested inside one deadlocks, a caller merely running beside one would only wait,
 and both were refused with the same sentence - so `waitForMessageQueueIdle(caller)` takes a label at
 all seven call sites (`archive replay`, `history ask`, `history answer`, `history request answer`,
-`outbox flush`, `connection sync`, `media send`) and both refusals quote it. Attributing this one
+`outbox flush`, `connection sync`, `media send` - the last deleted on 2026-11-01, when a file came to be
+queued at the tap, [chat](../frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)) and both refusals quote it. Attributing this one
 without it cost a read of every call site.
 
 ###### And the guard was refusing six callers it should have WAITED for - fixed 2026-08-16

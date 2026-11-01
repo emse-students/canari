@@ -5,4 +5,4 @@ the tap returns to its draft (a send that threw does too). The file returns to i
 staging. A voice note or chat-reel take, which is not re-staged, is reported rather than dropped
 in silence. The banner shows only if the member is still in the conversation the send was made in.
 A missing MLS service no longer loses the claimed files. Follow-up to #2821
-([media-send-queued-at-the-tap](docs/wiki/backlog.d/media-send-queued-at-the-tap.md)).
+([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
