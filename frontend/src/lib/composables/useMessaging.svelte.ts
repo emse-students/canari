@@ -103,6 +103,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
+  applyOutboxPendingStatuses,
   awaitOutboxSettled,
   enqueueOutboxMessage,
   isEnqueueQuotaFailure,
@@ -126,6 +127,7 @@ import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
+import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
@@ -399,6 +401,8 @@ export function useMessaging() {
       content: string;
       contactName: string;
       options: AddMessageToChatOptions & { skipDbSave?: boolean };
+      /** An own send, buffered without its entry: its status is the queue's to say at the replay. */
+      ownSend?: boolean;
     }>
   >();
 
@@ -862,6 +866,8 @@ export function useMessaging() {
     contactName: string,
     options: AddMessageToChatOptions & { skipDbSave?: boolean }
   ): void {
+    // THE STATUS GOES WITH THE ENTRY: `pending` was true at the tap and says nothing at the replay,
+    // which may come after the queue sent it. The replay asks the queue instead (`drainOrphanMessages`).
     const { outboxEntry, onPairWritten: _reportOnlyAPairWritten, ...kept } = options;
     if (outboxEntry) {
       console.error(
@@ -875,7 +881,13 @@ export function useMessaging() {
       );
       return;
     }
-    buffer.push({ senderId, content, contactName, options: kept });
+    buffer.push({
+      senderId,
+      content,
+      contactName,
+      options: outboxEntry ? { ...kept, status: undefined } : kept,
+      ...(outboxEntry ? { ownSend: true } : {}),
+    });
     orphanBuffer.set(normalized, buffer);
   }
 
@@ -1601,6 +1613,10 @@ export function useMessaging() {
       // orders by `sentAt`, and dating each file once the previous one's write had ended let a text
       // typed during a long write fall BETWEEN two files the member sent before it.
       const tappedAt = Date.now();
+      // WHERE THE FILES GO: the conversation the send was made in, or - when a duplicate-group merge
+      // re-keyed that DM while the send was reading a file - the row it was moved to.
+      let sendKey = sentFrom;
+      let sendGroupId = convo.id;
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
@@ -1737,17 +1753,38 @@ export function useMessaging() {
                 break;
               }
               // AND THE CONVERSATION, with no await from here to the write: one that left the map
-              // since the tap (deleted, left) would send this placeholder into the orphan buffer,
-              // which is not where a send belongs (review of #2874). Dropped, and said.
-              if (!ctx.conversations.get(sentFrom)) {
-                ctx.log(
-                  `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sentFrom.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
-                );
-                conversationGoneDuringSend = true;
-                break;
+              // since the tap would send this placeholder into the orphan buffer, which is not where
+              // a send belongs (review of #2874). Two ways out of the map, two answers:
+              //  - RE-KEYED: a duplicate-group merge moved the DM's row to the group just joined
+              //    (`setupMessageHandler`, the Welcome path). The file follows it, found by the same
+              //    predicate the merge used, so the two cannot disagree about which row the DM is;
+              //  - GONE (deleted, left): the file is dropped and the MEMBER IS TOLD, never only the
+              //    log - a file and its caption vanishing behind a log line is a silent loss.
+              if (!ctx.conversations.get(sendKey)) {
+                const followed =
+                  (convo.conversationType ?? 'group') === 'direct'
+                    ? findDirectConversationByPeer(
+                        ctx.conversations,
+                        convo.directPeerId ?? convo.contactName
+                      )
+                    : undefined;
+                if (followed) {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… ${sendKey.slice(0, 8)}… was re-keyed to ${followed[0].slice(0, 8)}… since the tap (a duplicate group merged) - the file follows it`
+                  );
+                  [sendKey, sendGroupId] = [followed[0], followed[1].id];
+                  outboxEntry.conversationId = sendGroupId;
+                } else {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sendKey.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
+                  );
+                  ctx.setSendError(m.chat_media_conversation_gone());
+                  conversationGoneDuringSend = true;
+                  break;
+                }
               }
               try {
-                await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
+                await addMessageToChat(ctx.userId, placeholder, sendKey, ctx, {
                   messageId,
                   status: 'pending',
                   timestamp: new SvelteDate(sentAt),
@@ -1801,14 +1838,14 @@ export function useMessaging() {
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(sentFrom);
+                const current = ctx.conversations.get(sendKey);
                 if (current) {
-                  ctx.conversations.set(sentFrom, {
+                  ctx.conversations.set(sendKey, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
                 }
-                await forgetLocalMessage(messageId, convo.id, ctx);
+                await forgetLocalMessage(messageId, sendGroupId, ctx);
                 throw enqueueError;
               }
             } finally {
@@ -1877,8 +1914,10 @@ export function useMessaging() {
       return;
     }
     if (conversationGoneDuringSend) {
+      // The banner above already said it. FALSE when nothing of this send went out, so the composer
+      // gives the caption back to the draft it was written in rather than losing it as well.
       ctx.log('[SEND] caption not sent: the conversation left the list during the media send');
-      return;
+      return sentMediaMessageCount === 0 && text ? false : undefined;
     }
     // THE CAPTION BELONGS TO THE FIRST FILE, and a refused first file given back to the staging
     // takes it back with it: sent alone it would arrive as a text that captions nothing (review of
@@ -2751,8 +2790,18 @@ export function useMessaging() {
       if (!messages || messages.length === 0) return;
       orphanBuffer.delete(normalized);
       console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
-      for (const msg of messages) {
-        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options);
+      const replays = messages.map((msg) =>
+        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
+      );
+      // AN OWN SEND'S STATUS IS READ FROM THE DURABLE QUEUE ONCE ITS ROW IS BACK, as at a reload: a
+      // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
+      // dropped at the buffering, so it can no longer outlive the send (re-review of #2874).
+      if (messages.some((msg) => msg.ownSend)) {
+        void Promise.allSettled(replays)
+          .then(() => applyOutboxPendingStatuses())
+          .catch((e: unknown) =>
+            console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
+          );
       }
     },
     /** Appends multiple messages in one reactive update and one batch DB write. */

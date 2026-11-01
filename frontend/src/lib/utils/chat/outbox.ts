@@ -894,6 +894,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     if (getIsTabLeader()) return;
     if (event.type === 'outbox_entry_retired') {
+      // ONLY A MESSAGE THIS TAB HOLDS: a reason for any other would sit in the map for the session,
+      // and the row, when it loads, reads its own reason from the store anyway.
+      if (!findMessage(event.messageId)) {
+        log(
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - not held here, nothing to draw`
+        );
+        return;
+      }
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - shown failed here`
       );
@@ -944,6 +952,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       status,
     });
     conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /**
+   * Writes `reason` on the stored row of `messageId` and READS IT BACK. `updateMessage` writes
+   * nothing, and says nothing, for a row that is absent or undecryptable - so "it did not throw" is
+   * not "it is on disk", and only the read-back answers that (re-review of #2874). Every way it can
+   * fail is logged: a reload will then draw the file as never completed.
+   */
+  async function persistUnsentReason(messageId: string, reason: UnsentReason): Promise<void> {
+    const lost = (why: string) =>
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… unsent reason ${reason} NOT persisted (${why}) - a reload will show the file as never completed`
+      );
+    if (!storage) {
+      lost('no storage');
+      return;
+    }
+    try {
+      await storage.updateMessage(messageId, { unsentReason: reason }, deviceKey());
+      const back = await storage.getMessage(messageId, deviceKey());
+      if (!back) lost('its row is absent or undecryptable');
+      else if (back.unsentReason !== reason) lost('the row read back does not carry it');
+    } catch (e) {
+      lost(String(e).slice(0, 120));
+    }
   }
 
   /** See {@link OutboxController.storedUnsentReason}. */
@@ -1665,13 +1698,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             : undefined;
     if (unsentReason) {
       setUnsentReason(entry.id, unsentReason);
-      try {
-        await storage?.updateMessage(entry.id, { unsentReason }, deviceKey());
-      } catch (e) {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… unsent reason ${unsentReason} NOT persisted - a reload will show the file as never completed: ${String(e).slice(0, 120)}`
-        );
-      }
+      await persistUnsentReason(entry.id, unsentReason);
       publishOutboxEntryRetired(entry.id, unsentReason);
     }
     // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that

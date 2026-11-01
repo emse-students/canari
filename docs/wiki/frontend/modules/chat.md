@@ -1422,13 +1422,21 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
   `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). **Durable**: the reason is
   written on the stored message row (`StoredMessage.unsentReason`, inside the encrypted payload)
   before the entry is deleted, and the bubble of an own attachment absent from the queue reads it
-  (`storedUnsentReasonOf`) before it draws the orphan's "never completed"; a follower tab is told
-  live (`outbox_entry_retired`). Re-review of #2874.
-- **A send never rides the orphan buffer.** A conversation that left the map since the tap (deleted,
-  left) drops the file with a log line before its write, and its caption is not sent; and
-  `addMessageToChat`'s orphan buffer strips `outboxEntry`/`onPairWritten` from what it keeps, so a
-  replay (`drainOrphanMessages`) never writes - and so never sends - an entry a second time. The
-  buffer is cleared by `forgetAccount`, so nothing replays under the next account.
+  (`storedUnsentReasonOf`) before it draws the orphan's "never completed"; a follower tab holding the
+  message is told live (`outbox_entry_retired`). The write is READ BACK: `updateMessage` writes
+  nothing, and says nothing, for an absent or undecryptable row, so every way the reason fails to
+  reach disk is logged. Re-review of #2874.
+- **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
+  answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
+  `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
+  (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
+  the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
+  `outboxEntry`/`onPairWritten` - and an own send's tap-time `pending` - from what it keeps, so a
+  replay (`drainOrphanMessages`) never writes, and so never sends, an entry a second time; the
+  replayed own row then takes its status from the durable queue (`applyOutboxPendingStatuses`), as
+  at a reload. The buffer is cleared by `forgetAccount`, so nothing replays under the next account.
 - **An uploaded file retired unsent stays on the server.** There is no client route that deletes an
   ordinary chat upload (`DELETE /media/:id` is server-to-server; the user route covers only the
   sender's own chat reel), so `failPermanently` names its `mediaId` at `console.warn` and in the

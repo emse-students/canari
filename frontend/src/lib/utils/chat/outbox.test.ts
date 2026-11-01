@@ -5628,8 +5628,35 @@ describe('outbox - a file queued at the tap', () => {
     handler({ type: 'outbox_entry_retired', messageId: 'f9', reason: 'group-deleted' });
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
     expect(unsentReasonOf('f9')).toBe('group-deleted');
+    // A message this tab does not hold leaves no reason behind: nothing here would ever draw it.
+    handler({ type: 'outbox_entry_retired', messageId: 'not-here', reason: 'not-a-member' });
+    expect(unsentReasonOf('not-here')).toBeUndefined();
     outbox.dispose();
     isTabLeaderMock.mockReturnValue(true);
+  });
+
+  it('a reason the store did not keep (absent row) is said, never assumed written', async () => {
+    // No stored row: `updateMessage` writes nothing and throws nothing, as the real stores do.
+    const storage = makeStorage([tapEntry('a1')]);
+    const log = vi.fn();
+    const mlsService = makeMls({ active: async () => false });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['a1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, log }));
+
+    await outbox.flush();
+
+    expect(storage.updateMessage).toHaveBeenCalledWith(
+      'a1',
+      { unsentReason: 'not-a-member' },
+      'device-key'
+    );
+    expect(
+      log.mock.calls.some(([l]) =>
+        /a1.*unsent reason not-a-member NOT persisted \(its row is absent or undecryptable\)/.test(
+          String(l)
+        )
+      )
+    ).toBe(true);
   });
 
   it('a file retired AFTER its upload names the object it leaves on the server', async () => {

@@ -30,9 +30,15 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
 }));
 
 const enqueueMock = vi.fn();
+/** The queue's own status pass (`applyOutboxPendingStatuses`): what it marks pending is up to a test. */
+const applyStatusesMock = vi.fn(async () => {});
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
-  return { ...actual, enqueueOutboxMessage: (...args: unknown[]) => enqueueMock(...args) };
+  return {
+    ...actual,
+    enqueueOutboxMessage: (...args: unknown[]) => enqueueMock(...args),
+    applyOutboxPendingStatuses: () => applyStatusesMock(),
+  };
 });
 
 await import('./useMessaging.svelte');
@@ -603,7 +609,7 @@ describe('a send whose conversation left the map, and the orphan buffer', () => 
       createdAt: 1,
     }) as unknown as OutboxEntry;
 
-  it('a conversation gone during the file read: the file is dropped and said, its caption not sent', async () => {
+  it('a conversation gone during the file read: the file is dropped and the MEMBER is told', async () => {
     const messaging = await freshMessaging();
     const pair = vi.fn();
     const ctx = withStorage(makeContext(), pair);
@@ -614,8 +620,10 @@ describe('a send whose conversation left the map, and the orphan buffer', () => 
     await vi.waitFor(() => expect(read).toBeTypeOf('function'));
     ctx.conversations.delete(CONVO);
     read(new ArrayBuffer(3));
-    await sending;
 
+    // FALSE: nothing went out, so the composer gives the caption back - neither is lost silently.
+    expect(await sending).toBe(false);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_conversation_gone());
     expect(pair).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
     expect(logLines(ctx).some((l) => l.includes('left the conversation list since the tap'))).toBe(
@@ -624,6 +632,37 @@ describe('a send whose conversation left the map, and the orphan buffer', () => 
     expect(logLines(ctx).some((l) => l.includes('caption not sent: the conversation left'))).toBe(
       true
     );
+  });
+
+  it('a DM re-keyed by a duplicate-group merge during the file read: the file follows it', async () => {
+    const messaging = await freshMessaging();
+    const pairs: Array<{ row: StoredMessage; entry: OutboxEntry }> = [];
+    const ctx = withStorage(makeContext(), (row, entry) => pairs.push({ row, entry }));
+    const tapped = ctx.conversations.get(CONVO)!;
+    ctx.conversations.set(CONVO, {
+      ...tapped,
+      conversationType: 'direct',
+      directPeerId: 'peer',
+    } as never);
+    let read!: (b: ArrayBuffer) => void;
+    const sending = messaging.handleSendChat(ctx, '', {
+      files: [entryOf(() => new Promise<ArrayBuffer>((r) => (read = r)))],
+    });
+    await vi.waitFor(() => expect(read).toBeTypeOf('function'));
+    // What `setupMessageHandler` does on the Welcome of a duplicate DM group: the row MOVES.
+    const moved = { ...ctx.conversations.get(CONVO)!, id: 'joined-group' };
+    ctx.conversations.delete(CONVO);
+    ctx.conversations.set('joined-group', moved);
+    read(new ArrayBuffer(3));
+    await sending;
+
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].row.conversationId).toBe('joined-group');
+    expect(pairs[0].entry.conversationId).toBe('joined-group');
+    expect(queued().map((e) => e.conversationId)).toEqual(['joined-group']);
+    expect(ctx.conversations.get('joined-group')!.messages).toHaveLength(1);
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_media_conversation_gone());
+    expect(logLines(ctx).some((l) => l.includes('the file follows it'))).toBe(true);
   });
 
   it('an own send buffered as an orphan is replayed WITHOUT its outbox entry', async () => {
@@ -636,14 +675,21 @@ describe('a send whose conversation left the map, and the orphan buffer', () => 
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
+    applyStatusesMock.mockClear();
     await messaging.addMessageToChat('me', 'x', CONVO, ctx, {
       messageId: 'own-1',
+      status: 'pending',
       outboxEntry: ownEntry('own-1'),
       onPairWritten,
     });
     ctx.conversations.set(CONVO, conversation);
     messaging.drainOrphanMessages(CONVO, ctx);
     await flushMacrotask();
+
+    // THE TAP'S `pending` IS NOT REPLAYED: the queue's own pass sets it, from the durable queue,
+    // once the row is back - the queue already sent this one, so it is not marked.
+    expect(ctx.conversations.get(CONVO)!.messages[0].status).toBeUndefined();
+    expect(applyStatusesMock).toHaveBeenCalledTimes(1);
 
     // The replay keeps the message, as a plain row; the queue alone owns the send.
     expect(pair).not.toHaveBeenCalled();
