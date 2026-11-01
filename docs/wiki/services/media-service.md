@@ -385,7 +385,9 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   budget. It is CLIENT-NAMED, so nothing here proves a blob is a reel. It cannot be applied to an existing id.
 - **Daily budget, 500 MB per member per rolling 24 h** (user, 2026-10-09), counted from the live
   `chat-reel` entries of the caller (`size` is recorded for this class only) PLUS the bytes reserved by
-  uploads still in flight, refused `429` BEFORE the bytes are stored. **The check and the reservation share
+  uploads still in flight, refused `429` BEFORE the bytes are stored - the ONE `429` of this service whose
+  body carries a `code`, `chat-reel-over-budget` (`CHAT_REEL_OVER_BUDGET`): the client reads that code, never
+  the message, and fails the take's sends for good, while every other `429` stays transient (RC-13). **The check and the reservation share
   one synchronous run** (`reserveChatReelBudget`), released in a `finally` in the run that registers the
   entry: the first version checked, then awaited the store write, then registered, so N concurrent uploads
   all passed (found by review). A failed write rolls the reservation back. A `chat-reel` with no `ownerId`

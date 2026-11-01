@@ -30,7 +30,9 @@ export type Fault =
   /** The server answered this status without handling the request. */
   | number
   /** Something IN FRONT of the server (a proxy, the WAF) answered this status with an HTML page. */
-  | { edge: number };
+  | { edge: number }
+  /** The server answered this status with this JSON body, without handling the request. */
+  | { status: number; body: unknown };
 
 interface FakeSession {
   owner: string;
@@ -74,6 +76,8 @@ export class FakeSessionServer {
         if (fault === 'drop') throw new TransportFailureError(new TypeError('Failed to fetch'));
         if (fault === 'reset') throw new UploadNetworkError(path);
         if (fault === 'hang') return this.hung(transport);
+        if (typeof fault === 'object' && 'status' in fault)
+          return this.json(fault.status, fault.body);
         if (typeof fault === 'object') {
           return new Response('<html><body>Not Found</body></html>', {
             status: fault.edge,
