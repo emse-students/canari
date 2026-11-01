@@ -1,6 +1,10 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
-import { onIosQueueGateRelease, withholdsQueuedFrame } from '$lib/utils/appActive';
+import {
+  isIosAppInactive,
+  onIosQueueGateRelease,
+  withholdsQueuedFrame,
+} from '$lib/utils/appActive';
 import type {
   IMlsService,
   GroupMeta,
@@ -637,7 +641,7 @@ export abstract class BaseMlsService implements IMlsService {
   /** The {@link verifyDistributionEpoch} checks still answering, by group. Deleted as each settles. */
   private readonly distributionEpochChecks = new Map<
     string,
-    Promise<'current' | DistributionGapVerdict>
+    Promise<'current' | 'abandoned' | DistributionGapVerdict>
   >();
 
   /**
@@ -887,9 +891,26 @@ export abstract class BaseMlsService implements IMlsService {
     Array<{ resolve: () => void; reject: (e: Error) => void }>
   >();
 
+  /**
+   * THE TERMINATION OF A RELEASE NOBODY ELSE WILL PULL FOR. A released group whose pull failed, on an
+   * open socket that delivers it nothing more, would stay released - and "not drained" - for the
+   * session. So a WAIT on it is an event too: a waiter arriving on a release no pull has listed,
+   * with none in flight, starts one. Pulls are then bounded by the frames delivered plus the waits
+   * made, and the first that lists the mailbox ends the release.
+   */
+  private pullForUnlistedRelease(groupId: string, why: string): void {
+    const release = this.releasing.get(groupId);
+    if (!release || release.listed >= release.generation || this.pendingPullInFlight) return;
+    console.warn(
+      `[QUEUE] ${why} on ${groupId.slice(0, 8)}..., released and not listed by any pull, none in flight - pulling`
+    );
+    void this.fetchPendingMessages();
+  }
+
   /** Resolves once `groupId` holds no frame back ({@link holdsFramesBack}). */
   private whenFramesReturned(groupId: string): Promise<void> {
     if (!this.holdsFramesBack(groupId)) return Promise.resolve();
+    this.pullForUnlistedRelease(groupId, 'a wait for its frames');
     return new Promise((resolve, reject) => {
       const waiters = this.framesReturnedWaiters.get(groupId) ?? [];
       waiters.push({ resolve, reject });
@@ -907,12 +928,7 @@ export abstract class BaseMlsService implements IMlsService {
   private parkLiveFrame(release: GroupRelease, msg: MlsQueuedMessage): void {
     this.settleDelivery(msg.queuedMessageId, false);
     release.parked.push(msg);
-    if (release.listed < release.generation && !this.pendingPullInFlight) {
-      console.warn(
-        `[QUEUE] a live frame parked behind a release no pull has listed, and none is in flight - pulling`
-      );
-      void this.fetchPendingMessages();
-    }
+    this.pullForUnlistedRelease(msg.groupId ?? '', 'a live frame parked');
   }
 
   /**
@@ -2298,6 +2314,7 @@ export abstract class BaseMlsService implements IMlsService {
   /** @inheritdoc */
   whenGroupDrained(groupId: string): Promise<void> {
     if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    this.pullForUnlistedRelease(groupId, 'a drained waiter');
     return new Promise((resolve, reject) => {
       const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
       waiters.push({ resolve, reject });
@@ -2990,9 +3007,11 @@ export abstract class BaseMlsService implements IMlsService {
     // THE WITHHELD FRAMES ARE DECIDED HERE, once the drain is over and nothing is in flight: a gate
     // that released during the drain (the app became active, a call went live) was deferred to this
     // point (`pullWhatTheGateReleases`), so the frames of a released group come back in one pull,
-    // in order. What is still withheld is asked to be pushed now.
+    // in order. What is still withheld is asked to be pushed now - ONLY OUT OF FRONT: a group
+    // deferred while the app is active (frames still queued here) is pulled back by the drain that
+    // empties it, and a push asked now would raise a banner for a message the open app shows.
     this.pullWhatTheGateReleases('drain end');
-    if (withheld.length > 0) {
+    if (withheld.length > 0 && isIosAppInactive()) {
       const held = new Set([...this.withheldFrames.values()].flatMap((ids) => [...ids]));
       const stillWithheld = withheld.filter((id) => held.has(id));
       if (stillWithheld.length > 0) {
@@ -6528,15 +6547,26 @@ export abstract class BaseMlsService implements IMlsService {
   verifyDistributionEpoch(
     groupId: string,
     activeEpoch: number
-  ): Promise<'current' | DistributionGapVerdict> {
+  ): Promise<'current' | 'abandoned' | DistributionGapVerdict> {
     const short = groupId.slice(0, 8);
-    const check = (async (): Promise<'current' | DistributionGapVerdict> => {
+    const check = (async (): Promise<'current' | 'abandoned' | DistributionGapVerdict> => {
       // AFTER THE DRAIN, BECAUSE BEFORE IT "BEHIND" IS NOT A FACT. The server's epoch was read while
       // this device's own queue may still hold every commit it is missing - production 2026-09-28
       // held eight - and those apply in order with their seeds between them. Replaying from the log
       // first would jump past the epochs those seeds were sealed at, and `max_past_epochs` is 2.
       await this.initialDrain;
-      await this.waitForGroupQueueIdle('key-group epoch check', groupId).catch(() => {});
+      try {
+        await this.waitForGroupQueueIdle('key-group epoch check', groupId);
+      } catch (e) {
+        // THE SERVICE ENDED: nothing it would decide here could be acted on. Typed, never read
+        // off a message; any other failure of the wait is passed over, as before.
+        if (e instanceof GroupDrainAbandonedError) {
+          console.info(
+            `[GRAINE] epoch check of key group ${short}... abandoned - the client ended`
+          );
+          return 'abandoned';
+        }
+      }
       const local = this.getEpoch(groupId);
       if (local >= activeEpoch) return 'current';
       // A PROOF, AND SAID AS ONE: the drain has settled and the group is still short of an epoch the

@@ -9,6 +9,7 @@ import {
   unregisterMlsStatePersister,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import {
   describeKeyGroupFrameLosses,
   resetKeyGroupFrameLosses,
@@ -1116,6 +1117,21 @@ describe('a held key group behind its server', () => {
     expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
     log.mockRestore();
     warn.mockRestore();
+  });
+
+  it('STOPS when the client ended during the wait - abandoned, typed: no replay, no verdict told', async () => {
+    const { ctx, settle, listener } = behind(4, [{ baseEpoch: 4 }], 5);
+    (
+      ctx as unknown as { waitForGroupQueueIdle: ReturnType<typeof vi.fn> }
+    ).waitForGroupQueueIdle.mockRejectedValue(new GroupDrainAbandonedError('g-1'));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    settle();
+
+    expect(await verdict).toBe('abandoned');
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 
   it('says EXHAUSTED when the log cannot supply the commits, and leaves the gap armed', async () => {

@@ -359,6 +359,44 @@ describe('a queued frame while the iPhone app is inactive', () => {
       await vi.waitFor(() => expect(done).toBe(true));
       expect(applied).toEqual(['q-w1']);
     });
+
+    it('TERMINATION WITH NO FRAME: after a failed release pull, a drained waiter starts exactly one pull, which ends the release', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      const failing = vi.fn(async () => {
+        throw new Error('server error');
+      });
+      releaseBy(failing);
+      active(true);
+      await vi.waitFor(() => expect(failing).toHaveBeenCalledTimes(1));
+      await tick();
+      await tick();
+      // The socket delivers nothing more for the group: only the wait can start the pull.
+      const serve = vi.fn(async () => {
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      releaseBy(serve);
+      let drained = false;
+      void svc.whenGroupDrained('group-a').then(() => (drained = true));
+      void svc.whenGroupDrained('group-a');
+      await vi.waitFor(() => expect(drained).toBe(true));
+      expect(serve).toHaveBeenCalledTimes(1);
+      expect(applied).toEqual(['q-w1']);
+    });
+  });
+
+  it('an ACTIVE app with a deferred group asks the server to push nothing', async () => {
+    active(false);
+    await deliver(row('q-w1'));
+    pushNow.mockClear();
+    // The group still has a frame queued here when the app becomes active: its release is deferred.
+    const idle = vi
+      .spyOn(inner(svc).messageScheduler, 'isGroupIdle')
+      .mockImplementation(() => false);
+    active(true);
+    await deliver({ ...row('q-w2'), queuedMessageId: 'q-w2' });
+    idle.mockRestore();
+    expect(pushNow).not.toHaveBeenCalled();
   });
 
   describe('the group of a live call', () => {

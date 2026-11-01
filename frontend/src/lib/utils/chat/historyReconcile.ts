@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
 import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -465,7 +466,18 @@ export function answerAfterMailboxDrained(
   void (async () => {
     // The leg runs OUTSIDE the drain that scheduled it and owns no catch-up session, so this waits
     // rather than deadlocking however long the group takes.
-    await mlsService.waitForGroupQueueIdle('history answer', groupId).catch(() => {});
+    try {
+      await mlsService.waitForGroupQueueIdle('history answer', groupId);
+    } catch (e) {
+      // THE CLIENT ENDED: an answer now would be sent from a destroyed service. Typed, never read
+      // off a message; any other failure of the wait is passed over, as before.
+      if (e instanceof GroupDrainAbandonedError) {
+        console.info(
+          `[HISTORY_REQ] answer about ${groupId.slice(0, 8)}... not sent - the client ended`
+        );
+        return;
+      }
+    }
     await answer();
   })();
 }

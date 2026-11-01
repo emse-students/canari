@@ -9,6 +9,7 @@
  */
 import type { Mock } from 'vitest';
 import { appendLog } from '$lib/utils/sessionLog';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
@@ -545,6 +546,21 @@ describe('the mailbox barrier', () => {
     );
     await flush();
     expect(answer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT answer once the client ended - the wait was abandoned, typed', async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    answerAfterMailboxDrained(
+      {
+        waitForGroupQueueIdle: vi.fn().mockRejectedValue(new GroupDrainAbandonedError(GROUP)),
+      } as never,
+      GROUP,
+      answer
+    );
+    await flush();
+    expect(answer).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 });
 

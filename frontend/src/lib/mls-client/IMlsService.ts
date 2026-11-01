@@ -1336,12 +1336,13 @@ export interface IMlsService {
    * which is what keeps a seed or a request from being sealed at the stale epoch
    * (`distributionEpochFor`). The outcome reaches {@link onDistributionGapVerdict}.
    *
-   * @returns `current` when the group was not behind, else the verdict.
+   * @returns `current` when the group was not behind, `abandoned` when the client ended before the
+   *   group's frames were in (nothing is decided then), else the verdict.
    */
   verifyDistributionEpoch(
     groupId: string,
     activeEpoch: number
-  ): Promise<'current' | DistributionGapVerdict>;
+  ): Promise<'current' | 'abandoned' | DistributionGapVerdict>;
   /**
    * Resolves once nothing about `groupId`'s epoch is still being established: the initial drain has
    * settled and any {@link verifyDistributionEpoch} in flight for it has answered. What a request
