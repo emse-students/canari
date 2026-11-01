@@ -168,7 +168,8 @@ describe('a follower tab that composed a salon message shows ONE row, in both or
   it('without a client id (old leader, or another author) the row is merged as before', () => {
     const merged = mergeAnnouncedMessage([echo()], announced());
     expect(merged?.settledEcho).toBe(false);
-    expect(merged?.messages.map((m) => m.id)).toEqual(['local', 'srv']);
+    // The echo has no server time yet, so it is drawn below every dated row (`awaitsServerTime`).
+    expect(merged?.messages.map((m) => m.id)).toEqual(['srv', 'local']);
     expect(mergeAnnouncedMessage(merged!.messages, announced())).toBeNull();
   });
 });

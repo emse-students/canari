@@ -12,6 +12,7 @@
    */
   import { untrack } from 'svelte';
   import { scrollFades } from '$lib/actions/scrollFades';
+  import FeedTabsInfo from './FeedTabsInfo.svelte';
   import ReelsEntryButton from './ReelsEntryButton.svelte';
   import type { PostFeed } from '$lib/posts/api';
   import { centredTabScrollLeft } from '$lib/posts/feedTabScroll';
@@ -84,7 +85,7 @@
 
   // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
   // changes under it - a resize, or the web font arriving after the first layout was measured with
-  // the fallback's widths: at 2x text the row overflows and "Tout" sat under the faded edge by the
+  // the fallback's widths: at 2x text the row overflows and the tab then called "Tout" sat under the faded edge by the
   // CanaReels icon (`centredTabScrollLeft`).
   $effect(() => {
     const selected = feed;
@@ -171,5 +172,6 @@
       {/each}
     </div>
   </div>
+  <FeedTabsInfo />
   <ReelsEntryButton {authToken} />
 </div>

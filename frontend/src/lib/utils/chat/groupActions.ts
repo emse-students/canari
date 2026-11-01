@@ -839,6 +839,11 @@ function bundleFrame(
         // numbers, sent whole with every frame because both merges are `max` and therefore free to
         // repeat. Sending them once would make their delivery depend on which chunk survived.
         ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
+        // The server-clock marks beside them (readState.ts). An older reader ignores the field and
+        // keeps the stamped map, which is all it can compare.
+        ...(state?.serverReadWatermarks
+          ? { serverReadWatermarks: state.serverReadWatermarks }
+          : {}),
         ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
         // Restated by every chunk like the two above, and for the same reason: sending it once
         // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
@@ -858,6 +863,7 @@ type BundleAnswer = { requestId?: string; join?: boolean };
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
   readWatermarks?: ReadWatermarks;
+  serverReadWatermarks?: ReadWatermarks;
   historyFloor?: number;
   /**
    * The pin register - every message this conversation has pinned OR unpinned, with its date.
@@ -894,6 +900,7 @@ async function storedConversationState(
     const pins = pinEntries(groupId);
     return {
       readWatermarks: row?.readWatermarks,
+      serverReadWatermarks: row?.serverReadWatermarks,
       historyFloor: row?.historyFloor,
       ...(pins.length > 0 ? { pins } : {}),
     };
@@ -927,6 +934,29 @@ export async function historyRangeStartFor(
   if (!storage) return historyRangeStart(undefined);
   const { historyFloor } = await storedConversationState(groupId, storage);
   return historyRangeStart(historyFloor);
+}
+
+/**
+ * The server's record of when `groupId` was created, as this device stored it, or `undefined` when
+ * it is not known (no store, no row, a row written before the start was learned, or a failed read).
+ *
+ * Read from the conversation ROW, the same source as the floor, so an asker and an answerer reason
+ * from one kind of fact. Unknown is the safe answer here: it keeps every shortfall a shortfall (see
+ * `coverageFallsShort`), so the worst a failed read costs is the walk this value exists to avoid.
+ */
+export async function historyGroupStartFor(
+  groupId: string,
+  storage: IStorage | null
+): Promise<number | undefined> {
+  if (!storage) return undefined;
+  try {
+    return (await storage.getConversation(groupId))?.startedAt;
+  } catch (e) {
+    console.warn(
+      `[HISTORY_WINDOW] conversation row unreadable for ${groupId.slice(0, 8)}… - the group's start is unknown: ${String(e).slice(0, 120)}`
+    );
+    return undefined;
+  }
 }
 
 /**

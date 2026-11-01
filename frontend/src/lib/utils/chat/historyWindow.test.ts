@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  GROUP_START_CLOCK_SLACK_MS,
   NATIVE_DEVICE_WINDOW_MS,
   WEB_DEVICE_WINDOW_MS,
   deviceWindowMs,
+  coverageFallsShort,
   deviceWindowStart,
+  groupBeginningBound,
   historyRangeStart,
   isWithinHistoryRange,
   mergeHistoryFloor,
@@ -175,5 +178,53 @@ describe('isWithinHistoryRange', () => {
 
   it('keeps a message whose timestamp cannot be compared', () => {
     expect(isWithinHistoryRange(Number.NaN, 1000)).toBe(true);
+  });
+});
+
+describe('groupBeginningBound', () => {
+  it('sits one clock slack below the server start - a message is dated by its sender', () => {
+    expect(groupBeginningBound(NOW - DAY_MS, NOW)).toBe(NOW - DAY_MS - GROUP_START_CLOCK_SLACK_MS);
+  });
+
+  it('clamps a start in the future to now, so it never denies a past already held', () => {
+    expect(groupBeginningBound(NOW + 10 * DAY_MS, NOW)).toBe(NOW - GROUP_START_CLOCK_SLACK_MS);
+  });
+
+  it.each([[undefined], [0], [-5], [Number.NaN], [Number.POSITIVE_INFINITY]])(
+    'reads an unusable start (%s) as unknown',
+    (startedAt) => {
+      expect(groupBeginningBound(startedAt, NOW)).toBeUndefined();
+    }
+  );
+});
+
+describe('coverageFallsShort', () => {
+  const SINCE = NOW - 5 * 365 * DAY_MS;
+  const NINETY = NOW - 90 * DAY_MS;
+
+  it('is not short when the member covers what was asked', () => {
+    expect(coverageFallsShort({ since: SINCE, coveredFrom: SINCE }, NOW)).toBe(false);
+  });
+
+  it('is short when the start is unknown - the old rule, which loses nothing', () => {
+    expect(coverageFallsShort({ since: SINCE, coveredFrom: NINETY }, NOW)).toBe(true);
+  });
+
+  it('is NOT short when the group began after where the member memory begins', () => {
+    expect(
+      coverageFallsShort({ since: SINCE, coveredFrom: NINETY, startedAt: NOW - 600_000 }, NOW)
+    ).toBe(false);
+  });
+
+  it('is short when the group is older than where the member memory begins', () => {
+    expect(
+      coverageFallsShort({ since: SINCE, coveredFrom: NINETY, startedAt: NOW - 400 * DAY_MS }, NOW)
+    ).toBe(true);
+  });
+
+  it('is short when the member memory begins inside the clock slack below the start', () => {
+    expect(
+      coverageFallsShort({ since: SINCE, coveredFrom: NINETY, startedAt: NINETY + DAY_MS / 2 }, NOW)
+    ).toBe(true);
   });
 });

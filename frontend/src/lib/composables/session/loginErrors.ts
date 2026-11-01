@@ -54,6 +54,13 @@ export type LoginErrorCode =
    * state nothing showed to be broken, and it is not an ordinary outcome - it accuses the engine.
    */
   | 'local_state_unreadable_now'
+  /**
+   * PIN accepted, and the saved state failed to load for a cause NOTHING typed (an IPC fault, a disk
+   * read, a panic, an install lock: `SavedStateUnopenedError` reason `unknown`). It proves nothing
+   * about the bytes, so the sentence is retry-first and offers no reset. Like
+   * `local_state_unreadable_now`, in NONE of the predicates below.
+   */
+  | 'local_state_unknown'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */

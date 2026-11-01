@@ -692,6 +692,49 @@ Nothing here is scheduled and nothing is retried. Being wrong about any of it co
 a message. When the walk ends without closing the gap, the gap is simply not remembered: the next
 connection compares again from scratch, which is where a member with a longer memory gets its turn.
 
+### A shortfall that predates the group is not a shortfall (2026-10-26)
+
+**Measured on the 1.4.1 BIG-1 row.** A phone asked a group created minutes earlier for its five
+years. Every browser member answered `covers ... only from <90 days ago> - 1735 d short`, so the
+phone walked all eight members: eight elections, eight probes and eight lines, for a past that could
+not exist. The two state keys were equal at both ends.
+
+**The rule.** The range `[since, coveredFrom)` a member does not cover can hold a message only if it
+reaches above the group's beginning. Both sides already know that beginning: `Conversation.startedAt`,
+the server's record of the group's creation, stored on the conversation row and never merged or sent.
+One predicate decides both ends, `coverageFallsShort` (`historyWindow.ts`):
+
+- **the answerer** (`stateOurCoverage`) stays silent when its memory reaches below the group's
+  beginning. Silence still means *"I cover what you asked"*, and that is now true;
+- **the asker** (`noteCoverageShortfall`) does not walk on such a coverage. A build older than this
+  rule still sends the frame, so the asker logs one line saying the group began after it, and elects
+  nobody. The exclusion list of a real walk uses the same predicate.
+
+**What it does not change.** The `since` an ask states, the state key computed over it and the clip
+applied to an answer all stay the same, so no member receives a different history. Only the coverage
+frame and the walk are decided by the beginning. Clipping the asked window itself was rejected: the
+answer is clipped on each message's SENDER-clock timestamp, and the beginning is a SERVER-clock
+instant, so a clipped ask could withhold a message from a sender whose clock ran behind.
+
+**Two margins keep it on the safe side.** The bound sits `GROUP_START_CLOCK_SLACK_MS` (one day) below
+the start, for the same two-clock reason. A start in the future is clamped to now. An unknown start
+(an old row, no store, a failed read) keeps every shortfall a shortfall, which is the old behaviour.
+
+**Why "skip the walk when the keys match" was rejected.** Agreement is not completeness (above): two
+stores can agree over the asker's window and both miss years that a third member holds. The beginning
+is a fact about what can EXIST. Agreement between two stores says nothing about what a third member
+holds.
+
+**Termination is unchanged.** A real shortfall (the group is older than the answerer's memory) walks
+exactly as before, one member more excluded at each step, and ends on `excludedOnline > 0`.
+
+**The SQLite row now keeps the start (schema v17, `started_at`).** IndexedDB stored the whole object,
+but SQLite stored only named columns, so a phone forgot the start on every reload until the next group
+sweep refilled it (`recordGroupStart`). That also applies to the scrollback check that reads it
+(`began inside this device's window`). Pinned by `historyReconcile.test.ts` (BIG-1 shape, real
+shortfall, clock slack, unknown start), `actions.historyRequest.test.ts` (the answerer),
+`sqliteMigrations.test.ts` (v17) and `sqliteConversationColumns.test.ts` (a save and a merge keep `started_at` beside v16's `server_read_watermarks`).
+
 ### What that leaves open, and why it is left open (decided 2026-08-17)
 
 Two consequences follow from having no schedule, and both are accepted rather than overlooked:
@@ -934,9 +977,12 @@ answer path can forget it.
   every recipient's `queued_message.createdAt` - and the outbox stores it as that message's
   `serverTimestamp`, in memory and on disk (`outbox.ts`, `patchServerTimestamp`). A control entry
   (reaction, edit, delete) is not stamped: it mutates a message whose own date must not move. A
-  message the native background sender delivered (`/api/mls/push/send`) is not stamped: that route
-  answers `receivedAt` too, but the native senders (Android, iOS) do not store it yet, so those copies
-  stay undated and fall under the legacy rule below - the undated residue SHRINKS, it does not vanish.
+  message the native background sender delivered (`/api/mls/push/send`) is stamped too since
+  2026-11-01: that route answers `receivedAt`, the native drains write it beside the id in
+  `outbox_sent.ndjson` and the quick reply's cache row
+  ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+  A copy sent by an older build, or whose answer carried none, stays undated and falls under the
+  legacy rule below - the undated residue SHRINKS, it does not vanish.
 - **Rows ingested by the OLD replay path are TRUSTED as dated, deliberately.** Before this change the
   Redis-stream replay dated an undated message by the bundle FRAME's time. Those rows are now
   indistinguishable from a real `serverTimestamp`, and they are not re-dated or distrusted: a bundle
@@ -1522,11 +1568,15 @@ mutation, so silent and durable - and rides on every `history_bundle`. Everythin
 who has read a message, the unread count, how far reading a conversation moves the mark - is in
 `$lib/utils/chat/readState.ts`, which absorbed `unread.ts`.
 
-**T is the message's own client timestamp**, `messageTime` - the PRIMARY key display order uses, not
-`serverTimestamp`, which is only a tie-break. A watermark ordered differently from the list it
-describes would leave a message marked read while the one visibly above it stayed unread. And it is
-drawn from the MESSAGES rather than from the clock: a device an hour fast would otherwise mark an
-hour of unread messages read for everyone, permanently, the merge being `max`.
+**T is on the clock the list is sorted by** - a watermark ordered differently from the list it
+describes would leave a message marked read while the one visibly above it stayed unread. Since
+2026-10-31 that is the SERVER's acceptance time (`messageTime`), and a conversation holds two maps:
+`serverReadWatermarks`, compared against it and written by this build, and `readWatermarks`, the
+stamped (`sentAt`) marks of every earlier build, older clients and the native shade, still honoured -
+a row is read when either covers it ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31),
+[legacy-compatibility](../legacy-compatibility.md)). And T is drawn from the MESSAGES rather than
+from the clock: a device an hour fast would otherwise mark an hour of unread messages read for
+everyone, permanently, the merge being `max`.
 
 What it buys, beyond travelling in the shared log so a reinstall recovers read state with no peer
 online:
