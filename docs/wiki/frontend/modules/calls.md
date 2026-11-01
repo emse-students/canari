@@ -2656,7 +2656,7 @@ the call. Messages still arrive and are shown; only their sound goes.**
 
 | Sound | How it is silenced during a call |
 |---|---|
-| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing (`[AUDIO] <name> tone silenced - a call holds the app's sound`). The incoming ring passes `purpose: 'call'` and is exempt |
+| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing. Each is counted (one `Log.d` line per tone, which the in-app log does not record); the count is told once on the gate's release line, `[AUDIO] the call released the app's sound (...) - N tone(s) silenced during the call`. The incoming ring passes `purpose: 'call'` and is exempt |
 | Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on, until unmuted (`volumechange` pauses them). Nothing resumes on the call's end - the reader presses play. The reel review is now registered, so it also follows "one media at a time" and the pause on leaving the screen |
 | Browser notification (web, desktop browser) | raised with `silent: true` |
 | Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
@@ -2664,8 +2664,9 @@ the call. Messages still arrive and are shown; only their sound goes.**
 
 **The one gate.** Each `CallService` states its `callState` under its holder id; the gate is held while
 any holder is `calling`, `incoming` or `incall` and released at `ended` / `idle`, or when a replaced
-service is retired (`retireFromPageRing`). Logged once per change: `[AUDIO] a call holds the app's
-sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
+service is retired (`retireFromPageRing`). Logged once per change, through `Log.i` (`Log.d` writes
+`console.debug`, which the in-app log never records - the line was unreadable on a device until
+2026-11-01): `[AUDIO] a call holds the app's sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
 `toneOutput.test.ts`, `playbackArbiter.test.ts`, the p2p block above and `CallSoundHoldTest.kt`.
 
 **What is NOT covered, and what would lift it:**
@@ -2701,7 +2702,7 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 |---|---|---|
 | The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
 | The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
-| Audio route (speaker, earpiece, Bluetooth) | iOS only: label-matched `setSinkId`, best effort, logged when there is nothing to route to | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
+| Audio route (speaker, earpiece, Bluetooth) | iOS only: the loudspeaker by label-matched `setSinkId`, best effort, `WARN` when none is listed; the earpiece is the call's DEFAULT output (WebKit lists no such device), asked as `setSinkId('')` or nothing at all (`callAudioRoute.ts`) | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
 | Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | - |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
 | The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |

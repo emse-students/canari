@@ -64,7 +64,8 @@
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
-  import { startCallVoice } from '$lib/utils/callVoice';
+  import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
+  import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
   import { untrack } from 'svelte';
   import { ScreenWakeLock } from '$lib/live/liveDevice';
@@ -180,8 +181,9 @@
       return;
     }
     // No stream yet: an empty play() inside the gesture is what lets the later one through on
-    // WebKit. Its own rejection (no source) is expected and only logged.
-    sink.play().catch((e: unknown) => appendLog(`[Call] voice primed (${why}): ${String(e)}`));
+    // WebKit. The stream (or the surface going) aborts it, which `primeCallVoice` reads as a
+    // handover, not a refusal.
+    void primeCallVoice(sink, why);
   }
 
   $effect(() => {
@@ -281,24 +283,12 @@
    * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
    * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
-  async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const kind = speaker ? 'speaker' : 'earpiece';
-      const target = devices.find(
-        (d) => d.kind === 'audiooutput' && d.label.toLowerCase().includes(kind)
-      );
-      if (!target || !('setSinkId' in sink)) {
-        appendLog(`[Call] no '${kind}' output to route to on this engine - route unchanged`);
-        return;
-      }
-      await (sink as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(
-        target.deviceId
-      );
-      appendLog(`[Call] audio routed to ${kind}`);
-    } catch (e) {
-      appendLog(`[Call] audio routing failed: ${String(e)}`);
-    }
+  const routeSpeaker = createSpeakerRouter({
+    enumerate: () => navigator.mediaDevices.enumerateDevices(),
+    log: appendLog,
+  });
+  function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
+    return routeSpeaker(sink as HTMLAudioElement & RoutableSink, speaker);
   }
 
   $effect(() => {
