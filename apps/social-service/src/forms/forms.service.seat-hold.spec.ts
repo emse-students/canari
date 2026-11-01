@@ -137,6 +137,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // The paid form's pre-check before any payment request: no catalogue to check the tier
       // against, and nothing held, so a rise.
       listCotisationTiers: jest.fn(() => Promise.resolve([])),
+      cotisationModeOf: jest.fn(() => Promise.resolve('dated')),
       rankCotisationTier: jest.fn(() => Promise.resolve('none')),
     };
 

@@ -337,6 +337,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       allowCustomAmount: false,
       customAmountMinCents: null,
       customAmountMaxCents: null,
+      // A membership product always stores the tag it grants (a legacy row without one is refused).
+      grantedTagName: overrides.type === 'membership' ? 'cotisant:bde' : null,
       ...overrides,
     }) as AssociationProduct;
 
@@ -3333,6 +3335,54 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           warn.mock.calls.filter(([line]) => String(line).includes('memberPriceTag names no'))
         ).toHaveLength(1);
       });
+    });
+  });
+
+  describe('assertMembershipGrantable - the shared cotisationGrantRefusal', () => {
+    const run = (service: unknown, a: unknown, p: unknown) =>
+      (service as any).assertMembershipGrantable(a, p);
+    const disabledBody = expect.objectContaining({
+      response: expect.objectContaining({ code: 'COTISATION_DISABLED' }),
+    });
+
+    it('refuses a membership product of an association with no cotisation mode', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).toThrow(disabledBody);
+    });
+
+    it('refuses a legacy membership product that stores no tag, before any money moves', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: null }
+        )
+      ).toThrow(disabledBody);
+    });
+
+    it('CONTROL: a membership with a mode and a tag, and a non-membership product, pass', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).not.toThrow();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p2', type: 'standard', grantedTagName: null }
+        )
+      ).not.toThrow();
     });
   });
 

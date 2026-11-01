@@ -264,6 +264,19 @@ export class UserTagService {
   }
 
   /**
+   * The association's cotisation mode, or null when cotisations are disabled (or it does not
+   * exist): the input of `cotisationGrantRefusal`, read where a paid form decides whether its
+   * grant could succeed.
+   */
+  async cotisationModeOf(assocId: string): Promise<CotisationMode | null> {
+    const rows: { cotisationMode: CotisationMode | null }[] = await this.repo.manager.query(
+      `SELECT "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    return rows[0]?.cotisationMode ?? null;
+  }
+
+  /**
    * Lists an association's cotisation tiers (its `membership` products), each resolved to the tag
    * it currently grants. Returns an empty list when the association has no cotisation mode.
    * The single source of truth for "which tiers exist", shared by the roster labels, the manual

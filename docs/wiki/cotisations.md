@@ -104,8 +104,8 @@ never drifts from `deriveCotisationTag`. `ProductsService.update` drops `granted
 `tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
 membership product whose association has no `cotisationMode`: a stored tag string is never granted as
 typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
-with cotisations disabled, the checkout opening and the cash sale of such a product are refused
-`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+with cotisations disabled - or a legacy product storing no `grantedTagName` - the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED` before any payment is requested or recorded (ONE check, `cotisationGrantRefusal` in `product-checkout.ts`, which a paid form that grants a cotisation asks too: its submit is refused the same way, and a grant meeting a disabled mode at settlement answers `not-granted`, recorded `paid_not_granted`, never retried); a payment that lands anyway
 (an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
 paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
 requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived

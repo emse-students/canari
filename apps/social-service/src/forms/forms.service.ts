@@ -66,6 +66,7 @@ import {
 } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
+import { cotisationGrantRefusal } from '../associations/product-checkout';
 import { formTierRefusal, type FormTierRank } from '../associations/tier-pricing';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { receivedStatus } from '../users/entities/purchase-record.entity';
@@ -898,6 +899,18 @@ export class FormsService {
     userId: string | undefined
   ): Promise<void> {
     if (!form.grantsCotisation || !form.associationId || !userId) return;
+    // The boutique's rule (`cotisationGrantRefusal`): with no cotisation mode the grant would refuse
+    // ("not enabled") after the money was taken, whoever the submitter is.
+    const disabled = cotisationGrantRefusal({
+      cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
+    });
+    if (disabled) {
+      this.logger.warn(
+        `[Forms] submit refused (${disabled.code}): form=${form.id.slice(0, 8)} grants a cotisation ` +
+          `of assoc=${form.associationId.slice(0, 8)}, whose cotisations are disabled`
+      );
+      throw new ConflictException(disabled);
+    }
     const rank = await this.formTierRank(form.associationId, userId, form.cotisationVariantKey);
     const refusal = formTierRefusal(rank);
     this.logger.debug(
@@ -965,6 +978,20 @@ export class FormsService {
       return 'granted';
     }
     try {
+      // Cotisations disabled after the payment was opened: the grant could never succeed, so the
+      // answer is FINAL (`not-granted`, recorded `paid_not_granted`) - never `failed`, whose claim
+      // release makes every replay hit the same refusal.
+      const disabled = cotisationGrantRefusal({
+        cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
+      });
+      if (disabled) {
+        this.logger.error(
+          `[UserTag] Cotisation tier "${form.cotisationVariantKey ?? 'base'}" of ` +
+            `assoc=${form.associationId.slice(0, 8)} NOT granted to user=${userId.slice(0, 8)}: ` +
+            `${disabled.code} - final, not retried`
+        );
+        return 'not-granted';
+      }
       // Decided under the buyer's tier lock, so a shop settlement committed while the payment was
       // in flight is seen: never a renewal of the tier held (its price taken twice), never a held
       // tier the form is for people WITHOUT (`notCotisation`), never a move down by the XOR.

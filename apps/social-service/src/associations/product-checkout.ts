@@ -84,6 +84,34 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 
 /**
+ * The ONE decision "this association can grant a cotisation": the typed 409 body a payment is
+ * refused with BEFORE any money is requested when it cannot, or null. Shared by the boutique
+ * (`ProductsService.assertMembershipGrantable`) and the paid forms (`FormsService`), which must not
+ * each carry their own reading. It refuses when the association has no cotisation mode (no tag can
+ * be derived), and - for a product, which passes `storedTagName` - when the product stores no tag
+ * (a legacy row: the sale would end `paid_not_granted`). A form passes no `storedTagName`: its tier
+ * tag is derived from `cotisationVariantKey`, never stored.
+ */
+export function cotisationGrantRefusal(
+  asso: { cotisationMode: unknown },
+  storedTagName?: string | null
+): { code: string; message: string } | null {
+  if (!asso.cotisationMode) {
+    return {
+      code: COTISATION_DISABLED,
+      message: "This association's cotisations are disabled: the product cannot be sold.",
+    };
+  }
+  if (storedTagName !== undefined && !storedTagName) {
+    return {
+      code: COTISATION_DISABLED,
+      message: 'This membership product grants no tag: it cannot be sold until it is repaired.',
+    };
+  }
+  return null;
+}
+
+/**
  * The `code` of the 409 a manager gets when deleting a cotisation tier that people still hold,
  * active: the body carries `holderCount` beside it. Deleting it would leave their tag naming no
  * tier, so the manager moves them first (a manual grant of another tier swaps it out, a retag

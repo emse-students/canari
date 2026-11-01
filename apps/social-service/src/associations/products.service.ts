@@ -22,7 +22,7 @@ import {
   CHECKOUT_EXPIRY_MARGIN_MS,
   CHECKOUT_IN_PROGRESS,
   CHECKOUT_ISSUE_WINDOW_MS,
-  COTISATION_DISABLED,
+  cotisationGrantRefusal,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_COTISANTS_ONLY,
@@ -4303,24 +4303,23 @@ export class ProductsService {
   }
 
   /**
-   * Refuses (409 `COTISATION_DISABLED`) a membership product whose association has no cotisation
-   * mode, BEFORE any money is requested or recorded: `resolveGrantTag` derives no tag without one,
-   * so the purchase would grant nothing. The checkout opening and the cash sale call it, under the
+   * Refuses (409 `COTISATION_DISABLED`) a membership product that could grant nothing
+   * (`cotisationGrantRefusal`: no cotisation mode on its association, or no stored tag), BEFORE any
+   * money is requested or recorded: `resolveGrantTag` returns null without either. The checkout opening and the cash sale call it, under the
    * buyer's tier lock, on the association they re-read there.
    */
   private assertMembershipGrantable(
     asso: Pick<Association, 'id' | 'cotisationMode'>,
-    product: Pick<AssociationProduct, 'id' | 'type'>
+    product: Pick<AssociationProduct, 'id' | 'type' | 'grantedTagName'>
   ): void {
-    if (product.type !== 'membership' || asso.cotisationMode) return;
+    if (product.type !== 'membership') return;
+    const refusal = cotisationGrantRefusal(asso, product.grantedTagName ?? null);
+    if (!refusal) return;
     this.logger.warn(
-      `[SHOP] refused (${COTISATION_DISABLED}): membership product=${product.id.slice(0, 8)} of ` +
-        `assoc=${asso.id.slice(0, 8)}, whose cotisations are disabled`
+      `[SHOP] refused (${refusal.code}): membership product=${product.id.slice(0, 8)} of ` +
+        `assoc=${asso.id.slice(0, 8)}: ${refusal.message}`
     );
-    throw new ConflictException({
-      code: COTISATION_DISABLED,
-      message: "This association's cotisations are disabled: the product cannot be sold.",
-    });
+    throw new ConflictException(refusal);
   }
 
   /**
