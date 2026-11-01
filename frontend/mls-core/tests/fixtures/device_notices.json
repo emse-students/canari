@@ -203,7 +203,7 @@
     "key": null
   },
   {
-    "name": "a member's device entering by its own commit under a key already pinned is the same device and is not announced",
+    "name": "a member's device entering by its own commit under a key pinned elsewhere, never in this group, alerts its owner and is an ordinary added device (D3)",
     "event": {
       "groupId": "g",
       "epoch": 7,
@@ -211,33 +211,75 @@
       "keyFingerprint": "99",
       "trust": "pinned",
       "addedBy": "alice:web-9",
-      "memberAlreadyPresent": true
-    },
-    "ownUserId": "alice",
-    "ownDeviceId": "phone-a",
-    "isKeyDistributionGroup": false,
-    "audience": "none",
-    "key": "alice:web-9|99"
-  },
-  {
-    "name": "a further device of this account entering by its own commit under a key first seen alerts its owner, like an added one",
-    "event": {
-      "groupId": "g",
-      "epoch": 7,
-      "identity": "alice:web-9",
-      "keyFingerprint": "99",
-      "trust": "first-sight",
-      "addedBy": "alice:web-9",
-      "memberAlreadyPresent": true
+      "memberAlreadyPresent": true,
+      "firstInGroup": true
     },
     "ownUserId": "alice",
     "ownDeviceId": "phone-a",
     "isKeyDistributionGroup": false,
     "audience": "owner-alert",
-    "key": "alice:web-9|99"
+    "key": "alice:web-9|99",
+    "unvouched": false
   },
   {
-    "name": "a contact's further device entering by its own commit under a key first seen is an ordinary contact line",
+    "name": "a member's further device entering by its own commit for the first time anywhere is an ordinary added device (D2, D3)",
+    "event": {
+      "groupId": "g",
+      "epoch": 7,
+      "identity": "bob:web-4",
+      "keyFingerprint": "44",
+      "trust": "first-sight",
+      "addedBy": "bob:web-4",
+      "memberAlreadyPresent": true,
+      "firstInGroup": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-4|44",
+    "unvouched": false
+  },
+  {
+    "name": "a KNOWN device id entering by its own commit under a key other than the one known for it stays unvouched (D3 keeps this class)",
+    "event": {
+      "groupId": "g",
+      "epoch": 7,
+      "identity": "alice:web-9",
+      "keyFingerprint": "98",
+      "trust": "key-changed",
+      "addedBy": "alice:web-9",
+      "memberAlreadyPresent": true,
+      "firstInGroup": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "owner-alert",
+    "key": "alice:web-9|98",
+    "unvouched": true
+  },
+  {
+    "name": "a member's device coming back by its own commit under its pinned key, once in this group, is not new",
+    "event": {
+      "groupId": "g",
+      "epoch": 7,
+      "identity": "alice:web-9",
+      "keyFingerprint": "99",
+      "trust": "pinned",
+      "addedBy": "alice:web-9",
+      "memberAlreadyPresent": true,
+      "firstInGroup": false
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": "alice:web-9|99",
+    "unvouched": false
+  },
+  {
+    "name": "a device coming back by its own commit under a key first seen here, once in this group, is an ordinary new-device notice and not an unvouched entry",
     "event": {
       "groupId": "g",
       "epoch": 8,
@@ -245,16 +287,18 @@
       "keyFingerprint": "77",
       "trust": "first-sight",
       "addedBy": "bob:web-3",
-      "memberAlreadyPresent": true
+      "memberAlreadyPresent": true,
+      "firstInGroup": false
     },
     "ownUserId": "alice",
     "ownDeviceId": "phone-a",
     "isKeyDistributionGroup": false,
     "audience": "contact-line",
-    "key": "bob:web-3|77"
+    "key": "bob:web-3|77",
+    "unvouched": false
   },
   {
-    "name": "a contact's further device added by another of their devices is an ordinary contact line",
+    "name": "a device added by a device that is itself an unvouched entry here is unvouched too",
     "event": {
       "groupId": "g",
       "epoch": 9,
@@ -262,12 +306,34 @@
       "keyFingerprint": "55",
       "trust": "first-sight",
       "addedBy": "bob:web-4",
-      "memberAlreadyPresent": true
+      "memberAlreadyPresent": true,
+      "firstInGroup": true,
+      "addedByUnvouched": true
     },
     "ownUserId": "alice",
     "ownDeviceId": "phone-a",
     "isKeyDistributionGroup": false,
     "audience": "contact-line",
-    "key": "bob:web-5|55"
+    "key": "bob:web-5|55",
+    "unvouched": true
+  },
+  {
+    "name": "the same Add by a device that is not an unvouched entry is a member's Add",
+    "event": {
+      "groupId": "g",
+      "epoch": 9,
+      "identity": "bob:web-5",
+      "keyFingerprint": "55",
+      "trust": "first-sight",
+      "addedBy": "bob:web-4",
+      "memberAlreadyPresent": true,
+      "firstInGroup": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "contact-line",
+    "key": "bob:web-5|55",
+    "unvouched": false
   }
 ]

@@ -74,9 +74,21 @@ export interface DeviceEvent {
    */
   memberAlreadyPresent?: boolean;
   /**
+   * Whether this DEVICE was never in this group as far as this device saw: no leaf of its in the
+   * tree the commit was built on, no departure of it recorded here. Decided per group, never from
+   * the pin. Absent on an event recorded before the field existed, which reads as `false`.
+   */
+  firstInGroup?: boolean;
+  /**
+   * Whether the commit that added this device was made by a device that is itself an unvouched entry
+   * in this group, as this app records it (`historyWithheld.ts`): what an unvouched device adds is
+   * unvouched too. Set by the app before deciding (`deliverDeviceEvents`), never by the MLS layer.
+   */
+  addedByUnvouched?: boolean;
+  /**
    * A MARKER, not a device (`DeviceEvent::events_dropped` in Rust): events of `groupId` were dropped
    * past the queue's bound, so what was handed over about that group is incomplete. It names no
-   * identity and announces nothing; the notices say the loss (`deliverDeviceEvents`).
+   * identity; history is withheld in that group on it (`historyWithheld.ts`).
    */
   eventsDropped?: boolean;
 }
@@ -86,13 +98,10 @@ export interface DeviceEvent {
  * in Rust, held to the same table (`mls-core/tests/fixtures/device_notices.json`):
  * - a signed commit admitted it (`addedBy`; a changed key found in a joined tree is no admission);
  * - a `pinned` key is the SAME device coming back - a resync, a heal, a kick and re-add under the
- *   same key, its own commit included - and is never announced;
+ *   same key - and is never announced;
  * - a first sight is announced only for a user who was already in the conversation: a member joining
  *   with their devices is the member-added line, not one line per device;
  * - a key other than the pinned one is announced wherever it appears, since nothing proves it.
- *
- * WHO signed the commit does not matter (owner, 2026-10-31): a member's further device entering by
- * its own external commit is announced exactly like one a member added.
  */
 export function announcesNewDevice(event: DeviceEvent): boolean {
   if (event.addedBy === null) return false;
@@ -102,7 +111,9 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
     case 'first-sight':
       return event.memberAlreadyPresent === true;
     case 'pinned':
-      return false;
+      // A pin written by another group's tree vouches for nothing here: a device that brought
+      // itself into a group it was never in is announced whatever its pin says.
+      return entersByItsOwnCommit(event) || event.addedByUnvouched === true;
   }
 }
 
@@ -121,6 +132,45 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
  */
 export function entersUninvited(event: DeviceEvent): boolean {
   if (event.addedBy === null || event.memberAlreadyPresent !== false) return false;
+  const admitted = canonicalIdentity(event.identity);
+  return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
+}
+
+/**
+ * Whether this event is a device of a MEMBER that brought ITSELF into the group: the commit admitting
+ * it was signed by that very device (an external commit), its user already held a leaf, and the
+ * device was never in THIS group (`firstInGroup`) - whatever its pin says, since the pins are one
+ * store any group's tree writes. The twin of `DeviceEvent::enters_as_unvouched_device` in Rust.
+ *
+ * In a conversation no member admitted that device - a further device of a member is added by a
+ * member's Add, after a member's tap (`automaticAdmission` in `utils/chat/actions.ts`), and the
+ * device's own recovery never joins itself for a seat it was never admitted to (`requestReAdd`). So
+ * the entry is reported and written in the conversation (`deviceNotices.svelte.ts`), and its key is
+ * never "seen" by the admission rule: seen is a leaf in that group's tree or a member's approval,
+ * never a pin. A device coming back to a group it was in is not this case; in a community or salon
+ * key group every device enters this way and the caller does not ask. AND A DEVICE ADDED BY SUCH A
+ * DEVICE (`addedByUnvouched`) is one too: its Add is no member's.
+ */
+export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
+  if (event.addedBy === null) return false;
+  // Added by a device that is itself an unvouched entry here: no member vouched for this one either.
+  if (event.addedByUnvouched === true) return true;
+  // ONLY UNDER A KEY OTHER THAN THE ONE KNOWN FOR THAT ID (owner, 2026-10-31, D3 of
+  // docs/wiki/protocols/mls-availability-no-holder.md). A further device of a member - a NEW id - that
+  // lets itself in when no member device is online is announced as an ordinary added device and
+  // answered under rule 2; a KNOWN id coming in by its own commit under a new key stays withheld.
+  return event.trust === 'key-changed' && entersByItsOwnCommit(event);
+}
+
+/**
+ * Whether a device of a MEMBER brought ITSELF into a group it was never in: the commit admitting it
+ * was signed by that very device, its user already held a leaf, and the device was never in THIS
+ * group (`firstInGroup`). The twin of `DeviceEvent::enters_by_its_own_commit` in Rust.
+ */
+export function entersByItsOwnCommit(event: DeviceEvent): boolean {
+  if (event.addedBy === null) return false;
+  if (event.memberAlreadyPresent !== true) return false;
+  if (event.firstInGroup !== true) return false;
   const admitted = canonicalIdentity(event.identity);
   return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
 }

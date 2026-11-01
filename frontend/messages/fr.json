@@ -1415,6 +1415,8 @@
   "chat_unopenable_here": "Cette conversation ne peut plus être ouverte sur cet appareil : aucun appareil qui la détenait n'est revenu.",
   "chat_unopenable_start_again": "Recommencer avec les mêmes personnes",
   "chat_unopenable_hide": "Retirer de ma liste",
+  "chat_unopenable_start_again_failed": "Impossible de recommencer la conversation pour l'instant. Réessayez dans un moment.",
+  "chat_system_unvouched_device_entry": "Un appareil de {user} est entré de lui-même dans la conversation avec une clé différente de celle qu'on lui connaissait, sans qu'un membre ne l'ajoute",
   "chat_awaiting_admission_preview": "En attente qu'un membre vous ajoute.",
   "chat_unread_messages_label": [
     {

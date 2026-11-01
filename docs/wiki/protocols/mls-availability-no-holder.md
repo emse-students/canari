@@ -7,7 +7,9 @@ holds a group's MLS state any more?
 Sections 1-8 are a read-only audit of `main` at `c5186791b` (#2791 merged: a member's further
 device is added automatically); line numbers cite that commit. Nothing was run against an estate.
 **The owner decided on 2026-10-31 ([decisions](#decisions-taken-2026-10-31)), and D1-D3 and D5 are
-built**: where the audit below says "today", it describes the code before that build.
+built - with the self-join SHUT on the server until every member client reads it as D2/D3 say
+([the gate](#the-gate-d1-waits-for-d2-and-d3-on-every-member-client))**: where the audit below says
+"today", it describes the code before that build.
 
 **Related:** [mls-recovery-ladder](mls-recovery-ladder.md) (rung 2, the external join),
 [mls-protocol](mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31) (the
@@ -266,6 +268,19 @@ line and withhold history in that conversation, from every member (`historyWithh
 broadcast answers while any withheld device is present). That is noise the house rules do not allow,
 and it lands exactly on the conversations that just survived losing every device.
 
+**The one class the tripwire KEEPS (review of #2832): a KNOWN device id entering by its own commit
+under a key other than the one known for it.** A further device is a NEW id, so its first sight is the
+honest case D1 opens. A known id under a new key is not a further device's recovery: an honest
+re-registration of that device is a re-add by a member or a rejoin on its own seat, and what is left
+is exactly the insertion the tripwire exists for, under a name members already trust. So it still
+writes the accusing line (`chat_system_unvouched_device_entry`), reports `unvouched-device`, and is
+withheld history in that conversation. One predicate decides it, on both sides of the WASM boundary:
+`DeviceEvent::enters_as_unvouched_device` (`frontend/mls-core/src/device_trust.rs`) and
+`entersAsUnvouchedDevice` (`frontend/src/lib/mls-client/deviceTrust.ts`) answer
+`trust == KeyChanged && enters_by_its_own_commit()`, and a device added by such an entry stays
+unvouched with it. The shared fixture `mls-core/tests/fixtures/device_notices.json` pins the three
+rows: pinned and first-sight entries are ordinary added devices, the key-changed one is unvouched.
+
 ## 8. Measurement: what the hourly report says, and what it cannot see
 
 `reportSingleHolderGroups` (`app.controller.ts:851`, hourly since 2026-09-12) counts, per live group
@@ -338,25 +353,50 @@ The owner answered section 9 the same day. What each one changed in the code:
   in `apps/chat-delivery-service/src/utils/device-seat.ts`, read AFTER the base), so a queued Welcome
   or an Add in flight answers `welcome_owed` and is waited for. No timer was added: the trigger is the
   server's answer, the cadence the existing `RECOVERY_TIMEOUT_MS` throttle. The seat gate and the
-  `awaitingAdmission` 409 are untouched. **The race** between the self-join and a member's Add built on
-  the same epoch is decided by the strict epoch gate, which accepts one; the loser rebuilds - the
-  member clears its staged Add, the device drops its refused join and takes the Welcome - and one leaf
-  stands (`mls-core/tests/further_device_door.rs`, both orders).
+  `awaitingAdmission` 409 are untouched.
+  **One door per answer (review of #2832).** A `stored` answer used to put the ask in Redis AND wake
+  members' Android phones, whose background Add then raced the self-join it had just licensed. The
+  further device's ask now carries its intent (`selfJoinIfNobody: true`): with no member online and a
+  CURRENT base, the server stores, queues and wakes nothing, and withdraws an ask an earlier pass
+  stored (`SREM pending_welcome:{groupId}`, `LREM` of the exact frame from each member's
+  `pending_welcome_notify` list) - the device's own commit is the one door. On a stale or absent base
+  the device cannot let itself in, so the ask is stored and woken as any other and the member's Add is
+  the one door. Were two doors still to meet (an Add a member's app started from a forwarded ask
+  moments before), the strict epoch gate accepts one and the loser rebuilds - the member clears its
+  staged Add, the device drops its refused join and takes the Welcome - and one leaf stands
+  (`mls-core/tests/further_device_door.rs`, both orders). That is the last line, never the design.
 - **D2 - announced as an ordinary added device.** `DeviceEvent::announces_new_device` is the one event
   for both doors: "X a ajoute un appareil" to members, "Nouvel appareil connecte" with "Ce n'est pas
-  moi" on the owner's other devices. `enters_as_unvouched_device` / `entersAsUnvouchedDevice`, the
-  `chat_system_unvouched_device_entry` line and the client's `unvouched-device` report are deleted
-  (the server still accepts that kind from an older client). A NEW PERSON's self-entry is still said
-  and reported (`entersUninvited`).
-- **D3 - history follows rule 2** of [history-answer-addressing](history-answer-addressing.md):
-  `historyWithheld.ts`, `withholdHistoryFrom` and the sealing of a conversation on an overflowed native
-  queue are deleted with their backlog entry.
+  moi" on the owner's other devices. A further device - a new id, or one pinned by another group -
+  entering by its own commit writes no accusing line and no `unvouched-device` report. A NEW PERSON's
+  self-entry is still said and reported (`entersUninvited`), and so is a KNOWN id under a new key
+  ([the class the tripwire keeps](#the-security-trade-off-honestly)).
+- **D3 - history follows rule 2** of [history-answer-addressing](history-answer-addressing.md) for a
+  further device. `historyWithheld.ts` and `withholdHistoryFrom` stay, narrowed to the key-changed
+  class above.
 - **D4 - a link ask nobody answers stays blocked** and expires after 14 days. Nothing changed; the
   no-holder facts are never served to an `awaitingAdmission` seat.
 - **D5 - a stale or absent base with no holder stays terminal**, with no server-side resurrection. The
   conversation says so instead of waiting for ever - see below.
 - **D6 - the iOS background Add is deferred.** D1 makes it unnecessary for a further device; it
   remains a hardware item for the waits of a person's own ask.
+
+### The gate: D1 waits for D2 and D3 on every member client
+
+A `1.5.1`-`1.5.4` member reads a further device that let itself in as an accusation and withholds
+history from it - the tripwire D2/D3 narrowed. So the self-join must not open while such a client may
+still be a member. **The server holds the door shut** with one constant,
+`FURTHER_DEVICE_SELF_JOIN_OPEN = false` (`apps/chat-delivery-service/src/utils/device-seat.ts`):
+
+- `GET /api/mls/group-info/:groupId?deviceId=` serves the base WITHOUT the asking device's seat, so
+  the client reads `seat_unreadable` and does not join (`recovery.ts`, the D1 block);
+- a `selfJoinIfNobody` ask is stored, queued and woken exactly as any other.
+
+A constant, not an environment switch: the condition is a fact about the shipped clients, the same on
+every estate, and the commit that flips it is its record. **Lifted by a one-line pull request once
+`minClientVersion` is at least `1.5.5`**, the release carrying D2/D3 - the row in
+[legacy-compatibility](../legacy-compatibility.md) carries it. Until then a further device in a
+conversation with no member online waits, as before this page.
 
 ### D5: the banner, and what decides it
 
@@ -379,14 +419,28 @@ pending state (`readNoHolder`, `frontend/src/lib/utils/chat/noHolder.svelte.ts`)
    is reachable only once the base fact has ruled the self-join out.
 3. **Then the seat.** A queued Welcome or an Add in flight reads `welcome-owed`; an unread add lock or an
    `active` seat reads `unknown`.
-4. Only what is left is `no-holder`.
+4. **Then the holders (review of #2832).** A group merely SLOW is not a dead one. The answer also
+   carries `holders`: `liveHolderDevices`, the count of OTHER users' devices with an `active` row in the
+   group AND a KeyPackage published within `RETENTION_WINDOW_MS` (90 days - the window the server
+   already uses to call a device gone, `detectStaleDevices`), and `wakeSent`, whether this very request
+   woke member phones. Anything but `0` and `false` reads `unknown`: a member who did not open the app
+   tonight is still a holder.
+5. Only what is left is `no-holder`.
 
 Anything unknown - not asked yet, offline, a transport error, an older server sending no facts, a
-malformed answer - keeps today's waiting text. Every answer replaces the reading, so a member device
-coming online (a forwarded answer), a republished base, a Welcome landing (`cancelReAdd`, and the
-conversation turning `active`) each take the banner down. The reading is session memory: a restart
-starts from unknown and asks again. Tests: `noHolder.svelte.test.ts`, the D5 block of
-`recovery.test.ts`, `messaging.no-holder-facts.spec.ts`.
+malformed answer, one without `holders` - keeps today's waiting text. Every answer replaces the
+reading, so a member device coming online (a forwarded answer), a republished base, or a Welcome
+landing (`cancelReAdd`, and the conversation turning `active`) takes the banner down **at the next
+recovery pass that reads it** - the next answer on the recovery cadence, or the Welcome's own
+`cancelReAdd` - not at the instant the fact changes on the server. The reading is session memory: a
+restart starts from unknown and asks again.
+
+**The hidden list is released the first time the conversation is seen active** (`releaseHiddenOnceActive`,
+from `cancelReAdd` and from the list for every active row), so "Retirer de ma liste" can never hide a
+conversation that opened and later went pending again. It keeps at most `HIDDEN_UNOPENABLE_CAP` (200)
+ids, oldest dropped first. "Recommencer" runs one at a time (a second tap while it creates is ignored)
+and says it failed with a toast (`chat_unopenable_start_again_failed`) rather than doing nothing. Tests: `noHolder.svelte.test.ts`, the D5 block of
+`recovery.test.ts`, `messaging.no-holder-facts.spec.ts`, `useConversations.startAgain.svelte.test.ts`.
 
 ### How rare D5 is, read from the code (no production query)
 

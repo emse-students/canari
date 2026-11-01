@@ -20,7 +20,10 @@ import { isWelcomeOwed, readWelcomeOwedFromSeat } from './welcomeOwed';
  *    never reach the banner - the branch is reachable only once the base fact has ruled the join out;
  * 2. then the SEAT: a queued Welcome or an Add in flight is on its way, and an unreadable seat is
  *    unknown;
- * 3. only then, with the server's own verdict that no member device is online, `no-holder`.
+ * 3. then the HOLDERS: a group merely SLOW is not a dead one - while any other user's device still
+ *    holds it and published a KeyPackage within the server's retention window, or this very answer
+ *    woke member phones, the reading is `unknown` and the ordinary waiting text stays;
+ * 4. only then, with the server's own verdict that no member device is online, `no-holder`.
  *
  * Every later answer replaces the reading: a member device online, a Welcome landing, a republished
  * base, a transport error (unknown) - each takes the banner away and the ordinary path resumes.
@@ -33,7 +36,7 @@ export type NoHolderReading =
   | 'base-usable'
   /** A Welcome is queued for this device or an Add is in flight: it is on its way. */
   | 'welcome-owed'
-  /** The whole fact set: no base this device can use, nothing on its way, no member online. */
+  /** The whole fact set: no usable base, nothing on its way, no member online, no live holder. */
   | 'no-holder';
 
 /**
@@ -49,14 +52,16 @@ export function readNoHolder(facts: NoHolderFacts | undefined): NoHolderReading 
   const reading = readWelcomeOwedFromSeat(facts.seat);
   if (reading === null) return 'unknown';
   if (isWelcomeOwed(reading)) return 'welcome-owed';
-  // 3. Reached only with the server's `no_peer_online` (the caller passes no facts otherwise).
+  // 3. THE HOLDERS. A live holder may yet come online, and a wake may yet bring one.
+  if (facts.holders.liveHolderDevices !== 0 || facts.holders.wakeSent) return 'unknown';
+  // 4. Reached only with the server's `no_peer_online` (the caller passes no facts otherwise).
   return 'no-holder';
 }
 
 /** Parses the `facts` of a server answer, `undefined` for anything that is not exactly that shape. */
 export function parseNoHolderFacts(raw: unknown): NoHolderFacts | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const r = raw as { base?: unknown; seat?: unknown };
+  const r = raw as { base?: unknown; seat?: unknown; holders?: unknown };
   let base: NoHolderFacts['base'];
   if (r.base === null) base = null;
   else if (
@@ -69,7 +74,19 @@ export function parseNoHolderFacts(raw: unknown): NoHolderFacts | undefined {
     base = { baseEpoch: b.baseEpoch, activeEpoch: b.activeEpoch };
   } else return undefined;
   const seat = parseSeat(r.seat);
-  return seat ? { base, seat } : undefined;
+  const holders = parseHolders(r.holders);
+  return seat && holders ? { base, seat, holders } : undefined;
+}
+
+/** Parses `holders`; `undefined` (so the whole answer reads as unknown) for any other shape. */
+function parseHolders(raw: unknown): NoHolderFacts['holders'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const h = raw as { liveHolderDevices?: unknown; wakeSent?: unknown };
+  if (!Number.isInteger(h.liveHolderDevices) || (h.liveHolderDevices as number) < 0) {
+    return undefined;
+  }
+  if (typeof h.wakeSent !== 'boolean') return undefined;
+  return { liveHolderDevices: h.liveHolderDevices as number, wakeSent: h.wakeSent };
 }
 
 /** Parses a served seat ({@link DistributionSeat}); `undefined` for any other shape. */
@@ -124,8 +141,25 @@ export function resetNoHolderReadings(): void {
 
 // ---------- Taken off this account's list ----------
 
+/**
+ * The most ids the hidden list keeps, oldest dropped first. A hidden id only ever matters while its
+ * conversation cannot open, and is released the first time it is seen active
+ * ({@link releaseHiddenOnceActive}), so the cap bounds what an account that hides many dead
+ * conversations writes - it never decides what a live one shows.
+ */
+export const HIDDEN_UNOPENABLE_CAP = 200;
+
 const hidden = new SvelteSet<string>();
 let hiddenAccount: string | null = null;
+
+/** Writes the hidden list of the bound account, in insertion order (oldest first). */
+function persistHidden(userId: string): void {
+  try {
+    localStorage.setItem(ACCOUNT_KEY.unopenableHidden(userId), JSON.stringify([...hidden]));
+  } catch (e) {
+    console.error(`[NO_HOLDER] hidden list not persisted, a reload lists it again: ${String(e)}`);
+  }
+}
 
 /** Binds the hidden list to `userId` (read once per account). */
 export function loadHiddenUnopenable(userId: string): void {
@@ -135,7 +169,10 @@ export function loadHiddenUnopenable(userId: string): void {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY.unopenableHidden(userId));
     const ids: unknown = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') hidden.add(id);
+    if (Array.isArray(ids)) {
+      for (const id of ids.slice(-HIDDEN_UNOPENABLE_CAP))
+        if (typeof id === 'string') hidden.add(id);
+    }
   } catch (e) {
     console.error(`[NO_HOLDER] hidden list unreadable, every conversation is listed: ${String(e)}`);
   }
@@ -148,18 +185,32 @@ export function loadHiddenUnopenable(userId: string): void {
  */
 export function hideUnopenable(userId: string, groupId: string): void {
   loadHiddenUnopenable(userId);
+  hidden.delete(groupId);
   hidden.add(groupId);
-  try {
-    localStorage.setItem(ACCOUNT_KEY.unopenableHidden(userId), JSON.stringify([...hidden]));
-  } catch (e) {
-    console.error(`[NO_HOLDER] hidden list not persisted, a reload lists it again: ${String(e)}`);
+  for (const oldest of [...hidden].slice(0, Math.max(0, hidden.size - HIDDEN_UNOPENABLE_CAP))) {
+    hidden.delete(oldest);
   }
+  persistHidden(userId);
   console.log(`[NO_HOLDER] ${groupId.slice(0, 8)}... taken off the list by its user`);
 }
 
 /**
+ * Releases `groupId` from the hidden list THE FIRST TIME IT IS SEEN ACTIVE (review of #2832): the
+ * hiding meant "while it cannot open", so once it opened the choice is spent. Kept, it would hide a
+ * live conversation the day a later recovery made it pending again. Called where the group is known
+ * held again (`cancelReAdd`) and by the list for every active row it renders. A no-op for an id that
+ * is not hidden, or before the account's list is bound.
+ */
+export function releaseHiddenOnceActive(groupId: string): void {
+  if (hiddenAccount === null || !hidden.has(groupId)) return;
+  hidden.delete(groupId);
+  persistHidden(hiddenAccount);
+  console.log(`[NO_HOLDER] ${groupId.slice(0, 8)}... opened - back on the list for good`);
+}
+
+/**
  * Whether a conversation is off the list: the user hid it AND it is still not active. A Welcome that
- * makes it active lists it again by itself - the hiding was never more than "while it cannot open".
+ * makes it active lists it again by itself, and releases the id ({@link releaseHiddenOnceActive}).
  */
 export function isHiddenFromList(groupId: string, lifecycle: string | undefined): boolean {
   return lifecycle !== 'active' && hidden.has(groupId);

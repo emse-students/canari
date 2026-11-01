@@ -66,13 +66,20 @@ export type WelcomeRequestAnswer =
 /**
  * What a `no_peer_online` answer says about the requester's group, read by the server IN THAT SAME
  * ANSWER (`noHolderFacts`): the stored base's two epochs - `null` when no base was ever published -
- * and the requester's own seat, read after the base. Absent when the server could not read them, or
- * told a caller with no admitted seat nothing. The one input of the no-holder banner
- * (`readNoHolder`, D5 of `docs/wiki/protocols/mls-availability-no-holder.md`).
+ * the requester's own seat, read after the base, and whether a member could still answer
+ * (`holders`). Absent when the server could not read them, or told a caller with no admitted seat
+ * nothing. The one input of the no-holder banner (`readNoHolder`, D5 of
+ * `docs/wiki/protocols/mls-availability-no-holder.md`).
  */
 export type NoHolderFacts = {
   base: { baseEpoch: number; activeEpoch: number } | null;
   seat: DistributionSeat;
+  /**
+   * `liveHolderDevices`: OTHER users' devices with an active row in the group and a KeyPackage
+   * published within the server's retention window - a member who merely did not open the app
+   * tonight. `wakeSent`: this very answer woke member phones in the background.
+   */
+  holders: { liveHolderDevices: number; wakeSent: boolean };
 };
 
 /**
@@ -917,6 +924,16 @@ export interface IMlsService {
    */
   setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<boolean>) | null): void;
   /**
+   * Hands every device event already merged to the consumer and resolves once it has decided them,
+   * after any hand-over still running. A history answer awaits it before reading who is withheld
+   * (`historyWithheld.ts`): the drain's own hand-over is not awaited by anything, so an answer
+   * scheduled in the same drain as an entry would otherwise read the record before it exists.
+   *
+   * @returns whether the events were decided: `false` when no consumer is registered, the take
+   * failed, or the consumer failed or could not decide them - and an answer then refuses.
+   */
+  settleDeviceEvents(why: string): Promise<boolean>;
+  /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
    * TRUST for "a key this device has seen", for any verifier of a device-key signature, since a key
@@ -1730,8 +1747,15 @@ export interface IMlsService {
   /**
    * Asks a member of `groupId` to Welcome this device, and says what the server did with the ask
    * ({@link WelcomeRequestAnswer}), which the requester logs - no answer makes the ask durable.
+   *
+   * `selfJoinIfNobody`: the ask of a FURTHER device that joins by itself when no member device is
+   * online (D1) - the server then stores, queues and wakes nothing, so a member's background Add
+   * never races the device's own commit. One door per answer.
    */
-  sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer>;
+  sendWelcomeRequest(
+    groupId: string,
+    opts?: { selfJoinIfNobody?: boolean }
+  ): Promise<WelcomeRequestAnswer>;
 
   /**
    * Ask one online member to republish `groupId`'s external-join base.

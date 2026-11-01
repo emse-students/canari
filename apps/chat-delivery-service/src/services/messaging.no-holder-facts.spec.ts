@@ -27,6 +27,18 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 describe('MessagingService - the facts a no-holder answer carries', () => {
   let service: MessagingService;
 
+  const pipelineCalls: { op: string; args: unknown[] }[] = [];
+  const pipe = () => {
+    const p: Record<string, unknown> = {};
+    for (const op of ['sadd', 'srem', 'rpush', 'lrem', 'expire']) {
+      p[op] = jest.fn((...args: unknown[]) => {
+        pipelineCalls.push({ op, args });
+        return p;
+      });
+    }
+    p.exec = jest.fn().mockResolvedValue([]);
+    return p;
+  };
   const redis = {
     smembers: jest.fn(),
     exists: jest.fn(),
@@ -35,12 +47,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     publish: jest.fn().mockResolvedValue(1),
     del: jest.fn().mockResolvedValue(1),
     set: jest.fn().mockResolvedValue('OK'),
-    pipeline: jest.fn(() => ({
-      sadd: jest.fn().mockReturnThis(),
-      rpush: jest.fn().mockReturnThis(),
-      expire: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([]),
-    })),
+    pipeline: jest.fn(pipe),
   };
   const repo = () => ({
     find: jest.fn().mockResolvedValue([]),
@@ -54,6 +61,15 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   let groupInfoRepo: ReturnType<typeof repo>;
   let deviceGroupRepo: ReturnType<typeof repo>;
   let queuedMessageRepo: ReturnType<typeof repo>;
+  let keyPackageRepo: ReturnType<typeof repo>;
+  let fcmWake: jest.SpyInstance;
+  /** The group's device rows: the requester's pending seat, a member's live device by default. */
+  let deviceRows: { userId: string; deviceId: string; status: string }[];
+  /** The devices with a KeyPackage inside the retention window. */
+  let liveKeyPackages: { userId: string; deviceId: string }[];
+  const openTheDoor = () =>
+    ((service as unknown as { furtherDeviceSelfJoinOpen: boolean }).furtherDeviceSelfJoinOpen =
+      true);
 
   const body = { groupId: 'g1', requesterUserId: 'requ', requesterDeviceId: 'reqd' };
 
@@ -64,20 +80,35 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     groupInfoRepo = repo();
     deviceGroupRepo = repo();
     queuedMessageRepo = repo();
+    keyPackageRepo = repo();
+    pipelineCalls.length = 0;
+    deviceRows = [
+      { userId: 'requ', deviceId: 'reqd', status: 'pending' },
+      { userId: 'ua', deviceId: 'da', status: 'active' },
+    ];
+    liveKeyPackages = [{ userId: 'ua', deviceId: 'da' }];
     // A member's device and the requester's, nobody online.
     redis.smembers.mockResolvedValue(['ua:da', 'requ:reqd']);
     redis.exists.mockResolvedValue(0);
     redis.mget.mockResolvedValue([null]);
     groupMemberRepo.findOne.mockResolvedValue({ id: 'seat-1', awaitingAdmission: false });
     groupRepo.findOne.mockResolvedValue({ id: 'g1', activeEpoch: 7 });
-    deviceGroupRepo.find.mockResolvedValue([{ deviceId: 'reqd', status: 'pending' }]);
+    deviceGroupRepo.find.mockImplementation(
+      async ({ where }: { where: { userId?: string; status?: string } }) =>
+        deviceRows.filter(
+          (r) =>
+            (where.userId === undefined || r.userId === where.userId) &&
+            (where.status === undefined || r.status === where.status)
+        )
+    );
+    keyPackageRepo.find.mockImplementation(async () => liveKeyPackages);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
-        { provide: getRepositoryToken(KeyPackage), useValue: repo() },
+        { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: repo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(PushToken), useValue: repo() },
@@ -91,7 +122,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     const logger = (service as unknown as { logger: Record<string, (m: string) => void> }).logger;
     jest.spyOn(logger, 'log').mockImplementation(() => {});
     jest.spyOn(logger, 'warn').mockImplementation(() => {});
-    jest
+    fcmWake = jest
       .spyOn(
         service as unknown as { sendFcmWelcomeRequestPending: () => Promise<void> },
         'sendFcmWelcomeRequestPending'
@@ -109,6 +140,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       facts: {
         base: { baseEpoch: 5, activeEpoch: 7 },
         seat: { status: 'pending', welcomeQueued: false, addInFlight: false },
+        holders: { liveHolderDevices: 1, wakeSent: true },
       },
     });
   });
@@ -155,6 +187,111 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     expect(res.facts).toEqual({
       base: { baseEpoch: 6, activeEpoch: 7 },
       seat: { status: 'pending', welcomeQueued: false, addInFlight: false },
+      holders: { liveHolderDevices: 1, wakeSent: false },
+    });
+  });
+
+  describe('whether a member could still answer (D5 liveness)', () => {
+    it("counts only OTHER users' active devices with a KeyPackage inside the retention window", async () => {
+      deviceRows.push(
+        { userId: 'requ', deviceId: 'old-phone', status: 'active' },
+        { userId: 'ub', deviceId: 'db', status: 'active' },
+        { userId: 'uc', deviceId: 'dc', status: 'removed' }
+      );
+      liveKeyPackages = [
+        { userId: 'ua', deviceId: 'da' },
+        { userId: 'requ', deviceId: 'old-phone' },
+      ];
+
+      const res = await service.notifyBaseRefreshRequest('requ', body);
+
+      expect(res.facts?.holders).toEqual({ liveHolderDevices: 1, wakeSent: false });
+    });
+
+    it('reads zero when every other holder is gone past the window', async () => {
+      liveKeyPackages = [];
+      const res = await service.notifyBaseRefreshRequest('requ', body);
+      expect(res.facts?.holders.liveHolderDevices).toBe(0);
+    });
+  });
+
+  describe('the further-device door is gated on D2/D3 having reached every member client', () => {
+    it('serves no seat while the door is shut, so the client reads seat_unreadable', async () => {
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
+      jest
+        .spyOn(
+          service as unknown as { assertMayReadExternalBase: () => Promise<void> },
+          'assertMayReadExternalBase'
+        )
+        .mockResolvedValue(undefined);
+
+      const res = await service.getGroupInfo('g1', 'requ', 'reqd');
+
+      expect(res).not.toHaveProperty('seat');
+    });
+
+    it('stores and wakes an ask carrying selfJoinIfNobody like any other while the door is shut', async () => {
+      const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
+
+      expect(res.status).toBe('no_peer_online');
+      expect(fcmWake).toHaveBeenCalledTimes(1);
+      expect(pipelineCalls.some((c) => c.op === 'sadd')).toBe(true);
+    });
+  });
+
+  describe('one door per answer (D1): a further device that joins by itself', () => {
+    beforeEach(() => {
+      openTheDoor();
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
+    });
+
+    it('keeps the stored ask as the one door when the base is stale - the device cannot join on it', async () => {
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 5 });
+
+      const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
+
+      expect(res.facts?.holders.wakeSent).toBe(true);
+      expect(fcmWake).toHaveBeenCalledTimes(1);
+      expect(pipelineCalls.some((c) => c.op === 'srem')).toBe(false);
+    });
+
+    it('stores, queues and wakes nothing, and withdraws an ask an earlier pass stored', async () => {
+      const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
+
+      expect(res.status).toBe('no_peer_online');
+      expect(res.facts?.holders).toEqual({ liveHolderDevices: 1, wakeSent: false });
+      expect(fcmWake).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(pipelineCalls.filter((c) => c.op === 'sadd' || c.op === 'rpush')).toEqual([]);
+      expect(pipelineCalls).toContainEqual({
+        op: 'srem',
+        args: ['pending_welcome:g1', 'requ:reqd'],
+      });
+      expect(pipelineCalls).toContainEqual({
+        op: 'lrem',
+        args: [
+          'pending_welcome_notify:ua',
+          0,
+          JSON.stringify({
+            type: 'welcome_request',
+            groupId: 'g1',
+            requesterUserId: 'requ',
+            requesterDeviceId: 'reqd',
+          }),
+        ],
+      });
+    });
+
+    it('still stores and wakes an ask without the intent', async () => {
+      const res = await service.notifyWelcomeRequest('requ', body);
+      expect(res.facts?.holders.wakeSent).toBe(true);
+      expect(fcmWake).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards to an online member whatever the intent', async () => {
+      redis.exists.mockResolvedValue(1);
+      const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
+      expect(res.status).toBe('forwarded');
     });
   });
 
@@ -166,6 +303,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   });
 
   it("serves a conversation's base with the asking device's seat, read after it", async () => {
+    openTheDoor();
     groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
     jest
       .spyOn(

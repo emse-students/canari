@@ -64,12 +64,42 @@ export async function readDeviceSeat(
 }
 
 /**
+ * THE FURTHER-DEVICE SELF-JOIN IS SHUT UNTIL EVERY MEMBER CLIENT READS IT AS AN ORDINARY ADDED DEVICE
+ * (D1 gated on D2/D3, review of #2832). A `1.5.1`-`1.5.4` member writes a member's further device
+ * entering by its own commit as an accusation and withholds history from it, so while such clients
+ * may still be members, the server does not open the door: the conversation base is served WITHOUT
+ * the asking device's seat (the client then reads `seat_unreadable` and does not join), and a
+ * further device's `selfJoinIfNobody` ask is stored, queued and woken exactly as any other.
+ *
+ * LIFTED BY ONE LINE, in its own pull request, once `minClientVersion` is at least the release
+ * carrying D2/D3 (`1.5.5`) - `docs/wiki/legacy-compatibility.md` carries the condition. A constant
+ * rather than an environment switch: the condition is a fact about the shipped clients, the same on
+ * every estate, and a reviewed commit is its record.
+ */
+export const FURTHER_DEVICE_SELF_JOIN_OPEN = false;
+
+/**
+ * Whether a member could still answer, read in the same request (D5 of
+ * docs/wiki/protocols/mls-availability-no-holder.md): `liveHolderDevices` counts OTHER users'
+ * devices with an `active` row in the group AND a KeyPackage published within the retention window
+ * (`RETENTION_WINDOW_MS` - the one liveness window this service keeps); `wakeSent` says whether this
+ * very request woke member phones in the background. A member who simply did not open the app tonight
+ * is still a live holder, so the client never calls such a group unopenable.
+ */
+export interface HolderLiveness {
+  liveHolderDevices: number;
+  wakeSent: boolean;
+}
+
+/**
  * The facts a `no_peer_online` answer carries about the requester's group (`noHolderFacts`): the
- * stored base's epochs - `null` when none was ever published - and the requester's own seat.
+ * stored base's epochs - `null` when none was ever published - the requester's own seat, and whether
+ * a member could still answer ({@link HolderLiveness}).
  */
 export interface NoHolderFacts {
   base: { baseEpoch: number; activeEpoch: number } | null;
   seat: DeviceSeat;
+  holders: HolderLiveness;
 }
 
 /** A seat as one log field: `pending(welcome=..,adding=..)`, `active` or `none`. */

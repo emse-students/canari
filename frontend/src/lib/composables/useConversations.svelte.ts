@@ -29,9 +29,11 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
+  chat_unopenable_start_again_failed,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
+import { showToast } from '$lib/stores/toast.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
 import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -183,6 +185,8 @@ export function useConversations() {
 
   // ── UI state ──────────────────────────────────────────────────────────────
   let selectedContact = $state<string | null>(null);
+  /** `handleStartAgainWithSamePeople` is creating a group: a second tap is ignored. */
+  let startingAgainInFlight = false;
   let isConversationDrawerOpen = $state(false);
   /**
    * WHICH conversation side panel is open, and there is only ever one.
@@ -2438,33 +2442,49 @@ export function useConversations() {
    * one first), so a second one would be a duplicate on the peer's side; the banner does not offer it.
    */
   async function handleStartAgainWithSamePeople(ctx: ConversationContext) {
+    // ONE AT A TIME (review of #2832): a second tap while the first is creating would mint a second
+    // group with the same people.
+    if (startingAgainInFlight) {
+      ctx.log('[NO_HOLDER] start again: already under way - this tap is ignored');
+      return;
+    }
     const key = selectedContact;
     if (!key) return;
     const convo = conversations.get(key);
     if (!convo || (convo.conversationType ?? 'group') !== 'group') return;
-    let people: string[];
+    startingAgainInFlight = true;
     try {
-      people = (await fetchGroupRoster(ctx.ensureMls(), convo.id, { fresh: true })).filter(
-        (id) => id !== ctx.userId
+      let people: string[];
+      try {
+        people = (await fetchGroupRoster(ctx.ensureMls(), convo.id, { fresh: true })).filter(
+          (id) => id !== ctx.userId
+        );
+      } catch (e) {
+        ctx.log(
+          `[NO_HOLDER] start again: the roster of ${convo.id.slice(0, 8)}... could not be read: ${String(e)}`
+        );
+        showToast(chat_unopenable_start_again_failed(), 'error');
+        return;
+      }
+      ctx.log(
+        `[NO_HOLDER] start again: a new group for the ${people.length} other member(s) of ${convo.id.slice(0, 8)}...`
       );
+      const outcome = await createNewGroup(convo.name, ctx);
+      if (!outcome.ok || !outcome.key) {
+        ctx.log(
+          `[NO_HOLDER] start again: the new group was not created (${outcome.ok ? 'no key' : outcome.reason})`
+        );
+        showToast(chat_unopenable_start_again_failed(), 'error');
+        return;
+      }
+      // `createNewGroup` selected the new group, so the invitation goes to it.
+      if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
     } catch (e) {
-      ctx.log(
-        `[NO_HOLDER] start again: the roster of ${convo.id.slice(0, 8)}... could not be read: ${String(e)}`
-      );
-      return;
+      ctx.log(`[NO_HOLDER] start again failed: ${String(e)}`);
+      showToast(chat_unopenable_start_again_failed(), 'error');
+    } finally {
+      startingAgainInFlight = false;
     }
-    ctx.log(
-      `[NO_HOLDER] start again: a new group for the ${people.length} other member(s) of ${convo.id.slice(0, 8)}...`
-    );
-    const outcome = await createNewGroup(convo.name, ctx);
-    if (!outcome.ok || !outcome.key) {
-      ctx.log(
-        `[NO_HOLDER] start again: the new group was not created (${outcome.ok ? 'no key' : outcome.reason})`
-      );
-      return;
-    }
-    // `createNewGroup` selected the new group, so the invitation goes to it.
-    if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
   }
 
   /**

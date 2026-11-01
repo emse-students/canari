@@ -265,6 +265,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       isDistributionGroup: (groupId) => mls.isDistributionGroup(groupId),
       conversations: session.conversations,
       localGroups: () => mls.getLocalGroups(),
+      heldGroupsKnown: () => mls.heldGroupsKnown(),
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),
