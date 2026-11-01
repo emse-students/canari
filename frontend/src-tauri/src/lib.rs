@@ -65,7 +65,7 @@ use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
     ack_fcm_cache, check_push_secret_health, claim_device_notices, delete_user_push_files,
     forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
-    get_voip_token, load_push_context, read_and_clear_outbox_sent,
+    get_voip_token, load_push_context, push_cache_message_ids, read_and_clear_outbox_sent,
     read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
     store_push_context, store_push_secret, take_fcm_cache, take_key_group_push_joins,
@@ -1730,6 +1730,7 @@ pub fn run() {
             get_local_storage_usage,
             take_fcm_cache,
             ack_fcm_cache,
+            push_cache_message_ids,
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
             take_nse_outcomes,

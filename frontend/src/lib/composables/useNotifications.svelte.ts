@@ -10,8 +10,9 @@ import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
 import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import {
+  pluginMessageBanner,
   postNativeMessageNotification,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
@@ -694,7 +695,7 @@ export function useNotifications() {
     }
     lastNotifAtByConv.set(convKey, now);
     // ONE BUILDER ON ANDROID, AND IT IS THE RICH ONE. Checked before the plugin rather than
-    // inside it: the plugin path below is the WEB implementation, kept because web and desktop
+    // inside it: the plugin path below serves web, desktop and an iPhone in the foreground, which
     // have nothing else, and running it here as well is what posted two notifications for one
     // message. See `nativeNotification.ts` for the pair the user captured.
     if (isAndroidTauriRuntime()) {
@@ -719,9 +720,20 @@ export function useNotifications() {
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
+          // ON iOS THIS BANNER STANDS BESIDE THE EXTENSION'S, so it is headed like it: the group or
+          // the salon as the title, the sender beside the text (`pluginMessageBanner`).
+          const shown =
+            isIosTauriRuntime() && native
+              ? pluginMessageBanner(native, title, (sender, line) =>
+                  m.notif_group_message_line({ sender, body: line })
+                )
+              : { title, body };
           await sendNotification({
-            title,
-            ...androidNotificationOptions(body, mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES),
+            title: shown.title,
+            ...androidNotificationOptions(
+              shown.body,
+              mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES
+            ),
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
@@ -733,9 +745,13 @@ export function useNotifications() {
           // on nothing.
           //
           // ANDROID NO LONGER REACHES HERE: the branch above asks the native builder instead, which
-          // is the answer the last paragraph of this comment filed. What is left below is WEB and
-          // DESKTOP, where the plugin is the only builder there is - and desktop is a different
-          // implementation again (`desktop.rs`, notify-rust) that no session has measured.
+          // is the answer the last paragraph of this comment filed. What is left below is iOS IN
+          // THE FOREGROUND - the extension builds every banner of an app in the background, and
+          // `CanariShowMessageNotification` returns early in front, so this plugin call is the one
+          // banner an iPhone gets for a frame the socket delivered (measured on an iPhone 12,
+          // `1.5.4-alpha.1`, 2026-11-01) - and WEB and DESKTOP, where the plugin is the only builder
+          // there is. Desktop is a different implementation again (notify-rust) that no session has
+          // measured.
           //
           // `tauri-plugin-notification` 2.3.3 puts THREE extras on the tap intent: the notification
           // id, the action id, and `notification.sourceJson`. On the way back,

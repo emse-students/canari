@@ -445,6 +445,108 @@ pub(crate) async fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
     }
 }
 
+/// The message ids the push cache holds RIGHT NOW in `dirs` - the live file and every taken one -
+/// READ, never moved or deleted: the take ([`take_fcm_cache_in`]) and its ack stay the only writers.
+///
+/// WHAT IT ANSWERS. Every entry is a message a native push path decrypted for a banner, and the
+/// frontend asks this before raising a banner of its own for a message the socket redelivered, so a
+/// message the iOS notification extension already presented is not presented twice (iPhone 12,
+/// `1.5.4-alpha.1`, 2026-11-01). It is read at the decision rather than learned from the take,
+/// because the take runs after the drain that decides, on a cold start and on a resume alike.
+///
+/// A sealed line this key does not open, or any line with no key, names no id: the answer is then
+/// "not known presented", which costs a duplicate banner and never a missing one.
+pub(crate) fn push_cache_message_ids_in(
+    dirs: &[&std::path::Path],
+    key: Option<&CacheKey>,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut unopened = 0usize;
+    for dir in dirs {
+        let mut names: Vec<String> = taken_files(dir).into_iter().map(|(_, n)| n).collect();
+        names.push(FCM_CACHE_FILE.to_string());
+        for name in names {
+            let text = match std::fs::read_to_string(dir.join(&name)) {
+                Ok(t) => t,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    log::warn!(
+                        "[FCM_CACHE] {name} unreadable - its ids are not known presented: {e}"
+                    );
+                    continue;
+                }
+            };
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let opened = if line.starts_with(crate::native_cache::LINE_PREFIX) {
+                    match key.map(|k| open_line(k, Purpose::PushCache, line)) {
+                        Some(Ok(o)) => o.into_inner(),
+                        _ => {
+                            unopened += 1;
+                            continue;
+                        }
+                    }
+                } else {
+                    line.to_string()
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&opened) else {
+                    continue;
+                };
+                if let Some(id) = value["messageId"].as_str().filter(|s| !s.is_empty()) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    if unopened > 0 {
+        log::warn!(
+            "[FCM_CACHE] {unopened} sealed line(s) not opened - their messages are not known presented"
+        );
+    }
+    ids
+}
+
+/// [`push_cache_message_ids_in`] on the app's data directory and, on iOS, the App Group container,
+/// where the extension writes and from where `CanariDrainAppGroupFcmCache` carries its lines over
+/// only at the app's activation - after the page's resume has already pulled the socket.
+#[tauri::command]
+pub(crate) async fn push_cache_message_ids(app: tauri::AppHandle) -> Vec<String> {
+    let read = tauri::async_runtime::spawn_blocking(move || {
+        let dir = match app.path().app_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+                return Vec::new();
+            }
+        };
+        #[cfg(mobile)]
+        let key = crate::native_cache::app_cache_key(&app).ok();
+        #[cfg(not(mobile))]
+        let key: Option<CacheKey> = None;
+        #[cfg(target_os = "ios")]
+        let group = match crate::app_group::app_group_dir() {
+            Ok(g) => Some(g),
+            Err(e) => {
+                log::warn!(
+                    "[FCM_CACHE] no App Group container - the extension's lines are not read: {e}"
+                );
+                None
+            }
+        };
+        #[cfg(not(target_os = "ios"))]
+        let group: Option<std::path::PathBuf> = None;
+        let mut dirs: Vec<&std::path::Path> = vec![dir.as_path()];
+        if let Some(g) = group.as_deref() {
+            dirs.push(g);
+        }
+        push_cache_message_ids_in(&dirs, key.as_ref())
+    })
+    .await;
+    read.unwrap_or_else(|e| {
+        log::error!("[FCM_CACHE] id read task failed: {e}");
+        Vec::new()
+    })
+}
+
 /// [`ack_fcm_cache_in`] on the app's data directory, called by `consumeFcmCache` once the entries
 /// it was handed have been written.
 #[tauri::command]
@@ -2672,6 +2774,47 @@ mod fcm_cache_take_tests {
         let t = take_fcm_cache_in(&d, Some(&KEY));
         assert!(t.entries.is_empty());
         assert!(t.files.is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// The ids are read from the live file, a taken one and a second directory (the iOS App Group),
+    /// and reading them moves and deletes nothing: the take still hands every entry over.
+    #[test]
+    fn the_ids_are_read_everywhere_and_nothing_is_taken() {
+        let d = dir("ids-app");
+        let group = dir("ids-group");
+        push(&d, "taken");
+        let first = take_fcm_cache_in(&d, Some(&KEY));
+        assert_eq!(first.files.len(), 1);
+        push(&d, "live");
+        push(&group, "extension");
+        let mut found =
+            super::push_cache_message_ids_in(&[d.as_path(), group.as_path()], Some(&KEY));
+        found.sort();
+        assert_eq!(found, vec!["extension", "live", "taken"]);
+        assert!(d.join(FCM_CACHE_FILE).exists() && group.join(FCM_CACHE_FILE).exists());
+        assert_eq!(
+            ids(&take_fcm_cache_in(&d, Some(&KEY))),
+            vec!["taken", "live"]
+        );
+        std::fs::remove_dir_all(&d).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// With no key a sealed line names no id - "not known presented" - and a plaintext one still does.
+    #[test]
+    fn a_sealed_line_names_no_id_without_the_key() {
+        let d = dir("ids-nokey");
+        let sealed = seal_line(&KEY, Purpose::PushCache, "{\"messageId\":\"sealed\"}");
+        std::fs::write(
+            d.join(FCM_CACHE_FILE),
+            format!("{{\"messageId\":\"plain\"}}\n{sealed}\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            super::push_cache_message_ids_in(&[d.as_path()], None),
+            vec!["plain"]
+        );
         std::fs::remove_dir_all(&d).ok();
     }
 

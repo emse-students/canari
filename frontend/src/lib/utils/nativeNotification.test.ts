@@ -8,6 +8,7 @@ vi.mock('$lib/utils/appVersion', () => ({
 
 import {
   notificationGroupName,
+  pluginMessageBanner,
   postNativeMessageNotification,
   type NativeMessageNotification,
 } from './nativeNotification';
@@ -116,5 +117,43 @@ describe('notificationGroupName', () => {
 
   it('falls back to the stored name when there is no auxiliary label', () => {
     expect(notificationGroupName('group', '', 'grp-1')).toBe('grp-1');
+  });
+});
+
+/**
+ * AN iPHONE IN THE FOREGROUND IS BANNERED BY THE PLUGIN, AND THE BANNER MUST BE HEADED LIKE THE
+ * EXTENSION'S: the group or the salon as the title, the sender beside the text. It was titled with
+ * the sender alone, so a group banner lost its group ("Canari Test Delta / F1 group fg tap", iPhone
+ * 12, `1.5.4-alpha.1`, 2026-11-01).
+ */
+describe('pluginMessageBanner', () => {
+  const line = (sender: string, body: string) => `${sender}: ${body}`;
+
+  it('titles a group with the group, and names the sender beside the text', () => {
+    expect(
+      pluginMessageBanner(
+        { senderName: 'Canari Test Delta', groupName: 'F1', body: 'hi' },
+        'x',
+        line
+      )
+    ).toEqual({ title: 'F1', body: 'Canari Test Delta: hi' });
+  });
+
+  it('titles a direct message with its sender, the text untouched', () => {
+    expect(
+      pluginMessageBanner({ senderName: 'Alice', groupName: '', body: 'hi' }, 'x', line)
+    ).toEqual({ title: 'Alice', body: 'hi' });
+  });
+
+  it('reads a group named like its sender as the extension does - a direct message', () => {
+    expect(
+      pluginMessageBanner({ senderName: 'Alice', groupName: 'Alice', body: 'hi' }, 'x', line)
+    ).toEqual({ title: 'Alice', body: 'hi' });
+  });
+
+  it('keeps the caller title when nothing names the conversation', () => {
+    expect(
+      pluginMessageBanner({ senderName: '', groupName: '', body: 'hi' }, 'Canari', line)
+    ).toEqual({ title: 'Canari', body: 'hi' });
   });
 });

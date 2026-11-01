@@ -124,6 +124,35 @@ describe('the restore and a live delivery', () => {
     expect(log).toHaveBeenCalledWith('[RESTORE] 1 conversation row(s) seeded - history follows');
   });
 
+  it('starts its history phase only once the catch-up the rows released has drained', async () => {
+    // The login's pull is held until the rows exist and returned by `notifyConversationRowsSeeded`
+    // (iPhone 12, 2026-11-01). Not awaited, phase 2's first barrier pulled the mailbox itself.
+    const conversations = new SvelteMap<string, Conversation>();
+    const order: string[] = [];
+    let drain!: () => void;
+    const service = mls({
+      notifyConversationRowsSeeded: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            order.push('catch-up');
+            drain = () => {
+              order.push('drained');
+              resolve();
+            };
+          })
+      ),
+      getUserGroups: vi.fn(async () => {
+        order.push('phase2');
+        return [];
+      }),
+    });
+    const running = restore(conversations, service, storage());
+    await vi.waitFor(() => expect(order).toEqual(['catch-up']));
+    drain();
+    await running;
+    expect(order.slice(0, 3)).toEqual(['catch-up', 'drained', 'phase2']);
+  });
+
   it('merges the stored page into a row a live delivery wrote after the rows were seeded', async () => {
     const conversations = new SvelteMap<string, Conversation>();
     let reads = 0;

@@ -71,4 +71,13 @@ describe('the notification tap listener is armed once and routed by a table', ()
     expect(code).toMatch(/notifNav\.navigate\(target\)/);
     expect(code).not.toMatch(/\bgoto\(/);
   });
+
+  it('heads an iPhone foreground banner like the extension, and only there', () => {
+    // The plugin is the builder of an iPhone in the foreground (iPhone 12, 2026-11-01), and it
+    // titled a group banner with the sender alone - see `pluginMessageBanner`.
+    expect(code).toMatch(
+      /isIosTauriRuntime\(\) && native\s*\?\s*pluginMessageBanner\(native, title,/
+    );
+    expect(code).toMatch(/title: shown\.title,/);
+  });
 });
