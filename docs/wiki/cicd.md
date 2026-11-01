@@ -2263,7 +2263,7 @@ are builder stages and the local compose file, which reach no estate.
 Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
 estate, so it is a backlog item ([backlog](backlog.md#p3---the-eight-service-images-run-as-root-trivy-ds-0002-measured-2026-10-23)), not a gate that would be red from day one.
 
-### A `code_scanning` rule on the ruleset: analysed 2026-10-23, NOT applied
+### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 
 **The question.** Ruleset `22152902` requires one check, `CI passed`. The `CodeQL` check-run (the
 code scanning results of the `Security / CodeQL Security Analysis` upload) is advisory: it fails on a
@@ -2296,53 +2296,14 @@ bypass actor with `bypass_mode: always`, and auto-merge merges as whoever armed 
 binds exactly as far as `CI passed` already does for those merges, no further. And the analysis
 takes 2-4 minutes, well inside the CI run, so "in progress" costs no extra wall-clock time.
 
-**Recommendation: apply it.** No pull request this repository produces today would be blocked for a
-missing analysis, and it turns the one security verdict still advisory into a binding one. **Its
-precondition must stay true**: CodeQL must never move behind `changes` or a `paths` filter - that
-would make every documentation pull request wait on an analysis that never starts. Apply it while
-watching the first fork pull request, if one ever comes. The decision is the user's
-([owed](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
-
-`PUT` replaces the whole ruleset, so the body carries every current rule plus the new one (read back
-2026-10-23 with `gh api repos/emse-students/canari/rulesets/22152902`; read it again before applying):
-
-```sh
-gh api -X PUT repos/emse-students/canari/rulesets/22152902 --input - <<'JSON'
-{
-  "name": "main",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-  "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
-    { "actor_id": 4791068, "actor_type": "Integration", "bypass_mode": "always" }
-  ],
-  "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    { "type": "pull_request", "parameters": {
-        "allowed_merge_methods": ["squash", "merge", "rebase"],
-        "dismiss_stale_reviews_on_push": false,
-        "dismissal_restriction": { "allowed_actors": [], "enabled": false },
-        "require_code_owner_review": false,
-        "require_extra_approval_for_unattributed_changes": false,
-        "require_last_push_approval": false,
-        "required_approving_review_count": 0,
-        "required_review_thread_resolution": false,
-        "required_reviewers": [] } },
-    { "type": "required_status_checks", "parameters": {
-        "do_not_enforce_on_create": false,
-        "required_status_checks": [{ "context": "CI passed" }],
-        "strict_required_status_checks_policy": false } },
-    { "type": "code_scanning", "parameters": {
-        "code_scanning_tools": [
-          { "tool": "CodeQL", "alerts_threshold": "errors", "security_alerts_threshold": "high_or_higher" } ] } }
-  ]
-}
-JSON
-```
-
-Undoing it is the same `PUT` without the last rule.
+**Decision: applied on 2026-10-23.** Ruleset `22152902` carries the `code_scanning` rule (tool `CodeQL`,
+`alerts_threshold: errors`, `security_alerts_threshold: high_or_higher`), read back from the ruleset
+itself. No pull request this repository produces was found to be blocked for a missing analysis, and
+it turned the one security verdict that was advisory into a binding one. **Its precondition must stay
+true**: CodeQL must never move behind `changes` or a `paths` filter - that would make every
+documentation pull request wait on an analysis that never starts. Watch the first fork pull request,
+if one ever comes. Undoing it is a `PUT` of the ruleset without that rule (`PUT` replaces the whole
+ruleset, so read it first with `gh api repos/emse-students/canari/rulesets/22152902`).
 
 ### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
 
