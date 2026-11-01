@@ -1284,6 +1284,35 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
+**A salon banner names its speaker (2026-11-01), the iOS half of Android's `ChannelBannerAuthor`.**
+Both Apple composers (the NSE's `handleChannelMessage`, `canari_push.mm`'s `CanariHandleChannelMessage`)
+used to set no author subtitle except on a mention of the reader, and to draw the SALON's letter
+whenever the face was missing - the shape the owner read on Android `v1.6.0` ("G" for `#général`).
+One rule per composer now (the NSE's `channelBannerAuthor`, `CanariSalonSpeaker`), with the same
+three answers and reason codes as Android:
+
+- **Named**: the open PROVED the author - the native answer's `authorProven`, `true` only under a
+  v2 session (`background.rs` `open_graine_push`) - and `display_names.json` names them. The
+  subtitle is their name (or "<name> vous a mentionné" on a mention), the image their face or their
+  initials.
+- **Unnamed**: a v1 session (`v1-session`: it opens for whoever the push names), a push naming
+  nobody, or a proven author the file has no name for. The subtitle is "Quelqu'un", the image the
+  "?" disc, **no photo**, and the mention line names nobody either.
+- **Unproven**: a blind banner. No subtitle, the "?" disc.
+- **One log line**, `[SALON_AUTHOR] author UNNAMED reason=...`, prefixed `WARN` only for a fault
+  (`unreadable`, `no-names`, `no-sender-id`, `no-account`).
+- **One read of `display_names.json` per banner, its reason said once.** The speaker, the mention
+  line and the tokens share one book (the NSE's `DisplayNamesReader`; `CanariNameBook`, which the
+  ObjC handler hands to `CanariShowMessageNotification` as `salonNames`). Whichever reads first says
+  why the file names nobody: the speaker's line above, or - when the speaker rule did not read it (a
+  v1 row, a push naming nobody) - `[SALON_AUTHOR] display_names.json names nobody reason=...` from the
+  tokens, at the same levels. The NSE decides the speaker before rendering the tokens for that.
+
+Only the JSON literal `true` proves (a CFBoolean: `isJSONTrue`, and the same test in `canari_push.mm`; a
+JSON `1` does not). An older native library answers without `authorProven`, which reads as not proven: such a build
+names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
+reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+
 #### What the extension did, in the app's log (2026-11-01)
 
 **Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the
@@ -2474,8 +2503,12 @@ them. The name never rides the push and is never fetched on the push path (user 
     neither (review of #2881, which caught a first version naming nobody on the socket path while
     the push named the author).
   - **Never a borrowed face.** The second trigger adds no line, so its large icon describes nothing
-    shown: a shortcut-less post (a salon) takes the face of the line the shade shows LAST
-    (`style.messages.lastOrNull()?.person?.icon`), never the icon the second call brought.
+    shown: a shortcut-less post (a salon) takes the face of the last line SOMEBODY ELSE wrote,
+    never the icon the second call brought, and never the reader's own inline reply (attributed to
+    the style's user, `selfPerson`).
+  - **The name is on disk before the socket trigger reads it.** `notifyInbound` resolves the sender
+    (which notes the name for `display_names.json`), then awaits `flushNameMirror`, then posts: a
+    proven author resolved in that very task is named, not "Quelqu'un".
   - **The title is the last trigger's wording.** The push titles a salon `<Communaute> - #<salon>`
     (`buildChannelPushTitle`, from its payload's workspace name); the WebView's salon row carries no
     community name, so the socket trigger titles it with the salon alone (`notificationGroupName`).
