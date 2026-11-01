@@ -4414,3 +4414,7 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   under an open conversation (a name resolved late, a rename) strands the draft under the old key:
   invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
   "vanishes" from a DM.
+
+### The scroll-to-bottom badge counts only what lies below the viewport (2026-11-01)
+
+The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.

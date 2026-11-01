@@ -43,7 +43,7 @@
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadForUser, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -364,6 +364,12 @@
    * observers, the unread pill.
    */
   let isNearBottom = $state(true);
+  /**
+   * The id of the last message row at least partly in view, written by `measureScroll` with the flag
+   * above. The unread pill counts the unread rows AFTER it (`countUnreadBelow`), so it is a statement
+   * about what lies below the reader and not about the conversation as a whole.
+   */
+  let lastVisibleMessageId = $state<string | null>(null);
   let _isMobile = $state(false);
   let _composerFocused = $state(false);
   let lastConversationKey = $state('');
@@ -537,10 +543,29 @@
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     isNearBottom = isPinnedToBottom(chatContainer);
+    lastVisibleMessageId = measureLastVisibleMessageId();
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < 80) {
       void loadOlderGroups();
     }
+  }
+
+  /**
+   * The last message row whose top edge is above the bottom of the scroller, or `null`. A row not in
+   * the DOM (below the render window) is below by definition; the scan runs back from the newest
+   * drawn row and stops at the first one in view, so it is short exactly when it matters (a reader
+   * near the live end) and costs one rect per row only while they are far up.
+   */
+  function measureLastVisibleMessageId(): string | null {
+    if (!chatContainer) return null;
+    const bottom = chatContainer.getBoundingClientRect().bottom;
+    for (let i = visibleMessageGroups.length - 1; i >= 0; i--) {
+      const group = visibleMessageGroups[i];
+      if (!isMessageGroupRow(group)) continue;
+      const el = document.getElementById(`msg-${group.message.id}`);
+      if (el && el.getBoundingClientRect().top < bottom) return group.message.id;
+    }
+    return null;
   }
 
   function clearStickyDateTimer() {
@@ -751,7 +776,12 @@
     const convo = chatView?.conversation;
     if (!convo) return 0;
     const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
-    return countUnreadForUser(convo.messages, mine.stamped, mine.server);
+    return countUnreadBelow(
+      messageGroups.filter(isMessageGroupRow).map((g) => g.message),
+      lastVisibleMessageId,
+      mine.stamped,
+      mine.server
+    );
   });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold

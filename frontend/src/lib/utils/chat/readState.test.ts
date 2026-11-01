@@ -1,6 +1,7 @@
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
 import { compareMessageOrder } from './messageOrder';
 import {
+  countUnreadBelow,
   countUnreadForUser,
   hasRead,
   isUnreadForUser,
@@ -185,6 +186,54 @@ describe('the unread badge', () => {
     const read = watermarkAfterReading(onScreen, 0);
     expect(countUnreadForUser(onScreen, read)).toBe(0);
     expect(countUnreadForUser(afterScrollingUp, read)).toBe(0);
+  });
+});
+
+describe('the unread count of the scroll-to-bottom button', () => {
+  const thread = [
+    msg('a', 1000),
+    msg('b', 2000, ME),
+    msg('c', 3000),
+    msg('d', 4000, ME),
+    msg('e', 5000),
+  ];
+
+  it('counts only the unread rows AFTER the last visible one', () => {
+    // Watermark 0: a, c, e are unread. Viewing up to c, only e lies below.
+    expect(countUnreadBelow(thread, 'c', 0)).toBe(1);
+    expect(countUnreadBelow(thread, 'a', 0)).toBe(2);
+  });
+
+  it('shows nothing for an unread row above or in view, the owner report of 2026-11-01', () => {
+    // The newest foreign row (e) is in view, an older unread one (a) is above: nothing is below.
+    expect(countUnreadBelow(thread, 'e', 0)).toBe(0);
+    // Own rows below the viewport never count, nor does a thread where everything below is own.
+    expect(countUnreadBelow(thread, 'c', 5000)).toBe(0);
+    expect(countUnreadBelow([msg('a', 1000), msg('b', 2000, ME)], 'a', 0)).toBe(0);
+  });
+
+  it('counts nothing while the position is unmeasured or unknown', () => {
+    expect(countUnreadBelow(thread, null, 0)).toBe(0);
+    expect(countUnreadBelow(thread, 'gone', 0)).toBe(0);
+  });
+
+  it('is unmoved by a reaction, which is not a row: the same rows give the same count', () => {
+    const withReaction = thread.map((m) =>
+      m.id === 'd' ? { ...m, reactions: { '❤': [PEER] } } : m
+    );
+    expect(countUnreadBelow(withReaction, 'c', 0)).toBe(countUnreadBelow(thread, 'c', 0));
+  });
+
+  it('never counts a derived system or roster line below the viewport', () => {
+    // "X added Y to the group" is a local row stamped at processing time, so it can sort last.
+    const roster = msg('r', 9000, 'system', { isSystem: true });
+    const roster2 = msg('r2', 9500, PEER, { isSystem: true });
+    expect(countUnreadBelow([...thread, roster, roster2], 'e', 0)).toBe(0);
+    expect(countUnreadBelow([...thread, roster, roster2], 'c', 0)).toBe(1);
+  });
+
+  it('counts a new incoming row that lands below the viewport', () => {
+    expect(countUnreadBelow([...thread, msg('f', 6000)], 'e', 0)).toBe(1);
   });
 });
 
