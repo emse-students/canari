@@ -11,9 +11,20 @@ import type { MediaService } from './media.service';
 
 const SECRET = 'erasure-secret';
 
-function build(result: { deleted: number; failed: number }) {
-  const svc = { removeAllOwnedBy: jest.fn().mockResolvedValue(result) };
-  return new MediaController(svc as unknown as MediaService, {} as never, {} as never);
+function build(result: { deleted: number; failed: number }, order: string[] = []) {
+  const svc = {
+    removeAllOwnedBy: jest.fn(async () => {
+      order.push('media');
+      return result;
+    }),
+  };
+  const sessions = {
+    cancelAllOwnedBy: jest.fn(async (id: string) => {
+      order.push(`sessions:${id}`);
+      return 1;
+    }),
+  };
+  return new MediaController(svc as unknown as MediaService, sessions as never, {} as never);
 }
 
 const prev = process.env.INTERNAL_SECRET;
@@ -38,5 +49,11 @@ describe('DELETE media/internal/users/:userId', () => {
     await expect(
       build({ deleted: 2, failed: 1 }).removeAllOwnedBy('u1', SECRET)
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('ends the open upload sessions of the erased owner first: no device of that account can any more', async () => {
+    const order: string[] = [];
+    await build({ deleted: 0, failed: 0 }, order).removeAllOwnedBy('u1', SECRET);
+    expect(order).toEqual(['sessions:u1', 'media']);
   });
 });
