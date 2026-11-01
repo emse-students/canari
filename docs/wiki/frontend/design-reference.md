@@ -1124,14 +1124,13 @@ from a lazy per-face `fetch` the client can cache to a per-user upstream call ma
 being assembled, and it would make the user payload fail when MiGallery does. **The discriminator
 this rule asks for has to be known to the layer that would carry it, and here it is not.**
 
-**Chromium does not warn about `apple-mobile-web-app-capable`.** The note said a deprecation warning
-was logged on every load and that `mobile-web-app-capable` should be added beside it. Measured on
-Chrome 153 against the served page (the tag IS in the markup): one console message on a cold load,
-`Initialised in WEB mode (WASM)`, and nothing under `warn`, `error`, `verbose` or `issue`. There is
-also **no web app manifest in this repository**, so the standard spelling would install nothing and
-declare nothing - the Apple tag is the whole of "added to the home screen, this opens without
-Safari's chrome", and it is the only one of the two any engine here reads. Adding the second name
-would have put an inert tag in the source to silence a line that is not printed.
+**Chromium DOES warn about a lone `apple-mobile-web-app-capable` (re-measured 2026-11-01).** An
+earlier note here said it did not (Chrome 153); on Chrome 156 a bare page carrying only the Apple tag
+logs `<meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta
+name="mobile-web-app-capable" content="yes">` as a `warn`, and a page carrying BOTH tags logs nothing.
+So `app.html` keeps both: the standard name silences Chrome, the Apple one is the only spelling Safari
+reads for "added to the home screen, opens without Safari's chrome". There is no web app manifest in
+this repository, so neither name installs anything by itself.
 
 **`MIN_USEFUL_HEIGHT` exceeding the room on the chosen side is not a fault.** A panel smaller than
 it shows a header and a clipped first row, so the height is KEPT and the panel is moved instead.
