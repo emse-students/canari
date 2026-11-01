@@ -156,9 +156,11 @@ and volume, and this system asked for none of the three.
 
 | Frame | Fields | Action |
 |---|---|---|
-| `welcome_request` | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward Welcome to a peer |
-| `reinvite_request` | same | Re-invite after stale epoch |
-| `read` | `messageId` | Read receipt (no-op at gateway level) |
+| `typing` | `groupId`, `state` (`start`/`stop`) | Relayed to the group's other online devices, only when the sender holds a seat in `group:members:{groupId}` |
+| `disconnect` | - | Retires this connection's session |
+
+Every other frame is ignored. `welcome_request` was RETIRED on 2026-11-01 (ignored and logged; the
+ask is `POST mls/welcome-request`) - see [chat-gateway](services/chat-gateway.md#inbound-frames-typing-is-seat-checked-welcome_request-is-retired-2026-11-01).
 
 ### Gateway -> client
 

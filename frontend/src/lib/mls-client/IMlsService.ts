@@ -1,3 +1,4 @@
+import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
@@ -63,6 +64,8 @@ export type { IncomingDeliveryMeta };
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
   | { status: 'stored' }
+  /** The server REFUSED the ask on membership (`DeliveryRefusal`): no seat, so nothing was put. */
+  | { status: 'refused'; reason: DeliveryRefusalReason }
   | null;
 
 /**
@@ -714,6 +717,11 @@ export type HistoryRequestOutcome = {
    * facts, separated by evidence rather than by prose. Zero when the server said nothing.
    */
   excludedOnline: number;
+  /**
+   * Set when the server REFUSED the request on membership - an answer, and NOT an election: nobody
+   * was elected and nobody was found absent, so neither `noPeerOnline` nor `target` says anything.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**
@@ -737,6 +745,11 @@ export type BaseRefreshOutcome = {
   noPeerOnline: boolean;
   /** The member key (`userId:deviceId`) the server elected, when it elected one. */
   target?: string;
+  /**
+   * Set when the server REFUSED the request on membership: nobody was elected, so a caller must
+   * never read it as "a member is reachable" - see {@link HistoryRequestOutcome.refused}.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**

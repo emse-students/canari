@@ -43,8 +43,18 @@ describe('MessagingService - notifyHistoryRequest', () => {
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
+  /**
+   * The requester is an ADMITTED member of the group: the group exists and their seat awaits nothing.
+   * The gate itself - a stranger refused, a waiting seat answered 409 - is pinned per route in
+   * `controllers/messaging.controller.relay-membership.spec.ts`.
+   */
+  const seated = <T extends object>(repo: T, row: object) => ({
+    ...repo,
+    findOne: jest.fn().mockResolvedValue(row),
+  });
+
   const body = {
-    groupId: 'g1',
+    groupId: '00000000-0000-4000-8000-00000000c0a4',
     requesterUserId: 'reqU',
     requesterDeviceId: 'reqD',
   };
@@ -55,8 +65,14 @@ describe('MessagingService - notifyHistoryRequest', () => {
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(GroupMember),
+          useValue: seated(emptyRepo(), { id: 'seat', awaitingAdmission: false }),
+        },
+        {
+          provide: getRepositoryToken(Group),
+          useValue: seated(emptyRepo(), { id: '00000000-0000-4000-8000-00000000c0a4' }),
+        },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         {
           provide: getRepositoryToken(OneTimeKeyPackage),
