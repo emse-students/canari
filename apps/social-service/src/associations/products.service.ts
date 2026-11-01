@@ -489,7 +489,7 @@ const CLOSING_GRANT_REFUSALS: Record<ClosingGrantRefusal, { code: string; messag
   },
 };
 
-/** What `resolvePurchase` decided: the product, its amount for this buyer, and where it is paid. */
+/** What `decidePurchase` decided: the product, its amount for this buyer, and where it is paid. */
 interface ResolvedPurchase {
   asso: Association;
   product: AssociationProduct;
@@ -1047,7 +1047,7 @@ export class ProductsService {
 
   /**
    * What a checkout of `product` would charge this viewer now, from the SAME decisions
-   * `resolvePurchase` takes: a refused tier (`held`, `lower`, `unranked`) has no price, a grid
+   * `decidePurchase` takes: a refused tier (`held`, `lower`, `unranked`) has no price, a grid
    * answers its cell (null when it does not sell this combination), a fixed price goes through
    * `fixedPriceFor`, and a free amount is the buyer's to choose, so null.
    */
@@ -1517,18 +1517,17 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
-    // Only an edit that touches the gate is asked: an old product left gated by a since-disabled
-    // cotisation can still be withdrawn or renamed, and unticking the box is what clears it.
-    if (dto.membersOnly !== undefined || dto.requiredTags !== undefined) {
+    // Only a TRANSITION into the gated state is asked, not a save that repeats it: the settings
+    // panel and /admin/cercle send `membersOnly` on every save, so an old product left gated by a
+    // since-disabled cotisation can still be withdrawn or renamed, and unticking it clears it.
+    // "Gated" is the rule's own reading: ticked AND no `requiredTags` (which take precedence).
+    const nextMembersOnly = dto.membersOnly ?? product.membersOnly;
+    const nextTags = dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags;
+    const wasGated = product.membersOnly && (product.requiredTags ?? []).length === 0;
+    if (nextMembersOnly && (nextTags ?? []).length === 0 && !wasGated) {
       const asso = await this.assoRepo.findOne({ where: { id: associationId } });
       if (!asso) throw new NotFoundException('Association not found');
-      assertMembersOnlyGateable(
-        asso,
-        dto.membersOnly ?? product.membersOnly,
-        dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags,
-        this.logger,
-        'product'
-      );
+      assertMembersOnlyGateable(asso, nextMembersOnly, nextTags, this.logger, 'product');
     }
 
     // Setting `isActive` by hand is the admin taking ownership of the state: whatever the platform
@@ -2939,20 +2938,6 @@ export class ProductsService {
         `amount=${amountCents} allowed=${allowed} cents`
     );
     throw amountOutOfRange(min, max, `The ${what} must be between ${allowed} cents`);
-  }
-
-  /**
-   * Loads product/association, validates purchase rules, and resolves the amount in cents:
-   * `preparePurchase` (everything that calls another service) then `decidePurchase`.
-   */
-  private async resolvePurchase(
-    associationId: string,
-    productId: string,
-    userId: string,
-    customAmountCents?: number
-  ): Promise<ResolvedPurchase> {
-    const prepared = await this.preparePurchase(associationId, productId, userId);
-    return this.decidePurchase(prepared, userId, customAmountCents, this.productRepo.manager);
   }
 
   /**
