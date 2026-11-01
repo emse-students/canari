@@ -192,6 +192,7 @@ import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/a
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { isWelcomeOwed, readWelcomeOwedFromSeat } from '$lib/utils/chat/welcomeOwed';
+import { parseNoHolderFacts } from '$lib/utils/chat/noHolder.svelte';
 import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import {
   CommitRefusedError,
@@ -2972,16 +2973,27 @@ export abstract class BaseMlsService implements IMlsService {
    * next connection, or `null` when no answer said either - said here, since no answer is not a
    * statement that the ask was put.
    */
-  async sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer> {
+  async sendWelcomeRequest(
+    groupId: string,
+    opts?: { selfJoinIfNobody?: boolean }
+  ): Promise<WelcomeRequestAnswer> {
     const answer = await this.delivery.deliveryPost('welcome-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
+      ...(opts?.selfJoinIfNobody === true ? { selfJoinIfNobody: true } : {}),
     });
     if (answer?.status === 'forwarded' && typeof answer.target === 'string') {
       return { status: 'forwarded', target: answer.target };
     }
-    if (answer?.status === 'no_peer_online') return { status: 'stored' };
+    if (answer?.status === 'no_peer_online') {
+      const facts = parseNoHolderFacts(answer.facts);
+      return {
+        status: 'stored',
+        ...(facts ? { facts } : {}),
+        ...(answer.selfJoin === true ? { selfJoin: true } : {}),
+      };
+    }
     console.warn(
       `[MLS] welcome_request for ${groupId.slice(0, 8)}... got no answer naming what was done with it (status ${answer === null ? 'none' : String(answer.status)})`
     );
@@ -3019,9 +3031,12 @@ export abstract class BaseMlsService implements IMlsService {
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    const noPeerOnline = answer?.status === 'no_peer_online';
+    const facts = noPeerOnline ? parseNoHolderFacts(answer?.facts) : undefined;
     return {
-      noPeerOnline: answer?.status === 'no_peer_online',
+      noPeerOnline,
       target: typeof answer?.target === 'string' ? answer.target : undefined,
+      ...(facts ? { facts } : {}),
     };
   }
 
@@ -6758,7 +6773,7 @@ export abstract class BaseMlsService implements IMlsService {
    * problem and send the next reader to entirely the wrong place.
    */
   protected groupInfoChannel(groupId: string): {
-    /** `seat` is served by a key group's transport only - see {@link DistributionSeat}. */
+    /** `seat`: this device's seat, read after the base - see {@link DistributionSeat}. */
     fetch(): Promise<{
       groupInfo: string;
       baseEpoch: number;
@@ -6781,7 +6796,10 @@ export abstract class BaseMlsService implements IMlsService {
         );
       }
       return {
-        fetch: () => this.delivery.fetchGroupInfo(groupId),
+        // A CONVERSATION'S BASE COMES WITH THIS DEVICE'S SEAT, read after it (the server's
+        // `readDeviceSeat`), so the further-device self-join (D1) reads the base and whether an Add
+        // already carries this device from one answer.
+        fetch: () => this.delivery.fetchGroupInfo(groupId, this.deviceId),
         publish: (gi, epoch) => this.delivery.storeGroupInfo(groupId, gi, epoch),
       };
     }

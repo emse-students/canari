@@ -632,7 +632,9 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       addedBy: 'bob:new-tablet',
       memberAlreadyPresent: true,
       firstInGroup: true,
-      trust: 'first-sight',
+      // THE ONE CLASS D3 KEEPS WITHHELD (owner, 2026-10-31): a known id under a new key. A further
+      // device under a first-sight or pinned key is an ordinary added device (the test below).
+      trust: 'key-changed',
       keyFingerprint: 'beef',
       ...over,
     });
@@ -661,7 +663,7 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       epoch: 5,
       keyFingerprint: 'beef',
     });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('known device of a member'));
     error.mockRestore();
   });
 
@@ -971,13 +973,21 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
-  it('reports a device pinned by ANOTHER group entering this one by itself - the pin vouches for nothing here', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
-
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId: 'group-1', kind: 'unvouched-device' })
+  it('a further device entering by itself under its known or a first-seen key is an ordinary added device (D2, D3)', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        selfEntry({ trust: 'pinned' }),
+        selfEntry({ trust: 'first-sight', identity: 'bob:new-phone', addedBy: 'bob:new-phone' }),
+      ],
+      ctx
     );
+
+    expect(reporter).not.toHaveBeenCalled();
+    const accusing = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(accusing).toEqual([]);
   });
 
   it('says nothing for a device back in this group, a member-signed Add, or this device itself', async () => {

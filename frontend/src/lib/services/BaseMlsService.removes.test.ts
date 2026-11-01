@@ -214,7 +214,7 @@ describe('BaseMlsService - the departed-member removal reads the base through th
 
     // Refusing here would keep the departed member's leaves forever: nothing publishes a base for
     // a conversation on a sweep's behalf.
-    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('conv-1');
+    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('conv-1', undefined);
     expect(ctx.stageRemoveMembers).toHaveBeenCalledOnce();
     expect(ctx.ownContextMatchesBase).not.toHaveBeenCalled();
   });

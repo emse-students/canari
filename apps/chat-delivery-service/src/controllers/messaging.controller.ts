@@ -29,6 +29,7 @@ import {
   sanitizeEpoch,
   sanitizeLeafLogValue,
   sanitizeLogValue,
+  sanitizeOptionalQueryValue,
 } from '../utils/sanitize';
 
 /**
@@ -137,16 +138,23 @@ export class MessagingController {
   @Get('mls/group-info/:groupId')
   async getGroupInfo(
     @Headers('x-user-id') authUserId: string | undefined,
-    @Param('groupId') groupId: string
+    @Param('groupId') groupId: string,
+    @Query('deviceId') deviceIdRaw?: string
   ) {
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
+    // The asking device's seat travels WITH the base when the device names itself (`readDeviceSeat`).
+    const deviceId = sanitizeOptionalQueryValue(deviceIdRaw, 'deviceId');
     // "Nothing stored" is answered as JSON, never as a bare `null`: Nest sends a handler's `null` as
     // an EMPTY body with no content type, which the client cannot tell from a captive portal's empty
     // 2xx - so it read "no base" as an unparseable answer. `{ groupInfo: null }` is what every client,
     // old or new, already reads as "no base".
-    return (await this.messagingService.getGroupInfo(groupId, authUserId)) ?? { groupInfo: null };
+    return (
+      (await this.messagingService.getGroupInfo(groupId, authUserId, deviceId)) ?? {
+        groupInfo: null,
+      }
+    );
   }
 
   /**
@@ -197,9 +205,19 @@ export class MessagingController {
   async notifyWelcomeRequest(
     @Headers('x-user-id') authUserId: string | undefined,
     @Body()
-    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+      selfJoinIfNobody?: boolean;
+    }
   ) {
-    return this.messagingService.notifyWelcomeRequest(authUserId, body);
+    return this.messagingService.notifyWelcomeRequest(authUserId, {
+      groupId: body.groupId,
+      requesterUserId: body.requesterUserId,
+      requesterDeviceId: body.requesterDeviceId,
+      selfJoinIfNobody: body.selfJoinIfNobody === true,
+    });
   }
 
   /**

@@ -60,8 +60,36 @@ export type { IncomingDeliveryMeta };
  */
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
-  | { status: 'stored' }
+  | {
+      status: 'stored';
+      facts?: NoHolderFacts;
+      /**
+       * Whether the server lets a further device join by itself (D1) - `true` only when it says so.
+       * Absent (an older server) or `false` (the door is held shut until every member client reads
+       * such an entry as D2/D3 say): the device waits for a member's Add and tries no join.
+       */
+      selfJoin?: boolean;
+    }
   | null;
+
+/**
+ * What a `no_peer_online` answer says about the requester's group, read by the server IN THAT SAME
+ * ANSWER (`noHolderFacts`): the stored base's two epochs - `null` when no base was ever published -
+ * the requester's own seat, read after the base, and whether a member could still answer
+ * (`holders`). Absent when the server could not read them, or told a caller with no admitted seat
+ * nothing. The one input of the no-holder banner (`readNoHolder`, D5 of
+ * `docs/wiki/protocols/mls-availability-no-holder.md`).
+ */
+export type NoHolderFacts = {
+  base: { baseEpoch: number; activeEpoch: number } | null;
+  seat: DistributionSeat;
+  /**
+   * `liveHolderDevices`: every device but the asking one - the user's own other devices included -
+   * with an active row in the group and a KeyPackage published within the server's retention
+   * window: a holder who merely did not open the app tonight. `wakeSent`: this very answer woke member phones in the background.
+   */
+  holders: { liveHolderDevices: number; wakeSent: boolean };
+};
 
 /**
  * One device's seat in a key group, served by chat-delivery WITH the group's base and read AFTER it
@@ -701,6 +729,8 @@ export type BaseRefreshOutcome = {
   noPeerOnline: boolean;
   /** The member key (`userId:deviceId`) the server elected, when it elected one. */
   target?: string;
+  /** With `noPeerOnline` only: the facts read in the same answer ({@link NoHolderFacts}). */
+  facts?: NoHolderFacts;
 };
 
 /**
@@ -1726,8 +1756,15 @@ export interface IMlsService {
   /**
    * Asks a member of `groupId` to Welcome this device, and says what the server did with the ask
    * ({@link WelcomeRequestAnswer}), which the requester logs - no answer makes the ask durable.
+   *
+   * `selfJoinIfNobody`: the ask of a FURTHER device that joins by itself when no member device is
+   * online (D1) - the server then stores, queues and wakes nothing, so a member's background Add
+   * never races the device's own commit. One door per answer.
    */
-  sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer>;
+  sendWelcomeRequest(
+    groupId: string,
+    opts?: { selfJoinIfNobody?: boolean }
+  ): Promise<WelcomeRequestAnswer>;
 
   /**
    * Ask one online member to republish `groupId`'s external-join base.

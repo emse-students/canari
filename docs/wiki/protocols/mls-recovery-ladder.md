@@ -241,9 +241,12 @@ join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
 
 ### A further device's request is answered by an automatic Add
 
-A further device of a member (the join answers `further_device`) does not let itself in, so the seam
-sends it a `welcome_request`, and a member's device ADDS it: since 2026-10-31 nobody is asked about a
-member's device ([mls-protocol](mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+A further device of a member (the join answers `further_device`) asks first: the seam sends a
+`welcome_request`, and a member's device online ADDS it. On a `stored` answer - no member device
+online - it joins by itself in the same pass (D1,
+[mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)). Nobody is
+asked about a member's device since 2026-10-31
+([mls-protocol](mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 On DEVREVOKE-KEYGROUP (`1.5.1-alpha.8`, 2026-10-29) a minted device sent one for each of its six
 conversations, then all six again 20 s later: only `resetReAddCooldowns` clears every group's
 throttle, and its one caller is the session setup (`setupMessageHandler`). The requester's console
@@ -255,16 +258,21 @@ logs it, but no answer makes the request durable:
 
 - `forwarded` reaches one online member's device, which adds it.
 - `stored` (`no_peer_online`) is kept for every member's next connection (`pending_welcome`,
-  `pending_welcome_notify`, 24 h), then drained to a member's device.
+  `pending_welcome_notify`, 24 h), then drained to a member's device - EXCEPT a further device's ask
+  carrying `selfJoinIfNobody` on a current base, which the server neither stores nor wakes (and
+  withdraws if an earlier pass stored it): its own join is the one door
+  ([one door per answer](mls-availability-no-holder.md#decisions-taken-2026-10-31)).
 - A record of "already asked against this epoch pair" was tried in review and REMOVED: in a quiet
   group the pair never moves, and the presence edge does not watch group members, so the device
   would wait for a reload.
 
 **What it costs.** A device with a `pending` seat is also added by every member's own
-pending-invitation sweep from that durable row (`processPendingInvitations`). **A device with NO seat
-and no member's device online** depends on its own cadence. The durable fix is on the
-[backlog](../backlog.md): store a further device's request as a server row, as a link's ask is, and
-let the requester stop asking once the row exists.
+pending-invitation sweep from that durable row (`processPendingInvitations`). A device with NO seat
+and no member's device online no longer waits for one: the `stored` answer is the trigger of its own
+join (D1), so the server-row ask once planned for it is not needed and was closed on 2026-10-31. **Until
+the server opens that door** (`FURTHER_DEVICE_SELF_JOIN_OPEN`, held shut until `minClientVersion`
+carries D2/D3 - [the gate](mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)),
+the answer says `selfJoin: false` and the device waits for a member as before, without a second join.
 
 **The history answerer says its withholding once and counts repeats.** `utils/graine/frameHandler.ts` says
 `withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group

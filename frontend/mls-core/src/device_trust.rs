@@ -164,7 +164,7 @@ impl DeviceEvent {
             && match self.trust {
                 LeafTrust::KeyChanged => true,
                 LeafTrust::FirstSight => self.member_already_present,
-                LeafTrust::Pinned => self.enters_as_unvouched_device(),
+                LeafTrust::Pinned => self.enters_by_its_own_commit() || self.added_by_unvouched,
             }
     }
 
@@ -172,10 +172,22 @@ impl DeviceEvent {
     /// signed by that very device (an external commit), its user already held a leaf, and the
     /// device was never in this group ([`DeviceEvent::first_in_group`]) - whatever its pin says.
     /// The twin of `entersAsUnvouchedDevice` in `deviceTrust.ts`, held to the same table.
+    ///
+    /// ONLY UNDER A KEY OTHER THAN THE ONE KNOWN FOR THAT ID (owner, 2026-10-31, D3 of
+    /// `docs/wiki/protocols/mls-availability-no-holder.md`): a further device - a NEW id - that lets
+    /// itself in when no member device is online is announced like an added one and answered under
+    /// rule 2; a KNOWN id entering by its own commit under a new key stays withheld.
     pub fn enters_as_unvouched_device(&self) -> bool {
         if self.added_by_unvouched && self.added_by.is_some() {
             return true;
         }
+        self.trust == LeafTrust::KeyChanged && self.enters_by_its_own_commit()
+    }
+
+    /// Whether a device of a MEMBER brought ITSELF into a group it was never in: the commit admitting
+    /// it was signed by that very device, its user already held a leaf, and the device was never in
+    /// this group. The twin of `entersByItsOwnCommit` in `deviceTrust.ts`.
+    pub fn enters_by_its_own_commit(&self) -> bool {
         self.first_in_group
             && self.member_already_present
             && self
@@ -1064,6 +1076,33 @@ mod tests {
         let e = &events[0];
         assert_eq!(e.trust, LeafTrust::Pinned);
         assert!(e.first_in_group);
+        assert!(e.enters_by_its_own_commit());
+        // D3 (owner, 2026-10-31): the same key it is known by - announced, never withheld.
+        assert!(!e.enters_as_unvouched_device());
+        assert!(e.announces_new_device());
+    }
+
+    #[test]
+    fn a_known_device_entering_a_group_by_itself_under_a_new_key_stays_unvouched() {
+        // The one class D3 keeps withheld: a KNOWN id, a key other than the pinned one, its own
+        // commit, never in this group.
+        let mut t = DeviceTrust::default();
+        let own = ("alice:phone-a", &[1u8; 32][..]);
+        let a_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut a_after = a_before.clone();
+        a_after.push(lk(2, "bob:web-2", 3));
+        t.observe_merged_commit("gA", 4, &a_before, &a_after, Some("bob:phone-1"), own);
+        t.take_events();
+        let b_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut b_after = b_before.clone();
+        b_after.push(lk(2, "bob:web-2", 4));
+        t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own);
+        let events = t.take_events();
+        let e = events
+            .iter()
+            .find(|e| e.identity == "bob:web-2")
+            .expect("the entry is an event");
+        assert_eq!(e.trust, LeafTrust::KeyChanged);
         assert!(e.enters_as_unvouched_device());
         assert!(e.announces_new_device());
     }

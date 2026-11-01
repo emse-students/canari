@@ -1415,6 +1415,11 @@
   "chat_settings_title": "Paramètres",
   "chat_e2e_established_preview": "Canal E2E établi.",
   "chat_waiting_own_device": "En attente d'ajout. Cela se fait tout seul dès qu'un autre de vos appareils déjà dans cette conversation, ou un autre membre, ouvre l'application.",
+  "chat_unopenable_here": "Cette conversation ne peut plus être ouverte sur cet appareil : aucun appareil qui la détenait n'est revenu.",
+  "chat_unopenable_start_again": "Recommencer avec les mêmes personnes",
+  "chat_unopenable_hide": "Retirer de ma liste",
+  "chat_unopenable_start_again_failed": "Impossible de recommencer la conversation pour l'instant. Réessayez dans un moment.",
+  "chat_system_unvouched_device_entry": "Un appareil de {user} est entré de lui-même dans la conversation avec une clé différente de celle qu'on lui connaissait, sans qu'un membre ne l'ajoute",
   "chat_awaiting_admission_preview": "En attente qu'un membre vous ajoute.",
   "chat_unread_messages_label": [
     {
@@ -3576,7 +3581,6 @@
   "chat_system_member_left": "{user} a quitté le groupe",
   "chat_system_device_added": "{user} a ajouté un appareil",
   "chat_system_uninvited_entry": "{user} a rejoint la conversation sans qu'un membre ne l'ajoute",
-  "chat_system_unvouched_device_entry": "Un appareil jamais vu de {user} est entré dans la conversation de lui-même, sans qu'un membre ne l'ajoute",
   "device_notice_title": "Nouvel appareil sur votre compte",
   "device_notice_body": "Un nouvel appareil a été ajouté à votre compte ({when}).",
   "device_notice_body_named": "« {label} » a été ajouté à votre compte ({when}).",

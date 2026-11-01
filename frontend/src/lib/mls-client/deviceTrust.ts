@@ -113,7 +113,7 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
     case 'pinned':
       // A pin written by another group's tree vouches for nothing here: a device that brought
       // itself into a group it was never in is announced whatever its pin says.
-      return entersAsUnvouchedDevice(event);
+      return entersByItsOwnCommit(event) || event.addedByUnvouched === true;
   }
 }
 
@@ -155,6 +155,20 @@ export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
   if (event.addedBy === null) return false;
   // Added by a device that is itself an unvouched entry here: no member vouched for this one either.
   if (event.addedByUnvouched === true) return true;
+  // ONLY UNDER A KEY OTHER THAN THE ONE KNOWN FOR THAT ID (owner, 2026-10-31, D3 of
+  // docs/wiki/protocols/mls-availability-no-holder.md). A further device of a member - a NEW id - that
+  // lets itself in when no member device is online is announced as an ordinary added device and
+  // answered under rule 2; a KNOWN id coming in by its own commit under a new key stays withheld.
+  return event.trust === 'key-changed' && entersByItsOwnCommit(event);
+}
+
+/**
+ * Whether a device of a MEMBER brought ITSELF into a group it was never in: the commit admitting it
+ * was signed by that very device, its user already held a leaf, and the device was never in THIS
+ * group (`firstInGroup`). The twin of `DeviceEvent::enters_by_its_own_commit` in Rust.
+ */
+export function entersByItsOwnCommit(event: DeviceEvent): boolean {
+  if (event.addedBy === null) return false;
   if (event.memberAlreadyPresent !== true) return false;
   if (event.firstInGroup !== true) return false;
   const admitted = canonicalIdentity(event.identity);
