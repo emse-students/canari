@@ -2,7 +2,7 @@
 /**
  * The feed's tab row keeps the SELECTED tab in full view: on arrival, on a selection, and when the
  * row's layout changes under it - the web font arriving after the first layout, or a resize (Mi 9T,
- * v1.2.9-alpha.4: at 2x text "Tout" sat under the faded edge by the CanaReels icon).
+ * v1.2.9-alpha.4: at 2x text the tab then called "Tout" sat under the faded edge by the CanaReels icon).
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement
   ) {
-    // Tout is the last tab: 300-420 in the content, measured with the row unscrolled.
+    // "Mon espace" (then "Tout") is the last tab: 300-420 in the content, measured with the row unscrolled.
     const tab = this.getAttribute('data-feed-tab');
     const box = tab === 'all' ? { left: 300, width: 120 } : { left: 0, width: 300 };
     return { ...box, right: box.left + box.width, top: 0, bottom: 0, height: 0 } as DOMRect;

@@ -112,6 +112,7 @@ describe('memberLeft, replay', () => {
       deletedMessages: new Set(),
       editedMessages: new Map(),
       readWatermarkUpdates: {},
+      serverReadWatermarkUpdates: {},
       historyFloorUpdate: {},
       pushPendingMessage: (msg: any) => pushed.push(msg),
       dropOwnExcluded: async (messages: any) => messages,
