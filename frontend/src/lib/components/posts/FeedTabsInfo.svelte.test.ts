@@ -16,14 +16,21 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-it('explains the three tabs when opened and hides them when closed', () => {
-  window.matchMedia = vi.fn().mockReturnValue({ matches: true }) as unknown as typeof matchMedia;
+/** Mounts the button with `matchMedia` answering `sheet`, and returns it. */
+function render(sheet: boolean): HTMLButtonElement {
+  window.matchMedia = vi.fn().mockReturnValue({ matches: sheet }) as unknown as typeof matchMedia;
   mounted = mount(FeedTabsInfo, { target: document.body });
-  const button = document.querySelector<HTMLButtonElement>('[data-feed-tabs-info]')!;
+  return document.querySelector<HTMLButtonElement>('[data-feed-tabs-info]')!;
+}
+
+it('explains the three tabs when opened and hides them when closed', () => {
+  const button = render(true);
   expect(document.body.textContent).not.toContain(m.posts_tabs_info_all_body());
   button.click();
   flushSync();
   expect(button.getAttribute('aria-expanded')).toBe('true');
+  expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   for (const text of [
     m.posts_tabs_info_associations_body(),
     m.posts_tabs_info_followed_body(),
@@ -34,4 +41,24 @@ it('explains the three tabs when opened and hides them when closed', () => {
   button.click();
   flushSync();
   expect(button.getAttribute('aria-expanded')).toBe('false');
+});
+
+it('on a wide window it is a labelled group, not a dialog', () => {
+  const button = render(false);
+  button.click();
+  flushSync();
+  expect(button.getAttribute('aria-haspopup')).toBe('true');
+  expect(document.querySelector('[role="group"]')).not.toBeNull();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it('Escape closes it and returns focus to the (i) button', () => {
+  const button = render(false);
+  button.click();
+  flushSync();
+  const panel = document.querySelector<HTMLElement>('[role="group"]')!;
+  panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  flushSync();
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(button);
 });

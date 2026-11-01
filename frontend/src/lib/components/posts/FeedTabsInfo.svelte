@@ -43,7 +43,7 @@
   data-feed-tabs-info
   aria-label={m.posts_tabs_info_open()}
   title={m.posts_tabs_info_open()}
-  aria-haspopup="dialog"
+  aria-haspopup={asSheet ? 'dialog' : 'true'}
   aria-expanded={open}
   onclick={toggle}
   class="glass-chrome ui-icon-button text-text-muted hover:text-text-main rounded-full focus-visible:ring-2 focus-visible:ring-amber-500"

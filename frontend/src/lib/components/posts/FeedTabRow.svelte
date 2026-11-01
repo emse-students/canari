@@ -85,7 +85,7 @@
 
   // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
   // changes under it - a resize, or the web font arriving after the first layout was measured with
-  // the fallback's widths: at 2x text the row overflows and "Mon espace" sat under the faded edge by the
+  // the fallback's widths: at 2x text the row overflows and the tab then called "Tout" sat under the faded edge by the
   // CanaReels icon (`centredTabScrollLeft`).
   $effect(() => {
     const selected = feed;

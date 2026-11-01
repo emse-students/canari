@@ -7,8 +7,8 @@ const row = { left: 16, width: 300 };
 const MAX = 120;
 
 describe('centredTabScrollLeft', () => {
-  it('scrolls the last tab ("Tout") flush with the end, out from under the fade', () => {
-    // Tout spans 300-420 in the content, so its left is 316 on screen at scrollLeft 0.
+  it('scrolls the last tab (then "Tout") flush with the end, out from under the fade', () => {
+    // It spans 300-420 in the content, so its left is 316 on screen at scrollLeft 0.
     expect(centredTabScrollLeft(row, { left: 316, width: 120 }, 0, MAX)).toBe(MAX);
   });
 
