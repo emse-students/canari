@@ -382,6 +382,8 @@
   "outbox_upload_too_large": "Ce fichier n'a pas pu être envoyé : il dépasse la taille maximale acceptée par le serveur. Envoyez une version plus petite ou compressée.",
   "outbox_upload_refused": "Ce fichier n'a pas pu être envoyé : le serveur l'a refusé. Supprimez ce message, puis réessayez ou envoyez une autre version du fichier.",
   "upload_failed_label": "Envoi refusé par le serveur",
+  "upload_unsent_group_deleted": "Non envoyé : cette conversation a été supprimée",
+  "upload_unsent_not_a_member": "Non envoyé : vous ne faites plus partie de cette conversation",
   "media_orphan_label": "Cet envoi n'a pas abouti : le fichier n'existe pas sur le serveur",
   "control_refused_reaction": "Votre réaction {emoji} n'a pas été envoyée",
   "control_refused_edit": "Votre modification n'a pas été envoyée",

@@ -1382,18 +1382,48 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
   enqueue (`OutboxEnqueueError`) withdraws the placeholder and re-stages the file; a
   `MessageWrittenError` (the row is on disk, the live queue refused it) keeps both - the next flush
   sends it. The one refusal left is the text path's: a `removed` row takes nothing new.
+- **"Pair" is atomic on IndexedDB only.** SQLite through `tauri-plugin-sql` cannot hold a transaction
+  across two statements ([sqliteBatch](../../../../frontend/src/lib/db/sqliteBatch.ts)), so it writes the
+  entry first and a tear after it throws `OutboxEntryWrittenAloneError`; `MessagePairWriteError.entryWritten`
+  carries it to both send paths, which then tell the queue the row is durable instead of writing it
+  a second time (a second blob in its slot) and giving the file back (a duplicate). Review of #2874, M2.
+- **The account is asked before EACH write**, not once at the tap: `enqueueOutboxMessage` reaches the
+  module's ACTIVE controller, so a sign-out inside the read or the pair write would hand the file to
+  the NEXT account's queue, which sends it as itself. On a sign-out since the tap the file is dropped
+  with a log line, nothing is re-staged, and the caption is not sent (review of #2874, M1).
+- **A caption belongs to the first file**: a refused first file given back to the staging takes it
+  back too (the send answers `false`, the composer restores the draft) instead of sending it alone as
+  a text that captions nothing (L3). A file DROPPED because the member moved on (below) still lets its
+  caption go, so the words are not lost with it.
+- **A refusal after the member moved to another conversation drops the file** and says so on the
+  banner of the conversation now on screen (`chat_media_dropped_other_conversation`); re-staging it
+  where the member is not looking was judged worse. Accepted as is (review of #2874, L4).
 - **What the barrier guarded is the flush's**: the queue-idle barrier before any lane (the file is
-  sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD and resumed by
-  its Welcome), the deleted-group read and `isGroupActive` (an evicted group retires it) - all before
-  the upload is paid, so a file for a group that cannot take it costs no transfer. The CEK is still
+  sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD, its bubble
+  showing `repairing`, and resumed by its Welcome), the deleted-group read and `isGroupActive` (an
+  evicted group retires it) - all before the upload is paid, so a file for a group that cannot take it
+  costs no transfer. **And again before the seal** (`outbox media seal`): the flush's barrier is an
+  upload back, and a lane woken by the upload's end does not pass it again (L1). The CEK is still
   generated on the device, by the upload the flush starts (`encryptAndUpload`); the entry holds the
   plaintext under the device key until then.
+- **A file the group will never take says why in its bubble.** Retired for `group-deleted`, or for
+  `evicted`/`evicted-late`/`removed`, its bytes go with the row and the bubble read "refused by the
+  server", the file's failure and not this one. `failPermanently` now records an `UnsentReason`
+  (`uploadProgress.svelte.ts`) and the bubble says `upload_unsent_group_deleted` or
+  `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). In memory, like the upload
+  views: after a reload the failed bubble falls back to the generic line.
+- **An uploaded file retired unsent stays on the server.** There is no client route that deletes an
+  ordinary chat upload (`DELETE /media/:id` is server-to-server; the user route covers only the
+  sender's own chat reel), so `failPermanently` names its `mediaId` at `console.warn` and in the
+  in-app log, and the object waits for its retention class's sweep (`ephemeral` for a chat upload).
+  Owed if that is ever too slow: a sender's delete route for its own unsent upload (L2).
 - **Order**: every file of one tap is dated by the tap (`tappedAt + index`), so a text typed while a
   long write runs is dated after all of them; a text sent before the file goes out before it. A text
   sent AFTER it may still be accepted first while the upload runs (WP-OFF-9, below).
 - Pinned by `useMessaging.mediaEnqueue.svelte.test.ts` (no barrier, tap-then-kill durability, order,
-  the refusals) and `outbox.test.ts` ("a file queued at the tap": kill and resume, the idle barrier,
-  the held and the evicted group, failure then retry).
+  the refusals, the sign-out and the caption), `sqlitePairWrite.test.ts` (the torn SQLite pair) and
+  `outbox.test.ts` ("a file queued at the tap": kill and resume, both barriers, the held, evicted and
+  deleted group and their reasons, the orphaned upload, failure then retry).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

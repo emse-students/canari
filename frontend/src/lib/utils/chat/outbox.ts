@@ -62,6 +62,7 @@ import {
   clearAllUploads,
   clearUpload,
   patchUpload,
+  setUnsentReason,
   setUploadRetry,
   uploadViewOf as viewOfUpload,
 } from './uploadProgress.svelte';
@@ -1620,6 +1621,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     patchStatus(entry.id, 'error');
     clearUpload(entry.id);
+    // AN ATTACHMENT RETIRED FOR THE GROUP'S SAKE SAYS SO IN ITS BUBBLE, not "refused by the server"
+    // (review of #2874, M4): its bytes go with the row below, and the bubble is all that is left.
+    if (entry.kind === 'media') {
+      if (cause === 'group-deleted') setUnsentReason(entry.id, 'group-deleted');
+      else if (cause === 'evicted' || cause === 'evicted-late' || cause === 'removed')
+        setUnsentReason(entry.id, 'not-a-member');
+    }
+    // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
+    // deletes an ordinary chat upload (`DELETE /media/:id` is server-to-server), so it is said here,
+    // with its id, and left to the server's retention sweep of its class (review of #2874, L2).
+    const orphanedUpload = entry.kind === 'media' ? entry.media?.uploadedRef?.mediaId : undefined;
+    if (orphanedUpload) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… retired UNSENT after its upload (${cause}): media ${orphanedUpload} stays on the server until its retention sweep`;
+      console.warn(line);
+      log(line);
+    }
     uploadTasks.delete(entry.id);
     uploadOwed.delete(entry.id);
     repairHeld.delete(entry.id);
@@ -2185,6 +2202,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           startUpload(entry, media);
           return 'uploading';
         }
+        // THE INBOUND QUEUE IS ASKED AGAIN BEFORE THE SEAL. The flush's own barrier is an upload
+        // back - minutes on a weak link - and a lane woken by the upload's end does not pass it
+        // again, so commits that arrived meanwhile could still be unapplied: the file would be
+        // sealed at a stale epoch the up-to-date members cannot open (review of #2874, L1). Free
+        // when the queue is idle, which is the steady state.
+        await mlsService
+          .waitForMessageQueueIdle('outbox media seal', null)
+          .catch((e) =>
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… incoming-queue barrier before the media seal failed, sealing at a possibly stale epoch: ${String(e)}`
+            )
+          );
         const prepared = buildMediaMessage(entry, media, media.uploadedRef);
         proto = prepared.proto;
         mediaContent = prepared.content;
@@ -3017,7 +3046,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // nothing would ever send it.
       if (!storage) {
         log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
-        throw new OutboxEnqueueError('no storage layer');
+        const refused = new OutboxEnqueueError('no storage layer');
+        // A row the caller already wrote beside its echo EXISTS: saying "nothing was written" would
+        // have it withdrawn and given back for a second send (review of #2874, L5).
+        throw opts.alreadyDurable ? new MessageWrittenError(entry.id, refused) : refused;
       }
       // CLASSIFIED AT THE THROW (review of #2843, M1): a failure once the row is on disk - written
       // here, or beside its echo by the caller (`alreadyDurable`) - is about a message that EXISTS

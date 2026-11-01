@@ -1,5 +1,6 @@
 /**
- * A DM/GROUP FILE IS QUEUED AT THE TAP, LIKE A TEXT (backlog item 27, 2026-11-01).
+ * A DM/GROUP FILE IS QUEUED AT THE TAP, LIKE A TEXT (2026-11-01; `docs/wiki/frontend/modules/chat.md`,
+ * "A file is queued at the tap, like a text").
  *
  * `handleSendChat` used to wait for the inbound queue and a membership round trip BEFORE it wrote
  * anything - 18 s on a stalled link with no bubble on screen. The outbox flush already asks both
@@ -232,6 +233,26 @@ describe('a file is queued at the tap - no barrier before it', () => {
     expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
     expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_media_send_error_generic());
     expect(accused).toHaveBeenCalled();
+    // And the in-app log says it too, where a member's report is read.
+    expect(logLines(ctx).some((l) => l.includes('durable, the live queue refused it'))).toBe(true);
+  });
+
+  it("an entry SQLite wrote without its placeholder row is the queue's: told durable, never given back", async () => {
+    const messaging = await freshMessaging();
+    // The class of the module graph `freshMessaging` just loaded: `instanceof` is the classification.
+    const { OutboxEntryWrittenAloneError } = await import('$lib/utils/chat/messageWrittenError');
+    const ctx = withStorage(makeContext(), (row) => {
+      throw new OutboxEntryWrittenAloneError(row.id, new Error('disk full on the messages table'));
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    await messaging.handleSendChat(ctx, '');
+
+    // Not written a second time (a second blob in its slot), not re-staged (a duplicate).
+    expect(enqueueMock).toHaveBeenCalledOnce();
+    expect(enqueueMock.mock.calls[0][1]).toEqual({ alreadyDurable: true });
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(logLines(ctx).some((l) => l.includes('written WITHOUT its placeholder row'))).toBe(true);
   });
 
   it('a deleted conversation refuses the file, gives it back and says why', async () => {
@@ -491,6 +512,64 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     // The caption is not sealed for whoever signs in next either.
     expect(queued().some((e) => e.kind === 'text')).toBe(false);
     expect(logLines(ctx).some((l) => l.includes('signed out since the tap'))).toBe(true);
+  });
+
+  // A SIGN-OUT INSIDE THE READ OR THE PAIR WRITE: `enqueueOutboxMessage` reaches the module's ACTIVE
+  // controller, which by then is the NEXT account's - and it would send this file as itself.
+  it('a sign-out during the file read hands nothing to the next account', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    let read!: (b: ArrayBuffer) => void;
+    const sending = messaging.handleSendChat(ctx, '', {
+      files: [entryOf(() => new Promise<ArrayBuffer>((r) => (read = r)))],
+    });
+    await vi.waitFor(() => expect(read).toBeTypeOf('function'));
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+    read(new ArrayBuffer(3));
+    await sending;
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
+    expect(logLines(ctx).some((l) => l.includes('dropped before its write: signed out'))).toBe(
+      true
+    );
+  });
+
+  it('a sign-out during the pair write hands nothing to the next account', async () => {
+    const messaging = await freshMessaging();
+    let written!: () => void;
+    const ctx = withStorage(makeContext(), () => {});
+    (
+      ctx.storage as unknown as { saveMessageWithOutboxEntry: () => Promise<void> }
+    ).saveMessageWithOutboxEntry = () => new Promise<void>((r) => (written = r));
+    const sending = messaging.handleSendChat(ctx, 'caption', {
+      files: [entryOf(async () => new ArrayBuffer(3))],
+    });
+    await vi.waitFor(() => expect(written).toBeTypeOf('function'));
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+    written();
+    await sending;
+
+    // Neither the file nor its caption reaches the queue the next account now owns.
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(logLines(ctx).some((l) => l.includes('not handed to the queue: signed out'))).toBe(true);
+  });
+
+  it('a refused file takes its caption back with it: no caption is sent alone', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    enqueueMock.mockImplementation(async (entry?: { kind: string }) => {
+      if (entry?.kind === 'media') throw new OutboxEnqueueError('the durable write failed');
+    });
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+
+    // FALSE: the composer gives the caption back to the draft, beside the re-staged file.
+    expect(await messaging.handleSendChat(ctx, 'the caption')).toBe(false);
+
+    expect(queued().some((e) => e.kind === 'text')).toBe(false);
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
   });
 
   it('a sign-out forgets every staged file and armed reply', async () => {

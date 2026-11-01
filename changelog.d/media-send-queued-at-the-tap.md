@@ -2,4 +2,6 @@
 
 The pre-send wait for the inbound queue and the membership check (18 s on a stalled link, nothing
 on screen) is gone: the placeholder and its outbox entry are written together at the tap, and the
-outbox's own gates hold, retire or send it ([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
+outbox's own gates hold, retire or send it. A file its group will never take (deleted, or this
+device no longer a member) now says so in its bubble instead of "refused by the server", and a
+refused file takes its caption back instead of sending it alone ([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).

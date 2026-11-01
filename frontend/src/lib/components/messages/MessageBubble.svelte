@@ -18,6 +18,7 @@
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
   import {
     retryUpload,
+    unsentReasonOf,
     uploadViewOf,
     type UploadView,
   } from '$lib/utils/chat/uploadProgress.svelte';
@@ -662,6 +663,16 @@
    */
   const uploadFailed = $derived(isOwn && !!mediaRef && !mediaRef.mediaId && status === 'error');
   /**
+   * What the failed bubble says: the GROUP's reason when the outbox gave one (the conversation was
+   * deleted, or this device is no longer in it), the server's refusal otherwise.
+   */
+  const uploadFailedLabel = $derived.by((): string => {
+    const reason = uploadFailed ? unsentReasonOf(messageId) : undefined;
+    if (reason === 'group-deleted') return m.upload_unsent_group_deleted();
+    if (reason === 'not-a-member') return m.upload_unsent_not_a_member();
+    return m.upload_failed_label();
+  });
+  /**
    * A text of mine the server failed on 5xx too many times in a row: the outbox keeps it, shows it
    * failed and marks it with a `failed` view - the one sign that its Retry has a handler. Its retry
    * is the attachment's (`retryUpload`), so the component still never imports the queue.
@@ -990,6 +1001,7 @@
                 onNear={() => (isNearViewport = true)}
                 {upload}
                 {uploadFailed}
+                {uploadFailedLabel}
                 onCancelUpload={onDelete ? () => onDelete(messageId) : undefined}
                 onRetryUpload={() => retryUpload(messageId)}
               />

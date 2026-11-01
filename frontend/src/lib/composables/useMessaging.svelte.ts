@@ -1163,8 +1163,13 @@ export function useMessaging() {
           } catch (e) {
             // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
             // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
-            console.error('[DB] the message and its outbox entry were NOT written:', e);
             pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+            console.error(
+              pairWriteFailure.entryWritten
+                ? '[DB] the outbox entry was written WITHOUT its message:'
+                : '[DB] the message and its outbox entry were NOT written:',
+              e
+            );
           }
         } else {
           await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
@@ -1470,6 +1475,8 @@ export function useMessaging() {
     let sentMediaMessageCount = 0;
     /** A held salon upload was refused because the account signed out - see the media catch. */
     let sessionEndedDuringSend = false;
+    /** A file of this send was refused and given back to the staging (the catch below). */
+    let mediaRestaged = false;
 
     // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
     // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
@@ -1685,6 +1692,17 @@ export function useMessaging() {
               // own row. Either way the entry is durable before the upload starts, so the file
               // survives a kill between the tap and its transfer.
               let pairWritten = false;
+              // THE ACCOUNT IS ASKED BEFORE EACH WRITE, not once at the tap: the read above and the
+              // pair write below are awaits, and a sign-out inside one hands `enqueueOutboxMessage`
+              // (the module's ACTIVE controller) to the next account, which would send this file
+              // as itself (review of #2874, M1). Dropped, never re-staged, and said in the log.
+              if (signOutGeneration() !== tapGeneration) {
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: signed out since the tap`
+                );
+                sessionEndedDuringSend = true;
+                break;
+              }
               try {
                 await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
                   messageId,
@@ -1697,9 +1715,23 @@ export function useMessaging() {
                 });
               } catch (pairError) {
                 if (!(pairError instanceof MessagePairWriteError)) throw pairError;
+                // THE ENTRY REACHED DISK ALONE (SQLite writes it first): the queue owns it, so it
+                // is not written a second time and the file is not given back (M2).
+                pairWritten = pairError.entryWritten;
                 ctx.log(
-                  `[MEDIA] ${messageId.slice(0, 8)}… its placeholder and entry were NOT written together - the outbox writes its own row: ${String(pairError.cause)}`
+                  pairError.entryWritten
+                    ? `[MEDIA] ${messageId.slice(0, 8)}… its entry was written WITHOUT its placeholder row - the queue owns it: ${String(pairError.cause)}`
+                    : `[MEDIA] ${messageId.slice(0, 8)}… its placeholder and entry were NOT written together - the outbox writes its own row: ${String(pairError.cause)}`
                 );
+              }
+              if (signOutGeneration() !== tapGeneration) {
+                // Whatever was written stays in the LEAVING account's store, whose own queue sends
+                // it at its next sign-in; it is never handed to the next account's.
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… not handed to the queue: signed out during its write (written=${pairWritten})`
+                );
+                sessionEndedDuringSend = true;
+                break;
               }
               try {
                 await enqueueOutboxMessage(
@@ -1714,6 +1746,9 @@ export function useMessaging() {
                   console.error(
                     `[MEDIA] ${messageId.slice(0, 8)}… written with its entry, but the live queue refused it - the next flush sends it:`,
                     enqueueError
+                  );
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… durable, the live queue refused it - left to the next flush: ${String(enqueueError.cause)}`
                   );
                   sentMediaMessageCount++;
                   continue;
@@ -1775,6 +1810,7 @@ export function useMessaging() {
           );
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
+          mediaRestaged = unsent > 0;
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
@@ -1796,6 +1832,14 @@ export function useMessaging() {
     if (sessionEndedDuringSend) {
       ctx.log('[SEND] caption not sent: the session ended during the media send');
       return;
+    }
+    // THE CAPTION BELONGS TO THE FIRST FILE, and a refused first file given back to the staging
+    // takes it back with it: sent alone it would arrive as a text that captions nothing (review of
+    // #2874, L3). FALSE, so the composer gives it back to the draft beside the file. A file DROPPED
+    // because the member moved on (L4) leaves its caption to be sent, so the words are not lost too.
+    if (mediaRestaged && sentMediaMessageCount === 0 && text) {
+      ctx.log('[SEND] caption not sent alone: its file was refused - given back with it');
+      return false;
     }
     if (sentMediaMessageCount > 0 || !text) return;
 
