@@ -461,7 +461,9 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
 
 /**
  * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
+ * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget), at the CHAT
+ * profile and under the server's chat cap (RC-3, `chatReelPrepareOptions`). A cap that cannot be read
+ * (offline) throws an ordinary failure: the take is kept and parked, never prepared without its cap. A cancel is
  * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
  * failure of the take.
  */
@@ -474,20 +476,27 @@ async function prepareQueuedChatReel(
     { prepareVideoForUpload, isVideoPrepareError },
     { UploadAbortedError },
     { videoPrepareFailureMessage, isUnpreparableFault },
+    { getReelLimits },
+    { chatReelPrepareOptions },
   ] = await Promise.all([
     import('$lib/media'),
     import('$lib/video/prepareVideoForUpload'),
     import('$lib/utils/uploadXhr'),
     import('$lib/video/videoPrepareMessages'),
+    import('$lib/posts/api'),
+    import('$lib/reels/chatReelWriter'),
   ]);
   const raw = media.fileBytes ?? new Uint8Array(0);
   const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
     type: media.mimeType,
   });
-  const limits = await new MediaService().uploadLimits();
+  const [limits, reelLimits] = await Promise.all([
+    new MediaService().uploadLimits(),
+    getReelLimits(),
+  ]);
   try {
     const prepared = await prepareVideoForUpload(source, {
-      maxBytes: limits?.maxPlaintextBytes,
+      ...chatReelPrepareOptions(reelLimits, limits?.maxPlaintextBytes),
       signal: opts.signal,
       onProgress: opts.onProgress,
     });
