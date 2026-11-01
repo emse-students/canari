@@ -797,12 +797,8 @@ export async function requestReAdd(
     // THE SERVER HOLDS THE DOOR SHUT until every member client reads such an entry as an ordinary
     // added device (`FURTHER_DEVICE_SELF_JOIN_OPEN`, the gate of mls-availability-no-holder.md): it
     // says so in the answer, so no join is attempted and no base fetched only to be refused.
-    if (answer.selfJoin !== true) {
-      deps.log(
-        `[READD] ${groupId.slice(0, 8)}... no member device online - waiting for a member's Add (the server holds the self-join shut)`
-      );
-      return;
-    }
+    // Said by `askAMemberToReAddUs`, in its one line for this answer.
+    if (answer.selfJoin !== true) return;
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... no member device online to Add this one - joining by itself in this pass (D1)`
     );
@@ -1300,7 +1296,11 @@ async function askAMemberToReAddUs(
       ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
       : answer.status === 'stored'
         ? opts?.selfJoinIfNobody === true
-          ? `[READD] welcome_request for ${short}... no member online - kept for a member only if the base cannot let this device in (selfJoinIfNobody)`
+          ? answer.selfJoin === true
+            ? `[READD] welcome_request for ${short}... no member online - kept for a member only if the base cannot let this device in (selfJoinIfNobody)`
+            : // ONE LINE PER PASS while the gate is shut: both facts, said once (the D1 branch
+              // returns without a line of its own).
+              `[READD] welcome_request for ${short}... no member device online - waiting for a member's Add (the server holds the self-join shut)`
           : `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
         : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
