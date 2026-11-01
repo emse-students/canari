@@ -47,6 +47,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PRODUCT_ALREADY_PURCHASED) {
     return m.shop_already_purchased();
   }
+  if (err instanceof SocialApiError && err.code === PRODUCT_COTISANTS_ONLY) {
+    return m.shop_members_only_hint();
+  }
   if (err instanceof SocialApiError && err.code === TIER_NOT_A_RISE) {
     return m.shop_tier_not_a_rise();
   }
@@ -55,6 +58,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
     return m.shop_cotisation_disabled();
+  }
+  if (err instanceof SocialApiError && err.code === ASSOCIATION_ARCHIVED) {
+    return m.shop_association_archived();
   }
   if (err instanceof SocialApiError && err.code === FORM_TIER_ALREADY_HELD) {
     return m.form_tier_already_held();
@@ -126,6 +132,14 @@ export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
 export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 
 /**
+ * The body `code` of social-service's 403 when the product is reserved to the association's
+ * cotisants (`membersOnly`, the Cercle top-up's box included) and the buyer holds no active tier of
+ * it. The card already greys its button from `viewerIsCotisant`; this is the sentence for the click
+ * that the listing could not foresee (a cotisation that ended since the page was drawn).
+ */
+export const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
+
+/**
  * The body `code` of social-service's 409 when the buyer holds, active, a sibling cotisation tier
  * priced at least as high as this one: buying it would replace the held tier (`product-checkout.ts`).
  */
@@ -142,6 +156,31 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
+ * The body `code` of social-service's 409 when the product's association is ARCHIVED: its page and
+ * its products stay reachable by link, and the purchase is what refuses it, before any money.
+ */
+export const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
+
+/**
+ * The body `code` of social-service's 400 when a product or a partnership card is saved reserved to
+ * cotisants (`membersOnly`) by an association with no cotisation mode: no tier exists to hold, so it
+ * would be offered to nobody (`members-only-gate.ts`).
+ */
+export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
+
+/**
+ * The sentence for a refusal of a product or partnership-card SAVE that the admin can act on, or
+ * `null` for anything else (the caller keeps its generic error). Classified by the typed `code`,
+ * never by the message.
+ */
+export function membersOnlySaveRefusalMessage(err: unknown): string | null {
+  if (err instanceof SocialApiError && err.code === MEMBERS_ONLY_WITHOUT_COTISATION) {
+    return m.admin_members_only_without_cotisation();
+  }
+  return null;
+}
 
 /**
  * The body `code` of social-service's 409 when a paid answer's form grants the cotisation tier the

@@ -25,6 +25,8 @@ import {
   COTISATION_DISABLED,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
+  PRODUCT_COTISANTS_ONLY,
+  ASSOCIATION_ARCHIVED,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
@@ -49,6 +51,8 @@ import {
 } from './product-checkout';
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { assertMembersOnlyGateable } from './members-only-gate';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
@@ -934,15 +938,29 @@ export class ProductsService {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   /**
-   * Returns all active products across all associations (login required, listed on /shop), each
-   * annotated for `userId` (`annotateForViewer`).
+   * Returns the active products of every association visible to `userId` (login required, listed
+   * on /shop), each annotated for `userId` (`annotateForViewer`). Visible is the directory's
+   * predicate, `associationVisibleToViewerSql` (a member of the association, D21, or its rules
+   * reach one of the reader's spaces): a product of another campus is no more listed than its
+   * association is. BUYING IT BY ITS LINK STAYS OPEN (owner, 2026-10-31): the association's page
+   * (`listByAssoc`, D37) lists it to anyone holding the link, and `preparePurchase` asks no
+   * campus - as a form's link is enough to answer it.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
-    const all = await this.productRepo.find({
-      where: { isActive: true },
-      order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
-    });
+    const all = await this.productRepo
+      .createQueryBuilder('p')
+      .where('p.isActive = true')
+      .andWhere(associationVisibleToViewerSql('"p"."associationId"', ':viewerId'), {
+        viewerId: userId,
+      })
+      .orderBy('p.associationId', 'ASC')
+      .addOrderBy('p.sortOrder', 'ASC')
+      .addOrderBy('p.createdAt', 'ASC')
+      .getMany();
+    this.logger.debug(`[SHOP] ${all.length} active product(s) visible to ${userId.slice(0, 8)}`);
     // A review account's shop holds only the associations it is a member of (review-cohort-reach.ts).
+    // Already implied by the space predicate (a review account has no real space), kept as the
+    // cohort's own stated boundary.
     const reached = await associationsReachedByReviewer(
       this.productRepo.manager,
       userId,
@@ -1246,6 +1264,13 @@ export class ProductsService {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
     assertKindMaySell(this.logger, associationId, asso.type, 'product create');
+    assertMembersOnlyGateable(
+      asso,
+      dto.membersOnly ?? false,
+      dto.requiredTags ?? null,
+      this.logger,
+      'product'
+    );
 
     if (
       dto.customAmountMinCents !== undefined &&
@@ -1490,6 +1515,20 @@ export class ProductsService {
       minCents > maxCents
     ) {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+    }
+
+    // Only an edit that touches the gate is asked: an old product left gated by a since-disabled
+    // cotisation can still be withdrawn or renamed, and unticking the box is what clears it.
+    if (dto.membersOnly !== undefined || dto.requiredTags !== undefined) {
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      if (!asso) throw new NotFoundException('Association not found');
+      assertMembersOnlyGateable(
+        asso,
+        dto.membersOnly ?? product.membersOnly,
+        dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags,
+        this.logger,
+        'product'
+      );
     }
 
     // Setting `isActive` by hand is the admin taking ownership of the state: whatever the platform
@@ -2936,7 +2975,7 @@ export class ProductsService {
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
-
+    this.assertNotArchived(asso, product);
     // Route to the association's own account, or an approved parent's when delegating.
     const provider = await this.activePaymentProvider();
     const paymentTarget = await this.routeWith(asso, provider);
@@ -2985,7 +3024,13 @@ export class ProductsService {
     manager: EntityManager
   ): Promise<ResolvedPurchase> {
     const { associationId, productId, paymentTarget, vendorToken } = prepared;
-    const asso = await manager.findOne(Association, { where: { id: associationId } });
+    // FOR SHARE: the archive (`AssociationsService.update`) writes this row under FOR UPDATE, so the
+    // two are ORDERED - a checkout deciding first commits before the archive lands, and one deciding
+    // after reads `archived` committed. SHARE, not UPDATE, so buyers do not queue behind each other.
+    const asso = await manager.findOne(Association, {
+      where: { id: associationId },
+      lock: { mode: 'pessimistic_read' },
+    });
     const product = await manager.findOne(AssociationProduct, {
       where: { id: productId, associationId },
     });
@@ -3016,6 +3061,9 @@ export class ProductsService {
       });
     }
 
+    // Re-read under the lock, like the routing: an archive committed while the purchase was being
+    // prepared refuses it here.
+    this.assertNotArchived(asso, product);
     this.assertMembershipGrantable(asso, product);
 
     // The profile is the one other input fetched before the lock: a grid that now needs it, read
@@ -3480,11 +3528,14 @@ export class ProductsService {
       this.logger.debug(
         `[SHOP] rejected: product=${product.id.slice(0, 8)} gating not satisfied for user=${userId.slice(0, 8)}`
       );
-      throw new ForbiddenException(
-        requiredTags.length > 0
-          ? 'This product is reserved to users holding one of the required tags'
-          : "This product is reserved to the association's cotisants"
-      );
+      throw requiredTags.length > 0
+        ? new ForbiddenException(
+            'This product is reserved to users holding one of the required tags'
+          )
+        : new ForbiddenException({
+            code: PRODUCT_COTISANTS_ONLY,
+            message: "This product is reserved to the association's cotisants",
+          });
     }
 
     // A balance top-up is a recharge of an account on another site: repeatable by definition and
@@ -4243,6 +4294,27 @@ export class ProductsService {
         `was issued as request ${row.requestId ?? 'none'} - nothing recorded`
     );
     return false;
+  }
+
+  /**
+   * Refuses (409 `ASSOCIATION_ARCHIVED`) a purchase from an ARCHIVED association, before any money
+   * is requested: buying by the page's link is open (owner, 2026-10-31), and an archived
+   * association's page stays reachable with whatever products it left active. Asked before the lock
+   * (`preparePurchase`) and again under it (`decidePurchase`), on the association re-read there.
+   */
+  private assertNotArchived(
+    asso: Pick<Association, 'id' | 'archived'>,
+    product: Pick<AssociationProduct, 'id'>
+  ): void {
+    if (!asso.archived) return;
+    this.logger.log(
+      `[SHOP] refused (${ASSOCIATION_ARCHIVED}): product=${product.id.slice(0, 8)} of archived ` +
+        `assoc=${asso.id.slice(0, 8)}`
+    );
+    throw new ConflictException({
+      code: ASSOCIATION_ARCHIVED,
+      message: 'This association is archived: its products are no longer sold.',
+    });
   }
 
   /**
