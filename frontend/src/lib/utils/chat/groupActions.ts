@@ -839,6 +839,11 @@ function bundleFrame(
         // numbers, sent whole with every frame because both merges are `max` and therefore free to
         // repeat. Sending them once would make their delivery depend on which chunk survived.
         ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
+        // The server-clock marks beside them (readState.ts). An older reader ignores the field and
+        // keeps the stamped map, which is all it can compare.
+        ...(state?.serverReadWatermarks
+          ? { serverReadWatermarks: state.serverReadWatermarks }
+          : {}),
         ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
         // Restated by every chunk like the two above, and for the same reason: sending it once
         // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
@@ -858,6 +863,7 @@ type BundleAnswer = { requestId?: string; join?: boolean };
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
   readWatermarks?: ReadWatermarks;
+  serverReadWatermarks?: ReadWatermarks;
   historyFloor?: number;
   /**
    * The pin register - every message this conversation has pinned OR unpinned, with its date.
@@ -894,6 +900,7 @@ async function storedConversationState(
     const pins = pinEntries(groupId);
     return {
       readWatermarks: row?.readWatermarks,
+      serverReadWatermarks: row?.serverReadWatermarks,
       historyFloor: row?.historyFloor,
       ...(pins.length > 0 ? { pins } : {}),
     };

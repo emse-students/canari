@@ -44,6 +44,8 @@ export interface AggregatableMessage {
   timestamp: number;
   content: string;
   isDeleted?: boolean;
+  /** The server's acceptance, when the row has it: the instant shown and sorted by (`messageTime`). */
+  serverTimestamp?: number;
 }
 
 /** Matches http(s) URLs; trailing punctuation is trimmed so "(see https://x.)" yields a clean URL. */
@@ -64,6 +66,8 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
 
   for (const m of messages) {
     if (m.isDeleted) continue;
+    // THE CONVERSATION'S OWN CLOCK (`messageTime`): the server's time when the row has it.
+    const timestamp = m.serverTimestamp && m.serverTimestamp > 0 ? m.serverTimestamp : m.timestamp;
     let env;
     try {
       env = parseEnvelope(m.content);
@@ -89,7 +93,7 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
       const item: SharedMediaItem = {
         messageId: m.id,
         senderId: m.senderId,
-        timestamp: m.timestamp,
+        timestamp,
         media: env.media,
         caption: env.caption,
       };
@@ -97,12 +101,12 @@ export function aggregateSharedContent(messages: AggregatableMessage[]): SharedC
       else files.push(item);
       if (env.caption) {
         for (const url of extractUrls(env.caption)) {
-          links.push({ messageId: m.id, senderId: m.senderId, timestamp: m.timestamp, url });
+          links.push({ messageId: m.id, senderId: m.senderId, timestamp, url });
         }
       }
     } else if (env.kind === 'text') {
       for (const url of extractUrls(env.text)) {
-        links.push({ messageId: m.id, senderId: m.senderId, timestamp: m.timestamp, url });
+        links.push({ messageId: m.id, senderId: m.senderId, timestamp, url });
       }
     }
   }

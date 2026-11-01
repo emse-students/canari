@@ -728,12 +728,12 @@ holds.
 **Termination is unchanged.** A real shortfall (the group is older than the answerer's memory) walks
 exactly as before, one member more excluded at each step, and ends on `excludedOnline > 0`.
 
-**The SQLite row now keeps the start (schema v16, `started_at`).** IndexedDB stored the whole object,
+**The SQLite row now keeps the start (schema v17, `started_at`).** IndexedDB stored the whole object,
 but SQLite stored only named columns, so a phone forgot the start on every reload until the next group
 sweep refilled it (`recordGroupStart`). That also applies to the scrollback check that reads it
 (`began inside this device's window`). Pinned by `historyReconcile.test.ts` (BIG-1 shape, real
-shortfall, clock slack, unknown start), `actions.historyRequest.test.ts` (the answerer) and
-`sqliteMigrations.test.ts` (v16).
+shortfall, clock slack, unknown start), `actions.historyRequest.test.ts` (the answerer),
+`sqliteMigrations.test.ts` (v17) and `sqliteConversationColumns.test.ts` (a save and a merge keep `started_at` beside v16's `server_read_watermarks`).
 
 ### What that leaves open, and why it is left open (decided 2026-08-17)
 
@@ -977,9 +977,12 @@ answer path can forget it.
   every recipient's `queued_message.createdAt` - and the outbox stores it as that message's
   `serverTimestamp`, in memory and on disk (`outbox.ts`, `patchServerTimestamp`). A control entry
   (reaction, edit, delete) is not stamped: it mutates a message whose own date must not move. A
-  message the native background sender delivered (`/api/mls/push/send`) is not stamped: that route
-  answers `receivedAt` too, but the native senders (Android, iOS) do not store it yet, so those copies
-  stay undated and fall under the legacy rule below - the undated residue SHRINKS, it does not vanish.
+  message the native background sender delivered (`/api/mls/push/send`) is stamped too since
+  2026-11-01: that route answers `receivedAt`, the native drains write it beside the id in
+  `outbox_sent.ndjson` and the quick reply's cache row
+  ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+  A copy sent by an older build, or whose answer carried none, stays undated and falls under the
+  legacy rule below - the undated residue SHRINKS, it does not vanish.
 - **Rows ingested by the OLD replay path are TRUSTED as dated, deliberately.** Before this change the
   Redis-stream replay dated an undated message by the bundle FRAME's time. Those rows are now
   indistinguishable from a real `serverTimestamp`, and they are not re-dated or distrusted: a bundle
@@ -1565,11 +1568,15 @@ mutation, so silent and durable - and rides on every `history_bundle`. Everythin
 who has read a message, the unread count, how far reading a conversation moves the mark - is in
 `$lib/utils/chat/readState.ts`, which absorbed `unread.ts`.
 
-**T is the message's own client timestamp**, `messageTime` - the PRIMARY key display order uses, not
-`serverTimestamp`, which is only a tie-break. A watermark ordered differently from the list it
-describes would leave a message marked read while the one visibly above it stayed unread. And it is
-drawn from the MESSAGES rather than from the clock: a device an hour fast would otherwise mark an
-hour of unread messages read for everyone, permanently, the merge being `max`.
+**T is on the clock the list is sorted by** - a watermark ordered differently from the list it
+describes would leave a message marked read while the one visibly above it stayed unread. Since
+2026-10-31 that is the SERVER's acceptance time (`messageTime`), and a conversation holds two maps:
+`serverReadWatermarks`, compared against it and written by this build, and `readWatermarks`, the
+stamped (`sentAt`) marks of every earlier build, older clients and the native shade, still honoured -
+a row is read when either covers it ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31),
+[legacy-compatibility](../legacy-compatibility.md)). And T is drawn from the MESSAGES rather than
+from the clock: a device an hour fast would otherwise mark an hour of unread messages read for
+everyone, permanently, the merge being `max`.
 
 What it buys, beyond travelling in the shared log so a reinstall recovers read state with no peer
 online:

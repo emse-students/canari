@@ -387,7 +387,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     // title `(N)` - until it was opened on this device too.
     const next =
       userId.toLowerCase() === ctx.userId.toLowerCase()
-        ? withOwnReadAdvanced(convo, userId, Number(data.at))
+        ? // A salon's marks are on the stamped map, where a salon row's stamp IS its server time.
+          withOwnReadAdvanced(convo, userId, Number(data.at), 'stamped')
         : (() => {
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;

@@ -1,9 +1,11 @@
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
+  messageOrderColumnsStatements,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
 
@@ -140,12 +142,53 @@ describe('conversationAwaitingAdmissionStatement (v15)', () => {
   });
 });
 
+describe('conversationServerReadWatermarksStatement (v16)', () => {
+  it('adds the server-clock read marks to an existing conversations table, NULL on every row', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, read_watermarks TEXT)'
+    );
+    engine.exec(
+      `INSERT INTO conversations (id, name, read_watermarks) VALUES ('g1', 'Group', '{"me":5}')`
+    );
+    const columnsOf = () =>
+      (engine.prepare('PRAGMA table_info(conversations)').all() as { name: string }[]).map(
+        (c) => c.name
+      );
+
+    const sql = conversationServerReadWatermarksStatement(columnsOf());
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    // The stamped marks are untouched: they keep covering what they covered (readState.ts).
+    expect(
+      engine.prepare('SELECT read_watermarks, server_read_watermarks FROM conversations').get()
+    ).toEqual({ read_watermarks: '{"me":5}', server_read_watermarks: null });
+    expect(conversationServerReadWatermarksStatement(columnsOf())).toBeNull();
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(16);
+  });
+
+  it('adds the order key and its pending flag to an existing messages table, only the ones it lacks', () => {
+    expect(messageOrderColumnsStatements(CURRENT_MESSAGE_COLUMNS)).toEqual([
+      'ALTER TABLE messages ADD COLUMN order_at INTEGER',
+      'ALTER TABLE messages ADD COLUMN order_pending INTEGER',
+    ]);
+    expect(messageOrderColumnsStatements([...CURRENT_MESSAGE_COLUMNS, 'order_at'])).toEqual([
+      'ALTER TABLE messages ADD COLUMN order_pending INTEGER',
+    ]);
+    expect(
+      messageOrderColumnsStatements([...CURRENT_MESSAGE_COLUMNS, 'order_at', 'order_pending'])
+    ).toEqual([]);
+  });
+});
+
 /**
- * v15 -> v16 on a REAL in-memory SQLite: the group's start was declared persisted and SQLite dropped
+ * v16 -> v17 on a REAL in-memory SQLite: the group's start was declared persisted and SQLite dropped
  * it on every save. A stored conversation reads NULL - unknown until the next group sweep - and a
  * rerun does nothing.
  */
-describe('conversationStartedAtStatement (v16)', () => {
+describe('conversationStartedAtStatement (v17)', () => {
   const columnsOf = (engine: any): string[] =>
     engine
       .prepare('PRAGMA table_info(conversations)')
@@ -173,6 +216,6 @@ describe('conversationStartedAtStatement (v16)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(16);
+    expect(SCHEMA_VERSION).toBe(17);
   });
 });

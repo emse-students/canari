@@ -544,7 +544,8 @@ pub unsafe extern "C" fn canari_native_build_text_message_proto(
 /// cross-device notification-cancel path instead of a peer push.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_build_read_watermark_proto(at: i64) -> *mut c_char {
-    let bytes = build_read_watermark_app_message(at);
+    // iOS carries no server time down to its shade yet (chat.md, "Not done, owed"): the stamped shape.
+    let bytes = build_read_watermark_app_message(at, 0);
     CString::new(STANDARD.encode(&bytes))
         .unwrap_or_else(|_| CString::new("").expect("static empty"))
         .into_raw()

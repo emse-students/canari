@@ -1,5 +1,5 @@
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
-import { messageTime } from './messageOrder';
+import { messageTime, stampedTime } from './messageOrder';
 
 /**
  * Read state as a watermark: one monotone instant per participant, meaning *this user has read
@@ -18,15 +18,50 @@ import { messageTime } from './messageOrder';
  * - **it survives a reinstall through the shared log**, because the whole read state of a
  *   conversation is a handful of numbers small enough to travel with every reconciliation.
  *
- * The instant compared against is the message's own client timestamp - `messageTime`, the PRIMARY
- * key display order uses. Not `serverTimestamp`, which is only a tie-break: a watermark ordered
- * differently from the list it describes would leave a message marked read while the one visibly
- * above it stayed unread.
+ * TWO CLOCKS, ONE PER MAP, BECAUSE A WATERMARK IS A NUMBER WITH NO UNIT (owner, 2026-10-31).
+ *
+ * - `serverReadWatermarks` is compared against `messageTime`, the SERVER's time when the row has it:
+ *   the key the conversation is sorted by, so a mark never covers a row drawn below one it does not.
+ *   This is the map this build writes for a DM or a group. A message delivered late sorts where it
+ *   arrived, past every mark taken before it arrived, so it notifies and counts as unread.
+ * - `readWatermarks` is compared against the row's STAMPED `timestamp` - the author's `sentAt` on an
+ *   MLS row. It is the map every mark before 2026-10-31 was written in, the one an older client's
+ *   frame still carries (`at` alone), and the one the native shade's "mark as read" writes. Kept,
+ *   never converted: nothing can say which row a bare `at` meant. A salon's marks live here too,
+ *   and for a salon the two clocks are one - a salon row's `timestamp` IS its server `createdAt`.
+ *
+ * A row is read when EITHER map covers it. A stamped mark from before the change keeps what it
+ * already covered read, so nothing reads as unread on upgrade; the residue - a late message whose
+ * `sentAt` is older than a STAMPED mark - is the old behaviour, and only where that stamped mark
+ * is newer than every server mark. See docs/wiki/legacy-compatibility.md.
  */
 
-/** The instant a watermark is compared against. Kept in one place so it cannot drift from the sort. */
-export function readOrderKey(msg: Pick<ChatMessage, 'timestamp'>): number {
-  return messageTime(msg as ChatMessage);
+/**
+ * The instant a SERVER watermark is compared against - {@link messageTime}, the sort key. Kept in
+ * one place so it cannot drift from the sort.
+ */
+export function readOrderKey(msg: Pick<ChatMessage, 'timestamp' | 'serverTimestamp'>): number {
+  return messageTime(msg);
+}
+
+/** Whether a reader holding the `stamped` and `server` marks has read `msg`: either map covers it. */
+export function isCoveredBy(
+  msg: Pick<ChatMessage, 'timestamp' | 'serverTimestamp'>,
+  stamped: number,
+  server: number
+): boolean {
+  return (server > 0 && server >= readOrderKey(msg)) || stamped >= stampedTime(msg);
+}
+
+/** Both of one reader's marks in `convo`, 0 where a map holds nothing for them. */
+export function readPointFor(
+  convo: { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks },
+  userNorm: string
+): { stamped: number; server: number } {
+  return {
+    stamped: watermarkFor(convo.readWatermarks, userNorm),
+    server: watermarkFor(convo.serverReadWatermarks, userNorm),
+  };
 }
 
 /** This user's watermark, or 0 - which reads as "has read nothing", the correct default. */
@@ -100,13 +135,26 @@ export function parseReadWatermarks(raw: unknown): ReadWatermarks | undefined {
   return Object.keys(clean).length > 0 ? clean : undefined;
 }
 
-/** Whether `userNorm` has read `msg`. */
+/** Whether `userNorm` has read `msg`, by either map. */
 export function hasRead(
   watermarks: ReadWatermarks | undefined,
   userNorm: string,
-  msg: Pick<ChatMessage, 'timestamp'>
+  msg: Pick<ChatMessage, 'timestamp' | 'serverTimestamp'>,
+  serverWatermarks?: ReadWatermarks
 ): boolean {
-  return watermarkFor(watermarks, userNorm) >= readOrderKey(msg);
+  return isCoveredBy(
+    msg,
+    watermarkFor(watermarks, userNorm),
+    watermarkFor(serverWatermarks, userNorm)
+  );
+}
+
+/** Every participant either map names. */
+function participantsOf(
+  watermarks: ReadWatermarks | undefined,
+  serverWatermarks: ReadWatermarks | undefined
+): string[] {
+  return [...new Set([...Object.keys(watermarks ?? {}), ...Object.keys(serverWatermarks ?? {})])];
 }
 
 /**
@@ -117,15 +165,15 @@ export function hasRead(
  * second copy is a thing that can disagree.
  */
 export function readersOf(
-  msg: Pick<ChatMessage, 'timestamp' | 'senderId'>,
-  watermarks: ReadWatermarks | undefined
+  msg: Pick<ChatMessage, 'timestamp' | 'serverTimestamp' | 'senderId'>,
+  watermarks: ReadWatermarks | undefined,
+  serverWatermarks?: ReadWatermarks
 ): string[] {
-  if (!watermarks) return [];
-  const key = readOrderKey(msg);
   const authorNorm = msg.senderId.toLowerCase();
-  return Object.entries(watermarks)
-    .filter(([userNorm, at]) => userNorm !== authorNorm && at >= key)
-    .map(([userNorm]) => userNorm)
+  return participantsOf(watermarks, serverWatermarks)
+    .filter(
+      (userNorm) => userNorm !== authorNorm && hasRead(watermarks, userNorm, msg, serverWatermarks)
+    )
     .sort();
 }
 
@@ -144,45 +192,42 @@ export function readersOf(
  *   had not seen it. And a head that would land on its owner's own message is not drawn: the
  *   message already says it.
  *
- * @param messages The conversation in DISPLAY order - `compareMessageOrder`, whose primary key is
- *                 the same `readOrderKey`, so the keys are non-decreasing and a binary search holds.
- *                 The WHOLE list, never a render window: a window ending above a reader's true
- *                 anchor would pin the head to the window's last row.
+ * @param messages The conversation in DISPLAY order (`compareMessageOrder`). The WHOLE list, never
+ *                 a render window: a window ending above a reader's true anchor would pin the head
+ *                 to the window's last row.
+ * @param serverWatermarks The server-clock marks (top of this file); a reader is placed by whichever
+ *                 of their two marks reaches further.
  * @returns message id -> the participants anchored there, sorted; messages with none are absent.
  */
 export function seenByAnchors(
-  messages: ReadonlyArray<Pick<ChatMessage, 'id' | 'timestamp' | 'senderId' | 'isSystem'>>,
+  messages: ReadonlyArray<
+    Pick<ChatMessage, 'id' | 'timestamp' | 'serverTimestamp' | 'senderId' | 'isSystem'>
+  >,
   watermarks: ReadWatermarks | undefined,
-  viewerId: string
+  viewerId: string,
+  serverWatermarks?: ReadWatermarks
 ): Map<string, string[]> {
   const anchors = new Map<string, string[]>();
-  if (!watermarks) return anchors;
   const viewerNorm = viewerId.trim().toLowerCase();
-
   const rows = messages.filter((msg) => !msg.isSystem && msg.senderId !== 'system');
-  const keys = rows.map((msg) => readOrderKey(msg));
-  const lastOwnKey = new Map<string, number>();
-  rows.forEach((msg, i) => {
-    const author = msg.senderId.toLowerCase();
-    lastOwnKey.set(author, Math.max(lastOwnKey.get(author) ?? 0, keys[i]));
-  });
+  // ONE pass over the conversation, whatever the number of readers: each reader is then placed by
+  // two binary searches and a lookup (review of #2824, P3-7) - never a scan per reader.
+  const serverKeys = suffixMinima(rows.map(readOrderKey));
+  const stampedKeys = suffixMinima(rows.map(stampedTime));
+  const lastWritten = new Map<string, number>();
+  rows.forEach((row, i) => lastWritten.set(row.senderId.toLowerCase(), i));
 
-  for (const [userNorm, at] of Object.entries(watermarks)) {
+  for (const userNorm of participantsOf(watermarks, serverWatermarks)) {
     if (userNorm === viewerNorm) continue;
-    const position = Math.max(at, lastOwnKey.get(userNorm) ?? 0);
-    // The last row whose key is <= position.
-    let lo = 0;
-    let hi = rows.length - 1;
-    let found = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (keys[mid] <= position) {
-        found = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
+    const stamped = watermarkFor(watermarks, userNorm);
+    const server = watermarkFor(serverWatermarks, userNorm);
+    // The LAST row, in display order, this reader has read ({@link isCoveredBy}: either mark) or
+    // wrote.
+    const found = Math.max(
+      server > 0 ? lastAtOrBelow(serverKeys, server) : -1,
+      lastAtOrBelow(stampedKeys, stamped),
+      lastWritten.get(userNorm) ?? -1
+    );
     if (found < 0) continue;
     const anchor = rows[found];
     if (anchor.senderId.toLowerCase() === userNorm) continue;
@@ -195,6 +240,43 @@ export function seenByAnchors(
 }
 
 /**
+ * `out[i]` = the smallest of `keys[i..]`: non-decreasing, whatever order `keys` is in. The display
+ * order is the server key's order for every dated row, but not for an unsent own row (ordered below
+ * them all, on its `sentAt`) nor for the stamped key at all - so the anchors search THIS, never the
+ * keys themselves.
+ */
+function suffixMinima(keys: readonly number[]): number[] {
+  const out: number[] = Array.from({ length: keys.length }, () => 0);
+  let min = Infinity;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    min = Math.min(min, keys[i]);
+    out[i] = min;
+  }
+  return out;
+}
+
+/**
+ * The last index whose key is `<= mark`, or -1, by binary search over {@link suffixMinima}: the last
+ * `i` with `suffixMin[i] <= mark` IS the last `j` with `keys[j] <= mark` - some key at or after `i`
+ * is under the mark, and every key after the last such `j` is above it.
+ */
+function lastAtOrBelow(suffixMin: readonly number[], mark: number): number {
+  let lo = 0;
+  let hi = suffixMin.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (suffixMin[mid] <= mark) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
+/**
  * Whether `msg` should still raise the unread badge for the user whose watermark is `watermark`.
  *
  * Own and system messages never count. Both recompute sites used to infer "unseen" from "arrived
@@ -202,11 +284,12 @@ export function seenByAnchors(
  * device yet were already read on another one.
  */
 export function isUnreadForUser(
-  msg: Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>,
-  watermark: number
+  msg: Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>,
+  watermark: number,
+  serverWatermark = 0
 ): boolean {
   if (msg.isOwn || msg.isSystem || msg.senderId === 'system') return false;
-  return readOrderKey(msg) > watermark;
+  return !isCoveredBy(msg, watermark, serverWatermark);
 }
 
 /**
@@ -222,34 +305,54 @@ export function isUnreadForUser(
  * the new watermark among the messages held. A message this device has not loaded cannot raise it,
  * and one it holds past the watermark keeps it - which is what an unconditional zero got wrong.
  *
+ * `clock` names the map `at` belongs to (top of this file): `server` for a DM or group mark this
+ * build decided or a frame that said `serverAt`; `stamped` for a salon mark, an older client's bare
+ * `at`, and the native shade's.
+ *
  * @returns `convo` itself when neither the watermark nor the count changes, so a repeat costs no
  *          re-render.
  */
 export function withOwnReadAdvanced<
   C extends {
-    messages: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>;
+    messages: Array<
+      Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
+    >;
     readWatermarks?: ReadWatermarks;
+    serverReadWatermarks?: ReadWatermarks;
     unreadCount?: number;
   },
->(convo: C, userId: string, at: number): C {
-  const merged = mergeReadWatermark(convo.readWatermarks, userId, at);
-  const watermark = watermarkFor(merged ?? convo.readWatermarks, userId);
+>(convo: C, userId: string, at: number, clock: ReadClock): C {
+  const field = clock === 'server' ? 'serverReadWatermarks' : 'readWatermarks';
+  const merged = mergeReadWatermark(convo[field], userId, at);
+  const point = readPointFor({ ...convo, ...(merged ? { [field]: merged } : {}) }, userId);
   const held = convo.unreadCount ?? 0;
-  const next = Math.min(held, countUnreadForUser(convo.messages, watermark));
+  const next = Math.min(held, countUnreadForUser(convo.messages, point.stamped, point.server));
   if (!merged && next === held) return convo;
   return {
     ...convo,
-    ...(merged ? { readWatermarks: merged } : {}),
+    ...(merged ? { [field]: merged } : {}),
     unreadCount: next,
   };
 }
 
-/** Counts the messages of `msgs` that still read as unread at `watermark`. */
+/**
+ * Which map a mark belongs to: `server` is compared against the server's time of a row, `stamped`
+ * against the row's own `timestamp`. See the top of this file.
+ */
+export type ReadClock = 'server' | 'stamped';
+
+/** Counts the messages of `msgs` that still read as unread for a reader holding these two marks. */
 export function countUnreadForUser(
-  msgs: Array<Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp'>>,
-  watermark: number
+  msgs: Array<
+    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
+  >,
+  watermark: number,
+  serverWatermark = 0
 ): number {
-  return msgs.reduce((total, msg) => total + (isUnreadForUser(msg, watermark) ? 1 : 0), 0);
+  return msgs.reduce(
+    (total, msg) => total + (isUnreadForUser(msg, watermark, serverWatermark) ? 1 : 0),
+    0
+  );
 }
 
 /**
@@ -267,7 +370,10 @@ export function countUnreadForUser(
  */
 export function watermarkAfterReading(
   msgs: Array<
-    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'awaitingServerId'>
+    Pick<
+      ChatMessage,
+      'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp' | 'awaitingServerId'
+    >
   >,
   current: number,
   includeSystem = false
@@ -298,17 +404,138 @@ export function watermarkAfterReading(
  *
  * A SALON IS UNCHANGED, own and system rows included: its mark goes to the server, which counts
  * unread rows against it.
+ *
+ * THE ANSWER IS ON THE SERVER'S CLOCK (`readOrderKey`) for both: a DM or group mark goes into
+ * `serverReadWatermarks` and its frame says `serverAt`; a salon row's two clocks are one.
+ * `current` is the reader's mark in the map the answer goes into.
  */
 export function readMarkTarget(
   msgs: Array<
-    Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'awaitingServerId'>
+    Pick<
+      ChatMessage,
+      'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp' | 'awaitingServerId'
+    >
   >,
   current: number,
-  isSalon: boolean
+  isSalon: boolean,
+  serverSeen: number
 ): number {
   if (isSalon) return watermarkAfterReading(msgs, current, true);
-  return watermarkAfterReading(
+  const target = watermarkAfterReading(
     msgs.filter((msg) => !msg.isOwn),
     current
   );
+  return Math.max(current, Math.min(target, serverMarkCeiling(msgs, serverSeen)));
+}
+
+/**
+ * THE HIGHEST A SERVER-CLOCK MARK MAY GO: the newest `serverTimestamp` the conversation holds, and
+ * never above what the server itself has said to this account on this device (`serverSeen`,
+ * serverClock.ts, durable). 0 - the mark does not move - while the server has said nothing.
+ *
+ * WHY. The target is the newest key read, and a row's key falls back on its `sentAt` - the AUTHOR's
+ * clock - when the row has no server time, while a bundle row's server time was written by the
+ * member who relayed it. Unbounded, a phone running fast or a relayer writing 2100 would push the
+ * reader's server mark past every message not yet received, and the merge is `max`: read for good,
+ * before they arrive. An undated row newer than every server time held therefore stays unread until
+ * a dated row catches up with it, which is the cost of never over-reading.
+ *
+ * A conversation holding no dated row at all is bounded by `serverSeen` alone.
+ */
+export function serverMarkCeiling(
+  msgs: ReadonlyArray<Pick<ChatMessage, 'serverTimestamp'>>,
+  serverSeen: number
+): number {
+  let held = 0;
+  for (const msg of msgs) {
+    const at = msg.serverTimestamp;
+    if (typeof at === 'number' && Number.isFinite(at) && at > held) held = at;
+  }
+  // NOTHING KNOWN, NOTHING MOVED: with no server statement on this device yet (a first boot with no
+  // network) the rows held are the only bound, and they are exactly what is not trusted.
+  if (serverSeen <= 0) return 0;
+  return held === 0 ? serverSeen : Math.min(held, serverSeen);
+}
+
+/**
+ * The mark a `read_watermark` frame states, and the clock it is on.
+ *
+ * A frame from this build carries `serverAt` (the server's clock, `serverReadWatermarks`) AND `at`,
+ * the same value, for an older client that reads `at` alone. A frame with no `serverAt` is from an
+ * older client or the native shade, and its `at` is on the stamped clock (`readWatermarks`).
+ * `null` when the frame states no usable instant.
+ */
+export function readWatermarkFrameMark(data: {
+  at?: unknown;
+  serverAt?: unknown;
+}): { at: number; clock: ReadClock } | null {
+  const server = Number(data.serverAt);
+  if (Number.isFinite(server) && server > 0) return { at: server, clock: 'server' };
+  const stamped = Number(data.at);
+  if (Number.isFinite(stamped) && stamped > 0) return { at: stamped, clock: 'stamped' };
+  return null;
+}
+
+/**
+ * The mark a `read_watermark` frame RECEIVED from a member states, bounded by the server's own time
+ * for that frame: an honest sender's server-clock mark is the server time of a row it holds, which
+ * the server accepted before it accepted this frame. A server mark above `frameServerAt` - or any
+ * server mark when the frame's server time is unknown - is REFUSED, with the reason: written by a
+ * member, unbounded, it would mark every later message read before it arrives, for good (the merge
+ * is `max`). A stamped mark (an older client's `{at}`) is on the author's clock and is passed through
+ * as it always was.
+ */
+export function receivedReadWatermarkMark(
+  data: { at?: unknown; serverAt?: unknown },
+  frameServerAt: number | undefined
+): { mark: { at: number; clock: ReadClock } | null; refused?: string } {
+  const mark = readWatermarkFrameMark(data);
+  if (!mark || mark.clock !== 'server') return { mark };
+  if (!(typeof frameServerAt === 'number' && frameServerAt > 0)) {
+    return { mark: null, refused: 'the frame carries no server time to bound it' };
+  }
+  if (mark.at > frameServerAt) {
+    return {
+      mark: null,
+      refused: `serverAt ${mark.at} is after the server accepted the frame (${frameServerAt})`,
+    };
+  }
+  return { mark };
+}
+
+/**
+ * The server-clock marks a HISTORY BUNDLE restates, without any above the server's own time for the
+ * bundle frame (see {@link receivedReadWatermarkMark}); `dropped` counts the refused ones. With no
+ * server time for the frame, every server mark is refused.
+ */
+export function boundedServerMarks(
+  marks: ReadWatermarks | null | undefined,
+  frameServerAt: number | undefined
+): { kept: ReadWatermarks | null; dropped: number } {
+  if (!marks) return { kept: null, dropped: 0 };
+  const bound = typeof frameServerAt === 'number' && frameServerAt > 0 ? frameServerAt : 0;
+  const kept: ReadWatermarks = {};
+  let dropped = 0;
+  for (const [user, at] of Object.entries(marks)) {
+    if (bound > 0 && at <= bound) kept[user] = at;
+    else dropped++;
+  }
+  return { kept: Object.keys(kept).length > 0 ? kept : null, dropped };
+}
+
+/** The `data` of a `read_watermark` frame this build sends: the mark under both names (see above). */
+export function readWatermarkFrameData(serverAt: number): { at: number; serverAt: number } {
+  return { at: serverAt, serverAt };
+}
+
+/**
+ * `convo` with `userId`'s mark on `clock` advanced to `at`, or `null` when it is not ahead - a
+ * PEER's mark, which moves no badge. Our own goes through {@link withOwnReadAdvanced}.
+ */
+export function withReadMark<
+  C extends { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks },
+>(convo: C, userId: string, at: number, clock: ReadClock): C | null {
+  const field = clock === 'server' ? 'serverReadWatermarks' : 'readWatermarks';
+  const merged = mergeReadWatermark(convo[field], userId, at);
+  return merged ? { ...convo, [field]: merged } : null;
 }

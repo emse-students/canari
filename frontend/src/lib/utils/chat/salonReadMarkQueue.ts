@@ -53,11 +53,22 @@ export class ReadMarkTargetGoneError extends Error {
  */
 export type SendSalonMark = (channelId: string, at: number, serverAt?: number) => Promise<unknown>;
 
-/** Which ledger a mark is owed in: a salon's goes to the server, a DM's or group's to the outbox. */
-type MarkSpace = 'salon' | 'dm';
+/**
+ * Which ledger a mark is owed in: a salon's goes to the server, a DM's or group's to the outbox -
+ * `dm` on the server's clock since 2026-10-31, `dmStamped` the ones owed before, on the authors'
+ * `sentAt` clock, which leave as the older `{at}` frame and are never written again.
+ */
+type MarkSpace = 'salon' | 'dm' | 'dmStamped';
 
 const keyFor = (space: MarkSpace, userId: string): string =>
-  space === 'salon' ? ACCOUNT_KEY.salonReadMarks(userId) : ACCOUNT_KEY.dmReadMarks(userId);
+  space === 'salon'
+    ? ACCOUNT_KEY.salonReadMarks(userId)
+    : space === 'dm'
+      ? ACCOUNT_KEY.dmServerReadMarks(userId)
+      : ACCOUNT_KEY.dmReadMarks(userId);
+
+/** The clock of an owed DM or group mark, which decides the frame it leaves as. */
+export type OwedDmClock = 'server' | 'stamped';
 
 function load(space: MarkSpace, userId: string): Owed {
   try {
@@ -92,7 +103,7 @@ export function recordSalonReadMark(
   record('salon', userId, channelId, at, serverAt);
 }
 
-/** Records that `userId` has read the DM or group `conversationId` up to `at`, durably. */
+/** Records that `userId` has read the DM or group `conversationId` up to `at` (server clock), durably. */
 export function recordDmReadMark(userId: string, conversationId: string, at: number): void {
   record('dm', userId, conversationId, at);
 }
@@ -177,6 +188,7 @@ export function owedSalonReadMarks(userId: string): Owed {
  */
 export function forgetDmReadMark(userId: string, conversationId: string): void {
   forget('dm', userId, conversationId);
+  forget('dmStamped', userId, conversationId);
 }
 
 /**
@@ -201,6 +213,11 @@ export function owedDmReadMarks(userId: string): Owed {
   return load('dm', userId);
 }
 
+/** The DM and group marks owed since before 2026-10-31, on the stamped clock. */
+export function owedStampedDmReadMarks(userId: string): Owed {
+  return load('dmStamped', userId);
+}
+
 /**
  * Delivers every owed mark. A mark is removed only when the server answered AND nothing higher was
  * recorded while the call was in flight, or when the server answered that the salon no longer exists
@@ -217,11 +234,13 @@ export function flushSalonReadMarks(userId: string, send: SendSalonMark): Promis
  * Hands every owed DM or group mark to the outbox; `queue` resolves once the outbox has taken the
  * frame and throws when it could not. Same removal rule as the salon's.
  */
-export function flushDmReadMarks(
+export async function flushDmReadMarks(
   userId: string,
-  queue: (conversationId: string, at: number) => Promise<unknown>
+  queue: (conversationId: string, at: number, clock: OwedDmClock) => Promise<unknown>
 ): Promise<number> {
-  return flush('dm', userId, queue, 'the next outbox registration or read');
+  const next = 'the next outbox registration or read';
+  const stamped = await flush('dmStamped', userId, (id, at) => queue(id, at, 'stamped'), next);
+  return stamped + (await flush('dm', userId, (id, at) => queue(id, at, 'server'), next));
 }
 
 async function flush(

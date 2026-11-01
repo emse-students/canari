@@ -1,0 +1,288 @@
+/**
+ * Deriving the order key of the message rows that carry only a PROVISIONAL one, shared by both
+ * storage backends (`SqliteStorage`, `IndexedDbStorage`).
+ *
+ * WHY A ROW IS PROVISIONAL. The order key (`storedOrderAt`) is the server's receive time, which is
+ * INSIDE the ciphertext. A row written before the key existed (the SQLite v16 step, the IndexedDB
+ * v12 upgrade) or imported from a backup (`importEncryptedRow`, whose input is ciphertext) cannot be
+ * keyed without the device key, so it is written with its `timestamp` (`sentAt`, readable in the
+ * clear) as the key and a PENDING flag. A page read never waits for the real key: it walks the index
+ * as it stands - the keyed rows and the provisional ones together - and starts this derivation behind
+ * it. The page drawn meanwhile is in the right order on screen anyway, because the timeline sorts on
+ * the decrypted `messageTime`; only the store's page BOUNDARY is provisional, and `PageKey.provisional`
+ * says so to the one reader that pages below it (`loadOlderMessages`).
+ *
+ * BOUNDED AND RESUMABLE. The rows are read {@link ORDER_KEY_CHUNK_ROWS} at a time, in primary-key
+ * order after the last one read, and each chunk is WRITTEN before the next is read: a kill loses at
+ * most one chunk of work, and the next run reads only the rows still pending - the flag is the
+ * durable progress, no counter or clock is. One run per conversation at a time
+ * ({@link OrderKeyDerivations}).
+ *
+ * TWO FAILURES, TWO ANSWERS, told apart by TYPE at the throw (`PayloadUnreadableError`), never by a
+ * message. A row this key can never read is keyed on its `timestamp` and its flag cleared - it is in
+ * no page (the page read skips it), and left pending it would be decrypted again by every run. Any
+ * other failure may pass (the key could not be imported, the engine threw), so the row stays pending,
+ * the run moves past it, and the next run tries it again.
+ */
+
+import { decryptData, PayloadUnreadableError } from '$lib/encryption';
+import { appendLog } from '$lib/utils/sessionLog';
+import { fromMessagePayload, storedOrderAt } from './messagePayload';
+
+/** Rows read, decrypted and written per step of a derivation. */
+export const ORDER_KEY_CHUNK_ROWS = 500;
+
+/** One provisional row as a backend reads it: the clear columns and the sealed payload. */
+export interface PendingOrderRow {
+  id: string;
+  /** `sentAt`, already a number: the key the row is provisionally paged on. */
+  timestamp: number;
+  iv: Uint8Array;
+  cipherText: Uint8Array;
+}
+
+/** The row's derived key, to be written only while the row is still pending. */
+export interface DerivedOrderKey {
+  id: string;
+  orderAt: number;
+}
+
+/** What one derivation run did, counted for its log line and for the tests. */
+export interface OrderKeyDerivation {
+  /** Rows keyed on the server time read out of their payload (or their `sentAt` when it has none). */
+  derived: number;
+  /** Rows this key can never read, keyed on their `sentAt` for good. */
+  unreadable: number;
+  /** Rows a failure that may pass left pending, for the next run. */
+  deferred: number;
+}
+
+/** The two storage operations a derivation needs, implemented by each backend. */
+export interface OrderKeyIo {
+  /** Up to `limit` pending rows of the conversation, by primary key, strictly after `after`. */
+  readChunk(after: string | undefined, limit: number): Promise<PendingOrderRow[]>;
+  /** Writes the keys and clears the pending flag, touching only rows STILL pending. */
+  writeChunk(keyed: readonly DerivedOrderKey[]): Promise<void>;
+}
+
+/**
+ * Runs one derivation of `conversationId` to the end of its pending rows, chunk by chunk.
+ * Rejects only when the store itself fails (a read or a write) - the chunks written before stand.
+ */
+export async function deriveOrderKeysInChunks(
+  conversationId: string,
+  deviceKeyB64: string,
+  io: OrderKeyIo
+): Promise<OrderKeyDerivation> {
+  const tag = conversationId.slice(0, 8);
+  const done: OrderKeyDerivation = { derived: 0, unreadable: 0, deferred: 0 };
+  let after: string | undefined;
+  for (;;) {
+    const rows = await io.readChunk(after, ORDER_KEY_CHUNK_ROWS);
+    if (rows.length === 0) break;
+    const keyed: DerivedOrderKey[] = [];
+    for (const row of rows) {
+      try {
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        const msg = fromMessagePayload(
+          { id: row.id, conversationId, timestamp: row.timestamp },
+          payload
+        );
+        keyed.push({ id: row.id, orderAt: storedOrderAt(msg) });
+        done.derived++;
+      } catch (e) {
+        if (e instanceof PayloadUnreadableError) {
+          keyed.push({ id: row.id, orderAt: row.timestamp });
+          done.unreadable++;
+        } else {
+          done.deferred++;
+          console.warn(
+            `[STORE] order key of ${row.id} in ${tag} deferred - the payload could not be read for now: ${String(e)}`
+          );
+        }
+      }
+    }
+    if (keyed.length > 0) await io.writeChunk(keyed);
+    after = rows[rows.length - 1].id;
+    if (rows.length < ORDER_KEY_CHUNK_ROWS) break;
+  }
+  if (done.derived + done.unreadable + done.deferred > 0) {
+    appendLog(
+      `[STORE] order keys of ${tag}: ${done.derived} derived` +
+        (done.unreadable > 0 ? `, ${done.unreadable} unreadable (keyed on their sentAt)` : '') +
+        (done.deferred > 0 ? `, ${done.deferred} deferred to the next run` : '')
+    );
+  }
+  return done;
+}
+
+/** Who is waiting for a run: a reader on screen, or nobody (a run started behind a page read). */
+export type OrderKeyRunPriority = 'waited' | 'background';
+
+/** A run queued on the lane and not started yet. */
+interface QueuedRun {
+  conversationId: string;
+  start: () => Promise<OrderKeyDerivation>;
+  resolve: (done: OrderKeyDerivation) => void;
+  reject: (e: unknown) => void;
+}
+
+/**
+ * ONE derivation in flight per conversation, and ONE LANE for all of them: a run starts only when
+ * the previous one - whatever its conversation - has settled, so a first boot opening many
+ * conversations decrypts one chunk at a time instead of competing with the writes the boot itself
+ * makes (review of #2824, E). A second page read of a conversation joins its run instead of
+ * decrypting the same rows twice. The entry is dropped when the run settles, so the next read that
+ * still finds a pending row (a backup imported since) starts a new run.
+ *
+ * A RUN SOMEONE WAITS FOR GOES FIRST (third review of #2824, 2). The lane holds two queues and
+ * starts the next run from the `waited` one while it holds any: a load-older that must wait for its
+ * conversation's keys (`run`) is not put behind every conversation the boot queued in the background
+ * (`startInBackground`), and a background run already queued for that conversation is MOVED to the
+ * waited queue rather than started twice. Still one run at a time, never preempted: a run in progress
+ * finishes its chunks, so termination and resume-after-kill (the flag is the progress) are those of
+ * {@link deriveOrderKeysInChunks}. A background run is delayed only by runs a reader is waiting for,
+ * which are as many as the reader's own gestures.
+ *
+ * A RUN THAT DEFERRED A ROW ENDS THE WAITING for its conversation: the row stays flagged, and until
+ * a fact says the failure has passed the conversation's pages are read as keyed ({@link gaveUp}) - a
+ * load-older does not wait for, and re-read behind, a derivation that would defer the same row
+ * again. Two facts take it back, never a clock: new rows to key arrive (`rearm`, a backup import), or
+ * a page read DECRYPTED a row still flagged ({@link readableAgain}) - the very work the run deferred
+ * succeeded, so the next run will key it. A row the run can never key does not decrypt in a page read
+ * either (both run `decryptData` then `fromMessagePayload`), so it cannot re-arm the conversation
+ * over and over; at worst the next session's run retries it.
+ */
+export class OrderKeyDerivations {
+  private readonly inFlight = new Map<string, Promise<OrderKeyDerivation>>();
+  /** Runs queued and not started, a reader waiting for each. Started before any background one. */
+  private readonly waited: QueuedRun[] = [];
+  /** Runs queued and not started that nobody waits for. */
+  private readonly background: QueuedRun[] = [];
+  /** Whether a run holds the lane. */
+  private busy = false;
+  /** The conversations whose last run deferred a row, until a fact says the failure has passed. */
+  private readonly deferred = new Set<string>();
+
+  /**
+   * The run in flight for `conversationId`, or a new one queued on the lane with `start`.
+   * `priority` says whether a reader waits for it (`run` from a load-older, `orderKeysDerived`):
+   * such a run is started before every background one still queued, and a background run of the
+   * same conversation already queued is promoted rather than duplicated.
+   */
+  run(
+    conversationId: string,
+    start: () => Promise<OrderKeyDerivation>,
+    priority: OrderKeyRunPriority = 'waited'
+  ): Promise<OrderKeyDerivation> {
+    const running = this.inFlight.get(conversationId);
+    if (running) {
+      if (priority === 'waited') this.promote(conversationId);
+      return running;
+    }
+    let queued!: QueuedRun;
+    const settled = new Promise<OrderKeyDerivation>((resolve, reject) => {
+      queued = { conversationId, start, resolve, reject };
+    });
+    // The entry goes IN THE SAME CALLBACK that records the outcome, before it: a settled run can
+    // never be joined. Dropped one microtask later (a `.finally`), a `readableAgain` landing in
+    // between re-armed the conversation, then joined the finished run and derived nothing (review 4
+    // of #2824).
+    const forget = () => {
+      if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
+    };
+    const run: Promise<OrderKeyDerivation> = settled.then(
+      (done) => {
+        forget();
+        if (done.deferred > 0) {
+          this.deferred.add(conversationId);
+          console.warn(
+            `[STORE] order keys of ${conversationId.slice(0, 8)}: ${done.deferred} row(s) deferred - its pages are read as keyed until a page read decrypts one of them or the next session retries them`
+          );
+        }
+        return done;
+      },
+      (e: unknown) => {
+        forget();
+        throw e;
+      }
+    );
+    this.inFlight.set(conversationId, run);
+    (priority === 'waited' ? this.waited : this.background).push(queued);
+    this.next();
+    return run;
+  }
+
+  /** Moves a background run of `conversationId` still queued to the waited queue. */
+  private promote(conversationId: string): void {
+    const at = this.background.findIndex((q) => q.conversationId === conversationId);
+    if (at < 0) return;
+    const [queued] = this.background.splice(at, 1);
+    this.waited.push(queued);
+    appendLog(
+      `[STORE] order keys of ${conversationId.slice(0, 8)}: a reader waits for them - moved ahead of ${this.background.length} background run(s)`
+    );
+  }
+
+  /** Starts the next queued run when the lane is free: a waited one first. */
+  private next(): void {
+    if (this.busy) return;
+    const queued = this.waited.shift() ?? this.background.shift();
+    if (!queued) return;
+    this.busy = true;
+    // `start` may throw synchronously: the lane is released whatever it does.
+    Promise.resolve()
+      .then(queued.start)
+      .then(queued.resolve, queued.reject)
+      .finally(() => {
+        this.busy = false;
+        this.next();
+      });
+  }
+
+  /** Whether the last run of `conversationId` deferred a row and nothing re-armed it since. */
+  gaveUp(conversationId: string): boolean {
+    return this.deferred.has(conversationId);
+  }
+
+  /** New rows to key in `conversationId` (a backup import): its next page read derives again. */
+  rearm(conversationId: string): void {
+    this.deferred.delete(conversationId);
+  }
+
+  /**
+   * A page read of `conversationId` decrypted a row still flagged pending (`page` is what it hands
+   * back). When the conversation's last run had deferred rows, that failure has passed: the
+   * conversation is re-armed, a run starts behind the read, and the page's keys are marked
+   * provisional - so the next load-older waits for the keys instead of paging on `sentAt` for the
+   * rest of the session. Nothing happens otherwise (a pending row on a page is the ordinary
+   * provisional case, already derived behind the read).
+   */
+  readableAgain(
+    conversationId: string,
+    page: ReadonlyArray<{ pageKey?: { provisional: boolean } }>,
+    start: () => Promise<OrderKeyDerivation>
+  ): void {
+    if (!this.deferred.delete(conversationId)) return;
+    appendLog(
+      `[STORE] order keys of ${conversationId.slice(0, 8)}: a deferred row decrypted in a page read - derived again`
+    );
+    for (const row of page) if (row.pageKey) row.pageKey.provisional = true;
+    this.startInBackground(conversationId, start);
+  }
+
+  /**
+   * Starts (or joins) a run in the BACKGROUND: the caller does not wait, and a store failure is
+   * logged here - the pending rows stay pending and the next page read starts a new run.
+   */
+  startInBackground(conversationId: string, start: () => Promise<OrderKeyDerivation>): void {
+    this.run(conversationId, start, 'background').catch((e) => {
+      console.error(
+        `[STORE] order-key derivation of ${conversationId.slice(0, 8)} stopped - the rows still pending are taken up by the next page read: ${String(e)}`
+      );
+    });
+  }
+}
