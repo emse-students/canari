@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CHAT_REEL_RETENTION_MS,
   CHAT_REEL_WRITER_ENABLED,
+  captureCapMs,
   chatReelAllowed,
+  chatReelCapMs,
   chatReelPendingDeclaration,
+  chatReelPrepareOptions,
   isChatReelTake,
   markChatReelTake,
   uploadClassFor,
@@ -49,5 +52,27 @@ describe('the chat reel writer', () => {
       microphone: 'separate',
     });
     expect(destinationRules('feed', true).photoOnly).toBe(false);
+  });
+
+  it('caps a chat take at the chat cap the server serves, and every other destination at the reel cap', () => {
+    const limits = { maxDurationMs: 90_000, chatMaxDurationMs: 60_000 };
+    expect(chatReelCapMs(limits)).toBe(60_000);
+    expect(captureCapMs(limits, 'chat')).toBe(60_000);
+    expect(captureCapMs(limits, 'feed')).toBe(90_000);
+    expect(captureCapMs(limits, 'post')).toBe(90_000);
+    expect(captureCapMs(limits, 'post-edit')).toBe(90_000);
+  });
+
+  it('says it when a server older than RC-3 serves no chat cap, and keeps its reel cap', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(chatReelCapMs({ maxDurationMs: 90_000 })).toBe(90_000);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no chat cap'));
+    warn.mockRestore();
+  });
+
+  it('prepares a queued take at the chat profile under the chat cap (RC-3 wired into RC-5)', () => {
+    expect(
+      chatReelPrepareOptions({ maxDurationMs: 90_000, chatMaxDurationMs: 60_000 }, 50_000_000)
+    ).toEqual({ profile: 'chat', maxSeconds: 60, maxBytes: 50_000_000 });
   });
 });

@@ -69,7 +69,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
-  import { markChatReelTake } from '$lib/reels/chatReelWriter';
+  import { captureCapMs, markChatReelTake } from '$lib/reels/chatReelWriter';
 
   interface Props {
     /** The session, injectable for tests. */
@@ -124,6 +124,8 @@
   const hasMicrophone = $derived(session.microphone);
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
+  /** The take's cap for THIS destination: the chat cap in a conversation (RC-3), the reel cap elsewhere. */
+  const capMs = $derived(limits ? captureCapMs(limits, destination) : null);
   /**
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
    * (`postCameraOpener`); a cap not read yet (offline) keeps them too - a photo needs neither.
@@ -209,7 +211,9 @@
     limitsFault = null;
     try {
       limits = await getReelLimits();
-      console.debug(`[reel-capture] cap ${limits.maxDurationMs} ms`);
+      console.debug(
+        `[reel-capture] cap ${limits.maxDurationMs} ms, chat cap ${limits.chatMaxDurationMs ?? 'none'} ms (${destination})`
+      );
     } catch (err) {
       limitsFault = classifyLimitsFault(refusalStatus(err));
       console.error(`[reel-capture] the reel limits could not be read (${limitsFault})`, err);
@@ -454,7 +458,7 @@
 
   function beginTake() {
     const stream = session.stream;
-    if (!stream || !limits) {
+    if (!stream || capMs === null) {
       console.warn('[reel-capture] a take was asked for with no stream or no cap');
       send({ type: 'failed' });
       return;
@@ -489,10 +493,10 @@
     elapsedMs = 0;
     // THE CAP IS THE PRODUCT'S RULE (C4), so it is a deadline by definition: the ring is full when
     // the take is as long as the server allows, and that ends it exactly as a second tap would.
-    limitTimer = setTimeout(() => send({ type: 'limit' }), limits.maxDurationMs);
+    limitTimer = setTimeout(() => send({ type: 'limit' }), capMs);
     const tick = () => {
       if (!recorder) return;
-      elapsedMs = Math.min(recorder.elapsedMs, limits?.maxDurationMs ?? recorder.elapsedMs);
+      elapsedMs = Math.min(recorder.elapsedMs, capMs ?? recorder.elapsedMs);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -605,7 +609,7 @@
   }
 
   async function takePickedVideo(file: File) {
-    if (!limits) {
+    if (capMs === null) {
       // The gallery button waits for the cap, so this is a pick the member made and cannot see
       // taken: it is said, never dropped.
       console.warn('[reel-capture] a gallery pick arrived before the cap was read');
@@ -618,12 +622,9 @@
       return;
     }
     const durationMs = await readVideoDurationMs(file);
-    if (durationMs !== null && durationMs > limits.maxDurationMs) {
-      console.warn(`[reel-capture] picked ${durationMs} ms, over ${limits.maxDurationMs}`);
-      showToast(
-        m.reels_capture_too_long({ seconds: Math.round(limits.maxDurationMs / 1000) }),
-        'error'
-      );
+    if (durationMs !== null && durationMs > capMs) {
+      console.warn(`[reel-capture] picked ${durationMs} ms, over ${capMs}`);
+      showToast(m.reels_capture_too_long({ seconds: Math.round(capMs / 1000) }), 'error');
       return;
     }
     send({ type: 'picked', clip: { blob: file, source: 'gallery' } });
@@ -671,9 +672,7 @@
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');
-  const fraction = $derived(
-    limits ? shutterRingFraction(capture, elapsedMs, limits.maxDurationMs) : 0
-  );
+  const fraction = $derived(capMs !== null ? shutterRingFraction(capture, elapsedMs, capMs) : 0);
 </script>
 
 <!-- No Back swipe while the editor owns the strokes or a take is being filmed (`swipeBack`): a
