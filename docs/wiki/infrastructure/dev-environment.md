@@ -155,9 +155,9 @@ needs no toolchain to load it (`bun tools/dev-seed/seed.ts --write` after an edi
 
 | Seeded | Not seeded, and why |
 | --- | --- |
-| 10 people, last name `Fictif`, across formations, promotions and both campuses | communities, salons, DMs - anything under MLS. A community inserted as rows has no key-distribution group and no device holding its state, so nobody could ever read it. Testers create them through the product |
-| the ten spaces, three categories, six associations (`BDE Fictif` as the ICM x Saint-Etienne BDE, three clubs, a list, `Ecole Fictive` addressing everyone), their audiences and memberships (each president holds every flag) | media: a row naming an object the dev bucket does not hold renders as a 404 |
-| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (`1.2.7` today; production's floor is `1.2.9` since 2026-10-29, so the seed must follow, owed in [backlog](../backlog.md): a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
+| 18 people, last name `Fictif`, across formations, promotions and both campuses | communities, salons, DMs - anything under MLS. A community inserted as rows has no key-distribution group and no device holding its state, so nobody could ever read it. Testers create them through the product |
+| the ten spaces, four categories (including `solidarite`), ten associations (`BDE Fictif` as the ICM x Saint-Etienne BDE, seven clubs, a list, `École Fictive` addressing everyone), their audiences and memberships (each president holds every flag) | media: a row naming an object the dev bucket does not hold renders as a 404 |
+| follows, 12 posts, 10 calendar events (3 `pending` and 1 `rejected` with a reason, for the validation flow; the rest `validated`), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (`1.2.7` today; production's floor is `1.2.9` since 2026-10-29, so the seed must follow, owed in [backlog](../backlog.md): a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
 
 **Fake, checkably.** Last names are the marker, association names say `Fictif`/`Fictive`, every
 address is on `example.invalid` - the TLD RFC 2606 reserves so it can never resolve. User ids are 64
