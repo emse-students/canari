@@ -61,23 +61,15 @@ describe('the iOS active signal', () => {
     expect(launch).toContain('g_isInForeground = false');
   });
 
-  it('the page ASKS the same flag the extension reads, by the same name', () => {
+  it('the page ASKS UIKit itself, on the main thread - never a mirror a failed write could leave stale', () => {
     const rust = readFileSync(
       resolve(here, '../../../src-tauri/src/commands/app_active.rs'),
       'utf8'
     );
-    const nse = readFileSync(
-      resolve(here, '../../../src-tauri/gen/apple/canari_NSE/NotificationService.swift'),
-      'utf8'
-    );
-    const asked = /APP_ACTIVE_FLAG_FILE: &str = "([^"]+)"/.exec(rust)?.[1];
-    const written = /URLByAppendingPathComponent:@"([^"]+)"\]/.exec(
-      body(IOS_MM, 'static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {')
-    )?.[1];
-    const read = /appInForegroundFile = "([^"]+)"/.exec(nse)?.[1];
-    expect(asked).toBeDefined();
-    expect(asked).toBe(written);
-    expect(asked).toBe(read);
+    expect(rust).toContain('msg_send![app, applicationState]');
+    expect(rust).toContain('run_on_main_thread');
+    expect(rust).not.toContain('app_in_foreground"');
+    expect(rust).not.toContain('app_group_dir');
   });
 
   it('a push the page could not be told is an ERROR', () => {

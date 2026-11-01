@@ -2280,12 +2280,15 @@ after every page load (`CanariPushActiveToPage`), read by `appActive.ts` only. N
 tones, playback, the checkpoint flush, reconnects, read-marking).
 
 **Told AND asked.** A push can be lost (`evaluateJavaScript` failed), and a page left on "inactive"
-in front would withhold everything. So the page also ASKS, on load and on every `visibilitychange`:
-`ios_app_active` (`commands/app_active.rs`) stats `app_in_foreground` in the App Group - the flag
-`CanariSetAppGroupForegroundFlag` writes from the same callbacks, and the one the extension reads, so
-the page, the delegate and the extension hold one state. An answer overtaken by a told transition is
-dropped (the push is newer); a page that held the other value logs an ERROR, as does the native
-failure to tell it. No timer.
+in front would withhold everything. So the page also ASKS, on load, on every `visibilitychange`
+(background and back) and on every window `focus` (an inactive-only return - Control Center, a
+system prompt, the app switcher - changes no visibility; WebKit's window activation is what moves
+then, and its `focus` is the page event that follows it). `ios_app_active` (`commands/app_active.rs`)
+answers from UIKit's own `applicationState`, read on the main thread - NOT from the App Group flag
+the extension reads: that flag is a write, and a write that failed would hand back a stale value
+that overrides a correct told one. An answer overtaken by a told transition is dropped (the push is
+newer); a page that held the other value logs an ERROR, as does the native failure to tell it. No
+timer.
 
 **Why the page must not consume a frame while inactive.** The extension decrypts read-only from
 `mls.bin`. A frame the page has already consumed has spent its secret (and the page persists its
@@ -2312,6 +2315,19 @@ drain's end: that drain is still withholding the group's later frames, and a pul
 its copy of those frames refused by the dedup while the drain held the originals - stranded, and the
 group's order inverted (review of #2844, 2026-11-01; the test is "ACTIVE MID-DRAIN" in
 `BaseMlsService.inactiveQueue.test.ts`).
+
+**A released group's live frames wait behind its release pull** (`releasing`). The scheduler keeps
+arrival order only, and on a return with the socket still open (the app switcher, Control Center) a
+live frame of the group lands before the pull's copies of the withheld ones: applied first, it
+overtakes them, and a withheld commit leaves the live next-epoch frame unreadable. So, from the
+release until a pull that STARTED after it has listed the whole mailbox, a live frame of the group is
+parked - not decrypted, not ACKed, forgotten by the dedup - and the pull's own copies go through.
+Then the parked frames are handed back in arrival order, behind the pull's rows; a parked frame the
+pull itself brought is not handed back (its pull copy took its place, in the server's order). A pull
+that fails lists nothing, so the group stays parked until a pull completes - never a live frame
+ahead of an unapplied pull. Tests: "a released group holds its live frames behind the release
+pull" (pull then live, a withheld commit then a live next-epoch frame, a failed pull). A live frame
+with no queued row (none is expected on this path) is not parked: no pull could ever bring it.
 
 **The live call's group is exempt** (`setIosLiveCallGroup`, written by `CallService` from its own
 state: ringing, calling or connected). A call runs with the app in the background, and its hangup,
