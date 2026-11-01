@@ -218,6 +218,19 @@ class NotificationService: UNNotificationServiceExtension {
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     case "social_follow_request": composed = actorTitled("follow_request")
     case "social_follow_accepted": composed = actorTitled("follow_accepted")
+    // A new person asks to join a conversation the reader is in: the person names the title, the
+    // conversation's name is the body (a fixed phrase when it has none).
+    // With no name to show (the lookup failed server-side) the title says "someone": an id never
+    // reaches a lock screen.
+    case "chat_join_ask":
+      if actor.isEmpty {
+        composed = (
+          Self.localized("notif.social.join_ask_anon.title", locale: locale),
+          arg.isEmpty ? Self.localized("notif.social.join_ask.body", locale: locale) : arg
+        )
+      } else {
+        composed = actorTitled("join_ask")
+      }
     // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's
     // word) is the body, a fixed sentence on a link-only space (Q-R5).
     case "social_booking_cancelled": composed = actorTitled("booking_cancelled")

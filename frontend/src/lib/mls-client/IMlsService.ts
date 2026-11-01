@@ -1100,6 +1100,12 @@ export interface IMlsService {
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.
    *  Returns true if acquired, false if another device already holds the lock. */
   acquireAddLock(groupId: string): Promise<boolean>;
+  /**
+   * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
+   * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
+   * about anyone else.
+   */
+  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**

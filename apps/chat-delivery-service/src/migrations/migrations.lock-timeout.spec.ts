@@ -67,6 +67,8 @@ describe.each([
   // `revoked_device` is read by every device registration and every commit.
   ['040_revoked_device_reason.sql', /^\s*ALTER\s+TABLE\s+"?revoked_device"?/im],
   ['042_group_created_by.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
+  // A new table locks no existing one, but the rule is "never queue behind the catalogue".
+  ['043_join_ask_pushes.sql', /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?dm_join_ask_pushes"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

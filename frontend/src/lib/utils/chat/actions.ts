@@ -1,4 +1,6 @@
 import { exportBackup, importBackup } from '$lib/backup';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 import { formatRecoveryCode } from '$lib/crypto/backupRecoveryCode';
 import {
   clearBackupOwedAfterKeyMove,
@@ -1228,6 +1230,9 @@ export async function discoverMissingGroups(params: {
             deleteConversation,
             log,
           });
+          // SAID ONCE, IN PLAIN WORDS: the row was the person's only trace of their ask, and it is
+          // gone. The row is purged just now, so no later pass can say it again.
+          showToast(m.chat_admission_ended_toast(), 'info');
           continue;
         }
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with

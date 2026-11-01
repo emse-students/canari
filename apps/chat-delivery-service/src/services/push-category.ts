@@ -67,6 +67,9 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',
   social_follow_accepted: 'follows',
+  // A new person asks to join a conversation the reader is in (chat-delivery's own key, not
+  // social-service's): a conversation matter, so the switch for messages silences it.
+  chat_join_ask: 'messages',
   form_opening_soon: 'forms',
   form_open: 'forms',
   // A payment landed on a full form, told to its managers: a form matter, filed under the EXISTING

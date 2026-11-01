@@ -4002,6 +4002,15 @@ export abstract class BaseMlsService implements IMlsService {
    * the holder's release sends no frame, so nothing else would say it.
    */
   async acquireAddLock(groupId: string): Promise<boolean> {
+    return (await this.acquireAddLockAnswer(groupId)) === 'taken';
+  }
+
+  /**
+   * {@link acquireAddLock} with WHY a refusal happened kept: `held` is the server's own answer that
+   * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
+   * nothing about anyone else.
+   */
+  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4018,10 +4027,10 @@ export abstract class BaseMlsService implements IMlsService {
     if (answer.acquired) {
       this.addLocksHeld.set(groupId, answer.token);
       markAddLock(this.userId, groupId, answer.token);
-      return true;
+      return 'taken';
     }
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
-    return false;
+    return answer.answered ? 'held' : 'unanswered';
   }
 
   /**

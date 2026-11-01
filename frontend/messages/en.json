@@ -310,7 +310,7 @@
   "chat_message_placeholder": "Write…",
   "chat_send_message_label": "Send message",
   "chat_send_error_generic": "The message could not be sent. Try again in a moment.",
-  "chat_send_held": "Sending as soon as the session is ready ({count} waiting)",
+  "chat_send_held": "Sending as soon as the conversation is ready ({count} waiting)",
   "chat_send_held_not_sent": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -3560,6 +3560,11 @@
   "join_request_declined_line": "You declined {user}'s request",
   "join_request_failed": "Your answer could not be saved. Try again.",
   "join_request_row_text": "{user} wants to join the conversation",
+  "join_request_other_member_answering": "Someone is adding people right now, try again in a moment.",
+  "join_request_other_member_answered": "Another member has already answered this request.",
+  "join_request_pending_badge_label": "Requests to join: {count}",
+  "chat_awaiting_admission_notice": "Your request was passed on. You can write here as soon as a member adds you.",
+  "chat_admission_ended_toast": "Your request to join a conversation was not accepted, or it has expired.",
   "chat_system_conversation_deleted": "{sender} deleted this conversation.",
   "chat_system_message_deleted": "This message has been deleted.",
   "chat_system_removed_from_group": "You have been removed from this group. You can no longer send or receive new messages.",

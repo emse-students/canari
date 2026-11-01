@@ -6,7 +6,8 @@
     canAnswerJoinRequests,
   } from '$lib/utils/chat/joinRequests.svelte';
   import { answerJoinRequestOrToast } from '$lib/utils/chat/joinRequestAnswer';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
   import type { JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
 
@@ -40,6 +41,38 @@
   const declinedLines = $derived(declinedJoinRequests(groupId));
   let busy = $state(false);
 
+  /**
+   * THE NAMES RESOLVED FOR THE PEOPLE ON SCREEN. An outsider who came by link is exactly the person
+   * no name cache holds, and `getUserDisplayNameSync` reads that cache without notifying anyone: the
+   * line used to say "Utilisateur inconnu" for good. So each person is resolved once, when their ask
+   * (or decline line) appears, and the answer is held here, REACTIVELY, so the line redraws.
+   */
+  const resolvedNames = new SvelteMap<string, string>();
+  const asked = new Set<string>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- a request ledger, nothing renders it
+
+  $effect(() => {
+    for (const userId of [...asks, ...declinedLines].map((r) => r.userId)) {
+      if (asked.has(userId)) continue;
+      asked.add(userId);
+      void resolveUserDisplayName(userId)
+        .then((name) => {
+          if (name) resolvedNames.set(userId, name);
+        })
+        .catch((e: unknown) => {
+          // Not a defect of the card: the line keeps the placeholder, and the next ask retries.
+          asked.delete(userId);
+          console.warn(`[JOIN_REQUEST] name of ${userId} not resolved: ${String(e)}`);
+        });
+    }
+  });
+
+  const nameOf = (userId: string) => resolvedNames.get(userId) ?? getUserDisplayNameSync(userId);
+  /** The sentence split around the name, so the name can be a link to the profile. */
+  const NAME_SLOT = '\u0001';
+  const rowText = $derived(m.join_request_row_text({ user: NAME_SLOT }).split(NAME_SLOT));
+  const textBefore = $derived(rowText[0] ?? '');
+  const textAfter = $derived(rowText[1] ?? '');
+
   async function answer(request: JoinRequest, choice: 'approve' | 'decline') {
     busy = true;
     try {
@@ -61,7 +94,13 @@
       class="text-text-muted inline-flex max-w-md flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5"
     >
       <Info size={14} class="shrink-0 opacity-60" aria-hidden="true" />
-      <span>{m.join_request_row_text({ user: getUserDisplayNameSync(request.userId) })}</span>
+      <span
+        >{textBefore}<a
+          href="/profile/{encodeURIComponent(request.userId)}"
+          class="text-text-main underline underline-offset-2"
+          data-join-profile={request.userId}>{nameOf(request.userId)}</a
+        >{textAfter}</span
+      >
       <span class="text-text-main inline-flex items-center gap-2 font-semibold">
         <button
           type="button"
@@ -89,7 +128,7 @@
       class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5"
     >
       <Info size={14} class="shrink-0 opacity-60" aria-hidden="true" />
-      <span>{m.join_request_declined_line({ user: getUserDisplayNameSync(line.userId) })}</span>
+      <span>{m.join_request_declined_line({ user: nameOf(line.userId) })}</span>
     </div>
   </div>
 {/each}
