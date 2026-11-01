@@ -52,7 +52,6 @@ function makeContext(saveMessageWithOutboxEntry: () => Promise<void>) {
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation,
-    verifyCurrentUserMembership: vi.fn().mockResolvedValue(true),
     playNotificationTone: vi.fn(),
     playReceiveTone: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),

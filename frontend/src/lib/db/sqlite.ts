@@ -7,6 +7,7 @@ import {
   invalidateHistoryStateKey,
 } from '$lib/utils/chat/historyStateKey';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
+import { OutboxEntryWrittenAloneError } from '$lib/utils/chat/messageWrittenError';
 import type {
   ConversationMeta,
   EncryptedGraineRow,
@@ -1013,6 +1014,12 @@ export class SqliteStorage implements IStorage {
    * retries, nothing reports, and the author keeps a message no one else will ever have (TAB-5,
    * 2026-09-05). The first is recoverable in the only direction that matters, so the entry is
    * written first and the message second.
+   *
+   * **AND THE TEAR IS REPORTED AS WHAT IT IS.** A message write that fails after the entry landed
+   * throws {@link OutboxEntryWrittenAloneError}: the caller must not write the entry a second time
+   * (a second blob in its slot) nor give the file back for another send (a duplicate) - the queue
+   * already owns it (review of #2874, M2). A failure of the entry write throws as it comes: nothing
+   * is on disk.
    */
   async saveMessageWithOutboxEntry(
     msg: StoredMessage,
@@ -1020,7 +1027,15 @@ export class SqliteStorage implements IStorage {
     deviceKeyB64: string
   ): Promise<void> {
     await this.saveOutboxEntry(entry, deviceKeyB64);
-    await this.saveMessages([msg], deviceKeyB64);
+    try {
+      await this.saveMessages([msg], deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[DB] ${msg.id.slice(0, 8)}… outbox entry written, its message row NOT - the queue sends it, the echo is missing:`,
+        e
+      );
+      throw new OutboxEntryWrittenAloneError(msg.id, e);
+    }
   }
 
   /**

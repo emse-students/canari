@@ -18,7 +18,9 @@
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
   import {
     retryUpload,
+    unsentReasonOf,
     uploadViewOf,
+    type UnsentReason,
     type UploadView,
   } from '$lib/utils/chat/uploadProgress.svelte';
   import { isReelMessage } from '$lib/reels/chatReel';
@@ -30,7 +32,7 @@
   import type { MessageReaction, MessageSendStatus } from '$lib/types';
   import ControlRefusedNotice from './ControlRefusedNotice.svelte';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
-  import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
+  import { isOutboxEntryQueued, storedUnsentReasonOf } from '$lib/utils/chat/outbox';
   import {
     isOutboxEnqueueInflight,
     outboxQueueVersion,
@@ -662,6 +664,19 @@
    */
   const uploadFailed = $derived(isOwn && !!mediaRef && !mediaRef.mediaId && status === 'error');
   /**
+   * What the failed bubble says: the GROUP's reason when the outbox gave one (the conversation was
+   * deleted, or this device is no longer in it), the server's refusal otherwise.
+   */
+  const uploadFailedLabel = $derived.by((): string => {
+    const reason =
+      uploadFailed || retiredForGroup
+        ? (unsentReasonOf(messageId) ?? storedUnsentReason ?? undefined)
+        : undefined;
+    if (reason === 'group-deleted') return m.upload_unsent_group_deleted();
+    if (reason === 'not-a-member') return m.upload_unsent_not_a_member();
+    return m.upload_failed_label();
+  });
+  /**
    * A text of mine the server failed on 5xx too many times in a row: the outbox keeps it, shows it
    * failed and marks it with a `failed` view - the one sign that its Retry has a handler. Its retry
    * is the attachment's (`retryUpload`), so the component still never imports the queue.
@@ -692,6 +707,8 @@
    * `false` makes it an orphan, an unreadable queue (`null`) stays the queued spinner.
    */
   let outboxHasEntry = $state<boolean | null>(null);
+  /** The reason the STORED row gives for a retired attachment - the answer after a reload. */
+  let storedUnsentReason = $state<UnsentReason | null>(null);
   const orphanCandidate = $derived(
     isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed }) &&
       // The sender's own enqueue is still writing the row: "absent" is not yet an answer.
@@ -702,11 +719,18 @@
     void outboxQueueVersion();
     if (!orphanCandidate) {
       outboxHasEntry = null;
+      storedUnsentReason = null;
       return;
     }
     let stale = false;
-    void isOutboxEntryQueued(messageId).then((queued) => {
+    void isOutboxEntryQueued(messageId).then(async (queued) => {
       if (stale) return;
+      // ABSENT FROM THE QUEUE IS NOT YET "NEVER COMPLETED": the outbox may have retired it for the
+      // group's sake and said why on the stored row - read before the verdict is drawn, so the
+      // orphan label never flashes over a reason (re-review of #2874).
+      const reason = queued === false ? await storedUnsentReasonOf(messageId) : null;
+      if (stale) return;
+      storedUnsentReason = reason;
       outboxHasEntry = queued;
       Log.d(
         'MESSAGE',
@@ -717,7 +741,16 @@
       stale = true;
     };
   });
-  const orphanMedia = $derived(orphanCandidate && outboxHasEntry === false);
+  /**
+   * Retired by the outbox for the GROUP's sake, as the stored row records: drawn as the failed
+   * bubble with its reason, not as an orphan whose upload "never completed".
+   */
+  const retiredForGroup = $derived(
+    orphanCandidate && outboxHasEntry === false && storedUnsentReason !== null
+  );
+  const orphanMedia = $derived(
+    orphanCandidate && outboxHasEntry === false && storedUnsentReason === null
+  );
 
   /**
    * WHICH blob this row shows - a string, so it changes only when the attachment does.
@@ -989,7 +1022,8 @@
                 {authToken}
                 onNear={() => (isNearViewport = true)}
                 {upload}
-                {uploadFailed}
+                uploadFailed={uploadFailed || retiredForGroup}
+                {uploadFailedLabel}
                 onCancelUpload={onDelete ? () => onDelete(messageId) : undefined}
                 onRetryUpload={() => retryUpload(messageId)}
               />

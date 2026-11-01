@@ -1,5 +1,9 @@
 import { sendChatMessage } from './messaging';
-import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
+import {
+  MessagePairWriteError,
+  MessageWrittenError,
+  OutboxEntryWrittenAloneError,
+} from './messageWrittenError';
 import type { Conversation } from '$lib/types';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 
@@ -140,6 +144,19 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     expect(result.success).toBe(true);
     expect(enqueueOutboxMessage).toHaveBeenCalledTimes(1);
     expect(enqueueOutboxMessage.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it('an entry SQLite wrote WITHOUT its echo is called durable: never written twice (#2874, M2)', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async (_s: string, _c: string, _n: string, o: any) => {
+      throw new MessagePairWriteError(
+        o.messageId,
+        new OutboxEntryWrittenAloneError(o.messageId, new Error('disk I/O error'))
+      );
+    };
+    const result = await sendChatMessage('hello', 'alice', null, h.deps);
+    expect(result.success).toBe(true);
+    expect(enqueueOutboxMessage.mock.calls[0][1]).toEqual({ alreadyDurable: true });
   });
 
   it('a store that wrote nothing (no storage) is not called durable either', async () => {

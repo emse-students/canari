@@ -15,6 +15,7 @@
  */
 
 import { SvelteMap } from 'svelte/reactivity';
+import type { UnsentReason } from '$lib/db/types';
 
 /**
  * - `preparing`: the file is being read and encrypted on this device, no byte has left yet.
@@ -91,9 +92,32 @@ export function clearUpload(messageId: string): void {
   views.delete(messageId);
 }
 
-/** Drops every view (logout / outbox teardown). */
+/**
+ * Why an attachment the outbox retired for good was never sent, when the cause is the GROUP rather
+ * than the file (review of #2874, M4): the conversation was deleted, or this device is no longer a
+ * member of it (evicted, or a re-admission whose Welcome never came). Without it the bubble said
+ * "refused by the server", which is the file's failure, not this one. The in-memory copy below
+ * serves this tab live; the stored row carries it across a reload and to other tabs
+ * (`StoredMessage.unsentReason`).
+ */
+export type { UnsentReason };
+
+const unsentReasons = new SvelteMap<string, UnsentReason>();
+
+/** Reactive read of {@link UnsentReason} for `messageId`; undefined when the outbox gave none. */
+export function unsentReasonOf(messageId: string): UnsentReason | undefined {
+  return unsentReasons.get(messageId);
+}
+
+/** The outbox, retiring an attachment for a reason that is the group's. */
+export function setUnsentReason(messageId: string, reason: UnsentReason): void {
+  unsentReasons.set(messageId, reason);
+}
+
+/** Drops every view and every reason (logout / outbox teardown). */
 export function clearAllUploads(): void {
   views.clear();
+  unsentReasons.clear();
 }
 
 /**

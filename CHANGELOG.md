@@ -163,7 +163,7 @@ Le Cercle is left untouched until a clean re-enrolment, and Les Rootz is re-enro
 A media send in a DM or group now takes the staged files before it waits for the membership check
 (18 s on a stalled link), so a second tap finds nothing to send; 13 taps had sent 13 copies of one
 video. The follow-up, queuing the file at the tap, is
-[media-send-queued-at-the-tap](docs/wiki/backlog.d/media-send-queued-at-the-tap.md).
+[chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01).
 
 ### Fixed - a refused attachment send gives the caption and the file back, in place, and says so where it was made
 
@@ -172,7 +172,7 @@ the tap returns to its draft (a send that threw does too). The file returns to i
 staging. A voice note or chat-reel take, which is not re-staged, is reported rather than dropped
 in silence. The banner shows only if the member is still in the conversation the send was made in.
 A missing MLS service no longer loses the claimed files. Follow-up to #2821
-([media-send-queued-at-the-tap](docs/wiki/backlog.d/media-send-queued-at-the-tap.md)).
+([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
 
 ### Added - a member reposts a post to their own followers, with the author's consent
 

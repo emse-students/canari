@@ -19,12 +19,36 @@ export class MessageWrittenError extends Error {
 }
 
 /**
- * The one write of an own message and the outbox entry that sends it FAILED - nothing of the pair
- * is on disk (`IStorage.saveMessageWithOutboxEntry` is one transaction). Thrown by
+ * The pair write of a message and its outbox entry left the ENTRY on disk and not the message.
+ *
+ * Only SQLite can end this way: `tauri-plugin-sql` pools its connections, so the pair is two
+ * statements and the entry is written first (`SqliteStorage.saveMessageWithOutboxEntry`). Thrown
+ * typed so the send path knows the queue already holds the row: writing it again would put a second
+ * blob in its slot, and re-staging the file would queue a second copy (review of #2874, M2).
+ */
+export class OutboxEntryWrittenAloneError extends Error {
+  constructor(
+    readonly messageId: string,
+    cause: unknown
+  ) {
+    super(
+      `outbox entry ${messageId.slice(0, 8)} was written, its message row was not: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'OutboxEntryWrittenAloneError';
+  }
+}
+
+/**
+ * The one write of an own message and the outbox entry that sends it FAILED. Thrown by
  * `addMessageToChat` instead of being swallowed: the send path then lets the outbox write its own
- * row, rather than telling it the row is already durable (review of #2843, M1).
+ * row, rather than telling it the row is already durable (review of #2843, M1) - UNLESS
+ * {@link entryWritten} says the entry reached disk alone, in which case the queue already owns it.
  */
 export class MessagePairWriteError extends Error {
+  /** True when the storage reported the ENTRY written without its message ({@link OutboxEntryWrittenAloneError}). */
+  readonly entryWritten: boolean;
+
   constructor(
     readonly messageId: string,
     cause: unknown
@@ -36,5 +60,6 @@ export class MessagePairWriteError extends Error {
       }
     );
     this.name = 'MessagePairWriteError';
+    this.entryWritten = cause instanceof OutboxEntryWrittenAloneError;
   }
 }
