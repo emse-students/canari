@@ -1034,6 +1034,14 @@ last one goes (RC-14):
   `chat-reel` (which every build since RC-2 sweeps at 30 days by age), and the post claim accepts
   `chat-reel` -> `reel` when it finds a chat hold. No client creates a hold before that server is
   deployed on both estates.
+- **Rollback hazard, the post half:** an old social-service with an old media-service ends a
+  published reel the only way they know - a `reel-purge` that DELETES. On the author's post delete
+  or on the post's retention, a `reel` file that also carries a chat hold is then deleted outright,
+  and the conversations it was sent to read `410` before their 30 days. An old social-service beside
+  the NEW media-service is safe (it names no reason, and a file a chat holds is `refused` and kept -
+  the [legacy shim](../../legacy-compatibility.md)). Both halves are why no client creates a hold
+  before RC-14 is on both estates, and why a rollback past RC-14 once holds exist must take both
+  services back together, knowingly.
 
 ### 15.4 A moderator's delete in one place erases the file everywhere
 
@@ -1209,37 +1217,43 @@ the only copy; what each piece is for:
   owner-only, idempotent, on a `reel-pending`, `chat-reel` or `reel` of the caller's; moves a
   `reel-pending` to `chat-reel`; answers `{dueAt}`; charges the daily budget once, at the hold.
 - **The claim** keeps a chat hold (`chat-reel` -> `reel`, both holds).
-- **`reel-purge` carries its REASON**, required: social-service's post delete sends `author` for the
+- **`reel-purge` carries its REASON**: social-service's post delete sends `author` for the
   publisher and `moderation` for a moderator or an admin acting on someone else's reel; the reel
   worker sends `retention`. `author`/`retention` answer `released` for a file a chat still holds, and
-  social-service reads that as done (the row goes, nothing is put on the idle clock).
+  social-service reads that as done (the row goes, nothing is put on the idle clock). A body with NO
+  reason is an older social-service during a deploy (the
+  [legacy shim](../../legacy-compatibility.md)): the old delete, or `refused` for a file a chat holds.
+- **Every delete writes its tombstone before awaiting the store**, so a hold or a claim placed during
+  the await meets the tombstone and refuses; a failed delete restores the entry for the retry. A
+  lapsed chat hold keeps nothing: not counted as shared, re-placed by a new take, refused by the
+  salon purge.
 - **The sender's `DELETE /api/media/chat-reel/:id`** releases the chat hold, the file only with the
   last hold (15.7).
 - **The salon declaration**: `POST .../channels/:id/messages` accepts `reelMediaId` (a UUID, else
   `CHANNEL_REEL_MEDIA_ID_INVALID`), stored on `channel_messages."reelMediaId"` (migration 122,
-  APPROVED by the owner 2026-10-30, M1). The entity names the column in no INSERT and no read: the
-  deploy starts the services before it applies a migration, and a declared column would fail every
-  salon send in that window. The send writes it by its own `UPDATE` in its transaction, only when a
-  message declares one.
+  APPROVED by the owner 2026-10-30, M1). An ordinary column of the entity, written by the send's own
+  INSERT inside its transaction: the deploy applies migrations before it replaces the services, so no
+  build naming the column runs without it.
 - **The moderator's purge** (`deleteChannelMessage`): a delete by someone other than the author, who
-  holds `channel.moderate` in the salon's community, reads the row's declaration (by id AND salon)
-  and, after the delete commits, calls `internal/chat-reel-purge` for the ROW's author. The media
-  service refuses a file that author did not upload or that no chat holds. Every failure is logged
-  (`[CHANNEL_REEL_PURGE]`) and never keeps the message; the file then lasts until its chat hold
-  lapses.
+  holds `channel.moderate` in the salon's community, takes the declaration from the row it loads (by
+  id AND salon) and, after the delete commits and the salon is told, calls `internal/chat-reel-purge`
+  for the ROW's author - in the background, never holding the answer, tracked with the fan-outs so
+  a SIGTERM waits for it. The media service refuses a file that author did not upload or that no
+  live chat hold keeps. Every failure is logged (`[CHANNEL_REEL_PURGE]`) and never keeps the
+  message; the file then lasts until its chat hold lapses.
 - **`chatReelMaxTargets`** (15) in `GET /api/posts/reel-limits`, for RC-12's sheet.
 
 **Tests**: `media.service.chat-holds.spec.ts` (a published-and-sent file survives its post's author
 delete and its post's retention and lives on its chat hold alone, survives its 30-day chat hold while
 the post holds it, goes with the last hold and at once on either moderation purge, `410` after; a
 held `reel-pending` not swept at 24 h; the hold route's owner, idempotence, budget and refusals; the
-sender's release; the salon purge's owner and hold checks), `media.controller.reel-purge.spec.ts`;
-social-service `channel.service.spec.ts` (the declaration's write and refusal, the purge's caller and
-its failures), `posts.service.reels.spec.ts` and `reel-retention.scheduler.spec.ts` (the reasons,
+sender's release; the salon purge's owner and hold checks; both delete-during-await races, the
+failed delete's restore, the no-reason shim, the lapsed hold), `media.controller.reel-purge.spec.ts`;
+social-service `channel.service.spec.ts` (the declaration's write and refusal, the purge's caller,
+its order after the answer and its failures), `posts.service.reels.spec.ts` and `reel-retention.scheduler.spec.ts` (the reasons,
 `released`), `reel-rules.spec.ts`, and `channel-reel-purge.integration.spec.ts` on a real PostgreSQL
 (migration 122 twice; salon S's moderator cannot purge a file only salon T names; a lying declaration
-of another member's file is refused; the author's own delete purges nothing; a send and a moderator's
-delete both work in the window before 122).
+of another member's file is refused; the author's own delete purges nothing).
 
 **Owed**: the bench run against a real media-service over HTTP (with RC-2's); the salon SEND of a reel
 (RC-8, after the switch per D-salons-later); RC-13, the client that calls the hold route.

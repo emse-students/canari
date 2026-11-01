@@ -183,7 +183,9 @@ Two internal routes (`X-Internal-Secret`, never reachable by a client), both bat
   `{ results: { <mediaId>: 'deleted' | 'released' | 'absent' | 'refused' | 'failed' } }`. **THE
   ALLOWLIST OF THIS DELETE IS OWNERSHIP**: it touches an object only if the entry's `ownerId` equals
   the `ownerId` the caller names, and it is neither a public asset nor an `association` document.
-  **`reason` is REQUIRED since RC-14** (a body without it is a `400`): `moderation` (a moderator's or
+  **`reason` since RC-14** (any value outside the three is a `400`; an ABSENT one is an older
+  social-service, the [legacy shim](../legacy-compatibility.md): the old delete, but `refused` for a
+  file a chat holds): `moderation` (a moderator's or
   an admin's delete of someone else's reel) purges the file with every hold on it; `author` (the
   publisher's own delete) and `retention` (this worker) release the post's hold alone, so a file the
   take also sent to conversations is `released` and stays until its chat hold lapses

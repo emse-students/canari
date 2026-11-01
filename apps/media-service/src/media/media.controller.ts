@@ -730,9 +730,10 @@ export class MediaController {
   /**
    * Ends reels' blobs on their owner's say-so, for the REASON named, and answers one outcome per id.
    * Sole consumer: social-service's `ReelRetentionScheduler` (`retention`) and the delete of a reel
-   * (`author` or `moderation`). The reason is REQUIRED: `moderation` purges every hold, the other two
-   * release the post's alone (reels-in-chat 15.4), and a body that forgot it must not get either by
-   * default. The allowlist (ownership, never a class) and each outcome are on
+   * (`author` or `moderation`). `moderation` purges every hold, the other two release the post's alone
+   * (reels-in-chat 15.4). An UNKNOWN reason is a 400; an ABSENT one is an older social-service, which
+   * every deploy runs beside this build for a while, and gets the old behaviour for a file no chat
+   * holds (legacy-compatibility). The allowlist (ownership, never a class) and each outcome are on
    * {@link MediaService.purgeReels}.
    */
   @Post('internal/reel-purge')
@@ -741,16 +742,17 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
     assertInternalSecret(internalSecret);
-    if (typeof body?.reason !== 'string' || !REEL_PURGE_REASONS.has(body.reason)) {
+    const raw = body?.reason;
+    if (raw !== undefined && (typeof raw !== 'string' || !REEL_PURGE_REASONS.has(raw))) {
       this.logger.warn(
-        `Reel purge refused: reason ${JSON.stringify(body?.reason)} is not one of moderation, author, retention`
+        `Reel purge refused: reason ${JSON.stringify(raw)} is not one of moderation, author, retention`
       );
       throw new BadRequestException("reason must be 'moderation', 'author' or 'retention'");
     }
-    const reason = body.reason as ReelPurgeReason;
+    const reason = raw as ReelPurgeReason | undefined;
     const items = this.purgeItems(body.items);
     const results = await this.mediaService.purgeReels(items, reason);
-    this.logPurgeCounts(`Reel purge (${reason})`, results);
+    this.logPurgeCounts(`Reel purge (${reason ?? 'no reason'})`, results);
     return { results };
   }
 

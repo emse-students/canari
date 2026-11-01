@@ -1,9 +1,10 @@
 /// <reference types="jest" />
 
 /**
- * `POST media/internal/reel-purge` REQUIRES its reason (reels-in-chat 15.4): `moderation` purges a
- * shared file with every hold, `author` and `retention` release the post's hold alone. A body that
- * forgot the reason must get neither by default - it is a 400, and the service is never reached.
+ * `POST media/internal/reel-purge` carries its reason (reels-in-chat 15.4): `moderation` purges a
+ * shared file with every hold, `author` and `retention` release the post's hold alone. An UNKNOWN
+ * reason is a 400 and the service is never reached; an ABSENT one is an older social-service and is
+ * passed through as such (the legacy shim, `MediaService.purgeReels`).
  * `POST media/internal/chat-reel-purge` forwards the salon moderator's items as they came.
  */
 import { BadRequestException } from '@nestjs/common';
@@ -41,7 +42,14 @@ describe('POST media/internal/reel-purge', () => {
     expect(svc.purgeReels).toHaveBeenCalledWith(items, 'author');
   });
 
-  it.each([undefined, '', 'purge', 'MODERATION'])(
+  it('passes an ABSENT reason through as undefined: an older social-service (legacy shim)', async () => {
+    const { controller, svc } = build();
+    const items = [{ mediaId: ID, ownerId: 'alice' }];
+    await controller.purgeReels({ items }, SECRET);
+    expect(svc.purgeReels).toHaveBeenCalledWith(items, undefined);
+  });
+
+  it.each([null, '', 'purge', 'MODERATION'])(
     'refuses a body whose reason is %p, before touching anything',
     async (reason) => {
       const { controller, svc } = build();

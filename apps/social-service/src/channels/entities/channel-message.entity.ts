@@ -107,19 +107,12 @@ export class ChannelMessage {
    * delete of this row, which may purge that file (`chat-reel-purge`) because the row names it. Null
    * on every message that carries no reel and on every row older than 122.
    *
-   * `insert: false`, `select: false`, `update: false`: the deploy starts the services BEFORE it
-   * applies 122, and TypeORM names every insertable column in its INSERT - so a declared column would
-   * fail EVERY salon send in that window, the cost `clientMessageId` pays. Instead the send writes it
-   * with its own UPDATE inside the send's transaction, only when a message declares one, and the
-   * delete reads it with its own SELECT (`readDeclaredReelMediaId`).
+   * An ordinary column, written by the send's own INSERT inside its transaction: the deploy applies
+   * migrations BEFORE it replaces the services (`deploy-environment.sh`, then `rolling.sh`), so no
+   * build carrying this declaration ever runs against a schema without 122. `update: false`: the
+   * declaration is the sender's, fixed at the send; nothing rewrites it.
    */
-  @Column({
-    type: 'uuid',
-    nullable: true,
-    insert: false,
-    select: false,
-    update: false,
-  })
+  @Column({ type: 'uuid', nullable: true, update: false })
   reelMediaId?: string | null;
 
   @Column({ type: 'uuid', nullable: true })

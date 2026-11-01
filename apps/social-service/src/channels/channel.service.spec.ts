@@ -799,8 +799,7 @@ describe('ChannelService security hardening', () => {
       channelId: 'ch1',
       authorId: 'someone-else',
     });
-    // A moderator's delete first reads the reel the row declares (none here), then the row lock.
-    messageRepo.query.mockResolvedValueOnce([{ reelMediaId: null }]).mockResolvedValueOnce([{}]);
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
@@ -819,34 +818,58 @@ describe('ChannelService security hardening', () => {
         roleIds: ['r1'],
       });
       repos.roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
-      repos.messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: author });
-      repos.messageRepo.query
-        .mockResolvedValueOnce([{ reelMediaId: declared }])
-        .mockResolvedValueOnce([{}]);
+      // The declaration is a column of the row the delete already reads - by id AND salon.
+      repos.messageRepo.findOne.mockResolvedValue({
+        id: 'm1',
+        channelId: 'ch1',
+        authorId: author,
+        reelMediaId: declared,
+      });
+      repos.messageRepo.query.mockResolvedValueOnce([{}]);
       return repos;
     };
 
-    it("purges the declared file for the ROW'S AUTHOR, after the delete committed", async () => {
-      const { service, messageRepo, chatReelMedia } = asModerator(REEL);
+    it("purges the declared file for the ROW'S AUTHOR, after the delete committed and the salon was told", async () => {
+      const { service, messageRepo, redis, chatReelMedia } = asModerator(REEL);
       chatReelMedia.purge.mockResolvedValue({ [REEL]: 'deleted' });
 
       await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
 
-      const [readSql, readParams] = messageRepo.query.mock.calls[0];
-      expect(readSql).toContain('SELECT "reelMediaId" FROM channel_messages');
-      // The declaration is read from THIS salon's row - id AND salon - never from the caller.
-      expect(readParams).toEqual(['m1', 'ch1']);
+      expect(messageRepo.findOne).toHaveBeenCalledWith({ where: { id: 'm1', channelId: 'ch1' } });
       expect(chatReelMedia.purge).toHaveBeenCalledWith([
         { mediaId: REEL, ownerId: 'someone-else' },
       ]);
       expect(messageRepo.delete.mock.invocationCallOrder[0]).toBeLessThan(
         chatReelMedia.purge.mock.invocationCallOrder[0]
       );
+      expect(redis.publishChannelEvent.mock.invocationCallOrder[0]).toBeLessThan(
+        chatReelMedia.purge.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('answers without waiting for the purge, and a SIGTERM settle still waits for it', async () => {
+      const { service, chatReelMedia } = asModerator(REEL);
+      let finish!: (r: Record<string, string>) => void;
+      chatReelMedia.purge.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+
+      await expect(service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
+        success: true,
+      });
+      let settled = false;
+      const settling = service.settleFanouts().then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      finish({ [REEL]: 'deleted' });
+      await settling;
+      expect(settled).toBe(true);
     });
 
     it('purges nothing for a row that declares no reel', async () => {
       const { service, messageRepo, chatReelMedia } = asModerator(null);
       await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
       expect(messageRepo.delete).toHaveBeenCalled();
       expect(chatReelMedia.purge).not.toHaveBeenCalled();
     });
@@ -854,14 +877,18 @@ describe('ChannelService security hardening', () => {
     it("purges nothing on the AUTHOR's own delete: the sender releases their hold themselves (15.7)", async () => {
       const { service, channelRepo, memberRepo, messageRepo, chatReelMedia } = makeService();
       arrangePollAccess(channelRepo, memberRepo);
-      messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+      messageRepo.findOne.mockResolvedValue({
+        id: 'm1',
+        channelId: 'ch1',
+        authorId: 'u1',
+        reelMediaId: REEL,
+      });
       messageRepo.query.mockResolvedValueOnce([{}]);
 
       await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
 
       expect(messageRepo.delete).toHaveBeenCalled();
-      // Not even read: the first statement is the row lock.
-      expect(messageRepo.query.mock.calls[0][0]).toContain('FOR UPDATE');
       expect(chatReelMedia.purge).not.toHaveBeenCalled();
     });
 
@@ -871,26 +898,16 @@ describe('ChannelService security hardening', () => {
       await expect(refused.service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
         success: true,
       });
+      await refused.service.settleFanouts();
 
       const down = asModerator(REEL);
       down.chatReelMedia.purge.mockRejectedValue(new Error('connect ECONNREFUSED media-service'));
       await expect(down.service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
         success: true,
       });
+      await down.service.settleFanouts();
       expect(down.messageRepo.delete).toHaveBeenCalled();
-    });
-
-    it('still deletes the message when the declaration cannot be read (the window before migration 122)', async () => {
-      const { service, messageRepo, chatReelMedia } = asModerator(REEL);
-      messageRepo.query.mockReset();
-      messageRepo.query
-        .mockRejectedValueOnce(new Error('column "reelMediaId" does not exist'))
-        .mockResolvedValue([{}]);
-
-      await service.deleteChannelMessage('ch1', 'm1', 'u1');
-
-      expect(messageRepo.delete).toHaveBeenCalled();
-      expect(chatReelMedia.purge).not.toHaveBeenCalled();
+      expect(down.chatReelMedia.purge).toHaveBeenCalled();
     });
   });
 
@@ -2139,27 +2156,17 @@ describe('ChannelService security hardening', () => {
       } as never);
       return { ...repos, done };
     };
-    const writes = (messageRepo: { query: jest.Mock }) =>
-      messageRepo.query.mock.calls.filter(([sql]) => String(sql).includes('"reelMediaId"'));
-
-    it('writes the declaration in the send transaction, by its own UPDATE after the insert', async () => {
+    it("writes the declaration, lower-cased, as a column of the send transaction's insert", async () => {
       const { done, messageRepo } = send({ reelMediaId: REEL.toUpperCase() });
       await done;
-      const [[sql, params]] = writes(messageRepo);
-      expect(sql).toContain('UPDATE channel_messages SET "reelMediaId" = $2 WHERE id = $1');
-      expect(params).toEqual(['m-new', REEL]);
       expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
-      expect(messageRepo.save.mock.invocationCallOrder[0]).toBeLessThan(
-        messageRepo.query.mock.invocationCallOrder[
-          messageRepo.query.mock.calls.findIndex(([q]) => String(q).includes('"reelMediaId"'))
-        ]
-      );
+      expect(messageRepo.save).toHaveBeenCalledWith(expect.objectContaining({ reelMediaId: REEL }));
     });
 
-    it('names the column in no statement for a message that declares nothing', async () => {
+    it('declares null for a message that carries no reel', async () => {
       const { done, messageRepo } = send({});
       await done;
-      expect(writes(messageRepo)).toEqual([]);
+      expect(messageRepo.save).toHaveBeenCalledWith(expect.objectContaining({ reelMediaId: null }));
     });
 
     it.each([

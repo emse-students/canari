@@ -583,6 +583,17 @@ function writeHolds(entry: MediaMetaEntry, holds: MediaHolds): void {
   entry.retentionClass = holds.post ? 'reel' : 'chat-reel';
 }
 
+/**
+ * The chat hold that still KEEPS the file at `now`, or null. A chat hold past its `dueAt` keeps
+ * nothing: alone it is the sweep's to take, and under a live post it is only a record that the
+ * chats' life ended - so the stats do not count it as shared, a new take may hold the published
+ * reel again, and a salon moderator may not purge a published reel through it.
+ */
+function liveChatHold(entry: MediaMetaEntry, now: number): ChatHold | null {
+  const chat = holdsOf(entry)?.chat ?? null;
+  return chat && chat.dueAt >= now ? chat : null;
+}
+
 interface MediaMetadataStore {
   items: Record<string, MediaMetaEntry>;
 }
@@ -1293,12 +1304,24 @@ export class MediaService {
    * - `failed` - the store refused or threw. The ONLY outcome that should keep a reel's row.
    *
    * Per id, a `try`: one object the store will not delete never blocks the rest.
+   *
+   * NO REASON is an OLDER social-service (legacy-compatibility, removed once both estates run
+   * RC-14): every deploy runs this build beside the previous social-service for a while, and it
+   * names none. It gets exactly the old behaviour - delete - for a file no conversation holds; a file
+   * a chat holds is `refused` and kept by its hold, since that caller cannot say whether it is a
+   * moderator (purge) or the post's end (release). Each such call is logged as the old caller.
    */
   async purgeReels(
     items: Array<{ mediaId: string; ownerId: string }>,
-    reason: ReelPurgeReason,
+    reason: ReelPurgeReason | undefined,
     now = Date.now()
   ): Promise<Record<string, ReelPurgeOutcome>> {
+    const label = reason ?? 'no reason: an older social-service';
+    if (!reason) {
+      this.logger.warn(
+        `Reel purge of ${items.length} id(s) with NO reason - an older social-service; files a chat holds are refused`
+      );
+    }
     // A Map, not an object: `mediaId` is caller-supplied and may be refused precisely because it is
     // not a UUID, so it must never be a property name.
     const results = new Map<string, ReelPurgeOutcome>();
@@ -1323,27 +1346,25 @@ export class MediaService {
       ) {
         results.set(mediaId, 'refused');
         this.logger.warn(
-          `Reel purge (${reason}) refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
+          `Reel purge (${label}) refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
         );
         continue;
       }
       const chat = holdsOf(entry)?.chat ?? null;
+      if (!reason && chat) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(
+          `Reel purge (${label}) refused for ${mediaId}: a chat holds it, and a caller naming no reason cannot end it`
+        );
+        continue;
+      }
       if (reason !== 'moderation' && chat && chat.dueAt >= now) {
         // The post's end is a statement about the FEED (D-postdelete): the chats keep their file.
         writeHolds(entry, { post: false, chat });
         changed = true;
         results.set(mediaId, 'released');
         this.logger.log(
-          `Reel purge (${reason}) of ${mediaId}: post hold released, kept by a chat hold until ${new Date(chat.dueAt).toISOString()}`
-        );
-        continue;
-      }
-      try {
-        await this.storage.delete(mediaId);
-      } catch (err) {
-        results.set(mediaId, 'failed');
-        this.logger.warn(
-          `Reel purge (${reason}) could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+          `Reel purge (${label}) of ${mediaId}: post hold released, kept by a chat hold until ${new Date(chat.dueAt).toISOString()}`
         );
         continue;
       }
@@ -1354,17 +1375,17 @@ export class MediaService {
         : reason === 'moderation'
           ? 'reel_moderated'
           : 'reel_expired';
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: now,
-        purgeReason,
-      };
+      if (
+        !(await this.tombstoneThenDelete(mediaId, entry, now, purgeReason, `Reel purge (${label})`))
+      ) {
+        results.set(mediaId, 'failed');
+        continue;
+      }
       changed = true;
       results.set(mediaId, 'deleted');
       if (chat) {
         this.logger.log(
-          `Reel purge (${reason}) deleted ${mediaId}, a file chats held (${purgeReason})`
+          `Reel purge (${label}) deleted ${mediaId}, a file chats held (${purgeReason})`
         );
       }
     }
@@ -1408,29 +1429,20 @@ export class MediaService {
         continue;
       }
       const ownedByAuthor = !!ownerId && entry.ownerId === ownerId;
-      if (!ownedByAuthor || !holdsOf(entry)?.chat) {
+      if (!ownedByAuthor || !liveChatHold(entry, now)) {
         results.set(mediaId, 'refused');
         this.logger.warn(
           `Chat-reel purge refused for ${mediaId}: class ${entry.retentionClass ?? 'none'}, ` +
-            `${ownedByAuthor ? 'no chat hold' : 'not uploaded by the row author'} - left in place`
+            `${ownedByAuthor ? 'no live chat hold' : 'not uploaded by the row author'} - left in place`
         );
         continue;
       }
-      try {
-        await this.storage.delete(mediaId);
-      } catch (err) {
+      if (
+        !(await this.tombstoneThenDelete(mediaId, entry, now, 'reel_moderated', 'Chat-reel purge'))
+      ) {
         results.set(mediaId, 'failed');
-        this.logger.warn(
-          `Chat-reel purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
-        );
         continue;
       }
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: now,
-        purgeReason: 'reel_moderated',
-      };
       changed = true;
       results.set(mediaId, 'deleted');
       this.logger.log(`Chat-reel purge deleted ${mediaId} (moderation, every hold ended)`);
@@ -1548,23 +1560,60 @@ export class MediaService {
       this.logger.log(`Chat-reel ${mediaId}: chat hold released by its sender, the post keeps it`);
       return 'released';
     }
-    try {
-      await this.storage.delete(mediaId);
-    } catch (err) {
-      this.logger.warn(
-        `Chat-reel delete could not remove ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
-      );
+    if (
+      !(await this.tombstoneThenDelete(
+        mediaId,
+        entry,
+        Date.now(),
+        'reel_deleted',
+        'Chat-reel delete'
+      ))
+    ) {
       return 'failed';
     }
-    this.meta.items[mediaId] = {
-      createdAt: entry.createdAt,
-      lastAccessAt: entry.lastAccessAt,
-      purgedAt: Date.now(),
-      purgeReason: 'reel_deleted',
-    };
     await this.persistMetadata();
     this.logger.log(`Chat-reel ${mediaId} deleted by its sender`);
     return 'deleted';
+  }
+
+  /**
+   * Deletes a JUDGED reel file: the tombstone lands SYNCHRONOUSLY, before the store's delete is
+   * awaited - the sweep's rule ({@link tombstoneAndDelete}). Judging, awaiting, then writing the
+   * tombstone from the stale entry let a hold or a claim placed during the await be overwritten: a
+   * take told `held` whose recipients then read `410`, or a post saved on a file deleted under it.
+   * Now anything arriving during the await meets the tombstone and refuses.
+   *
+   * A FAILED DELETE PUTS THE ENTRY BACK (if the slot still holds this tombstone), unlike the sweep:
+   * these purges answer `failed` so their caller RETRIES, and a retry that met the tombstone would
+   * read `absent` and drop the only record of the file - stranding it. Nothing can have changed the
+   * entry meanwhile: every reader during the await saw the tombstone and refused.
+   *
+   * @returns true when the object is gone; false (logged) when the store refused.
+   */
+  private async tombstoneThenDelete(
+    mediaId: string,
+    entry: MediaMetaEntry,
+    now: number,
+    purgeReason: PurgeReason,
+    label: string
+  ): Promise<boolean> {
+    const tombstone: MediaMetaEntry = {
+      createdAt: entry.createdAt,
+      lastAccessAt: entry.lastAccessAt,
+      purgedAt: now,
+      purgeReason,
+    };
+    this.meta.items[mediaId] = tombstone;
+    try {
+      await this.storage.delete(mediaId);
+      return true;
+    } catch (err) {
+      if (this.meta.items[mediaId] === tombstone) this.meta.items[mediaId] = entry;
+      this.logger.warn(
+        `${label} could not delete ${mediaId} - entry restored for a retry: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
   }
 
   /**
@@ -1662,13 +1711,12 @@ export class MediaService {
       return { status: 'answered', outcome: { status: 'refused' } };
     }
     const holds = holdsOf(entry);
-    if (holds?.chat) {
-      if (holds.chat.dueAt < now) {
-        this.logger.warn(
-          `Chat hold refused on ${mediaId}: its chat hold lapsed, the sweep takes it`
-        );
-        return { status: 'answered', outcome: { status: 'gone' } };
-      }
+    if (holds?.chat && holds.chat.dueAt < now && !holds.post) {
+      this.logger.warn(`Chat hold refused on ${mediaId}: its chat hold lapsed, the sweep takes it`);
+      return { status: 'answered', outcome: { status: 'gone' } };
+    }
+    // A lapsed chat hold under a LIVE post keeps nothing: the published reel is held again, below.
+    if (holds?.chat && holds.chat.dueAt >= now) {
       // A `chat-reel` upload: its class already held it, from its upload. Written down unchanged.
       const dirty = !entry.holds;
       if (dirty) writeHolds(entry, holds);
@@ -2007,7 +2055,7 @@ export class MediaService {
       if (entry.retentionClass === 'reel') {
         stats.reelCount += 1;
         stats.reelBytes += object.size;
-        if (entry.holds?.chat) {
+        if (entry.holds?.chat && entry.holds.chat.dueAt >= now) {
           stats.sharedReelCount += 1;
           stats.sharedReelBytes += object.size;
         }

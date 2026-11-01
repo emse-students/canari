@@ -4984,7 +4984,8 @@ export class ChannelService implements OnApplicationBootstrap {
    * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
    * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
    * across replicas is out of scope, and a duplicate there is settled downstream (see
-   * {@link runFanout}).
+   * {@link runFanout}). A moderated message's reel purge rides here too, keyed `reel-purge:<id>` so
+   * it is never mistaken for that message's fan-out, only so that SIGTERM waits for it.
    */
   private readonly fanoutsInFlight = new Map<string, Promise<void>>();
 
@@ -5316,32 +5317,6 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * The reel file a stored row declares, or null - read with its own statement because the entity
-   * never selects the column (see `ChannelMessage.reelMediaId`). BEST-EFFORT AND LOUD: a failure
-   * (the deploy's window before migration 122 exists) is logged at ERROR and answers null, so the
-   * moderator's delete of the MESSAGE still happens and only the file's purge is skipped - the file
-   * then goes by its chat hold's 30 days, the safe direction.
-   */
-  private async readDeclaredReelMediaId(
-    messageId: string,
-    channelId: string
-  ): Promise<string | null> {
-    try {
-      const rows: Array<{ reelMediaId: string | null }> = await this.messageRepo.query(
-        `SELECT "reelMediaId" FROM channel_messages WHERE id = $1 AND "channelId" = $2`,
-        [messageId, channelId]
-      );
-      return rows[0]?.reelMediaId ?? null;
-    } catch (err) {
-      this.logger.error(
-        `[CHANNEL_REEL_PURGE] could not read the reel declared by message ${messageId} channel=${channelId} - ` +
-          `its file is NOT purged and lasts until its chat hold lapses: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return null;
-    }
-  }
-
-  /**
    * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
    * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
    */
@@ -5397,16 +5372,8 @@ export class ChannelService implements OnApplicationBootstrap {
         if (tombstones.length > 0)
           this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
       }
+      // The declared reel (migration 122) is a column of this INSERT, so it commits with the row.
       const saved = await tx.getRepository(ChannelMessage).save(msg);
-      // THE DECLARED REEL COMMITS WITH THE ROW (migration 122), by its own statement: the entity
-      // never names the column in an INSERT (see `ChannelMessage.reelMediaId`), so a send that
-      // declares nothing never depends on the column existing.
-      if (msg.reelMediaId) {
-        await tx.query(`UPDATE channel_messages SET "reelMediaId" = $2 WHERE id = $1`, [
-          saved.id,
-          msg.reelMediaId,
-        ]);
-      }
       // THE OUTBOX ENTRY COMMITS WITH THE ROW (migration 093): a process that dies after this
       // transaction leaves both, and the fan-out it never made is found and finished at boot.
       await tx.query(
@@ -6367,12 +6334,10 @@ export class ChannelService implements OnApplicationBootstrap {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
     // A MODERATOR'S delete of a message that declares a reel file also purges that file (reels-in-chat
-    // 15.4), which one take may share with other conversations and the feed. Read BEFORE the row
-    // goes: the declaration lives only in it. The author's own delete purges nothing here - the
-    // sender releases their hold themselves (`DELETE /media/chat-reel/:id`, 15.7).
-    const declaredReel = moderation
-      ? await this.readDeclaredReelMediaId(messageId, channelId)
-      : null;
+    // 15.4), which one take may share with other conversations and the feed. Taken from the row read
+    // above, BEFORE it goes: the declaration lives only in it. The author's own delete purges nothing
+    // here - the sender releases their hold themselves (`DELETE /media/chat-reel/:id`, 15.7).
+    const declaredReel = moderation ? (msg.reelMediaId ?? null) : null;
 
     // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
     // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
@@ -6421,10 +6386,6 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
 
-    if (removed && declaredReel) {
-      await this.purgeModeratedReel(channelId, messageId, declaredReel, msg.authorId);
-    }
-
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.message.deleted',
@@ -6437,6 +6398,14 @@ export class ChannelService implements OnApplicationBootstrap {
         msg.authorId === userId ? '' : ' (moderation)'
       }`
     );
+    // THE FILE'S PURGE NEVER HOLDS THE ANSWER: the message is gone and the salon told, whatever the
+    // media service says or how long it takes. It runs as a tracked background job, so a SIGTERM
+    // (`settleFanouts`) still waits for it; `purgeModeratedReel` logs every outcome itself.
+    if (removed && declaredReel) {
+      void this.trackFanout(`reel-purge:${messageId}`, () =>
+        this.purgeModeratedReel(channelId, messageId, declaredReel, msg.authorId)
+      );
+    }
     return { success: true, channelId, messageId };
   }
 

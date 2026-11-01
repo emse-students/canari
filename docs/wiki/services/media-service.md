@@ -90,7 +90,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
 | POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
 | GET | `/api/media/internal/poster-list` | `INTERNAL_SECRET` | every claimed poster and its space, for social-service's hourly reconciliation |
-| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}], reason}` - on the owner's say-so, one outcome per id (`deleted`/`released`/`absent`/`refused`/`failed`); `reason` REQUIRED: `moderation` purges every hold, `author`/`retention` release the post's ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
+| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}], reason}` - on the owner's say-so, one outcome per id (`deleted`/`released`/`absent`/`refused`/`failed`); `reason`: `moderation` purges every hold, `author`/`retention` release the post's; absent = an older social-service (legacy shim), any other value `400` ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | POST   | `/api/media/internal/chat-reel-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - a salon moderator's purge: deleted only when `ownerId` (the row's author) uploaded it AND a chat holds it; every hold ends, tombstone `reel_moderated` (`410`) |
 | POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
 | POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
@@ -476,26 +476,44 @@ goes only with the last one.
 - **The claim** (`claimReels`) accepts a held file (`chat-reel` -> `reel`): it adds the post hold
   and keeps the chat hold and its due time. One whose chat hold already lapsed is refused, as an
   overdue `reel-pending` is.
-- **`reel-purge` carries its reason**, required (`400` without it): `moderation` deletes; `author` and
+- **A lapsed chat hold keeps nothing.** Under a live post it is only a record that the chats' life
+  ended (`liveChatHold`): the stats do not count the file as shared, a new take's hold on the
+  published reel is placed afresh with a new `dueAt`, and `chat-reel-purge` refuses it - a salon
+  moderator cannot reach a published reel through a hold that has lapsed.
+- **Every delete these paths make writes its tombstone BEFORE awaiting the store**
+  (`tombstoneThenDelete`, the sweep's rule). Judging, awaiting, then writing the tombstone let a hold
+  or a claim placed during the await be overwritten: a take told `held` whose recipients then read
+  `410`, or a post saved on a file deleted under it. Anything arriving during the await now meets the
+  tombstone and refuses. A FAILED delete puts the entry back, unlike the sweep: these callers answer
+  `failed` and retry, and a retry meeting a tombstone would read `absent` and strand the file.
+- **`reel-purge` carries its reason**: `moderation` deletes; `author` and
   `retention` answer `released` for a file whose chat hold is still live (the author's post delete
   leaves the chats their 30 days, D-postdelete), and delete otherwise. Tombstones: `reel_moderated`
   for a moderated file a chat held, `reel_expired` for one whose chat hold had lapsed, the old
   `manual_delete` for a reel no conversation ever held. `reel_moderated` is answered `410` like the
   other reel tombstones; no client is told the reason (a DM is not told that a salon was moderated).
+  **No reason at all is an older social-service** (a deploy-order window, the
+  [legacy shim](../legacy-compatibility.md)): it gets the old delete for a file no chat holds, and
+  `refused` - logged, the file kept by its hold - for one a chat holds, because that caller cannot say
+  whether it is a moderator or the post's end. Any other value is a `400`.
 - **`internal/chat-reel-purge`** (`purgeChatReels`) is the salon half. social-service proves what it
   owns - the caller holds `channel.moderate` in the community of the salon whose row it deletes, and
   that row (found by its id AND its salon) declares the file (`channel_messages."reelMediaId"`,
   migration 122, approved by the owner 2026-10-30). This service proves the rest: the file's
   uploader is the ROW's author (a row declaring another member's file is refused - a lying author can
-  only offer up a file of their own), and a chat holds it (a feed reel nobody sent, a photo, a
-  document are refused). The purge runs after the message delete committed and never gates it.
+  only offer up a file of their own), and a LIVE chat hold keeps it (a feed reel nobody sent, a
+  photo, a document are refused). The purge runs after the message delete committed and the salon
+  was told, in the background and never gating the answer; it is tracked with the salon's fan-outs,
+  so a replaced replica's SIGTERM waits for it.
 - **`setRetentionClass` on a held file**: `ephemeral` (the post's release fallback when `reel-purge`
   was unreachable) ends the post hold only; any other class drops the holds and keeps the file
   longer, the safe direction.
 - Pinned by `media.service.chat-holds.spec.ts` (each of the above over a stubbed store),
-  `media.controller.reel-purge.spec.ts` (the required reason), and on the social side
+  plus the two races (an author delete against a take's hold, a sender's delete against a post's
+  claim), a failed delete's restore, the shim and the lapsed hold;
+  `media.controller.reel-purge.spec.ts` (the reason, absent or refused), and on the social side
   `channel-reel-purge.integration.spec.ts` (real PostgreSQL: salon S's moderator and salon T's file,
-  the lying declaration, the deploy's window before 122). **Not run against a real media-service over
+  the lying declaration, migration 122 twice). **Not run against a real media-service over
   HTTP**: that bench run is owed with RC-2's.
 
 ## Live segments: outside the index, deleted by prefix (WP-L3, 2026-10-18)

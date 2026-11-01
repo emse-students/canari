@@ -406,3 +406,130 @@ describe("a salon moderator's purge: the row's author must be the uploader, and 
     });
   });
 });
+
+/** Holds the store's delete open until `open()`, so a test can act DURING the await. */
+function gateDeletes(service: MediaService) {
+  const storage = (service as unknown as Internals).storage;
+  const inner = storage.delete as (id: string) => Promise<void>;
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => (open = resolve));
+  let reached!: () => void;
+  const started = new Promise<void>((resolve) => (reached = resolve));
+  storage.delete = async (id: string) => {
+    reached();
+    await gate;
+    return inner(id);
+  };
+  return { open, started };
+}
+
+describe('a delete in flight is never overwritten by a hold or a claim placed during its await', () => {
+  it("the author's post delete vs a take's chat hold: the hold is refused, never answered held", async () => {
+    const items = { [FEED_ONLY]: entry({ ownerId: ALICE, retentionClass: 'reel' }) };
+    const { service, deleted } = serviceWith(items);
+    const gate = gateDeletes(service);
+
+    const purging = service.purgeReels([{ mediaId: FEED_ONLY, ownerId: ALICE }], 'author', NOW);
+    await gate.started;
+    const held = await service.holdForChat(FEED_ONLY, ALICE, NOW);
+    gate.open();
+
+    expect(held).toEqual({ status: 'gone' });
+    expect(await purging).toEqual({ [FEED_ONLY]: 'deleted' });
+    expect(deleted).toEqual([FEED_ONLY]);
+  });
+
+  it("the sender's delete vs the post's claim: the claim is refused, no post cites a deleted file", async () => {
+    const items = { [CHAT_ONLY]: entry({ ownerId: ALICE, retentionClass: 'chat-reel' }) };
+    const { service, deleted } = serviceWith(items);
+    const gate = gateDeletes(service);
+
+    const removing = service.removeChatReel(CHAT_ONLY, ALICE);
+    await gate.started;
+    const claim = await service.claimReels([CHAT_ONLY], ALICE);
+    gate.open();
+
+    expect(claim).toEqual({ claimed: [], refused: [CHAT_ONLY] });
+    expect(await removing).toBe('deleted');
+    expect(deleted).toEqual([CHAT_ONLY]);
+    expect(items[CHAT_ONLY].purgeReason).toBe('reel_deleted');
+  });
+
+  it('a failed delete puts the entry back, so the retry finds the file instead of `absent`', async () => {
+    const items = { [CHAT_ONLY]: entry({ ownerId: ALICE, retentionClass: 'chat-reel' }) };
+    const { service } = serviceWith(items);
+    (service as unknown as Internals).storage.delete = () =>
+      Promise.reject(new Error('store down'));
+
+    expect(await service.purgeChatReels([{ mediaId: CHAT_ONLY, ownerId: ALICE }], NOW)).toEqual({
+      [CHAT_ONLY]: 'failed',
+    });
+    expect(items[CHAT_ONLY].purgedAt).toBeUndefined();
+    expect(items[CHAT_ONLY].retentionClass).toBe('chat-reel');
+  });
+});
+
+describe('an older social-service naming NO reason (legacy shim)', () => {
+  it('deletes a reel no chat holds, exactly as before', async () => {
+    const items = { [FEED_ONLY]: entry({ ownerId: ALICE, retentionClass: 'reel' }) };
+    const { service, deleted } = serviceWith(items);
+    expect(
+      await service.purgeReels([{ mediaId: FEED_ONLY, ownerId: ALICE }], undefined, NOW)
+    ).toEqual({ [FEED_ONLY]: 'deleted' });
+    expect(deleted).toEqual([FEED_ONLY]);
+    expect(items[FEED_ONLY].purgeReason).toBe('manual_delete');
+  });
+
+  it('refuses a file a chat holds: it cannot tell a moderator from the post end, the hold keeps it', async () => {
+    const items = {
+      [FILE]: entry({
+        ownerId: ALICE,
+        retentionClass: 'reel',
+        holds: { post: true, chat: { heldAt: NOW, dueAt: NOW + WINDOW } },
+      }),
+    };
+    const { service, deleted } = serviceWith(items);
+    expect(await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], undefined, NOW)).toEqual({
+      [FILE]: 'refused',
+    });
+    expect(deleted).toEqual([]);
+    expect(items[FILE].holds?.post).toBe(true);
+  });
+});
+
+describe('a lapsed chat hold under a live post keeps nothing', () => {
+  const lapsed = () => ({
+    [FILE]: entry({
+      ownerId: ALICE,
+      retentionClass: 'reel',
+      size: 10,
+      holds: { post: true, chat: { heldAt: NOW - 40 * DAY, dueAt: NOW - 10 * DAY } },
+    }),
+  });
+
+  it('a new take may hold the published reel again, with a fresh due time', async () => {
+    const items = lapsed();
+    const { service } = serviceWith(items);
+    expect(await service.holdForChat(FILE, ALICE, NOW)).toEqual({
+      status: 'held',
+      dueAt: NOW + WINDOW,
+    });
+    expect(items[FILE].holds).toEqual({ post: true, chat: { heldAt: NOW, dueAt: NOW + WINDOW } });
+  });
+
+  it('is not counted as shared in the stats', async () => {
+    const { service } = serviceWith(lapsed());
+    const stats = await service.getStorageStats();
+    expect(stats.reelCount).toBe(1);
+    expect(stats.sharedReelCount).toBe(0);
+  });
+
+  it('does not let a salon moderator purge the published reel through it', async () => {
+    const items = lapsed();
+    const { service, deleted } = serviceWith(items);
+    expect(await service.purgeChatReels([{ mediaId: FILE, ownerId: ALICE }], NOW)).toEqual({
+      [FILE]: 'refused',
+    });
+    expect(deleted).toEqual([]);
+  });
+});

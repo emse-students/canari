@@ -19,11 +19,10 @@
 -- Nullable with no default, so on PostgreSQL 11+ the column is a catalogue change, not a rewrite.
 -- No index: it is read only by primary key, on the row a moderator deletes.
 --
--- THE SERVICE NAMES THE COLUMN IN NO INSERT AND NO READ OF HISTORY (`insert: false, select: false`
--- on the entity): the deploy starts the services BEFORE it applies this file, and an INSERT naming a
--- column that does not exist yet would fail every salon send in that window. The send writes it with
--- its own UPDATE in the send's transaction, only for a message that declares one; the moderator's
--- delete reads it with its own SELECT, best-effort.
+-- AN ORDINARY COLUMN OF THE ENTITY: the send writes it in its own INSERT, inside its transaction,
+-- and the moderator's delete reads it with the row it already loads. That is safe because the deploy
+-- applies migrations BEFORE it replaces the services (`deploy-environment.sh`, then `rolling.sh`):
+-- no build that names this column ever runs against a schema without it.
 --
 -- ROLLBACK: an image older than this migration never reads the column; a value written meanwhile is
 -- inert. Forward-only by intent.
