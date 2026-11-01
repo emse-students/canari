@@ -69,6 +69,7 @@ import {
   writePolicyAllows,
 } from './permissions';
 import { narrowAdmissionVoucher } from './admission-voucher';
+import { ChatReelMediaClient } from './chat-reel-media.client';
 
 import {
   CreateChannelDto,
@@ -1654,7 +1655,13 @@ export class ChannelService implements OnApplicationBootstrap {
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
     @InjectRepository(WorkspaceInvite)
     private readonly inviteRepo: Repository<WorkspaceInvite>,
-    private readonly redis: RedisService
+    private readonly redis: RedisService,
+    /**
+     * The media service's purge of a moderated salon reel (reels-in-chat 15.4). Injected by Nest in
+     * every running service; optional only so a spec that builds this class by hand and never
+     * deletes a reel need not pass one - and its absence at a purge is logged at ERROR.
+     */
+    private readonly chatReelMedia?: ChatReelMediaClient
   ) {}
 
   // ================= INVITES (shareable community links) =================
@@ -4891,6 +4898,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // row, so the repeat writes nothing, publishes nothing and pushes nobody. A repeat of a DELETED
     // message is refused at the insert itself, under the client id's lock (`saveUnderUnusedKey`).
     const clientMessageId = this.readClientMessageId(channel.id, input);
+    const reelMediaId = this.readDeclaredReelMediaIdOf(channel.id, input);
     if (clientMessageId) {
       const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
       if (stored) {
@@ -4928,6 +4936,7 @@ export class ChannelService implements OnApplicationBootstrap {
       messageIndex: input.messageIndex,
       signature: input.signature ?? null,
       clientMessageId,
+      reelMediaId,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: autoPin,
@@ -4975,7 +4984,8 @@ export class ChannelService implements OnApplicationBootstrap {
    * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
    * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
    * across replicas is out of scope, and a duplicate there is settled downstream (see
-   * {@link runFanout}).
+   * {@link runFanout}). A moderated message's reel purge rides here too, keyed `reel-purge:<id>` so
+   * it is never mistaken for that message's fan-out, only so that SIGTERM waits for it.
    */
   private readonly fanoutsInFlight = new Map<string, Promise<void>>();
 
@@ -5279,6 +5289,34 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * The reel file a send DECLARES (`reelMediaId`, migration 122, reels-in-chat 15.4), lower-cased,
+   * or null when it declares none. Anything but a UUID is refused rather than stored: the only reader
+   * is a moderator's purge, which must never be handed a value the media service would read as
+   * anything but an id.
+   */
+  private readDeclaredReelMediaIdOf(
+    channelId: string,
+    input: SendChannelMessageDto
+  ): string | null {
+    const { reelMediaId } = input;
+    if (reelMediaId === undefined || reelMediaId === null) return null;
+    if (typeof reelMediaId !== 'string' || !CLIENT_MESSAGE_ID.test(reelMediaId)) {
+      this.logger.warn(
+        `[CHANNEL_SEND] refused channel=${channelId} sender=${input.senderId.slice(0, 8)}: ` +
+          `reelMediaId is not a UUID (${typeof reelMediaId === 'string' ? `${reelMediaId.length}ch` : typeof reelMediaId})`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_REEL_MEDIA_ID_INVALID',
+        message: 'reelMediaId is the media id of the reel this message carries',
+      });
+    }
+    this.logger.debug(
+      `[CHANNEL_SEND] channel=${channelId} sender=${input.senderId.slice(0, 8)} declares reel ${reelMediaId.slice(0, 8)}`
+    );
+    return reelMediaId.toLowerCase();
+  }
+
+  /**
    * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
    * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
    */
@@ -5334,6 +5372,7 @@ export class ChannelService implements OnApplicationBootstrap {
         if (tombstones.length > 0)
           this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
       }
+      // The declared reel (migration 122) is a column of this INSERT, so it commits with the row.
       const saved = await tx.getRepository(ChannelMessage).save(msg);
       // THE OUTBOX ENTRY COMMITS WITH THE ROW (migration 093): a process that dies after this
       // transaction leaves both, and the fan-out it never made is found and finished at boot.
@@ -6290,9 +6329,15 @@ export class ChannelService implements OnApplicationBootstrap {
     const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
+    const moderation = msg.authorId !== userId;
+    if (moderation && !(await this.memberCanModerateMessages(member))) {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
+    // A MODERATOR'S delete of a message that declares a reel file also purges that file (reels-in-chat
+    // 15.4), which one take may share with other conversations and the feed. Taken from the row read
+    // above, BEFORE it goes: the declaration lives only in it. The author's own delete purges nothing
+    // here - the sender releases their hold themselves (`DELETE /media/chat-reel/:id`, 15.7).
+    const declaredReel = moderation ? (msg.reelMediaId ?? null) : null;
 
     // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
     // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
@@ -6353,7 +6398,58 @@ export class ChannelService implements OnApplicationBootstrap {
         msg.authorId === userId ? '' : ' (moderation)'
       }`
     );
+    // THE FILE'S PURGE NEVER HOLDS THE ANSWER: the message is gone and the salon told, whatever the
+    // media service says or how long it takes. It runs as a tracked background job, so a SIGTERM
+    // (`settleFanouts`) still waits for it; `purgeModeratedReel` logs every outcome itself.
+    if (removed && declaredReel) {
+      void this.trackFanout(`reel-purge:${messageId}`, () =>
+        this.purgeModeratedReel(channelId, messageId, declaredReel, msg.authorId)
+      );
+    }
     return { success: true, channelId, messageId };
+  }
+
+  /**
+   * Purges the reel file a moderated message declared (reels-in-chat 15.4). The caller has proven
+   * the two facts this service owns - the moderator holds `channel.moderate` in THIS salon's
+   * community and may read the salon, and the row (looked up by id AND salon) declares `mediaId`.
+   * The media service proves the other two: the file's uploader is `authorId` - the row's author,
+   * authenticated at its send, never anything the moderator supplies - and a conversation holds it.
+   *
+   * After the delete has committed and never gating it: the message is gone either way. A refusal
+   * (a declaration of a file the author did not upload, or one no conversation holds) is logged and
+   * left - the file was never this salon's to erase. A failure or an unreachable media service is
+   * logged at ERROR: the file then lasts until its chat hold lapses, and the row that named it is gone.
+   */
+  private async purgeModeratedReel(
+    channelId: string,
+    messageId: string,
+    mediaId: string,
+    authorId: string
+  ): Promise<void> {
+    if (!this.chatReelMedia) {
+      this.logger.error(
+        `[CHANNEL_REEL_PURGE] no chat-reel purge client wired - reel ${mediaId.slice(0, 8)} of message ${messageId} NOT purged`
+      );
+      return;
+    }
+    try {
+      const results = await this.chatReelMedia.purge([{ mediaId, ownerId: authorId }]);
+      const outcome = results[mediaId] ?? 'failed';
+      const line =
+        `[CHANNEL_REEL_PURGE] channel=${channelId} message=${messageId} reel=${mediaId.slice(0, 8)} ` +
+        `author=${authorId.slice(0, 8)}: ${outcome}`;
+      if (outcome === 'deleted' || outcome === 'absent') this.logger.log(line);
+      else if (outcome === 'refused')
+        this.logger.warn(`${line} - not the author's held reel, left alone`);
+      else this.logger.error(`${line} - the file lasts until its chat hold lapses`);
+    } catch (err) {
+      this.logger.error(
+        `[CHANNEL_REEL_PURGE] channel=${channelId} message=${messageId} reel=${mediaId.slice(0, 8)}: ` +
+          `the media service was unreachable (${err instanceof Error ? err.message : String(err)}) - ` +
+          `the file lasts until its chat hold lapses`
+      );
+    }
   }
 
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */

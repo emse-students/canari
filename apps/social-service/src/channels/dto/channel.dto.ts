@@ -239,6 +239,15 @@ export interface SendChannelMessageDto {
   /** When present, this message is a poll: it is auto-pinned when its author may pin, and accepts votes. */
   poll?: ChannelPollInputDto;
   /**
+   * The reel file this message carries, DECLARED in clear beside the ciphertext (migration 122,
+   * reels-in-chat 15.4): the one thing that lets a moderator of THIS salon purge that file, which
+   * one take may share with other conversations. The server cannot check it against the sealed
+   * body; it needs not to - the purge also requires the file's uploader to be this row's author, so
+   * a false declaration can only offer up a file of the author's own. A UUID, or absent; anything
+   * else is refused (`CHANNEL_REEL_MEDIA_ID_INVALID`).
+   */
+  reelMediaId?: string;
+  /**
    * Cleartext list of mentioned user ids, attached by the sender so the server can route
    * the `mentions` notification level without decrypting the message. This intentionally
    * exposes WHO is mentioned (never the content) to the server.

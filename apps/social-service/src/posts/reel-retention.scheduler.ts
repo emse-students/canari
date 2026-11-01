@@ -87,7 +87,7 @@ export class ReelRetentionScheduler {
       due: 0,
       deleted: 0,
       failed: 0,
-      blobs: { deleted: 0, absent: 0, refused: 0, failed: 0 },
+      blobs: { deleted: 0, released: 0, absent: 0, refused: 0, failed: 0 },
     };
     const keptForRetry: string[] = [];
 
@@ -137,7 +137,7 @@ export class ReelRetentionScheduler {
       const b = report.blobs;
       this.logger.log(
         `[REEL_GC] due=${report.due} deleted=${report.deleted} failed=${report.failed} ` +
-          `blobs(deleted=${b.deleted} absent=${b.absent} refused=${b.refused} failed=${b.failed})`
+          `blobs(deleted=${b.deleted} released=${b.released} absent=${b.absent} refused=${b.refused} failed=${b.failed})`
       );
     }
     return report;
@@ -155,7 +155,9 @@ export class ReelRetentionScheduler {
       })),
       ...commentMediaOwners(row.comments),
     ];
-    const results = await this.retention.purgeReelBlobs(items);
+    // `retention`: the post's 30 days end ITS hold; a file a conversation still holds is `released`
+    // and stays for the chats (reels-in-chat 15.3) - the row goes either way.
+    const results = await this.retention.purgeReelBlobs(items, 'retention');
 
     const stuck: string[] = [];
     for (const { mediaId } of items) {

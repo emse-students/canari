@@ -38,11 +38,19 @@ interface Notification {
 }
 
 /** A tiny database that understands exactly the four statements the worker issues. */
-function makeWorld(initial: { posts: Row[]; blobs: Record<string, string>; failing?: string[] }) {
+function makeWorld(initial: {
+  posts: Row[];
+  blobs: Record<string, string>;
+  failing?: string[];
+  /** Blobs a conversation's chat hold keeps past the post (reels-in-chat 15.3). */
+  chatHeld?: string[];
+}) {
   const posts = [...initial.posts];
   let notifications: Notification[] = [];
   const blobs = new Map(Object.entries(initial.blobs)); // mediaId -> ownerId
   const failing = new Set(initial.failing ?? []);
+  const chatHeld = new Set(initial.chatHeld ?? []);
+  const reasons: string[] = [];
   const sql: string[] = [];
   const purgeCalls: Array<Array<{ mediaId: string; ownerId: string }>> = [];
   let failTransactionOnce = false;
@@ -105,21 +113,25 @@ function makeWorld(initial: { posts: Row[]; blobs: Record<string, string>; faili
 
   /** The media service's behaviour: ownership is the allowlist, `absent` is success. */
   const retention = {
-    purgeReelBlobs: jest.fn((items: Array<{ mediaId: string; ownerId: string }>) => {
-      purgeCalls.push(items);
-      if (mediaDown) return Promise.reject(new Error('connect ECONNREFUSED media-service'));
-      const out: Record<string, ReelPurgeOutcome> = {};
-      for (const { mediaId, ownerId } of items) {
-        if (failing.has(mediaId)) out[mediaId] = 'failed';
-        else if (!blobs.has(mediaId)) out[mediaId] = 'absent';
-        else if (blobs.get(mediaId) !== ownerId) out[mediaId] = 'refused';
-        else {
-          blobs.delete(mediaId);
-          out[mediaId] = 'deleted';
+    purgeReelBlobs: jest.fn(
+      (items: Array<{ mediaId: string; ownerId: string }>, reason: string) => {
+        purgeCalls.push(items);
+        reasons.push(reason);
+        if (mediaDown) return Promise.reject(new Error('connect ECONNREFUSED media-service'));
+        const out: Record<string, ReelPurgeOutcome> = {};
+        for (const { mediaId, ownerId } of items) {
+          if (failing.has(mediaId)) out[mediaId] = 'failed';
+          else if (!blobs.has(mediaId)) out[mediaId] = 'absent';
+          else if (blobs.get(mediaId) !== ownerId) out[mediaId] = 'refused';
+          else if (chatHeld.has(mediaId) && reason !== 'moderation') out[mediaId] = 'released';
+          else {
+            blobs.delete(mediaId);
+            out[mediaId] = 'deleted';
+          }
         }
+        return Promise.resolve(out);
       }
-      return Promise.resolve(out);
-    }),
+    ),
   };
 
   const redis = { deleteByPattern: jest.fn(() => Promise.resolve(0)) };
@@ -137,6 +149,7 @@ function makeWorld(initial: { posts: Row[]; blobs: Record<string, string>; faili
     failing,
     sql,
     purgeCalls,
+    reasons,
     retention,
     notify: (n: Notification) => notifications.push(n),
     notifications: () => notifications,
@@ -196,6 +209,23 @@ describe('ReelRetentionScheduler - the cascade', () => {
       { mediaId: 'blob-r1', ownerId: 'alice' },
       { mediaId: 'comment-media', ownerId: 'bob' },
     ]);
+  });
+
+  it("ends the post's hold with reason `retention`: a file a chat still holds is released, and the row goes", async () => {
+    const world = makeWorld({
+      posts: [reel('r1')],
+      blobs: { 'blob-r1': 'alice' },
+      chatHeld: ['blob-r1'],
+    });
+
+    const report = await world.scheduler.purgeOnce();
+
+    expect(world.reasons).toEqual(['retention']);
+    expect(report).toMatchObject({ due: 1, deleted: 1, failed: 0 });
+    expect(report.blobs.released).toBe(1);
+    expect(world.posts).toHaveLength(0);
+    // The conversations' copy is the media service's to keep until its chat hold lapses.
+    expect(world.blobs.has('blob-r1')).toBe(true);
   });
 
   it('deletes the blobs BEFORE the row, and keeps the row when a blob is still there', async () => {

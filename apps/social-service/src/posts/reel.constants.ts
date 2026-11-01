@@ -16,6 +16,14 @@ export const REEL_MAX_DURATION_MS = 90_000;
  */
 export const CHAT_REEL_MAX_DURATION_MS = 60_000;
 
+/**
+ * How many conversations one press of "Envoyer à..." may send a take to (reels-in-chat 15.2): each
+ * target is one MLS or Graine send, and the whole press shares ONE file under one chat hold. Served
+ * as `chatReelMaxTargets`, so the sheet refuses the next tick with a sentence and no client carries
+ * the number.
+ */
+export const CHAT_REEL_MAX_TARGETS = 15;
+
 /** How long a reel lives - decision C6. Applied ONCE, at creation, into `posts.expiresAt`. */
 export const REEL_RETENTION_DAYS = 30;
 
@@ -46,12 +54,14 @@ export function isExpiredReel(
 export function reelLimits(): {
   maxDurationMs: number;
   chatMaxDurationMs: number;
+  chatReelMaxTargets: number;
   retentionDays: number;
   warningWindowDays: number;
 } {
   return {
     maxDurationMs: REEL_MAX_DURATION_MS,
     chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
+    chatReelMaxTargets: CHAT_REEL_MAX_TARGETS,
     retentionDays: REEL_RETENTION_DAYS,
     warningWindowDays: REEL_EXPIRY_WARNING_DAYS,
   };

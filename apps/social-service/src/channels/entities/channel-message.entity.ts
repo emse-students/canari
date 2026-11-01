@@ -101,6 +101,20 @@ export class ChannelMessage {
   @Column({ type: 'varchar', length: 36, nullable: true, select: false, update: false })
   clientMessageId?: string | null;
 
+  /**
+   * The reel file this message carries, as its SENDER declared it beside the ciphertext (migration
+   * 122, approved by the owner 2026-10-30; reels-in-chat 15.4). Read by ONE path: a moderator's
+   * delete of this row, which may purge that file (`chat-reel-purge`) because the row names it. Null
+   * on every message that carries no reel and on every row older than 122.
+   *
+   * An ordinary column, written by the send's own INSERT inside its transaction: the deploy applies
+   * migrations BEFORE it replaces the services (`deploy-environment.sh`, then `rolling.sh`), so no
+   * build carrying this declaration ever runs against a schema without 122. `update: false`: the
+   * declaration is the sender's, fixed at the send; nothing rewrites it.
+   */
+  @Column({ type: 'uuid', nullable: true, update: false })
+  reelMediaId?: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   replyTo: string;
 
