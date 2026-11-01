@@ -587,6 +587,8 @@
   "call_earpiece_label": "Écouteur",
   "call_route_unavailable_label": "Sortie audio indisponible pour le moment",
   "call_ringing_label": "Appel…",
+  "call_dnd_regrant_message": "Canari a une nouvelle sonnerie d'appel. Pour qu'un appel sonne encore en mode Ne pas déranger, réautorisez-le dans les réglages des appels.",
+  "call_dnd_regrant_action": "Réglages",
   "call_ended_with_duration": "Appel terminé · {duration}",
   "call_accept_short_label": "Accepter",
   "call_banner_region_label": "Appel en cours",

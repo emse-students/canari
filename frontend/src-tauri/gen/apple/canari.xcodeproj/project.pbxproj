@@ -44,6 +44,7 @@
 		DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */; };
 		DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */; };
 		DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */; };
+		DA10CA11E0000000000006B1 /* canari_ring_callkit.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */; };
 		5AE1A2B3C4D5E6F700000002 /* CanariShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5AE1A2B3C4D5E6F700000015 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */; };
 		5AE1A2B3C4D5E6F700000016 /* ShareCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */; };
@@ -132,6 +133,7 @@
 		DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_message.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_mention.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_reaction.wav; sourceTree = "<group>"; };
+		DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_ring_callkit.wav; sourceTree = "<group>"; };
 		5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanariShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareCapture.swift; sourceTree = "<group>"; };
@@ -274,7 +276,16 @@
 				80EB529A999B6336917EDB30 /* Products */,
 				BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */,
 				DA10CA11E0000000000005A0 /* NotificationSounds */,
+				DA10CA11E0000000000006A0 /* CallSounds */,
 			);
+			sourceTree = "<group>";
+		};
+		DA10CA11E0000000000006A0 /* CallSounds */ = {
+			isa = PBXGroup;
+			children = (
+				DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */,
+			);
+			path = CallSounds;
 			sourceTree = "<group>";
 		};
 		DA10CA11E0000000000005A0 /* NotificationSounds */ = {
@@ -495,6 +506,7 @@
 				DA10CA11E0000000000005B1 /* canari_gazouillis_message.wav in Resources */,
 				DA10CA11E0000000000005B2 /* canari_gazouillis_mention.wav in Resources */,
 				DA10CA11E0000000000005B3 /* canari_gazouillis_reaction.wav in Resources */,
+				DA10CA11E0000000000006B1 /* canari_ring_callkit.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
