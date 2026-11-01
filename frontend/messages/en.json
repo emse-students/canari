@@ -344,6 +344,7 @@
   "chat_send_error_seal_key_group_catching_up": "Nothing was sent: this device is catching up with the community's keys. Try again in a moment.",
   "chat_media_action_send": "Sending the media",
   "chat_media_send_error_generic": "The media could not be sent. Try again in a moment.",
+  "chat_media_conversation_gone": "An attachment was not sent: its conversation no longer exists on this device.",
   "chat_media_dropped_other_conversation": "An attachment sent in another conversation was removed. {cause}",
   "chat_media_send_error_storage_full": "The media could not be queued: this device is out of storage. Free some space and try again.",
   "outbox_edge_blocked": "Your messages are not getting through: the network is being blocked on the way to the server (security filter). They are kept and will be sent automatically; if this lasts, try another connection.",
