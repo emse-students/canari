@@ -269,8 +269,8 @@ services:
       # The key-group shared-payload WRITER (migration 034). A literal of env-manifest.tsv: false
       # until a release AFTER the one shipping its readers. Neither true nor false: no boot.
       QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
-      # The retired-device reaper (off | dry-run | on). A literal of env-manifest.tsv: off until the
-      # owner validates the rule and its dry run. Any other value: no boot.
+      # The retired-device reaper (off | dry-run | on), computed per estate by render-env.sh: off
+      # until the owner validates each step. Any other value: no boot.
       RETIRED_DEVICE_REAPER: ${RETIRED_DEVICE_REAPER:-off}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.

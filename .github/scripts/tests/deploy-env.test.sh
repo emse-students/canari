@@ -248,6 +248,17 @@ else
   fail "LYDIA_RECONCILE_ENABLED renders prod='$reconcile_prod' dev='$reconcile_dev' - production must be false, dev true"
 fi
 
+# THE RETIRED-DEVICE REAPER REVOKES DEVICES, so it ships OFF on BOTH estates, each read from its own
+# rendered file: a dry run, then an activation, is the owner's decision for ONE estate at a time, made
+# by editing its line in render-env.sh AND this expectation in the same commit - never a default.
+reaper_prod="$(port_of "$TMP/ports-prod.env" RETIRED_DEVICE_REAPER)"
+reaper_dev="$(port_of "$TMP/ports-dev.env" RETIRED_DEVICE_REAPER)"
+if [ "$reaper_prod" = "off" ] && [ "$reaper_dev" = "off" ]; then
+  pass "RETIRED_DEVICE_REAPER renders off on production and off on dev"
+else
+  fail "RETIRED_DEVICE_REAPER renders prod='$reaper_prod' dev='$reaper_dev' - both must be off until the owner validates a step"
+fi
+
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
 # asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
 # - and it is not what the 2026-09-25 outage was. Production asked for 8080, another local service
@@ -413,13 +424,6 @@ else
     fail "QUEUED_PAYLOAD_SHARED_WRITES is not false"
   fi
 
-  # The retired-device reaper REVOKES DEVICES, so it ships OFF: its dry run and then its activation
-  # are the owner's decision, each a deliberate edit of this expectation, never a default.
-  if grep -q '^RETIRED_DEVICE_REAPER=off$' "$out"; then
-    pass "RETIRED_DEVICE_REAPER is the literal off - the owner validates its activation"
-  else
-    fail "RETIRED_DEVICE_REAPER is not off"
-  fi
 
   # DEPLOY_BUILD must never be written in production: /api/version reports `build`, and production's
   # version already names its content because it is built from a tag.

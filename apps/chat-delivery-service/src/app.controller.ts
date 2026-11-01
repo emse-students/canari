@@ -307,7 +307,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
         'expired device revocations purge (24h), ' +
-        `retired-device reaper (24h, ${this.retiredDeviceReaperMode}) scheduled`
+        'retired-device reaper (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h

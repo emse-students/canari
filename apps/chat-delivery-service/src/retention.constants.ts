@@ -275,27 +275,39 @@ export const COMMIT_RATE_WARN_PER_DEVICE_HOUR = 8;
 export const COMMIT_LOG_REPORT_TOP_N = 10;
 
 /**
- * How far back the retired-device reaper looks for a LIFE SIGNAL of the device it would revoke: a
- * frame it sent that is still queued, a commit it sent, a key package or one-time key package it
- * published. Any one of them inside this window keeps the device, whatever else holds.
+ * How long a device must have shown NO life before the retired-device reaper may revoke it: no
+ * frame it sent still queued, no commit it sent, no key package or one-time key package it
+ * published (a key package's `createdAt` is reset on every connection, so it is the device's last
+ * connection, not its enrolment).
  *
- * **SEVEN DAYS, set by the owner's decision of 2026-11-01**, and it is a GUARD, not the trigger:
- * the reaper selects on durable facts (no session, no push token, not revoked, replaced by a live
- * device of the same platform), and this window only refuses a device that showed life recently,
- * the one population the 2026-11-01 re-measure found inside the candidates (1 of 292 had sent a
- * frame in the last 7 days). If it were wrong it would keep a device one more day, never revoke one
- * early.
+ * **THE RETENTION WINDOW, 90 DAYS, AND NOT THE 7 DAYS FIRST BUILT.** A session row dies after
+ * 7 idle days (core-service `SESSION_TTL_SECONDS`) and a web or desktop device never holds a push
+ * token, so "no session, no push token, nothing for 7 days" is a desktop app left closed for a
+ * holiday - review of #2880. Nothing measured justifies less, so the floor is the window the rest of
+ * this service already reads as "this device stopped": the stale-device GC demotes and then purges a
+ * device whose key package is older than {@link RETENTION_WINDOW_MS}.
+ *
+ * **WHAT THAT COSTS, STATED:** at this floor the reaper overlaps the GC (`detectStaleDevices` +
+ * `cleanupStaleDevices`) - both act on a device silent for 90 days. What the reaper adds is the ban
+ * row (`revoked_device`, cause `retired`), so the id cannot come back as a fan-out target, and its
+ * own proof of replacement. Lowering it is a decision for a measurement of the candidates'
+ * last-life age, never for this constant's comment.
  */
-export const RETIRED_DEVICE_LIFE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const RETIRED_DEVICE_LIFE_WINDOW_MS = RETENTION_WINDOW_MS;
 
 /**
- * The most devices ONE run of the retired-device reaper revokes (or lists, in a dry run).
+ * The most devices the retired-device reaper may revoke in any rolling 24 hours, counted from
+ * DURABLE STATE: the `revoked_device` rows of cause `retired` written in the last day.
  *
- * The run is daily, and the backlog it was built for was revoked by hand on 2026-11-01 (286
- * devices), so the steady state is what accrues between two runs - NOT MEASURED YET; the owner's
- * first dry run is that measurement. A run that names more than this is not the steady state: it
- * takes the oldest queues first, reports `matched` above `cap` at the accusing level, and the rest
- * wait for the next run, so a predicate gone wrong costs at most this many devices before someone
- * reads the line.
+ * A per-RUN cap was the first draft, and it was no bound at all: the boot sweep runs the reaper on
+ * every restart, so a day with ten deploys could revoke ten caps (review of #2880). The budget is
+ * read before the selection and again before each revocation, so restarts and replicas share it.
+ * It is CONSERVATIVE in one direction, stated: an install retiring its own abandoned id
+ * (`abandonedDevices.ts`) also writes `retired`, and spends the same budget. And two replicas
+ * reading the same remaining budget at the same instant can overshoot it by one device each.
+ *
+ * The steady state - what accrues between two runs - is NOT MEASURED; the owner's first dry run is
+ * that measurement. A day whose candidates exceed the budget takes the oldest queues first and says
+ * so at WARN; the rest wait for the next day.
  */
-export const RETIRED_DEVICE_REAP_CAP = 100;
+export const RETIRED_DEVICE_DAILY_BUDGET = 100;

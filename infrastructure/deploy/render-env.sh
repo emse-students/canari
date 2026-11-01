@@ -187,6 +187,20 @@ compute_lydia_reconcile_enabled() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
 }
 
+# The retired-device reaper (docs/wiki/services/chat-delivery.md): `off`, `dry-run` or `on`, set PER
+# ESTATE so a dry run can go to production alone. It REVOKES devices, so both ship `off`; each step
+# of its activation is the owner's decision, made by editing ONE of these two lines in a commit, and
+# `deploy-env.test.sh` asserts both.
+RETIRED_DEVICE_REAPER_PROD=off
+RETIRED_DEVICE_REAPER_DEV=off
+compute_retired_device_reaper() {
+  if [ "$ENVIRONMENT" = "dev" ]; then
+    printf '%s' "$RETIRED_DEVICE_REAPER_DEV"
+  else
+    printf '%s' "$RETIRED_DEVICE_REAPER_PROD"
+  fi
+}
+
 # ── Minimum lengths ───────────────────────────────────────────────────────────
 # A value can be PRESENT and still unusable: social-service refuses to sign anything with an
 # AGENDA_SIGNING_KEY shorter than 32 characters and answers 503 at runtime, which the deploy's
@@ -264,6 +278,7 @@ while IFS=$'\t' read -r key prod dev source note; do
     GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
     GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
     LYDIA_RECONCILE_ENABLED) value="$(compute_lydia_reconcile_enabled)" ;;
+    RETIRED_DEVICE_REAPER) value="$(compute_retired_device_reaper)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2
       exit 2

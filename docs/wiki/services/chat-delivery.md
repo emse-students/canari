@@ -43,12 +43,12 @@ The chat-delivery-service is the MLS API layer. It:
 ### The retired-device reaper, built OFF (2026-11-01)
 
 **What it answers.** A device with no session and no push token keeps its active seats and its key
-package, so every fan-out queues a row for it forever. Four hand passes revoked that population
-through `DELETE /api/mls/devices/:userId/:deviceId` (2026-10-12 twice, 2026-10-24, 2026-11-01: 286
+package, so every fan-out queues a row for it. Four hand passes revoked that population through
+`DELETE /api/mls/devices/:userId/:deviceId` (2026-10-12 twice, 2026-10-24, 2026-11-01: 286
 devices), and it refilled each time
 ([audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#fourth-pass-by-hand-and-the-reaper-that-replaces-the-passes---2026-11-01)).
-The owner decided on 2026-11-01 to build the fix at the source, OFF, and to validate its activation
-after reading the rule and a dry run.
+The owner decided on 2026-11-01 to build the fix at the source, OFF, and to validate each step of
+its activation.
 
 **It revokes; it never sweeps rows.** Each device goes through `revokeDevice`
 ([`utils/revoke-device.ts`](../../../apps/chat-delivery-service/src/utils/revoke-device.ts)), the one
@@ -57,53 +57,100 @@ packages, one-time key packages, push tokens, queue, the key groups held recorde
 then `notifyDeviceRevoked`. The cause is **`retired`**, so no session is ended, and a device that
 does come back is refused `DEVICE_REVOKED` + `reason: 'retired'` and enrols again under a fresh id.
 This is the [2026-08-11 rule](#the-answer-was-a-revocation-not-a-sweep-2026-08-11) applied by a
-machine: the judgement "replaced, not merely offline" the server could not make alone is made by
-clause 5 - the owner provably moved to a newer device of the same kind.
+machine - which is only right if the machine can PROVE "replaced, not merely offline".
 
-**The selection is ONE statement, an allowlist** (`RETIRED_DEVICE_PREDICATE_SQL`,
+**What does NOT prove it, and why the first draft was wrong** (review of #2880):
+
+- **A session row dies after 7 idle days** (core-service `SESSION_TTL_SECONDS`, swept hourly), and a
+  **web or desktop device never holds a push token**. "No session, no push token" is therefore any
+  web or desktop device not opened for a week.
+- **A device id has two prefixes only, `web` and `tauri`** - a desktop app, an iPhone and an Android
+  phone all read `tauri`.
+- **`key_package.createdAt` is reset on every registration and every connection**, so it dates the
+  last connection, never an enrolment.
+
+The first draft read "no session, no push token, nothing for 7 days, and the owner signed in on a
+newer key package of the same prefix" - which a desktop app left closed for an 8-day holiday meets.
+
+**What the predicate proves now** (`RETIRED_DEVICE_PREDICATE_SQL`,
 [`services/retired-device-reaper.ts`](../../../apps/chat-delivery-service/src/services/retired-device-reaper.ts)).
-Over every `(user, device)` holding a queued row, all of:
+Over every `(user, device)` holding a queued row and a key package, all of:
 
 1. no `auth_sessions` row for the device, of any age;
 2. no `push_token` row;
 3. no `revoked_device` row inside the ban window;
-4. no life since 7 days (`RETIRED_DEVICE_LIFE_WINDOW_MS`): no queued frame it sent, no commit it sent,
-   no key package or one-time key package it published;
-5. its owner has another device of the same platform (the id's prefix) with an unexpired session and
-   a key package newer than this device's oldest queued row.
+4. **no life for 90 days** (`RETIRED_DEVICE_LIFE_WINDOW_MS` = `RETENTION_WINDOW_MS`): no queued frame
+   it sent, no commit it sent, no key package (its last connection) and no one-time key package it
+   published;
+5. its owner has ANOTHER device with the same id prefix, **the same reported `deviceOs` and the same
+   non-NULL `deviceName`** on its key package, an unexpired session, and an **enrolment** - its first
+   `device_signature_key.firstSeenAt` (migration 027, a table nothing deletes) - later than this
+   device's oldest undelivered row and than this device's own first signature key.
+
+Read plainly: **this device has been silent for 90 days, and since it stopped draining its owner
+enrolled a new device that reports the same kind of machine under the same name, and is using it
+now.**
+
+**What it still does not prove, stated:**
+
+- **The enrolment date is exact only for a device enrolled after migration 027 reached production**
+  (merged 2026-09-29). There is no backfill: an older device's first row is its first upload after
+  the migration, which can be later than its real enrolment. A device enrolled before 027 that first
+  reconnected after a long silence can therefore look newer than it is. The smallest additive fix is
+  an `"enrolledAt"` column on `key_package` written on INSERT only, NULL for existing rows (a NULL
+  proving nothing) - **a migration, so the owner's yes** ([backlog](../backlog.d/retired-device-reaper-activation-owed-to-the-owner.md)).
+- **A device whose name was never set is never proven replaced** - `deviceName` is the name stored
+  on the device, and NULL equals nothing.
+- **At 90 days it overlaps the stale-device GC.** `detectStaleDevices` demotes the seats of a device
+  whose key package is older than the same window, and `cleanupStaleDevices` then purges it. What
+  the reaper adds is the ban row, so the id cannot come back as a fan-out target, and its proof. The
+  population the hand passes revoked sat INSIDE the 90 days; a lower floor is a decision owed to a
+  measurement of the candidates' last-life age (the second statement on the audit page).
 
 `retired-device-reaper.integration.spec.ts` holds one fixture per clause that fails it alone and is
-kept (an owner with no other device, a device that showed life, an expired session on either side, a
-key package older than the queue, a live device of another user), against a real PostgreSQL. The
-read-only form of the statement, and a count of what clause 5 alone keeps, are on the
+kept, against a real PostgreSQL. Among them are the three cases the review raised: the 8-day holiday
+desktop, an owner's other device enrolled BEFORE this one but connected yesterday, and a tauri
+desktop beside a tauri phone of the same name. The read-only form of the statement is on the
 [audit page](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#the-dry-run-read-only-as-the-owner-runs-it).
 
-**The switch is an environment literal, `RETIRED_DEVICE_REAPER`**, read once at boot
-(`readRetiredDeviceReaperMode`), the shape `QUEUED_PAYLOAD_SHARED_WRITES` already has: a row of
-`infrastructure/deploy/env-manifest.tsv`, asserted by `deploy-env.test.sh`, so turning it is a
-reviewed commit and no migration is needed (a `platform_config` column, the other switch shape here,
-would have been one). Values:
+**The switch is `RETIRED_DEVICE_REAPER`, set PER ESTATE**, read once at boot
+(`readRetiredDeviceReaperMode`). `infrastructure/deploy/render-env.sh` computes it from two lines,
+`RETIRED_DEVICE_REAPER_PROD` and `RETIRED_DEVICE_REAPER_DEV`, so a dry run can go to production
+alone; `deploy-env.test.sh` asserts both rendered values, so each step is a reviewed commit. The
+switch needed no migration (a `platform_config` column, the other switch shape here, would have).
 
 | Value | What a run does |
 | --- | --- |
-| `off` (default, both estates) | Nothing: not one query, not one line. The boot line says `RETIRED_DEVICE_REAPER=off`. |
-| `dry-run` | Selects, logs `[RETIRED_REAPER] would revoke user=... device=... oldestQueued=... queuedRows=...` per candidate, then `mode=dry-run matched=N listed=M cap=C - nothing written`. Writes nothing. |
-| `on` | Re-checks each candidate with the same statement restricted to it, revokes it, logs `[RETIRED_REAPER] revoked ...` with the purge counts. |
+| `off` (default, both estates) | Nothing: not one query. The boot line `[RETIRED_REAPER] RETIRED_DEVICE_REAPER=off` is the only line. |
+| `dry-run` | Selects up to one day's budget, logs `[RETIRED_REAPER] would revoke user=... device=... oldestQueued=... queuedRows=...` per candidate, then `mode=dry-run matched=N listed=M budget=B budgetLeft=L - nothing written`. Writes nothing. |
+| `on` | Revokes within what is left of the daily budget (below) and logs `[RETIRED_REAPER] revoked ...` with the purge counts. |
 
 Any other value refuses to boot: a destructive control whose switch cannot be read is never read as
 open.
 
-**Cap, isolation, report.** At most `RETIRED_DEVICE_REAP_CAP` (100) devices per run, oldest queue
-first; `matched` counts past the cap. Each device has its own `try`: a failure logs `FAILED to revoke`
-at ERROR and the run goes on. The summary `[RETIRED_REAPER] mode=on matched= cap= revoked= skipped=
-failed= queuedMessagesDeleted=` is a WARN whenever it revoked anything or matched more than the cap,
-an ERROR when one revocation failed, and a plain line only when it did nothing. A device that no
-longer matches at the re-check (a sign-in meanwhile, a ban by another replica) is `skipped`.
+**A DAILY budget, read from durable state.** At most `RETIRED_DEVICE_DAILY_BUDGET` (100) revocations
+in any rolling 24 hours, counted as the `revoked_device` rows of cause `retired` written in the last
+day, read before the selection (which is limited to what is left) and again before each revocation.
+A per-run cap was the first draft, and it bounded nothing: the boot sweep runs the reaper on every
+restart. Stated limits: an install retiring its own abandoned id also writes `retired` and spends the
+same budget (conservative), and two replicas reading the same remaining budget at the same instant
+can each overshoot it by one.
 
-**Idempotence is the ban row, not the clock.** A revoked device fails clause 3 forever, so a second
-run, a second replica during a deploy, or a run that died half-way revokes nothing twice; the spec
-proves it with the purge stubbed, the queue left in place, and the device still not selected again.
-The 24 h interval (plus the boot sweep's one run) decides only how soon a newly replaced device goes.
+**Re-checks, isolation, report.** Right before each revocation the device is re-checked: the same
+statement restricted to it, plus **no session of its owner created since the selection that names no
+device yet** (`auth_sessions."deviceId"` stays NULL until `bindDevice`, so a sign-in in progress is
+invisible to clause 1). **This narrows the race; it does not close it.** The checks and the
+revocation are not one transaction, and a sign-in landing between them is not seen; that device is
+refused `DEVICE_REVOKED` + `retired` and enrols again under a fresh id, its history coming back from
+peers, not from its purged queue. Each device has its own `try`: a failure logs `FAILED to revoke`
+at ERROR and the run goes on. The summary `[RETIRED_REAPER] mode=on matched= budgetLeft= revoked=
+skipped= failed= queuedMessagesDeleted=` is a WARN whenever it revoked anything or the candidates
+exceeded the budget, an ERROR when one revocation failed, and a plain line only when it did nothing.
+
+**Idempotence is the ban row, not the clock.** A revoked device fails clause 3 forever, and the
+budget is read from the same rows: a second run, a restart or a second replica revokes nothing twice
+and spends nothing twice. The spec proves it with the purge stubbed and the queue left in place. The
+24 h interval (plus the boot sweep's one run) decides only how soon a replaced device goes.
 
 ### One way a frame is delivered
 
@@ -2654,7 +2701,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
 | `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
 | `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox - Xcode debug builds only; a TestFlight build (dev estate included) is `aps-environment production` |
-| `RETIRED_DEVICE_REAPER` | no | `off` (default), `dry-run` or `on` - the [retired-device reaper](#the-retired-device-reaper-built-off-2026-11-01); a literal `off` in `env-manifest.tsv` on both estates; any other value refuses to boot |
+| `RETIRED_DEVICE_REAPER` | no | `off` (default), `dry-run` or `on` - the [retired-device reaper](#the-retired-device-reaper-built-off-2026-11-01); computed per estate by `render-env.sh`, `off` on both; any other value refuses to boot |
 
 ### The push avatar log line
 
