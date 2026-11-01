@@ -236,6 +236,9 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // who sees icmSe's post, ASKS to follow icmSe and is not answered: the column's default is a
     // request, and a request is not a follow.
     await client.query(MIGRATION_114);
+    await client.query(
+      readFileSync(join(__dirname, '..', 'migrations', '121_member_reposts.sql'), 'utf8')
+    );
     await client.query(`INSERT INTO user_follows VALUES ('adminIcm', 'icmSe')`);
     for (const p of POSTS) {
       await client.query(

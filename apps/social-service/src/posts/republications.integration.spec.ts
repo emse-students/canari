@@ -148,6 +148,7 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
     await q(migration('096_personal_republication_requests.sql'));
+    await q(migration('121_member_reposts.sql'));
     await q(
       `INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A3', 'a3', 'association')`,
       [A3]
@@ -423,9 +424,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
     it('hiding removes every republication and every pending proposal, and keeps decisions', async () => {
       // P7 has a pending proposal (withdrawn once, proposed again) and P5 an accepted one.
       const dropped = await dropRepublicationsOf(ds.manager, P(7));
-      expect(dropped).toEqual({ republications: 0, proposals: 1 });
+      expect(dropped).toEqual({ republications: 0, proposals: 1, memberReposts: 0 });
       const p5 = await dropRepublicationsOf(ds.manager, P(5));
-      expect(p5).toEqual({ republications: 1, proposals: 0 });
+      expect(p5).toEqual({ republications: 1, proposals: 0, memberReposts: 0 });
       expect(await sees(P(5), 'cGa')).toBe(false);
       const kept: { n: number }[] = await q(
         `SELECT count(*)::int AS n FROM proposals WHERE "subjectId" = $1 AND status = 'accepted'`,

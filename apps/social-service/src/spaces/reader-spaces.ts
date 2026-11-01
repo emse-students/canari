@@ -266,6 +266,49 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
 }
 
 /**
+ * Post row `post` reaches user row `user` through a MEMBER REPOST (WP-F6, decision 1 and Q2 of the
+ * follow requests, user 2026-10-25; consent shape, owner 2026-11-01): a person `user` FOLLOWS -
+ * accepted, never a pending request - reposted it (`member_reposts`). It holds for a personal post
+ * AND an entity post (Q2: a member's repost of an association post widens it to the member's
+ * accepted followers, and to nobody else).
+ *
+ * - NEVER AN ANONYMOUS POST: the write refuses one, and the predicate says it again, so a row that
+ *   ever pointed at one (a post flagged anonymous later) opens nothing.
+ * - BLOCKS, EVERY PAIR, BOTH WAYS, CHECKED HERE RATHER THAN TRUSTED TO THE SEVERING: reader and
+ *   reposter; and, for a PERSONAL post, reader and author and reposter and author. The author pairs
+ *   are left out for an entity post on purpose: its `authorId` is the officer who wrote it in the
+ *   association's name, and a feed that changed when a reader blocked that person would tell them
+ *   who wrote it (the oracle `PostsService.blockedAuthorSql` documents).
+ * - THE COHORT: reader, reposter and author on the same side of the review cohort's boundary.
+ * - NEVER A READ GRANT: the follow is the only door.
+ *
+ * CONSENT IS NOT READ HERE, it is STATE: a repost row exists only while the author consents. The
+ * write checks it under the author's lock, and withdrawing it deletes the rows under the same lock
+ * (`MemberRepostsService`), so no row outlives a "no".
+ *
+ * MONOTONE IN REPOSTS: adding a row only ever adds readers, which the newly-reached rule
+ * (`newlyReachedByMemberRepostSql`) relies on.
+ */
+export function memberRepostReachesUserSql(post: string, user: string): string {
+  const personal = `${post}."associationId" IS NULL`;
+  return `(NOT COALESCE(${post}.anonymous, false)
+    AND ${sameSideOfReviewCohortSql(`${post}."authorId"`, `${user}.id`)}
+    AND EXISTS (SELECT 1 FROM member_reposts vis_mrep
+      JOIN user_follows vis_mrep_follow ON vis_mrep_follow."followedUserId" = vis_mrep."reposterId"
+        AND vis_mrep_follow."followerUserId" = ${user}.id AND ${acceptedFollowSql('vis_mrep_follow')}
+      WHERE vis_mrep."postId" = ${post}.id
+        AND ${sameSideOfReviewCohortSql('vis_mrep."reposterId"', `${user}.id`)}
+        AND NOT EXISTS (SELECT 1 FROM user_blocks vis_mrep_block
+          WHERE (vis_mrep_block."blockerId" = ${user}.id AND vis_mrep_block."blockedId" = vis_mrep."reposterId")
+             OR (vis_mrep_block."blockerId" = vis_mrep."reposterId" AND vis_mrep_block."blockedId" = ${user}.id)
+             OR (${personal} AND (
+                  (vis_mrep_block."blockerId" = ${user}.id AND vis_mrep_block."blockedId" = ${post}."authorId")
+               OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = ${user}.id)
+               OR (vis_mrep_block."blockerId" = vis_mrep."reposterId" AND vis_mrep_block."blockedId" = ${post}."authorId")
+               OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = vis_mrep."reposterId"))))))`;
+}
+
+/**
  * Whether a post predicate counts the author's ACCEPTED FOLLOWERS (WP-F5). On by default - it is
  * who may SEE a personal post: by id, its comments and reactions, the search, the Suivis feed, the
  * announcement and the republication's newly-reached rule. OFF only where a feed is a feed of
@@ -300,6 +343,10 @@ export interface FollowerOpts {
  * MONOTONE IN REPUBLICATIONS, and `NEWLY_REACHED_BY_REPUBLICATION_SQL` relies on it: adding one
  * only ever adds a disjunct, so who sees a post after is who saw it before plus who the republisher
  * reaches. The follower disjunct changes nothing to that: it reads no republication.
+ *
+ * - ANY non-anonymous post, also: the accepted followers of a MEMBER who reposted it (WP-F6,
+ *   `memberRepostReachesUserSql`), left out with `followers: false` like the author's followers.
+ *   Monotone in reposts too, so a repost's newly-reached set is "after and not before".
  */
 export function postVisibleToUserSql(
   post: string,
@@ -313,13 +360,20 @@ export function postVisibleToUserSql(
       : `
       OR (NOT COALESCE(${post}.anonymous, false)
         AND ${acceptedFollowerOfAuthorSql(`${post}."authorId"`, user)})`;
+  // WP-F6: a member repost reaches the reposter's accepted followers - a follow-based door, so it
+  // is left out exactly where the author's own followers are (`followers: false`, decision 5).
+  const repostClause =
+    opts.followers === false
+      ? ''
+      : `
+      OR ${memberRepostReachesUserSql(post, user)}`;
   return `(${adminClause}${post}."authorId" = ${user}.id
     OR (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}
-      OR ${republicationReachesUserSql(post, user)}${followerClause}))
+      OR ${republicationReachesUserSql(post, user)}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
-      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })})))`;
+      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))`;
 }
 
 /**
@@ -360,6 +414,36 @@ export function newlyReachedByPersonalRepublicationSql(announced: boolean): stri
       WHERE (nr_block."blockerId" = nr_user.id AND nr_block."blockedId" = nr_post."authorId")
          OR (nr_block."blockerId" = nr_post."authorId" AND nr_block."blockedId" = nr_user.id))${followers}`;
 }
+
+/**
+ * Who would see post `$1` for the FIRST time if the member `$2` reposted it (WP-F6, the D38 rule):
+ * the reposter's ACCEPTED followers who cannot see the post NOW - asked BEFORE the row is written,
+ * under the post row's lock, so with visibility monotone in reposts this is exactly "after minus
+ * before", read from state and never from a clock. Minus the author and the reposter, minus anyone
+ * on the other side of the review cohort, and with every block `memberRepostReachesUserSql` checks:
+ * reader and reposter always, reader and author for a personal post only (an entity post's author
+ * is never a block's subject - the oracle that rule documents).
+ *
+ * The CALLER decides whether to tell them: an ENTITY post not yet announced will be announced to
+ * everyone who sees it by then (`announceRecipientsSql(false)`), these readers included, so they
+ * are told nothing at the repost; a PERSONAL post is announced to its author's followers only, so
+ * the readers a repost reaches are told at the repost, announced or not.
+ */
+export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users nr_user
+  JOIN posts nr_post ON nr_post.id = $1
+  JOIN user_follows nr_rfollow ON nr_rfollow."followedUserId" = $2 AND nr_rfollow."followerUserId" = nr_user.id
+    AND ${acceptedFollowSql('nr_rfollow')}
+  WHERE nr_user.id <> nr_post."authorId" AND nr_user.id <> $2
+    AND NOT COALESCE(nr_post.anonymous, false)
+    AND ${sameSideOfReviewCohortSql('$2::text', 'nr_user.id')}
+    AND ${sameSideOfReviewCohortSql('nr_post."authorId"', 'nr_user.id')}
+    AND NOT EXISTS (SELECT 1 FROM user_blocks nr_rblock
+      WHERE (nr_rblock."blockerId" = nr_user.id AND nr_rblock."blockedId" = $2)
+         OR (nr_rblock."blockerId" = $2 AND nr_rblock."blockedId" = nr_user.id)
+         OR (nr_post."associationId" IS NULL AND (
+              (nr_rblock."blockerId" = nr_user.id AND nr_rblock."blockedId" = nr_post."authorId")
+           OR (nr_rblock."blockerId" = nr_post."authorId" AND nr_rblock."blockedId" = nr_user.id))))
+    AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM

@@ -183,6 +183,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       '073_republications.sql',
       '074_coorganise.sql',
       '078_read_grants.sql',
+      '121_member_reposts.sql',
     ]) {
       await client.query(migration(name));
     }

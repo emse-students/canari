@@ -220,6 +220,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_followed_post": composed = actorTitled("followed_post")
     // Republication (D38): the republishing, then the proposing, association names the title.
     case "social_association_repost": composed = actorTitled("association_repost")
+    // WP-F6: the person who reposted names the title.
+    case "social_member_repost": composed = actorTitled("member_repost")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // D38b: an association asks the AUTHOR to republish their personal post.
     case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")

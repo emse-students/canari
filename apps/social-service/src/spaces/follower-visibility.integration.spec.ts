@@ -154,6 +154,7 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
       '074_coorganise.sql',
       '078_read_grants.sql',
       '114_user_follow_status.sql',
+      '121_member_reposts.sql',
     ]) {
       await client.query(migration(name));
     }

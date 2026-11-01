@@ -301,6 +301,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
     await q(migration('096_personal_republication_requests.sql'));
+    await q(migration('121_member_reposts.sql'));
     // AG and AG2 reach the whole Gardanne campus, and nothing else.
     for (const id of [AG, AG2]) {
       await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [id]);
@@ -851,7 +852,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await proposals.accept(pending.id, 'au', false);
       await personal.request(P(9), AG2, 'pr');
       const dropped = await dropRepublicationsOf(ds.manager, P(9));
-      expect(dropped).toEqual({ republications: 1, proposals: 1 });
+      expect(dropped).toEqual({ republications: 1, proposals: 1, memberReposts: 0 });
       expect(await sees(P(9), 'gr')).toBe(false);
     });
 

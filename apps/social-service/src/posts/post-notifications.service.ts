@@ -23,6 +23,7 @@ import {
   associationPostContent,
   followedPostContent,
   associationRepostContent,
+  memberRepostContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
@@ -126,6 +127,9 @@ export class PostNotificationsService {
         return associationRepostContent(actorName, text, icon);
       case 'repost_proposed':
         return repostProposedContent(actorName, text, icon);
+      // WP-F6: a person the recipient follows reposted a post. `actorName` is the REPOSTER.
+      case 'member_repost':
+        return memberRepostContent(actorName, text, icon);
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':

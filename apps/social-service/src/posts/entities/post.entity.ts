@@ -70,6 +70,15 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   anonymous: boolean;
 
+  /**
+   * The AUTHOR's per-post override of their member-repost consent (WP-F6, migration 121): NULL
+   * follows their account setting (`user_repost_settings`, ON by default), true or false overrides
+   * it for this post. Read only for a personal post - an entity post is reposted without consent.
+   * Served to the author alone (`repostConsent`), never spread onto a reader's card.
+   */
+  @Column({ type: 'boolean', nullable: true, default: null })
+  allowReposts: boolean | null;
+
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 

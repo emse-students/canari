@@ -48,10 +48,30 @@ export function republishedForViewerSql(viewer: string, among?: string): string 
   return `EXISTS (SELECT 1 ${countedRepublicationsSql('rf_in', viewer, among)})`;
 }
 
-/** The instant the row is placed at: its latest counted republication, else its publication. */
-export function republishedFeedAtSql(viewer: string, among?: string): string {
+/**
+ * A MEMBER REPOST (WP-F6) by one of `reposters` - a `text[]` placeholder, the viewer's ACCEPTED
+ * follows (`FollowsService.getFollowedUserIdsForUser`). It ADMITS the row to "Suivis" and PLACES it
+ * at the repost's time, never an anonymous post. Whether the viewer may READ the post is still the
+ * arm's own `postVisibleToViewerSql` (`memberRepostReachesUserSql` with its blocks and cohort).
+ */
+export function memberRepostedAmongSql(reposters: string): string {
+  return `(NOT COALESCE(posts.anonymous, false) AND EXISTS (SELECT 1 FROM member_reposts mf_in
+           WHERE mf_in."postId" = posts.id AND mf_in."reposterId" = ANY(${reposters}::text[])))`;
+}
+
+/**
+ * The instant the row is placed at: its latest counted republication - and, with `reposters`, its
+ * latest member repost by one of them (WP-F6: "a repost enters the Suivis feed at the time of the
+ * repost") - else its publication.
+ */
+export function republishedFeedAtSql(viewer: string, among?: string, reposters?: string): string {
+  const reposted = reposters
+    ? `,
+           (SELECT MAX(mf_at."repostedAt") FROM member_reposts mf_at
+             WHERE mf_at."postId" = posts.id AND mf_at."reposterId" = ANY(${reposters}::text[]))`
+    : '';
   return `GREATEST(posts."publishedAt",
-           (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)}))`;
+           (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)})${reposted})`;
 }
 
 /** The "Associations" feed: published by an association, or republished by one the viewer sees. */
