@@ -1,10 +1,10 @@
 # DPIA (AIPD) - MiGallery face recognition
 
 **Status: draft v1, 2026-10-16, for the controller (Association MiTV) and the school's DPO to
-validate; facts updated 2026-10-31 to the stored-template design (option C), which is written in MiGallery
-(lots A1-A9) and not yet deployed: production still runs the former design, Immich clustering
-every face into persons, and the A7 seed and the A8 cutover have not run. Section 1 states what
-holds once option C is released.** Every assessment the new design changes
+validate; facts updated 2026-10-31 to the stored-template design (option C), which is deployed in MiGallery
+(`v2.18.0`, lots A1-A9, 2026-11-01), seeded in production on 2026-11-01 (172,612 assets, 600,003 faces,
+312 members referenced); the A8 cutover has not run, so Immich still holds its own faces and persons.
+Section 1 states what holds.** Every assessment the new design changes
 is marked **to be re-assessed by the owner**: this update states facts and draws no conclusion.
 The mechanism is MiGallery's [face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md), the one reference; this page
 does not restate it. A DPIA is required here: face recognition processes biometric data used to identify a
@@ -101,9 +101,9 @@ facts changed is **to be re-assessed by the owner**.
 Ordered by the risk they lower. Each is a backlog line
 ([backlog](../backlog.md#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16)).
 
-1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller); WRITTEN, NOT
-   DEPLOYED, as a stored-template design** (lots A1-A9 written by 2026-10-31; the A7 seed and lot
-   A8 not yet run). What was written differs from the 2026-10-24 text below on three points, decided since: the
+1. **R1 - DECIDED 2026-10-24, option C (the owner, for the controller); DEPLOYED in
+   `v2.18.0` on 2026-11-01, as a stored-template design** (lots A1-A9; the A7 seed ran on 2026-11-01;
+   lot A8, the cutover, pending). What was written differs from the 2026-10-24 text below on three points, decided since: the
    matches are stored (`face_matches`) rather than computed at search time; the model is Immich's
    own machine-learning service, over a dedicated internal network, rather than a pinned image in a
    MiGallery worker; and the model comparison is done (buffalo_l kept). As decided on 2026-10-24: face
@@ -119,21 +119,21 @@ Ordered by the risk they lower. Each is a backlog line
    no one can be followed across the archive without a reference of them. Until it is built, inform
    at events (a notice where photographs are taken) and publish a page for non-members with an
    objection channel (`bureau@mitv.fr`).
-2. **R2 - WRITTEN, NOT DEPLOYED** (MiGallery A1, A4, A5): once released, withdrawal and account
+2. **R2 - DEPLOYED in `v2.18.0`** (MiGallery A1, A4, A5): withdrawal and account
    deletion delete the member's
    references and matches in one transaction, and their crops after its commit. **Owed**: lot A8,
    which deletes Immich's own faces, persons and embeddings and keeps an encrypted copy of what it
    deletes for 30 days, then deletes it (owner, 2026-10-31: *"Oui, 30 jours puis supprimée"*).
-3. **R3 - WRITTEN, NOT DEPLOYED** (MiGallery A6): once released, one access rule for a member's photos, crops for their holder
+3. **R3 - DEPLOYED in `v2.18.0`** (MiGallery A6): one access rule for a member's photos, crops for their holder
    only, every Immich person and face call refused by the proxy to everyone. Whether that closes
    the audit is **to be re-assessed by the owner**.
-4. **R4 - WRITTEN, NOT DEPLOYED** (MiGallery A5): once released, the selfie is never stored, neither as an asset nor anywhere else.
-5. **Proof of consent - WRITTEN, NOT DEPLOYED** for the consents given in MiGallery (`face_consents`: date, terms
+4. **R4 - DEPLOYED in `v2.18.0`** (MiGallery A5): the selfie is never stored, neither as an asset nor anywhere else.
+5. **Proof of consent - DEPLOYED in `v2.18.0`** for the consents given in MiGallery (`face_consents`: date, terms
    version, origin); the controller keeps the proof of the `legacy` links.
 6. **Terms page** - MiGallery's `/cgu`: sign-in is MiConnect; the "last updated" date is the terms
    version, a fixed date; the face sections (the store, the selfie, the bands, withdrawal,
-   retention, backups, the cutover) describing the stored-template design are written (lot A9,
-   terms version 2026-10-31) and not yet deployed. **Still open**: Google Fonts is loaded (visitor IPs to Google) - self-host
+   retention, backups, the cutover) describing the stored-template design are deployed (lot A9,
+   terms version 2026-10-31, in `v2.18.0`). **Still open**: Google Fonts is loaded (visitor IPs to Google) - self-host
    the font.
 7. **Processor agreement** between MiTV and Rootz (Art. 28).
 8. **Retention** for photographs and for the `logs` table.

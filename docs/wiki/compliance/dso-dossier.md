@@ -71,7 +71,7 @@ calculées et conservées tant que leur photo existe, mais ne sont jamais regrou
 Votre avis sur ce choix nous importe. Document :
 [dpia-migallery-faces](dpia-migallery-faces.md).
 
-**Mise à jour du 2026-10-31 :** l'option C est écrite dans MiGallery mais pas encore déployée (le modèle buffalo_l est
+**Mise à jour du 2026-10-31 :** l'option C est déployée dans MiGallery (v2.18.0, 2026-11-01) et la graine initiale a tourné en production le 2026-11-01 (172 612 médias, 600 003 visages, 312 membres référencés) ; la bascule n'a pas encore eu lieu (le modèle buffalo_l est
 gardé, les correspondances sont enregistrées plutôt que calculées à la recherche, l'analyse passe
 par le service d'apprentissage automatique d'Immich sur un réseau interne dédié). La bascule
 supprimera les visages, personnes et empreintes d'Immich, avec une copie chiffrée gardée 30 jours
