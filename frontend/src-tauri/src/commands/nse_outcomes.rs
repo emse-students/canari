@@ -352,15 +352,21 @@ pub(crate) fn take_locked(
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => {
-                    log::warn!("[NSE_OUTCOME] a done record could not be read: {e}");
-                    None
+                    // KEPT, NOT REMOVED: removing a record not read loses its outcome, and with it
+                    // the done twin that keeps its dead marker from being counted `killed`.
+                    log::error!(
+                        "[NSE_OUTCOME] a done record could not be read - kept for the next drain: {e}"
+                    );
+                    continue;
                 }
             };
             // A record that stays on the disk is read again by the drain that removes it: its line
             // is handed over then, so one run is never two lines.
             match remove(&entry.path(), "a done record") {
                 Removed::Done | Removed::AlreadyGone => lines.extend(line),
-                Removed::Failed => {}
+                Removed::Failed => log::error!(
+                    "[NSE_OUTCOME] a done record NOT removed - its outcome is withheld until a drain removes it"
+                ),
             }
             continue;
         }
@@ -417,8 +423,12 @@ pub(crate) fn take_locked(
                     "[NSE_OUTCOME] a dead run's marker was unreadable - its kill is not counted"
                 ),
             },
-            Removed::AlreadyGone => log::debug!(
-                "[NSE_OUTCOME] a dead run's marker was removed by its run - it reached its end, its line comes as a done record"
+            // Its run removed it after the listing, so it reached `end`. Its line cannot be in the
+            // log (the append needs the lock held here) and no done record stands beside it (the
+            // twin check above), so the run's done-record write failed: the outcome is lost, and
+            // the extension logged why. Not a kill either way.
+            Removed::AlreadyGone => log::warn!(
+                "[NSE_OUTCOME] a dead run's marker was removed by its run after the listing, with no done record - it ended, its outcome was lost by the extension"
             ),
             // Still there: the next drain judges it again and counts it then, never twice.
             Removed::Failed => {}
@@ -868,6 +878,83 @@ mod tests {
         let next = take_locked(&d, &|_| true, BOOT);
         assert_eq!(next.len(), 1, "{next:?}");
         assert!(next[0].contains("fallback"));
+    }
+
+    #[test]
+    fn an_unreadable_done_record_is_kept_and_its_dead_marker_is_not_killed() {
+        // A directory under the done record's name: reading it fails, and not with NotFound.
+        let d = dir("done_unreadable");
+        let done = d.join("nse_done.92.1.json");
+        std::fs::create_dir(&done).unwrap();
+        let marker = d.join("nse_inflight.92.1.json");
+        std::fs::write(
+            &marker,
+            r#"{"v":1,"at":95,"n":1,"stage":"attach","pid":92,"boot":"BOOT-A"}"#,
+        )
+        .unwrap();
+        let lines = take_locked(&d, &|_| true, BOOT);
+        assert!(
+            lines.iter().all(|l| !l.contains("killed")),
+            "a run that left a done record is never killed: {lines:?}"
+        );
+        assert!(
+            done.exists(),
+            "a record not read is kept for the next drain"
+        );
+    }
+
+    /// The discriminating twin of the test above: a FILE that cannot be read (EACCES) but CAN be
+    /// unlinked, so only the reader's own choice keeps it. Skipped where the read still succeeds
+    /// (a root runner ignores the mode).
+    #[cfg(unix)]
+    #[test]
+    fn a_done_record_denied_to_the_reader_is_not_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir("done_denied");
+        let done = d.join("nse_done.94.1.json");
+        std::fs::write(
+            &done,
+            r#"{"v":1,"at":97,"n":1,"outcome":"decrypted","pid":94}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&done, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_to_string(&done).is_ok() {
+            return;
+        }
+        let marker = d.join("nse_inflight.94.1.json");
+        std::fs::write(
+            &marker,
+            r#"{"v":1,"at":97,"n":1,"stage":"attach","pid":94,"boot":"BOOT-A"}"#,
+        )
+        .unwrap();
+        let lines = take_locked(&d, &|_| true, BOOT);
+        assert!(lines.iter().all(|l| !l.contains("killed")), "{lines:?}");
+        assert!(
+            done.exists(),
+            "a record not read is kept for the next drain"
+        );
+        std::fs::set_permissions(&done, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let next = take_locked(&d, &|_| true, BOOT);
+        assert_eq!(next.len(), 1, "{next:?}");
+        assert!(next[0].contains("decrypted"));
+    }
+
+    #[test]
+    fn a_dead_runs_marker_removed_by_its_run_without_a_done_record_is_not_killed() {
+        // The run ended after the listing (it removed its marker) but its done-record write failed.
+        let d = dir("ended_unrecorded");
+        let marker = d.join("nse_inflight.93.1.json");
+        std::fs::write(
+            &marker,
+            r#"{"v":1,"at":96,"n":1,"stage":"attach","pid":93,"boot":"BOOT-A"}"#,
+        )
+        .unwrap();
+        let ended = |_: i32| {
+            std::fs::remove_file(&marker).unwrap();
+            true
+        };
+        assert!(take_locked(&d, &ended, BOOT).is_empty());
+        assert!(take_locked(&d, &|_| true, BOOT).is_empty());
     }
 
     #[test]

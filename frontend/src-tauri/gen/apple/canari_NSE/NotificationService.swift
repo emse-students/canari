@@ -741,7 +741,9 @@ class NotificationService: UNNotificationServiceExtension {
       /// Removes the run's marker; already gone is the expected answer when nothing was ever written.
       private func removeMarker(_ marker: URL) {
         if unlink(marker.path) != 0, errno != ENOENT {
-          NSLog("[CanariNSE] outcome: in-flight marker NOT removed errno=\(errno)")
+          NSLog(
+            "[CanariNSE] outcome: ERROR in-flight marker NOT removed errno=\(errno) - the app may count this finished run killed"
+          )
         }
       }
 

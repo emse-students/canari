@@ -1107,8 +1107,16 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   before the app even read it is the same finished run, not an unreadable one. A live or
   unknowable process keeps its marker - no clock - and at most 64 are kept, the oldest beyond that
   removed with a warning. A file the run removed between the app's listing and its removal is
-  "already moved", not an error; a done record the app fails to remove is handed over by the drain
-  that does remove it, so one run is never two lines.
+  "already moved", not an error; a done record the app fails to remove is withheld (logged ERROR)
+  and handed over by the drain that does remove it, so one run is never two lines, and one it
+  cannot READ (other than "not found") is kept, never removed - removing it would lose the outcome
+  AND the twin that keeps its dead marker from being counted `killed`. A dead run's marker the run
+  itself removed after the listing, with no done record beside it, is a run whose done-record write
+  failed: not a kill, and logged as an outcome lost. **The known residual:** a finished run whose
+  marker unlink fails TWICE - once in the extension, once at the app's drain `k` - is counted
+  `killed` at drain `k+1`, since nothing names its line any more; both failures are logged at
+  ERROR (the extension's in its `NSLog`, the app's in its own log), so such a `killed` is never
+  silent.
 - **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files, the done
   records and the dead markers under the lock and re-serialises each line through a TYPED
   allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`/`n`, enums for `outcome` and `stage`,
