@@ -19,6 +19,7 @@
     blockDensity,
     buildRuns,
     cutRange,
+    edgeScrollDirection,
     spanOf,
     stackedLines,
     type GridRun,
@@ -32,9 +33,9 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE WEEK OF ONE COLUMN (D46, D48): the days as columns, as the agenda's week, each unit placed
-   * on a shared hour axis; on a phone the same component draws ONE day. A day with nothing offered
-   * folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
+   * THE WEEK OF ONE COLUMN (D46): the days as columns, as the agenda's week, each unit placed on a
+   * shared hour axis. It is the grid from `md` up; a phone draws the same week as a planning list
+   * (`PlanningList`, D55). A day with nothing offered folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
    * what tapping it does is the page's (`onPick`). A free unit the booking window refuses now (over,
    * too soon, too far, not open yet) is drawn greyed and DISABLED on the booker's grid: it is not
    * offered, so no sheet opens on it. Should the server still refuse at the send, its typed refusal
@@ -77,8 +78,6 @@
     /** The column drawn: a space with several columns shows one at a time. */
     resource: BookerResource;
     layout: WeekLayout;
-    /** `day` draws one column without its axis header and never folds it (the phone). */
-    mode: 'week' | 'day';
     /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
     blockMode?: boolean;
     nowMs: number;
@@ -101,7 +100,6 @@
     space,
     resource,
     layout,
-    mode,
     blockMode = false,
     nowMs,
     lastRefusedStart = null,
@@ -127,7 +125,11 @@
       }
     }
     coarse = isCoarsePointerDevice();
-    return onCoarsePointerChange((value) => (coarse = value));
+    const stopWatching = onCoarsePointerChange((value) => (coarse = value));
+    return () => {
+      stopWatching();
+      if (edgeFrame !== null) cancelAnimationFrame(edgeFrame);
+    };
   });
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
@@ -238,18 +240,41 @@
       if (travelled <= DRAG_SLOP_PX) return;
       beginSelection(press);
     }
-    // A range drawn near the top or bottom edge of the scrolling box carries the box with it, so a
-    // range can start at the edge and still reach the units beyond it.
-    if (scroller) {
-      const box = scroller.getBoundingClientRect();
-      if (e.clientY > box.bottom - EDGE_PX) scroller.scrollTop += EDGE_STEP_PX;
-      else if (e.clientY < box.top + EDGE_PX) scroller.scrollTop -= EDGE_STEP_PX;
-    }
-    // The pointer is captured, so the unit under it is found by position, not by event target.
-    const hit = cellAt(document.elementFromPoint(e.clientX, e.clientY));
+    followEdge(e.clientX, e.clientY);
+    selectAt(e.clientX, e.clientY);
+  }
+
+  /** The unit under the pointer joins the range (the pointer is captured, so found by position). */
+  function selectAt(x: number, y: number) {
+    const hit = cellAt(document.elementFromPoint(x, y));
     if (hit && selection && hit.day === selection.day) {
       selection = { ...selection, current: hit.idx };
     }
+  }
+
+  let edgeDirection: -1 | 0 | 1 = 0;
+  let edgeAt = { x: 0, y: 0 };
+  let edgeFrame: number | null = null;
+
+  /**
+   * A range drawn at the top or bottom edge of the scrolling box carries the box with it, and keeps
+   * doing so while the pointer is HELD there (a frame loop that ends when the pointer leaves the
+   * edge or the range ends), so a range can start at the edge and still reach the units beyond it.
+   */
+  function followEdge(x: number, y: number) {
+    edgeAt = { x, y };
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
+    edgeDirection = edgeScrollDirection(y, box, window.innerHeight, EDGE_PX);
+    if (edgeDirection !== 0 && edgeFrame === null) edgeFrame = requestAnimationFrame(edgeStep);
+  }
+
+  function edgeStep() {
+    edgeFrame = null;
+    if (!selection || edgeDirection === 0 || !scroller) return;
+    scroller.scrollTop += edgeDirection * EDGE_STEP_PX;
+    selectAt(edgeAt.x, edgeAt.y);
+    edgeFrame = requestAnimationFrame(edgeStep);
   }
 
   function handlePointerUp(e: PointerEvent) {
@@ -281,12 +306,13 @@
   }
 
   /**
-   * Whether tapping a unit does anything: everything does on the organiser's block grid, and a
-   * free unit on the booker's grid only while the booking window takes its start. One that cannot
+   * Whether tapping a unit does anything: a taken unit always opens its reading, a free one only
+   * where `isOfferedStart` says (the booking window for a booker; a block that has not begun for
+   * the organiser). One that cannot
    * be booked now is drawn greyed and is not a control at all.
    */
   function offered(unit: SlotUnit): boolean {
-    return blockMode || unit.state !== 'free' || bookableStart(unit);
+    return unit.state !== 'free' || isOfferedStart(space, unit, nowMs, lastRefusedStart, blockMode);
   }
 
   /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
@@ -361,7 +387,7 @@
   const bodyRem = $derived(((layout.endMin - layout.startMin) / 60) * layout.remPerHour);
   const remOf = (min: number) => (min * layout.remPerHour) / 60;
   const hourLabel = (min: number) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:00`;
-  const folded = (day: DayColumn) => mode === 'week' && day.state === 'closed';
+  const folded = (day: DayColumn) => day.state === 'closed';
   /** Open days share the width, a folded one is a strip; an open day never gets narrower than a label. */
   const columns = $derived(
     `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(4.25rem, 1fr)')).join(' ')}`
@@ -386,26 +412,24 @@
     </p>
   {/if}
   <div role="group" aria-label={m.bookings_grid_caption({ space: space.name })}>
-    {#if mode === 'week'}
-      <div
-        class="bg-cn-surface sticky top-0 z-20 grid gap-x-1 pe-1"
-        style:grid-template-columns={columns}
-      >
-        <span class="bg-cn-surface sticky left-0 z-10"></span>
-        {#each layout.days as day (day.date)}
-          {@const head = formatDayHead(day.date)}
-          <div
-            class="text-text-muted py-2 text-center text-xs leading-tight font-bold"
-            aria-label={folded(day)
-              ? `${formatDay(day.date)} : ${m.bookings_day_closed()}`
-              : formatDay(day.date)}
-          >
-            <span class="block first-letter:uppercase">{head.weekday}</span>
-            <span class="text-text-main text-sm">{head.num}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <div
+      class="bg-cn-surface sticky top-0 z-20 grid gap-x-1 pe-1"
+      style:grid-template-columns={columns}
+    >
+      <span class="bg-cn-surface sticky left-0 z-10"></span>
+      {#each layout.days as day (day.date)}
+        {@const head = formatDayHead(day.date)}
+        <div
+          class="text-text-muted py-2 text-center text-xs leading-tight font-bold"
+          aria-label={folded(day)
+            ? `${formatDay(day.date)} : ${m.bookings_day_closed()}`
+            : formatDay(day.date)}
+        >
+          <span class="block first-letter:uppercase">{head.weekday}</span>
+          <span class="text-text-main text-sm">{head.num}</span>
+        </div>
+      {/each}
+    </div>
     <div
       class="grid gap-x-1 pe-1 select-none [-webkit-touch-callout:none]"
       style:grid-template-columns={columns}

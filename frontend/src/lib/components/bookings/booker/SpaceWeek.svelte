@@ -47,10 +47,11 @@
 
   /**
    * THE WEEK OF ONE SPACE, ONE COLUMN AT A TIME (WP-B5, WP-R2, WP-R5): days as columns on a desktop
-   * and one day under a week strip on a phone (D46, D48; the width decides, as the agenda's does),
-   * the column selector, and the sheets that book, block and read a taken unit. THE WEEK ROLLS: seven days from today (owner, 2026-11-01), moved by sevens. ONE read holds the
-   * week and the day before it, so the strip's dots, the day and the column counts come from the
-   * same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
+   * and a planning list under a week strip on a phone (D46, D55; the width decides, as the agenda's
+   * does), the column selector, and the sheets that book, block and read a taken unit. THE WEEK
+   * ROLLS: seven days from today (owner, 2026-11-01), moved by sevens. ONE read holds the week and
+   * the day before it, so the strip's dots, the planning rows, the grid and the column counts come
+   * from the same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
    * `block` mode, where a drag or a tap on free units opens "Indisponible" (D50) instead of a booking.
    */
   interface Props {
@@ -88,9 +89,9 @@
   let loaded = $state<{ from: string; to: string } | null>(null);
   let mine = $state<Map<string, MyBooking>>(new Map());
   let slotsError = $state('');
-  /** A phone draws one day under the strip; wider screens draw the week. */
+  /** A phone draws the planning list under the strip; wider screens draw the grid. */
   let narrow = $state(isScheduleAgendaViewport());
-  /** The day shown (a phone). */
+  /** The day the phone's strip marks, and the planning list scrolls to. */
   let date = $state(untrack(() => localDate(nowMs, space.timeZone)));
   /** The first day of the rolling week shown: today at first (owner, 2026-11-01), then moved by sevens. */
   let start = $state(untrack(() => localDate(nowMs, space.timeZone)));
@@ -111,10 +112,8 @@
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
   const weekAll = $derived(start ? weekDates(start) : []);
   const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
-  /** The week of the chosen column: the strip's dots, and the desktop grid. */
+  /** The week of the chosen column: the strip's dots, the planning rows and the grid. */
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
-  /** What is drawn: the week - as a grid from `md`, as a planning list on a phone. */
-  const layout = $derived(week);
   /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
   const weekHeld = $derived.by(() => {
     const want = weekReadRange(start);
@@ -125,9 +124,9 @@
    * moved to loads. Dropping it for the empty line collapsed the page, and the browser clamped the
    * scroll to the top on every arrow (owner, 2026-10-31): the page must stay where the reader is.
    */
-  let lastDrawn: typeof layout | null = null;
+  let lastDrawn: typeof week | null = null;
   const drawn = $derived.by(() => {
-    if (weekHeld || !lastDrawn) lastDrawn = layout;
+    if (weekHeld || !lastDrawn) lastDrawn = week;
     return lastDrawn;
   });
   /** The phone's planning: the same week, one list of rows per day. */
@@ -139,7 +138,7 @@
     )
   );
   /** The range form (the planning's "+" or a tapped free row), or null while closed. */
-  let range = $state<{ resourceId: string; startMs?: number; endMs?: number } | null>(null);
+  let range = $state<{ resourceId: string; unit?: SlotUnit; endMs?: number } | null>(null);
   const freeCounts = $derived(
     new Map(
       space.resources.map((r) => [
@@ -342,16 +341,20 @@
             focusDate={date}
             {today}
             onOpen={(unit) => pick(resource, unit)}
-            onFree={(run) =>
-              (range = { resourceId: resource.id, startMs: run.startMs, endMs: run.endMs })}
-            onAdd={() => (range = { resourceId: resource.id })}
+            onFree={(run) => {
+              Log.d('BOOKINGS', 'planning: a free row opens the range form');
+              range = { resourceId: resource.id, unit: run.units[0], endMs: run.endMs };
+            }}
+            onAdd={() => {
+              Log.d('BOOKINGS', 'planning: the "+" opens the range form blank');
+              range = { resourceId: resource.id };
+            }}
           />
         {:else}
           <SpaceGrid
             {space}
             {resource}
             layout={drawn}
-            mode="week"
             blockMode={mode === 'block'}
             {nowMs}
             {lastRefusedStart}
