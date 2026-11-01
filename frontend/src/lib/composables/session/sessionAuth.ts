@@ -100,9 +100,11 @@ import {
   registerUploadReleaseDrain,
   releaseUploadDurably,
   unregisterUploadReleaseDrain,
-  type ReleaseAnswer,
+  ownerBoundToken,
+  type SessionReleaser,
 } from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   forgetProvenDeadEnds,
@@ -462,15 +464,23 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
     // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      await releaseUploadDurably(ctx.getUserId(), uploadId, why, releaseResumableSession, cb.log);
+      const ownerId = ctx.getUserId();
+      await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
   };
 }
 
-/** One media-service `DELETE` of a resumable session, under the signed-in owner's token. */
-async function releaseResumableSession(uploadId: string, why: string): Promise<ReleaseAnswer> {
-  const { MediaService } = await import('$lib/media');
-  return new MediaService().releaseResumableUpload(uploadId, getToken, why);
+/**
+ * The releaser of `ownerId`'s resumable sessions: one media-service `DELETE` each, under a token that
+ * is `ownerId`'s and nobody else's (`ownerBoundToken`). Another account signed in meanwhile gets
+ * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
+ */
+function releaserFor(ownerId: string): SessionReleaser {
+  const token = ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+  return async (uploadId, why) => {
+    const { MediaService } = await import('$lib/media');
+    return new MediaService().releaseResumableUpload(uploadId, token, why);
+  };
 }
 
 /**
@@ -1952,11 +1962,11 @@ export async function loginImpl(
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
     // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
-    registerUploadReleaseDrain({
-      getUserId: () => ctx.getUserId(),
-      release: releaseResumableSession,
-      log: cb.log,
-    });
+    // The owner is FIXED here: a pass started for this account never sends under the next one's token.
+    {
+      const ownerId = ctx.getUserId();
+      registerUploadReleaseDrain({ ownerId, release: releaserFor(ownerId), log: cb.log });
+    }
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),
