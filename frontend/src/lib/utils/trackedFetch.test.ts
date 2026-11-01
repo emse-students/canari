@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 /**
  * ONLY OUR API'S ANSWER PROVES THE SERVER IS THERE. Each edge page below is something a device meets
@@ -38,6 +39,26 @@ describe('trackedFetch counts as answered only a response proven to come from ou
     await trackedFetch(vi.fn(async () => page()) as unknown as typeof fetch, '/x', {});
     expect(connectivity.isOffline).toBe(false);
     debug.mockRestore();
+  });
+
+  it.each([
+    ['a 204', () => new Response(null, { status: 204 })],
+    ['an empty 200', () => new Response(null, { status: 200 })],
+  ])('%s proves nothing about reachability, yet ends a stall streak', async (_n, answer) => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    stall();
+    await trackedFetch(vi.fn(async () => answer()) as unknown as typeof fetch, '/x', {});
+    stall();
+    expect(connectivity.isOffline).toBe(false);
+    stall();
+    expect(connectivity.isOffline).toBe(true);
+    await trackedFetch(vi.fn(async () => answer()) as unknown as typeof fetch, '/x', {});
+    expect(connectivity.isOffline).toBe(true);
+    debug.mockRestore();
+    warn.mockRestore();
   });
 
   it("the API's JSON answer, whatever its status, clears offline and fires the reconnect", async () => {

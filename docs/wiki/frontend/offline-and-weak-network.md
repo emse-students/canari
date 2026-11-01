@@ -1019,11 +1019,15 @@ replays) and ended the reachability probe, all on the say-so of something that i
 - **WHO ANSWERED is read by the one helper** the refusal paths and `assertAnsweredByApi` already use,
   `responseOrigin` (`utils/apiJson.ts`): a JSON content type is the gateway's, anything else the
   edge's. No second proof was written.
-- **`trackedFetch` settles a non-JSON answer with `tracked.unproven(...)`** (`connectivity.svelte.ts`):
-  the request leaves the in-flight set, and NO reading moves - neither reachable nor unreachable, no
-  latency sample, one `console.debug` line. Not unreachable, because a route that answers non-JSON on
-  purpose (media, files) looks the same from the header; the reader that knows which it asked for
-  throws `NotFromApiError` itself. This is also why the pull and the history batch neither clear nor
+- **`trackedFetch` settles a non-JSON answer with `tracked.unproven(...)`** (`connectivity.svelte.ts`).
+  A non-JSON answer is NOT always an edge page: our own gateway sends some too - a binary live
+  segment (`fetchLiveSegment`), a `204`, a void Nest handler, nginx's HTML `401` from `auth_request`.
+  The header cannot tell those from a portal's page, so the answer is UNPROVEN, not foreign:
+  reachability does not move either way (never reachable, never unreachable), no latency sample is
+  taken, one `console.debug` line. The reader that knows what it asked for throws `NotFromApiError`
+  itself. But SOMETHING answered, so the link is not stalled: the stall count restarts and
+  `lastAnswerAt` moves, and slow / segment / slow is never read as two stalls in a row (which would
+  mark a working network unreachable), nor a slow route beside a segment as a quiet link. This is also why the pull and the history batch neither clear nor
   set the store on an edge page (section 20): every route now reads an edge page the same way.
 - **The probe asserts the API answered** (`assertAnsweredByApi(res, 'GET /api/version')`, a JSON
   route): an edge page throws `NotFromApiError`, the probe returns `false`, and the bounded ladder
@@ -1044,7 +1048,8 @@ portal's end brings no reconnect edge ([backlog](../backlog.md#p3---connectivity
 **Owed:** one dev reading behind a portal, because this changes reachability for every REST call.
 
 Tests: `trackedFetch.test.ts` (a portal `511`, an HTML `403`, an edge `502` page neither clear offline
-nor fire a reconnect nor mark a reachable server down; the API's JSON `200`, `403` and `502` do clear
-it), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
+nor fire a reconnect nor mark a reachable server down; a `204` and an empty `200` end a stall streak
+without moving reachability; the API's JSON `200`, `403` and `502` do clear it), `connectivity.test.ts`
+(stall, unproven, stall stays reachable; an unproven answer keeps the in-flight hint quiet), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
 `mlsDeliveryApi.notFromApi.test.ts` (a portal `200` on each write is `NotFromApiError`, the service's
 JSON is done).
