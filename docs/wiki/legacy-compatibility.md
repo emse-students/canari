@@ -579,7 +579,8 @@ refusal (`SealError`), and the three migration functions go. A client floor, not
 ### No date yet - a device-notice marker named by the key in hex, written by a build before 1.6.1
 
 **Site:** `announced_by_an_older_build` and `legacy_marker_name` in
-`frontend/src-tauri/src/mobile/device_notice.rs`.
+`frontend/src-tauri/src/mobile/device_notice.rs`, and the legacy half of `remove_device_notices_of`
+(with `device_notice_legacy_name`) in `frontend/src-tauri/src/commands/push.rs`.
 **Shim (2026-11-01):** the device-notice ledger names a marker by the SHA-256 of its key since 1.6.1;
 before, by the whole key in hex, which the filesystem refused for any key over 127 bytes
 ([mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
@@ -587,7 +588,8 @@ So an old marker exists only for a SHORT key: **the shim applies only to account
 id** (a key of at most 127 bytes, so a user id of roughly 40 characters or fewer); every other
 account never had a marker written. The claim reads such a marker as "already announced", so the
 upgrade posts nothing twice, and on that hit MIGRATES it: the digest marker is created
-(`create_new`) beside it. It is never written under the old name.
+(`create_new`) in the account's directory. It is never written under the old name; an account's
+deletion removes its own legacy markers from the ledger's root.
 **Removal condition:** `minClientVersion` at or above 1.6.1, on both estates, with both stores
 serving it, AND every installed build has run since and migrated its legacy markers. The
 registration pre-claim does NOT settle it: it skips devices idle for 30 days (absent from the device

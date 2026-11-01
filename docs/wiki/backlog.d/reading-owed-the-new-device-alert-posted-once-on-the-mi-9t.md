@@ -9,5 +9,5 @@ with the app closed, add a device to the bench account, and read the local notif
 ONCE (and not again on the next push or app open), with no `[DEVICE_NOTICE] marker ... not written`
 line in the log. **And, right after the update and before the app's first open**, push a heal
 commit naming an OLD device of the account: no "new device" notification may appear, and the log
-must show the engine's `not announced by the background engine: the app has not pre-claimed` line
+must show the service's `new-device key(s) held - the app has not pre-claimed this account` line
 until the first open writes the pre-claim marker. Closes with that reading.

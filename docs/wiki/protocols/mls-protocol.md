@@ -1128,13 +1128,18 @@ that consumes them next.
   The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
   other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
   never posted. **That pre-claim is a precondition the engines check, not one they assume (1.6.1):**
-  `preclaim_device_notices` records the old keys and THEN writes the account's marker
-  (`preclaimed.<sha256(userId)>`, never pruned), and the engines' door
-  (`engine_claim_device_notices`, behind the JNI and C-FFI) posts and claims nothing for an account
-  without it - logged, and left to the app's own pass. A store update runs the new build in the
-  engines BEFORE the app's next launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 had failed, so
-  without the gate a heal commit pushed before the first open would post a false "new device" for an
-  old laptop. The ledger is swept with the account's push files on deletion.
+  `preclaim_device_notices` records the old keys and THEN writes the account's `preclaimed` marker
+  (never pruned) - but only when the pass read the key ages of EVERY listed device (`complete`): one
+  unanswered device may be old, so its pass records the keys it knows and withholds the marker. The
+  engines' door (`engine_claim_device_notices_json`, behind the JNI and C-FFI) posts and claims
+  nothing for an account without the marker, and answers `{"claimed": [...], "held": n}` so the
+  Android and iOS log lines say which reason left nothing to post (this crate's log reaches no
+  logger in a killed app). A store update runs the new build in the engines BEFORE the app's next
+  launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 had failed, so without the gate a heal commit
+  pushed before the first open would post a false "new device" for an old laptop. **The ledger holds
+  one directory per account** (`device_notices/<sha256(userId)>/`: a marker per key, and
+  `preclaimed`); legacy markers sit in its root. An account's deletion removes its own directory and
+  its own legacy markers (`remove_device_notices_of`), never another account's on the install.
 - **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
   nobody, and announces nothing. Its events exist only in the STAGED post-add state
   (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
@@ -1146,10 +1151,12 @@ that consumes them next.
 processes the commit itself and so shows the in-app alert only, with no local notification; and a
 device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
 The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
-can still post for such a device when a heal brings it back; the app does not announce it. After an
-update, until the app's first registration on it has pre-claimed the account, the engines post
-nothing at all - a device added before that first open is told only by the in-app alert, once the
-app drains the commit (a lost notification, never a false one). A contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+can still post for such a device when a heal brings it back; the app does not announce it. **After
+an update, until the app's first registration on it has pre-claimed the account, the engines post
+nothing at all: an account that never opens the app after the update gets NO background "new device"
+alert, even for a real attacker's device, until that first open.** The in-app alert still comes
+then, once the app drains the commit - a late notification, never a false one. A pass with an
+unanswered device extends that window to the next complete one. A contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
 ### Who admits a new person (2026-10-23)

@@ -2170,23 +2170,75 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
 /// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
-/// marks and sent ids the background side handed over, and the device-notice ledger (one marker per
-/// announced device, named by `userId:deviceId`). Not `mls.bin`, `graine_seeds.json` or the push
-/// secret - kept by this command on purpose. Not the quick replies waiting for the page either: that
-/// file can hold ANOTHER account's lines, so only this account's are removed
-/// (`remove_quick_replies_of`, `delete_user_quick_replies`).
-const ACCOUNT_PUSH_FILES: [&str; 5] = [
+/// marks and sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the
+/// push secret - kept by this command on purpose. Not the quick replies waiting for the page either:
+/// that file can hold ANOTHER account's lines, so only this account's are removed
+/// (`remove_quick_replies_of`, `delete_user_quick_replies`). Not the device-notice ledger either:
+/// it is shared by every account on the install, so only this account's markers go
+/// ([`remove_device_notices_of`]).
+const ACCOUNT_PUSH_FILES: [&str; 4] = [
     "outbox_pending.ndjson",
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
-    DEVICE_NOTICES_DIR,
 ];
 
 /// The directory of the device-notice ledger (`mobile::device_notice`), in the app data directory on
 /// Android and in the App Group container on iOS - where the app and its background engine both
-/// reach it.
+/// reach it. One sub-directory per account ([`device_notices_account_dir`]).
 pub(crate) const DEVICE_NOTICES_DIR: &str = "device_notices";
+
+/// The ONE encoder of a device-notice file name: `text`'s SHA-256 in hex, 64 characters whatever
+/// its length - no `:` or `|` reaches a path, and no name exceeds the 255-byte limit of the
+/// filesystems the ledger lives on (ext4/f2fs on Android, APFS on iOS).
+pub(crate) fn device_notice_file_name(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The name builds before 1.6.1 gave a device-notice marker, in the ledger's root: `text`'s bytes in
+/// hex (read, migrated and deleted, never written - `legacy-compatibility.md`).
+pub(crate) fn device_notice_legacy_name(text: &str) -> String {
+    text.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `user_id`'s directory in the device-notice ledger under `data_dir`: named by the user id as the
+/// keys spell it (lowercase, `canonical_identity`), through [`device_notice_file_name`].
+pub(crate) fn device_notices_account_dir(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> std::path::PathBuf {
+    data_dir
+        .join(DEVICE_NOTICES_DIR)
+        .join(device_notice_file_name(&user_id.to_ascii_lowercase()))
+}
+
+/// Removes `user_id`'s device-notice markers from the ledger under `dir`: its own directory, and
+/// the legacy root markers whose key names it (`<hex(userId:)>...`). Another account's are kept.
+fn remove_device_notices_of(
+    dir: &std::path::Path,
+    user_id: &str,
+    removed: &mut usize,
+    failures: &mut usize,
+) {
+    crate::commands::storage::remove_entry(
+        &device_notices_account_dir(dir, user_id),
+        removed,
+        failures,
+    );
+    let prefix = device_notice_legacy_name(&format!("{}:", user_id.to_ascii_lowercase()));
+    let Ok(entries) = std::fs::read_dir(dir.join(DEVICE_NOTICES_DIR)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            crate::commands::storage::remove_entry(&entry.path(), removed, failures);
+        }
+    }
+}
 
 /// Claims, in the device-notice ledger the background engines share, the keys of the "a new device
 /// was added to your account" alerts the app has just shown - so a push that later replays the same
@@ -2216,25 +2268,30 @@ pub(crate) fn claim_device_notices(
 
 /// The app's pre-claim of `user_id`'s older devices at registration (`preclaimOldOwnDevices`):
 /// records `keys`, then the account's pre-claim marker, without which the background engines
-/// announce nothing for it (`mobile::device_notice::preclaim_device_notices`). Answers whether the
-/// marker is in place. Phones only, as [`claim_device_notices`].
+/// announce nothing for it (`mobile::device_notice::preclaim_device_notices`). `complete` is false
+/// when a listed device's key ages went unanswered: its keys may be old, so the marker is withheld.
+/// Answers whether the marker is in place. Phones only, as [`claim_device_notices`].
 #[tauri::command]
 pub(crate) fn preclaim_device_notices(
     app: tauri::AppHandle,
     user_id: String,
     keys: Vec<String>,
+    complete: bool,
 ) -> Result<bool, String> {
-    log::debug!("[DEVICE_NOTICE] app pre-claims {} key(s)", keys.len());
+    log::debug!(
+        "[DEVICE_NOTICE] app pre-claims {} key(s), complete={complete}",
+        keys.len()
+    );
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let dir = device_notices_data_dir(&app)?;
         Ok(crate::mobile::device_notice::preclaim_device_notices(
-            &dir, &user_id, &keys,
+            &dir, &user_id, &keys, complete,
         ))
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let _ = (app, user_id, keys);
+        let _ = (app, user_id, keys, complete);
         Err(NO_DEVICE_NOTICE_LEDGER.to_string())
     }
 }
@@ -2415,11 +2472,13 @@ fn remove_user_push_files_proved(
     for (_, name) in taken_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
+    remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);
     if let Some(dir) = extension_dir {
         let before = removed;
         for name in extension_account_files() {
             crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
         }
+        remove_device_notices_of(dir, user_id, &mut removed, &mut failures);
         log::info!(
             "[DEL-LOCAL] push files: {} removed from the extension's container",
             removed - before
@@ -2969,7 +3028,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -3019,9 +3078,15 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(&group).unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
         std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
-        // The device-notice ledger the extension claims in: markers name `userId:deviceId`.
-        std::fs::create_dir_all(group.join(super::DEVICE_NOTICES_DIR)).unwrap();
-        std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join("6123"), b"").unwrap();
+        // The device-notice ledger the extension claims in, shared by the accounts on the install:
+        // a directory per account, and a legacy root marker (`hex(userId:...)`) of each.
+        for user in ["a", "b"] {
+            let account = super::device_notices_account_dir(&group, user);
+            std::fs::create_dir_all(&account).unwrap();
+            std::fs::write(account.join("preclaimed"), b"").unwrap();
+            let legacy = super::device_notice_legacy_name(&format!("{user}:d|ff"));
+            std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join(legacy), b"").unwrap();
+        }
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             std::fs::write(group.join(kept), b"x").unwrap();
         }
@@ -3039,7 +3104,16 @@ mod delete_user_push_files_tests {
         assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
-        assert!(!group.join(super::DEVICE_NOTICES_DIR).exists());
+        // Only the deleted account's device notices go; the other account's stay.
+        let ledger = group.join(super::DEVICE_NOTICES_DIR);
+        assert!(!super::device_notices_account_dir(&group, "a").exists());
+        assert!(!ledger
+            .join(super::device_notice_legacy_name("a:d|ff"))
+            .exists());
+        assert!(super::device_notices_account_dir(&group, "b").exists());
+        assert!(ledger
+            .join(super::device_notice_legacy_name("b:d|ff"))
+            .exists());
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             assert!(group.join(kept).exists(), "{kept}");
         }
@@ -3093,7 +3167,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("6 push file(s) removed"), "{err}");
+        assert!(err.contains("5 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -3112,7 +3186,7 @@ mod delete_user_push_files_tests {
         merge_display_names(&group, "a", &names, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            6
+            5
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());

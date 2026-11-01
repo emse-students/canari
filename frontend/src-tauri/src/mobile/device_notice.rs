@@ -20,17 +20,23 @@
 //! server that stays silent cannot silence the alert.
 //!
 //! The ledger lives where both engines of a platform can reach it: the app data directory on
-//! Android (one process), the App Group container on iOS (the app and its extension).
+//! Android (one process), the App Group container on iOS (the app and its extension). It holds ONE
+//! DIRECTORY PER ACCOUNT (`device_notices/<sha256(userId)>/`: a marker per key, and the pre-claim
+//! marker), so an account's deletion removes its own markers and no other account's.
 
 use std::path::Path;
 
 use mls_core::MlsManager;
 
-/// The directory, inside the shared data directory, that holds one marker per announced key -
-/// swept with the account's other push files when the account is deleted.
-pub(crate) use crate::commands::push::DEVICE_NOTICES_DIR;
+/// The directory, inside the shared data directory, that holds the ledger; the per-account
+/// directory under it, and the one encoder of a file name, live with the deletion that sweeps them
+/// (`commands::push`), which is compiled off a phone too.
+pub(crate) use crate::commands::push::{
+    device_notice_file_name, device_notice_legacy_name, device_notices_account_dir,
+    DEVICE_NOTICES_DIR,
+};
 
-/// The most markers kept. Past it the OLDEST are removed: a key that old was announced long ago,
+/// The most markers kept per account. Past it the OLDEST are removed: a key that old was announced long ago,
 /// and the event that names it will not come back (the commit is merged and persisted by then).
 pub const MAX_DEVICE_NOTICE_MARKERS: usize = 256;
 
@@ -80,35 +86,25 @@ pub fn owner_alert_keys_of(
     keys
 }
 
-/// The name prefix of an account's pre-claim marker ([`preclaim_marker_name`]). It holds a `.`,
-/// which no key marker (hex only) does, so the two never collide and the pruner can tell them apart.
-const PRECLAIM_MARKER_PREFIX: &str = "preclaimed.";
+/// The file, in an account's ledger directory, saying the app has pre-claimed that account's older
+/// devices since this build ([`preclaim_device_notices`]). Not hex, so no key marker can be named so.
+const PRECLAIM_MARKER: &str = "preclaimed";
 
-/// `text`'s SHA-256, in hex: 64 characters whatever its length. The ONE way this ledger turns an
-/// identity into a file name, so no `:` or `|` reaches a path and no name exceeds the 255-byte
-/// limit of the filesystems the ledger lives on (ext4/f2fs on Android, APFS on iOS).
-fn sha256_hex(text: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
-/// The marker file name of `key`: [`sha256_hex`] of it.
+/// The marker file name of `key`: [`device_notice_file_name`] of it - 64 characters whatever the
+/// key.
 ///
 /// Before 1.6.1 the name was the whole key in hex ([`legacy_marker_name`]), twice the key's length:
 /// a production key (`userId:deviceId|fingerprint`) runs to ~160 bytes, its name to ~320, and
 /// every claim failed with `File name too long (os error 36)` - so no background engine announced
 /// a new device, and no key the app showed or pre-claimed was recorded, from 1.4.1-alpha.2 on.
 fn marker_name(key: &str) -> String {
-    sha256_hex(key)
+    device_notice_file_name(key)
 }
 
-/// The marker name builds before 1.6.1 wrote: the key's bytes in hex. Read, and migrated to
-/// [`marker_name`] on a hit - see [`announced_by_an_older_build`].
+/// The marker name builds before 1.6.1 wrote, in the ledger's ROOT: the key's bytes in hex. Read,
+/// and migrated to [`marker_name`] on a hit - see [`announced_by_an_older_build`].
 fn legacy_marker_name(key: &str) -> String {
-    key.bytes().map(|b| format!("{b:02x}")).collect()
+    device_notice_legacy_name(key)
 }
 
 /// Whether a build before 1.6.1 already announced `key`. Such a marker can exist only for a key of
@@ -116,22 +112,20 @@ fn legacy_marker_name(key: &str) -> String {
 /// refused by the filesystem, so it was NEVER written - and `exists` answers `false` for a name the
 /// filesystem refuses, so no length guard is needed. Honoured so the upgrade announces nothing
 /// twice (`docs/wiki/legacy-compatibility.md`, "a device-notice marker named by the key in hex").
-fn announced_by_an_older_build(dir: &Path, key: &str) -> bool {
-    dir.join(legacy_marker_name(key)).exists()
-}
-
-/// The name of the marker saying the app has pre-claimed `user_id`'s older devices: the prefix and
-/// [`sha256_hex`] of the user id as keys spell it (lowercase, `canonical_identity`).
-fn preclaim_marker_name(user_id: &str) -> String {
-    format!(
-        "{PRECLAIM_MARKER_PREFIX}{}",
-        sha256_hex(&user_id.to_ascii_lowercase())
-    )
+fn announced_by_an_older_build(root: &Path, key: &str) -> bool {
+    root.join(legacy_marker_name(key)).exists()
 }
 
 /// The account a key names: the user id before its first `:` (`userId:deviceId|fingerprint`).
 fn account_of(key: &str) -> Option<&str> {
     key.split_once(':').map(|(user, _)| user)
+}
+
+/// Whether the app has pre-claimed `user_id`'s older devices on this install since this build.
+fn is_preclaimed(data_dir: &Path, user_id: &str) -> bool {
+    device_notices_account_dir(data_dir, user_id)
+        .join(PRECLAIM_MARKER)
+        .exists()
 }
 
 /// What one pass over the ledger did: the keys it claimed, and how many it could not record.
@@ -140,17 +134,33 @@ struct ClaimPass {
     unrecorded: usize,
 }
 
-/// Claims each key in the ledger directory `dir` (which exists). A key already claimed - by this
-/// build or, migrated on the way, by an older one - is neither claimed nor counted; a key whose
-/// marker could not be written is logged at ERROR and counted in `unrecorded`.
-fn claim_in(dir: &Path, keys: &[String]) -> ClaimPass {
+/// Claims each key in its account's directory of the ledger under `data_dir`. A key already
+/// claimed - by this build or, migrated on the way, by an older one - is neither claimed nor
+/// counted; a key whose marker could not be written is logged at ERROR and counted in `unrecorded`.
+fn claim_in(data_dir: &Path, keys: &[String]) -> ClaimPass {
+    let root = data_dir.join(DEVICE_NOTICES_DIR);
     let mut pass = ClaimPass {
         claimed: Vec::new(),
         unrecorded: 0,
     };
+    let mut touched: Vec<std::path::PathBuf> = Vec::new();
     for key in keys {
+        let Some(user) = account_of(key) else {
+            log::error!("[DEVICE_NOTICE] key {key} names no account - not recorded, not announced");
+            pass.unrecorded += 1;
+            continue;
+        };
+        let dir = device_notices_account_dir(data_dir, user);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::error!(
+                "[DEVICE_NOTICE] ledger directory {} unavailable, {key} not recorded, not announced: {e}",
+                dir.display()
+            );
+            pass.unrecorded += 1;
+            continue;
+        }
         let path = dir.join(marker_name(key));
-        let legacy = announced_by_an_older_build(dir, key);
+        let legacy = announced_by_an_older_build(&root, key);
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -159,7 +169,12 @@ fn claim_in(dir: &Path, keys: &[String]) -> ClaimPass {
             Ok(_) if legacy => {
                 log::debug!("[DEVICE_NOTICE] announced by an older build, marker migrated: {key}");
             }
-            Ok(_) => pass.claimed.push(key.clone()),
+            Ok(_) => {
+                pass.claimed.push(key.clone());
+                if !touched.contains(&dir) {
+                    touched.push(dir);
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 log::debug!("[DEVICE_NOTICE] already announced: {key}");
             }
@@ -180,24 +195,10 @@ fn claim_in(dir: &Path, keys: &[String]) -> ClaimPass {
             }
         }
     }
-    if !pass.claimed.is_empty() {
+    for dir in &touched {
         prune_markers(dir);
     }
     pass
-}
-
-/// The ledger directory under `data_dir`, created, or `None` (logged at ERROR) when it cannot be.
-fn ledger_dir(data_dir: &Path, keys: usize) -> Option<std::path::PathBuf> {
-    let dir = data_dir.join(DEVICE_NOTICES_DIR);
-    match std::fs::create_dir_all(&dir) {
-        Ok(()) => Some(dir),
-        Err(e) => {
-            log::error!(
-                "[DEVICE_NOTICE] ledger directory unavailable, {keys} notice(s) not recorded: {e}"
-            );
-            None
-        }
-    }
 }
 
 /// THE APP's claim: claims each key in the ledger under `data_dir` and returns the keys THIS call
@@ -205,22 +206,29 @@ fn ledger_dir(data_dir: &Path, keys: usize) -> Option<std::path::PathBuf> {
 /// marker could not be written is logged and NOT returned, since nothing would then stop a second
 /// announcement of it. Ungated: the app decides from key ages it holds, which the engines do not.
 pub fn claim_device_notices(data_dir: &Path, keys: &[String]) -> Vec<String> {
-    match ledger_dir(data_dir, keys.len()) {
-        Some(dir) => claim_in(&dir, keys).claimed,
-        None => Vec::new(),
-    }
+    claim_in(data_dir, keys).claimed
 }
 
-/// THE APP's pre-claim of `user_id`'s older devices (`preclaimOldOwnDevices`): claims `keys`, then -
-/// only when every one of them is recorded - writes the account's pre-claim marker, which is what
-/// lets a background engine announce for this account at all ([`engine_claim_device_notices`]).
-/// Returns whether the marker is in place. A key left unrecorded leaves it absent, so the next
-/// registration tries again and the engines stay quiet meanwhile.
-pub fn preclaim_device_notices(data_dir: &Path, user_id: &str, keys: &[String]) -> bool {
-    let Some(dir) = ledger_dir(data_dir, keys.len()) else {
+/// THE APP's pre-claim of `user_id`'s older devices (`preclaimOldOwnDevices`): records `keys`, then,
+/// only when `complete` (the app read the key ages of EVERY listed device) and every key is
+/// recorded, writes the account's pre-claim marker, which is what lets a background engine
+/// announce for this account at all ([`engine_claim_device_notices`]). Returns whether the marker
+/// is in place. Otherwise it stays absent: the next registration tries again, and the engines stay
+/// quiet meanwhile rather than post for a device whose age nobody read.
+pub fn preclaim_device_notices(
+    data_dir: &Path,
+    user_id: &str,
+    keys: &[String],
+    complete: bool,
+) -> bool {
+    let pass = claim_in(data_dir, keys);
+    if !complete {
+        log::warn!(
+            "[DEVICE_NOTICE] {} older key(s) recorded, but a device's key ages went unanswered - pre-claim marker NOT written, the background engines stay quiet for this account until a complete pass",
+            pass.claimed.len()
+        );
         return false;
-    };
-    let pass = claim_in(&dir, keys);
+    }
     if pass.unrecorded > 0 {
         log::error!(
             "[DEVICE_NOTICE] {} of {} older key(s) not recorded - pre-claim marker NOT written, the background engines stay quiet for this account",
@@ -229,8 +237,9 @@ pub fn preclaim_device_notices(data_dir: &Path, user_id: &str, keys: &[String]) 
         );
         return false;
     }
-    let marker = dir.join(preclaim_marker_name(user_id));
-    match std::fs::write(&marker, b"") {
+    let dir = device_notices_account_dir(data_dir, user_id);
+    let marker = dir.join(PRECLAIM_MARKER);
+    match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&marker, b"")) {
         Ok(()) => {
             log::info!(
                 "[DEVICE_NOTICE] {} older key(s) pre-claimed, {} newly - the background engines may announce for this account",
@@ -249,6 +258,15 @@ pub fn preclaim_device_notices(data_dir: &Path, user_id: &str, keys: &[String]) 
     }
 }
 
+/// What a background engine's claim answers: the keys it may announce, and how many it HELD
+/// because their account is not pre-claimed - so the platform's own log line can say which of the
+/// two reasons left it nothing to post (this crate's log reaches no logger in a killed app).
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct EngineClaim {
+    pub claimed: Vec<String>,
+    pub held: usize,
+}
+
 /// A BACKGROUND ENGINE's claim (the Android FCM service, the iOS notification extension): as
 /// [`claim_device_notices`], but only for a key whose account the app has pre-claimed
 /// ([`preclaim_device_notices`]).
@@ -258,58 +276,52 @@ pub fn preclaim_device_notices(data_dir: &Path, user_id: &str, keys: &[String]) 
 /// new build BEFORE the app's next launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 failed
 /// (the name was too long), so without this gate one heal commit pushed before the first open would
 /// post a false "new device" for an old laptop. A key whose account has no marker is NOT claimed
-/// (the app's own pass, which reads the same event after its drain, decides) and is logged.
-pub fn engine_claim_device_notices(data_dir: &Path, keys: &[String]) -> Vec<String> {
-    let Some(dir) = ledger_dir(data_dir, keys.len()) else {
-        return Vec::new();
-    };
-    let gated: Vec<String> = keys
+/// (the app's own pass, which reads the same event after its drain, decides) and is counted `held`.
+pub fn engine_claim_device_notices(data_dir: &Path, keys: &[String]) -> EngineClaim {
+    let (open, held): (Vec<String>, Vec<String>) = keys
         .iter()
-        .filter(|key| {
-            let preclaimed =
-                account_of(key).is_some_and(|user| dir.join(preclaim_marker_name(user)).exists());
-            if !preclaimed {
-                log::info!(
-                    "[DEVICE_NOTICE] {key} not announced by the background engine: the app has not pre-claimed this account's older devices since the update - the app's own pass decides"
-                );
-            }
-            preclaimed
-        })
         .cloned()
-        .collect();
-    claim_in(&dir, &gated).claimed
+        .partition(|key| account_of(key).is_some_and(|user| is_preclaimed(data_dir, user)));
+    for key in &held {
+        log::info!(
+            "[DEVICE_NOTICE] {key} held by the background engine: the app has not pre-claimed this account's older devices since the update - the app's own pass decides"
+        );
+    }
+    EngineClaim {
+        claimed: claim_in(data_dir, &open).claimed,
+        held: held.len(),
+    }
 }
 
-/// [`engine_claim_device_notices`] over JSON arrays of strings, for the JNI and C-FFI entry points
-/// of the background engines. A payload that is not an array of strings claims nothing and answers
-/// `[]`, logged.
-pub fn claim_device_notices_json(data_dir: &Path, keys_json: &str) -> String {
-    let keys: Vec<String> = match serde_json::from_str(keys_json) {
-        Ok(k) => k,
+/// [`engine_claim_device_notices`] over JSON, for the JNI and C-FFI entry points of the background
+/// engines: a JSON array of keys in, an [`EngineClaim`] object out. A payload that is not an array
+/// of strings claims nothing and answers an empty claim, logged.
+pub fn engine_claim_device_notices_json(data_dir: &Path, keys_json: &str) -> String {
+    let claim = match serde_json::from_str::<Vec<String>>(keys_json) {
+        Ok(keys) => engine_claim_device_notices(data_dir, &keys),
         Err(e) => {
             log::error!("[DEVICE_NOTICE] keys payload is not a JSON array of strings: {e}");
-            return "[]".to_string();
+            EngineClaim {
+                claimed: Vec::new(),
+                held: 0,
+            }
         }
     };
-    serde_json::to_string(&engine_claim_device_notices(data_dir, &keys)).unwrap_or_else(|e| {
-        log::error!("[DEVICE_NOTICE] claimed keys not serialisable: {e}");
-        "[]".to_string()
+    serde_json::to_string(&claim).unwrap_or_else(|e| {
+        log::error!("[DEVICE_NOTICE] engine claim not serialisable: {e}");
+        r#"{"claimed":[],"held":0}"#.to_string()
     })
 }
 
-/// Keeps the newest [`MAX_DEVICE_NOTICE_MARKERS`] key markers. An account's pre-claim marker is
-/// never pruned: it is not a key, and losing it would silence the engines for that account.
+/// Keeps the newest [`MAX_DEVICE_NOTICE_MARKERS`] key markers of one account's directory. Its
+/// pre-claim marker is never pruned: it is not a key, and losing it would silence the engines.
 fn prune_markers(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut markers: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
         .filter_map(Result::ok)
-        .filter(|e| {
-            !e.file_name()
-                .to_string_lossy()
-                .starts_with(PRECLAIM_MARKER_PREFIX)
-        })
+        .filter(|e| e.file_name() != PRECLAIM_MARKER)
         .filter_map(|e| {
             let modified = e.metadata().ok()?.modified().ok()?;
             Some((modified, e.path()))
@@ -339,6 +351,24 @@ mod tests {
         dir
     }
 
+    /// The engine's answer, read back.
+    fn engine(dir: &Path, keys_json: &str) -> (Vec<String>, usize) {
+        let v: serde_json::Value =
+            serde_json::from_str(&engine_claim_device_notices_json(dir, keys_json)).unwrap();
+        let claimed = v["claimed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k.as_str().unwrap().to_string())
+            .collect();
+        (claimed, v["held"].as_u64().unwrap() as usize)
+    }
+
+    /// `user`'s directory of the ledger under `dir`.
+    fn account(dir: &Path, user: &str) -> std::path::PathBuf {
+        device_notices_account_dir(dir, user)
+    }
+
     #[test]
     fn a_key_is_claimed_once_whoever_asks_again() {
         let dir = temp_dir("once");
@@ -348,30 +378,28 @@ mod tests {
             claim_device_notices(&dir, &keys).is_empty(),
             "a replay announces nothing"
         );
-        assert!(preclaim_device_notices(&dir, "bob", &[]));
+        assert!(preclaim_device_notices(&dir, "bob", &[], true));
         assert_eq!(
-            claim_device_notices_json(&dir, r#"["bob:web-2|00ff","bob:web-4|22dd"]"#),
-            r#"["bob:web-4|22dd"]"#
+            engine(&dir, r#"["bob:web-2|00ff","bob:web-4|22dd"]"#),
+            (vec!["bob:web-4|22dd".to_string()], 0)
         );
     }
 
     #[test]
     fn a_payload_that_is_not_a_list_of_keys_claims_nothing() {
         let dir = temp_dir("bad");
-        assert_eq!(claim_device_notices_json(&dir, "{}"), "[]");
+        assert_eq!(engine(&dir, "{}"), (vec![], 0));
         assert!(!dir.join(DEVICE_NOTICES_DIR).exists());
     }
 
     #[test]
-    fn the_ledger_is_bounded() {
+    fn the_ledger_is_bounded_per_account() {
         let dir = temp_dir("bound");
         let keys: Vec<String> = (0..MAX_DEVICE_NOTICE_MARKERS + 5)
             .map(|i| format!("u:d{i}|ff"))
             .collect();
         claim_device_notices(&dir, &keys);
-        let count = std::fs::read_dir(dir.join(DEVICE_NOTICES_DIR))
-            .unwrap()
-            .count();
+        let count = std::fs::read_dir(account(&dir, "u")).unwrap().count();
         assert_eq!(count, MAX_DEVICE_NOTICE_MARKERS);
     }
 
@@ -402,8 +430,7 @@ mod tests {
             keys,
             "the marker is written"
         );
-        assert!(dir
-            .join(DEVICE_NOTICES_DIR)
+        assert!(account(&dir, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
             .join(marker_name(&keys[0]))
             .exists());
         assert!(
@@ -416,12 +443,12 @@ mod tests {
     fn a_marker_written_by_an_older_build_still_reads_announced() {
         let dir = temp_dir("legacy");
         let key = "bob:web-2|00ff".to_string();
-        let ledger = dir.join(DEVICE_NOTICES_DIR);
-        std::fs::create_dir_all(&ledger).unwrap();
-        std::fs::write(ledger.join(legacy_marker_name(&key)), b"").unwrap();
+        let root = dir.join(DEVICE_NOTICES_DIR);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(legacy_marker_name(&key)), b"").unwrap();
         assert!(claim_device_notices(&dir, std::slice::from_ref(&key)).is_empty());
         assert!(
-            ledger.join(marker_name(&key)).exists(),
+            account(&dir, "bob").join(marker_name(&key)).exists(),
             "the hit is migrated to the digest marker"
         );
     }
@@ -438,18 +465,18 @@ mod tests {
     #[test]
     fn the_legacy_marker_is_read_up_to_127_bytes_and_absent_from_128() {
         let dir = temp_dir("boundary");
-        let ledger = dir.join(DEVICE_NOTICES_DIR);
-        std::fs::create_dir_all(&ledger).unwrap();
+        let root = dir.join(DEVICE_NOTICES_DIR);
+        std::fs::create_dir_all(&root).unwrap();
         let short = key_of_len(127);
-        std::fs::write(ledger.join(legacy_marker_name(&short)), b"").unwrap();
+        std::fs::write(root.join(legacy_marker_name(&short)), b"").unwrap();
         assert!(claim_device_notices(&dir, std::slice::from_ref(&short)).is_empty());
 
         let long = key_of_len(128);
         assert!(
-            std::fs::write(ledger.join(legacy_marker_name(&long)), b"").is_err(),
+            std::fs::write(root.join(legacy_marker_name(&long)), b"").is_err(),
             "a 256-byte name cannot be written"
         );
-        assert!(!announced_by_an_older_build(&ledger, &long));
+        assert!(!announced_by_an_older_build(&root, &long));
         assert_eq!(
             claim_device_notices(&dir, std::slice::from_ref(&long)),
             vec![long]
@@ -457,18 +484,14 @@ mod tests {
     }
 
     /// After a store update the engines run before the app's next launch: until the app has
-    /// pre-claimed the account, an engine posts nothing and claims nothing, so the app decides.
+    /// pre-claimed the account, an engine posts nothing and claims nothing, so the app decides -
+    /// and says so (`held`), so the platform's own log line is true.
     #[test]
     fn an_engine_announces_only_for_an_account_the_app_has_pre_claimed() {
         let dir = temp_dir("gate");
         let fresh = r#"["alice:laptop|00ff"]"#;
-        assert_eq!(
-            claim_device_notices_json(&dir, fresh),
-            "[]",
-            "no marker, no post"
-        );
-        assert!(!dir
-            .join(DEVICE_NOTICES_DIR)
+        assert_eq!(engine(&dir, fresh), (vec![], 1), "no marker, no post");
+        assert!(!account(&dir, "alice")
             .join(marker_name("alice:laptop|00ff"))
             .exists());
 
@@ -476,34 +499,105 @@ mod tests {
         assert!(preclaim_device_notices(
             &dir,
             "Alice",
-            &["alice:old-laptop|11ee".to_string()]
+            &["alice:old-laptop|11ee".to_string()],
+            true
         ));
         assert_eq!(
-            claim_device_notices_json(&dir, r#"["alice:old-laptop|11ee"]"#),
-            "[]",
+            engine(&dir, r#"["alice:old-laptop|11ee"]"#),
+            (vec![], 0),
             "an old device a heal brings back is never posted"
         );
         assert_eq!(
-            claim_device_notices_json(&dir, fresh),
-            fresh,
+            engine(&dir, fresh),
+            (vec!["alice:laptop|00ff".to_string()], 0),
             "marker, post"
         );
         // Another account on the same install is still gated.
-        assert_eq!(claim_device_notices_json(&dir, r#"["bob:x|22"]"#), "[]");
+        assert_eq!(engine(&dir, r#"["bob:x|22"]"#), (vec![], 1));
+    }
+
+    /// A device whose key ages went unanswered may be old: its keys are not known, so the pass
+    /// records what it knows and withholds the marker - the engines stay quiet.
+    #[test]
+    fn an_incomplete_pre_claim_records_the_known_keys_and_withholds_the_marker() {
+        let dir = temp_dir("incomplete");
+        let old = "alice:old-laptop|11ee".to_string();
+        assert!(!preclaim_device_notices(
+            &dir,
+            "alice",
+            std::slice::from_ref(&old),
+            false
+        ));
+        assert!(account(&dir, "alice").join(marker_name(&old)).exists());
+        assert!(!is_preclaimed(&dir, "alice"));
+        assert_eq!(engine(&dir, r#"["alice:unread-tablet|22dd"]"#), (vec![], 1));
     }
 
     #[test]
     fn the_pre_claim_marker_is_never_pruned() {
         let dir = temp_dir("keep");
-        assert!(preclaim_device_notices(&dir, "u", &[]));
+        assert!(preclaim_device_notices(&dir, "u", &[], true));
         let keys: Vec<String> = (0..MAX_DEVICE_NOTICE_MARKERS + 5)
             .map(|i| format!("u:d{i}|ff"))
             .collect();
         claim_device_notices(&dir, &keys);
-        assert!(dir
-            .join(DEVICE_NOTICES_DIR)
-            .join(preclaim_marker_name("u"))
-            .exists());
+        assert!(is_preclaimed(&dir, "u"));
+    }
+
+    /// The source of `path`, relative to this crate's root.
+    fn source(path: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap()
+    }
+
+    /// The text of `source` from `from` up to the next `\n}` - one item's body.
+    fn item<'a>(source: &'a str, from: &str) -> &'a str {
+        let start = source
+            .find(from)
+            .unwrap_or_else(|| panic!("{from} not found"));
+        let rest = &source[start..];
+        &rest[..rest.find("\n}").unwrap()]
+    }
+
+    /// Both engines' entry points go through the GATED door; none reaches the app's ungated claim.
+    #[test]
+    fn each_engine_entry_point_calls_the_gated_claim() {
+        let jni = source("src/lib.rs");
+        let jni = item(
+            &jni,
+            "Java_fr_emse_canari_CanariFirebaseMessagingService_nativeClaimDeviceNotices",
+        );
+        assert!(jni.contains("device_notice::engine_claim_device_notices_json("));
+        let ffi = source("src/mobile/ios_ffi.rs");
+        let ffi = item(&ffi, "fn canari_native_claim_device_notices");
+        assert!(ffi.contains("device_notice::engine_claim_device_notices_json("));
+    }
+
+    /// The pre-claim command is reachable from the page: registered in the invoke handler.
+    #[test]
+    fn the_pre_claim_command_is_registered() {
+        let lib = source("src/lib.rs");
+        let handler = &lib[lib
+            .find(".invoke_handler(tauri::generate_handler![")
+            .unwrap()..];
+        let handler = &handler[..handler.find("])").unwrap()];
+        assert!(handler.contains("\n            preclaim_device_notices,\n"));
+    }
+
+    /// The app's pass calls the pre-claim command whatever it found - with no old key too, since
+    /// the call is also what writes the marker - and says whether it read every device.
+    #[test]
+    fn the_app_pre_claims_even_with_no_old_key() {
+        let ts = source("../src/lib/utils/chat/deviceNoticeWiring.ts");
+        let pass = item(&ts, "async function preclaimOldOwnDevices");
+        let call = pass
+            .find("invoke<boolean>('preclaim_device_notices'")
+            .expect("the pass calls the pre-claim command");
+        assert!(pass[call..].contains("complete"));
+        assert!(
+            !pass[..call].contains("old.length > 0"),
+            "the call is not conditioned on an old key"
+        );
     }
 
     /// The background engine's half end to end: a commit that gives this account another device,

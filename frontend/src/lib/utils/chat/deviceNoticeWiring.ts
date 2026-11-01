@@ -217,12 +217,25 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
     if (enrolledAt === 'unanswered') return;
     const devices = await mls.fetchUserDevices(userId);
     const old: string[] = [];
+    // False once ANY listed device's key ages go unanswered: its keys may be old, and a marker
+    // written now would let an engine post them as new - so Rust withholds it.
+    let complete = true;
     for (const d of devices) {
       if (d.deviceId === deviceId) continue;
       const identity = canonicalIdentity(`${userId}:${d.deviceId}`);
-      if (identity === null) continue;
+      if (identity === null) {
+        // No engine can name such a device either (`notice_key` needs a canonical identity).
+        console.debug(`[DEVICE_NOTICE] pre-claim skips a malformed device identity: ${d.deviceId}`);
+        continue;
+      }
       const facts = await keyFactsOf(mls, userId, d.deviceId);
-      if (facts === 'unanswered') continue;
+      if (facts === 'unanswered') {
+        console.warn(
+          `[DEVICE_NOTICE] key ages of device ${d.deviceId} unanswered - the pre-claim marker waits for a complete pass`
+        );
+        complete = false;
+        continue;
+      }
       for (const fingerprint of facts.fingerprints) {
         const isNew = isNewToItsOwner(firstSightIn(facts, fingerprint), {
           learnedAt: Date.now(),
@@ -235,10 +248,18 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
     // Even with nothing to record: the call also writes the account's pre-claim marker, without
     // which the background engines announce nothing for it (`preclaim_device_notices`).
     const { invoke } = await import('@tauri-apps/api/core');
-    const marked = await invoke<boolean>('preclaim_device_notices', { userId, keys: old });
+    const marked = await invoke<boolean>('preclaim_device_notices', {
+      userId,
+      keys: old,
+      complete,
+    });
     if (marked) {
       console.log(
         `[DEVICE_NOTICE] ${old.length} key(s) of this account's older devices pre-claimed`
+      );
+    } else if (!complete) {
+      console.warn(
+        `[DEVICE_NOTICE] ${old.length} older key(s) recorded, a device unanswered - the background engines stay quiet for this account until a complete pass`
       );
     } else {
       console.error(
