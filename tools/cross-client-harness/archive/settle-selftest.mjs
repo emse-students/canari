@@ -221,17 +221,17 @@ ok("TOK-1 forgives its renewal and its 200", narrated('TOK-1', A.renewing) && na
 ok('control: TOK-1 does NOT forgive a failed renewal', !narrated('TOK-1', A.failed));
 ok('TOK-2 forgives its renewal and its failure, at warn level too', narrated('TOK-2', A.renewing) && ignoringExpectedLog(rep({ unexplained: [], warnings: [A.failed] }), TOK_NARRATION['TOK-2']).warnings.length === 0);
 ok('control: no TOK row forgives a renewed token refused again', !narrated('TOK-1', A.refusedAgain) && !narrated('TOK-2', A.refusedAgain));
-// Verbatim from TOK-2 on alpha.4, stamps included.
+// TOK-2's failed Add as the app says it since the one-line fix (the shape of alpha.4's three lines,
+// now one: the outcome, at warn level, carrying its typed cause), stamps included.
 const FAILED_ADD = {
-  sync: '[17:26:08.277] [SYNC] processBulkAddition failed: DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed (TransportFailureError: request got no answer: TypeError: Failed to fetch) - the request did nothing',
-  bulk: '[17:26:08.276] Bulk invite error: DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed (TransportFailureError: request got no answer: TypeError: Failed to fetch) - the request did nothing',
+  outcome: '[17:26:08.279] [GROUP] an invitation added nobody (failed) in 1a2b3c4d...: DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed (TransportFailureError: request got no answer: TypeError: Failed to fetch) - the request did nothing',
   wsDown: '[17:26:08.118] [A] ws-',
-  outcome: '[17:26:08.279] [GROUP] an invitation added nobody (failed)',
 };
-ok("the app's failed-Add verdict is what TOK-2 reads, never the click", INVITATION_FAILED.test(FAILED_ADD.outcome) && !INVITATION_FAILED.test('[17:26:08.279] [GROUP] an invitation added nobody (outcome-unknown)'));
-ok('TOK-2 forgives its failed Add, the error-level line included', narrated('TOK-2', FAILED_ADD.bulk) && narrated('TOK-2', FAILED_ADD.wsDown) && ignoringExpectedLog(rep({ errors: [FAILED_ADD.sync], unexplained: [], warnings: [] }), TOK_NARRATION['TOK-2']).errors.length === 0);
-ok('control: TOK-1 forgives none of it', !narrated('TOK-1', FAILED_ADD.bulk) && !narrated('TOK-1', FAILED_ADD.wsDown));
-ok('control: an Add failed for ANOTHER reason stays dirt on TOK-2', !narrated('TOK-2', FAILED_ADD.bulk.replace('DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed', 'ApiRefusalError: boom')));
+ok("the app's failed-Add verdict is what TOK-2 reads, never the click", INVITATION_FAILED.test(FAILED_ADD.outcome) && INVITATION_FAILED.test('[17:26:08.279] [GROUP] an invitation added nobody (failed)') && !INVITATION_FAILED.test('[17:26:08.279] [GROUP] an invitation added nobody (outcome-unknown) in 1a2b3c4d...'));
+ok('TOK-2 forgives its failed Add, at warn level', narrated('TOK-2', FAILED_ADD.outcome) && narrated('TOK-2', FAILED_ADD.wsDown) && ignoringExpectedLog(rep({ unexplained: [], warnings: [FAILED_ADD.outcome] }), TOK_NARRATION['TOK-2']).warnings.length === 0);
+ok('control: TOK-1 forgives none of it', !narrated('TOK-1', FAILED_ADD.outcome) && !narrated('TOK-1', FAILED_ADD.wsDown));
+ok('control: an Add failed for ANOTHER reason stays dirt on TOK-2', !narrated('TOK-2', FAILED_ADD.outcome.replace('DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed', 'ApiRefusalError: boom')));
+ok('control: the retired three-line shape is forgiven no more', !narrated('TOK-2', '[17:26:08.276] Bulk invite error: DeliveryRenewalFailedError: POST /api/mls/commit answered 401 and the token renewal failed (x) - the request did nothing'));
 ok('control: the narration is the TOK rows\' only (no other settle row names it)', Object.keys(TOK_NARRATION).join() === 'TOK-1,TOK-2');
 const r401 = { rule: 0, mode: 'status-unsent', method: 'POST', url: URL_, done: 'fulfillRequest', gave: 401 };
 r = forgivingProvoked(rep({ badHttp: [`POST ${URL_} -> 401`], errors: [`Failed to load resource: the server responded with a status of 401 () <- POST ${URL_}`.replace(' <- POST ', ' ')] }), [r401]);
