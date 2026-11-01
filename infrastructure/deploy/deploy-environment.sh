@@ -304,6 +304,17 @@ psql() {
 # shellcheck source-path=SCRIPTDIR source=../lib/migrations.sh
 . "$DEPLOY_PATH/infrastructure/lib/migrations.sh"
 
+# THE BACKUP RIGHT BEFORE A MIGRATION THE OWNER APPROVED (owner, 2026-11-01). The loop calls this
+# before each held file `migration-approvals.txt` approves, and applies nothing more if it fails. The
+# dump is the nightly backup's own (`dump-auth-db.sh`), so a restore reads it the same way; it lands
+# in `pre-migration/` under the directory THIS account's crontab names for the nightly backup (no
+# default: an unnamed directory refuses), named after the estate and the migration.
+# shellcheck source-path=SCRIPTDIR source=../backup/dump-auth-db.sh
+. "$DEPLOY_PATH/infrastructure/backup/dump-auth-db.sh"
+migration_backup() {
+  pre_migration_backup "$1" "$PROJECT" dc
+}
+
 apply_migrations
 
 # ── Replace every service, without taking the estate off the air ─────────────

@@ -537,8 +537,8 @@ jobs:
   # calls `bucketExists`, which is a network round trip. Mocking it away would have made the adapter
   # under test a mock, which is the one thing a boot test may never do.
   #
-  # EVERY DATABASE HERE IS DISPOSABLE, and that is load-bearing: all four services set
-  # `synchronize: process.env.NODE_ENV !== 'production'`, so a boot CREATES and ALTERS the schema.
+  # EVERY DATABASE HERE IS DISPOSABLE, and that is load-bearing: this job sets
+  # `TYPEORM_SYNCHRONIZE=1` (`typeorm-synchronize.ts`), so a boot CREATES and ALTERS the schema.
   boot-nest-apps:
     name: Boot the real AppModule (${{ matrix.service }})
     needs: [changes]
@@ -646,6 +646,9 @@ jobs:
         working-directory: ${{ matrix.service }}
         env:
           NODE_ENV: test
+          # The schema is built from the entities by NAME, never because NODE_ENV is not
+          # `production` (typeorm-synchronize.ts): the disposable database needs it to boot.
+          TYPEORM_SYNCHRONIZE: '1'
           # Required whenever NODE_ENV is not `production`: `auth.controller.ts` refuses to
           # start rather than guess whether the refresh cookie should carry `Secure`. `false`
           # is the value a deployed estate uses, so this boot exercises the same branch.

@@ -59,6 +59,7 @@ volume sha256-identically over 172 objects. Full model:
 |---|---|
 | Local (`BACKUP_DIR`) | 7 days (`LOCAL_RETENTION_DAYS`) |
 | Offsite (`<backup-user>@<offsite-host>:<offsite-dir>/`) | 14 days (`BACKUP_RETENTION_DAYS`), enforced via SSH |
+| Local `BACKUP_DIR/pre-migration/` | none - kept until removed by hand (below) |
 
 **Two retentions since 2026-10-24, and the offsite one is the promise.** The local disk is the
 shared host's, which its administrators reported at 90 % that day; an archive weighed ~700 MB a
@@ -68,6 +69,21 @@ night ([why](#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13)), so 15 loca
 once it is N+1 whole days old, at the next nightly run: a local archive lives up to ~9 days, an
 offsite one up to ~16. `.github/scripts/tests/backup-retention.test.sh` runs `backup.sh` against
 stubs and asserts that each purge reads its own variable.
+
+**`pre-migration/` has no retention rule, deliberately (2026-11-01).** The deploy writes one dump
+there right before each migration the owner approved ([cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)),
+`<project>-<UTC time>-<migration>.sql.gz`: one per approved held migration, never one per deploy, and
+each is the only restore point taken right before a change that may lose data. An age rule would
+delete exactly that, and the nightly purge (`-maxdepth 1`, `canari-backup-*.tar.gz`) does not
+reach it. They are LOCAL ONLY - the offsite copy carries the nightly archive - and their weight is
+in the host report's `du` of the backup directory ([host-updates](host-updates.md)). Remove one by
+hand once the migration it protects is past doubt.
+
+**THE DEPLOY READS THE DIRECTORY FROM THE CRONTAB, AND HAS NO DEFAULT.** `canari_backup_dir`
+(`dump-auth-db.sh`) reads the `BACKUP_DIR=` line of the runner account's crontab - the line cron
+hands `backup.sh`, and the one `backup-report.sh` and `host-update-report.sh` read - and refuses
+with an `::error::` when it is missing. The first version fell back to `/home/canari/backups`, a
+path of the box production left on 2026-09-24, which the deploy account cannot create.
 
 ## Offsite transfer
 
@@ -83,7 +99,7 @@ The SSH key for the offsite account must be pre-authorized on the offsite server
 
 | Variable | Default | Description |
 |---|---|---|
-| `BACKUP_DIR` | `/home/canari/backups` | Local backup directory |
+| `BACKUP_DIR` | `/home/canari/backups` (a manual run only; in production the crontab sets it, and the deploy's pre-migration dump reads ONLY the crontab) | Local backup directory |
 | `BACKUP_RETENTION_DAYS` | `14` | Days to keep offsite archives |
 | `LOCAL_RETENTION_DAYS` | `7` | Days to keep local archives (never more than offsite) |
 | `BACKUP_SSH_HOST` | `<backup-user>@<offsite-host>` | Offsite rsync destination (empty to disable) |

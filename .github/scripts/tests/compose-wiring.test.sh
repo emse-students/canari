@@ -463,6 +463,18 @@ DEV_ABSENT_KEYS="
 printf '\nthe dev estate forwards what production forwards:\n'
 assert_forwards infrastructure/docker-compose.dev.yml "$DEV_ABSENT_BY_DESIGN" "$DEV_ABSENT_KEYS"
 
+printf '\na deployed estate never asks TypeORM to build its schema:\n'
+# A schema built from the entities at boot changes a deployed database outside the migration ledger
+# and the owner's hold on migrations (typeorm-synchronize.ts, docs/wiki/cicd.md). The services refuse
+# it next to NODE_ENV=production; the deployed compose files must not ask for it in the first place.
+for f in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml; do
+  if grep -q 'TYPEORM_SYNCHRONIZE' "$f"; then
+    fail "$f names TYPEORM_SYNCHRONIZE - a deployed schema changes only through a migration"
+  else
+    pass "$f never sets TYPEORM_SYNCHRONIZE"
+  fi
+done
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf 'FAILED: %d problem(s) across %d assertion(s)\n' "$failures" "$((checks + failures))"
