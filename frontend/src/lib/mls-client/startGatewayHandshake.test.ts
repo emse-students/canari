@@ -69,8 +69,6 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     connect,
     gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
     socketFence: () => 0,
-    // The rows exist: a reconnect's catch-up runs here (`deferUntilConversationRowsExist`).
-    deferUntilConversationRowsExist: () => false,
     onDisconnect: vi.fn(),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),

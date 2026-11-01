@@ -6,7 +6,7 @@
  * presented acknowledges nothing - so the same message arrives again after the app is relaunched
  * (iPhone 12, `1.5.4-alpha.1`, 2026-11-01). The record is what makes the second arrival silent.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NOTIFIED_MESSAGES_CAP, recordNotified, unnotifiedOf } from './notifiedMessages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -39,5 +39,24 @@ describe('the notified-messages record', () => {
   it('an unreadable record suppresses nothing rather than everything', () => {
     localStorage.setItem(ACCOUNT_KEY.notifiedMessages('u1'), '{not json');
     expect(unnotifiedOf('u1', ['m-1'])).toEqual(['m-1']);
+  });
+
+  it('says ONCE per process that storage refuses, not once per message', async () => {
+    // A fresh module: the "already said" flags belong to the process, which a new import models.
+    vi.resetModules();
+    const fresh = await import('./notifiedMessages');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refuse = () => {
+      throw new Error('storage refused');
+    };
+    vi.stubGlobal('localStorage', { getItem: refuse, setItem: refuse, removeItem: refuse });
+    for (let i = 0; i < 5; i++) {
+      expect(fresh.unnotifiedOf('u1', [`m-${i}`])).toEqual([`m-${i}`]);
+      fresh.recordNotified('u1', [`m-${i}`]);
+    }
+    // One line for the unreadable record, one for the unwritable one - not ten.
+    expect(warn).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+    warn.mockRestore();
   });
 });

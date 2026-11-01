@@ -1414,28 +1414,8 @@ export interface IMlsService {
    * A frame that arrived before the restore finished was left in the server queue with nothing to
    * render it into. This is the event that discharges it - the answer changed, so the ask is worth
    * repeating. Free and silent when nothing was left behind.
-   *
-   * It also runs whatever {@link deferUntilConversationRowsExist} still holds: a restore that failed
-   * before its rows were seeded never called {@link notifyConversationRowsSeeded}, and the login's
-   * catch-up must not wait for an event that is not coming.
    */
   notifyConversationsRestored(): void;
-
-  /**
-   * Holds `work` until the conversation rows exist, or says they already do.
-   *
-   * THE LOGIN'S FIRST PULL IS ORDERED AFTER THE ROWS BY THIS, NOT BY A DELAY. The socket opens
-   * before the restore (`sessionAuth`, for the barrier's sake), and its post-connect catch-up used
-   * to pull the mailbox right there - so on a cold start every queued frame met an empty map and
-   * was refused `absent-conversation`, then fetched a second time once the rows were seeded
-   * (iPhone 12, `1.5.4-alpha.1`, 2026-11-01: three frames, two pulls 330 ms apart). The work is run
-   * by the first {@link notifyConversationRowsSeeded} (which returns it, so the restore awaits it
-   * before its history phase) or {@link notifyConversationsRestored}, whichever comes first.
-   *
-   * @returns `true` when the work was held; `false` when the rows already exist, and the caller
-   *   runs it itself (every reconnect of a session whose restore has run).
-   */
-  deferUntilConversationRowsExist(work: () => Promise<void>): boolean;
 
   /**
    * Tells the service every stored conversation now has a ROW, though none has its history yet.
@@ -1448,12 +1428,8 @@ export interface IMlsService {
    * is the order the second phase keeps with a live delivery: the pull is announced in the same
    * tick, so each archive replay waits for it at its barrier and skips what it decrypted, and every
    * later write of a row MERGES into it rather than replacing it.
-   *
-   * @returns the work {@link deferUntilConversationRowsExist} held (the login's catch-up: settle,
-   *   pull, drain), so the restore runs its history phase AFTER that drain rather than racing it.
-   *   Never rejects: each held piece of work reports its own failure.
    */
-  notifyConversationRowsSeeded(): Promise<void>;
+  notifyConversationRowsSeeded(): void;
 
   /**
    * One conversation now EXISTS locally, so any frame buffered for it can be asked for again.

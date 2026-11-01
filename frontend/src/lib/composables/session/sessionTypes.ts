@@ -35,6 +35,13 @@ export interface ChatSessionCallbacks {
   /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
   loadAndRestoreConversations: () => Promise<void>;
   /**
+   * Seeds one row per stored conversation from the local store, without its history - which the
+   * next {@link loadAndRestoreConversations} replays rather than seeding again. The login calls it
+   * BEFORE `markInboundReady`, so no frame meets a map without its conversation
+   * (`useConversations`' `seedConversationRowsAhead`).
+   */
+  seedConversationRows: () => Promise<void>;
+  /**
    * Retires the ending session's restore chain (`useConversations`' `RestoreGeneration`), so a
    * restore it queued never runs as that account after the sign-out, and one still running never
    * makes the next login's restore wait. Called by the teardown, next to the clearing of the map.
