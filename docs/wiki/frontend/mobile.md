@@ -1073,16 +1073,32 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   `locality-unknown;direct=<token>`, `catchup-failed;direct=<token>`, `group-absent;direct=<token>`,
   `no-seed`, `no-ciphertext`, `not-opened`, where `<token>` is Rust's refusal reason of the direct
   decrypt), the last `stage` reached, `ms`, `peakMB` (the physical footprint, which jetsam holds an
-  extension to) and `stateKB` (the size of `mls.bin`). Rotated to `nse_outcomes.1.ndjson` past
-  32 KiB, so the pair stays bounded. Both sides `flock` `nse_outcomes.lock`.
+  extension to) and `stateKB` (the size of `mls.bin`). A `cause` is written for `fallback` and for
+  `expired` (the stage it reached) only. Rotated to `nse_outcomes.1.ndjson` past 32 KiB, so the
+  pair stays bounded. Both sides `flock` `nse_outcomes.lock` - **the extension never waits for
+  it**: it sits on the path that hands the content back, so the extension takes it `LOCK_NB`, and
+  when the app holds it the run's line goes into its own marker, renamed `nse_done.<pid>.<n>.json`,
+  which the app consumes like a line. Every `Trace` property is read and written under the run's
+  lock, because the expiry reads it on another thread while the decrypt writes it.
 - **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
-  `nse_inflight.<pid>.<n>.json`, rewritten at every stage, removed with its line. The app turns the
-  marker of a process PROVEN gone (`kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying
-  the stage and footprint it reached; a live or unknowable process keeps its marker - no clock.
-- **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files and the dead
-  markers under the lock and re-serialises each line through a key ALLOWLIST, so nothing but codes
-  and numbers can reach a log; `nseOutcomes.ts` writes them as `[NSE_OUTCOME] {...}` plus a
-  per-outcome summary line, at login and at every resume. No text, name or id is ever written.
+  `nse_inflight.<pid>.<n>.json`, stamped with the boot it ran in (`kern.boottime`), rewritten at
+  every stage, removed with its line - under the run's lock, and never rewritten once the run has
+  ended, so an expired run cannot come back as a marker. The app turns the marker of a process
+  PROVEN gone (stamped in another boot, or `kill(pid, 0)` answering `ESRCH`) into a `killed` line
+  carrying the stage and footprint it reached, unless a line with the same `pid` and `at` was
+  already taken (the run DID write); a live or unknowable process keeps its marker - no clock - and
+  at most 64 are kept, the oldest beyond that removed with a warning.
+- **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files, the done
+  records and the dead markers under the lock and re-serialises each line through a TYPED
+  allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`, enums for `outcome` and `stage`,
+  and for `kind`/`cause` a code token `^[a-z0-9_-]+(;direct=[a-z0-9-]+)?$` with no digit and no
+  UUID shape), so nothing but codes and numbers can reach a log; `nseOutcomes.ts` writes them as
+  `[NSE_OUTCOME] {...}` plus a per-outcome summary line, at login and at every resume. No text,
+  name or id is ever written.
+- **A chat link is built from an id only.** Every `fr.emse.canari://chat/...` the app or the
+  extension builds goes through `CanariChatLink` / `NotificationService.chatLink`, which refuse a
+  value outside `^[A-Za-z0-9_-]{1,128}$` (logged by its length); a payload's own `deepLink` is
+  opened on a tap only when its scheme is `fr.emse.canari`, and is logged by its shape only.
 
 **The extension's deployment target was 18.2 since it was created (2026-07-21)**, while the app
 installs from 16.0: iOS does not run an extension whose minimum is above its own version, and says

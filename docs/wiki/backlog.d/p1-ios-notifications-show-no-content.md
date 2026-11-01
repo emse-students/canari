@@ -44,6 +44,25 @@ the extension never handed content back (not loaded, killed, crashed); `Nouveau 
    read: decrypted=N`. A `killed` line names the `stage` and `peakMB` the run reached; a
    `fallback` names its `cause`. Record `peakMB` and `stateKB` here, with the account's group count.
 
+**Owed, the outcome log's own three rows (same bench, a `local_url` or TestFlight build, Xcode on
+the tethered Mac):**
+
+7. **A crash is exactly one `killed`.** Send one 1:1 message; while Console shows `didReceive`,
+   Xcode > Debug > Attach to Process > `CanariNotifications`, then Stop (the debugger's SIGKILL).
+   Open Canari: the log must hold EXACTLY ONE `"outcome":"killed"` line for that push, with the
+   stage it reached, and no other line with its `pid` and `at`.
+8. **An expiry is exactly one `expired`.** Attach the same way with a breakpoint on
+   `handleMlsMessage`, hold it 40 s, continue. The banner must still arrive (the best attempt), and
+   the log must hold EXACTLY ONE `"outcome":"expired"` line whose `cause` is the stage, and no
+   `killed` for that run on any later drain (the marker is removed under the run's lock and never
+   rewritten after `end`). If iOS does not call the expiry while the debugger holds the process,
+   say so here and use a `local_url` build against a server held silent for the proto fetch.
+9. **`kill(pid, 0)` answers `ESRCH`, not `EPERM`, from the app's sandbox.** Row 7's drain decides
+   it: a `killed` line proves `ESRCH`. A log line `[NSE_OUTCOME] pid liveness not provable
+   errno=Some(1)` with the marker left in place means the sandbox hides the answer: kills are then
+   counted only after a reboot (the marker's `boot` stamp) or lost to the 64-marker cap, and the
+   proof must move to a lock the run holds for its life (released by the kernel at its death).
+
 Closed when a release carrying this change shows content on the bench and the user's phone, or
 the outcome log names a cause that then gets its own fix.
 

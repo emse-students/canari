@@ -68,8 +68,34 @@ static NSString *CanariDescribeDeepLink(NSString *deepLink) {
   return out;
 }
 
-/// The link a tap on a notification opens: the payload's own `deepLink`, else the conversation its
-/// CLEARTEXT fields name.
+/// The id a chat link may carry: `^[A-Za-z0-9_-]{1,128}$` - every group id (a UUID) and every
+/// channel id fits it. Twin of `NotificationService.isLinkId`.
+static BOOL CanariIsLinkId(NSString *_Nullable value) {
+  static NSRegularExpression *re;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    re = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,128}$" options:0 error:nil];
+  });
+  return value != nil &&
+         [re numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)] == 1;
+}
+
+/// THE ONE PLACE A CHAT LINK IS BUILT FROM AN ID (`fr.emse.canari://chat/<prefix><id>`), and only
+/// when the id is an id: a value carrying `/`, `?`, `#` or `..` would otherwise open another route
+/// than the conversation. Nil, logged with its length only, on a mismatch. Twin of the extension's
+/// `NotificationService.chatLink`.
+static NSString *_Nullable CanariChatLink(NSString *_Nullable value, NSString *prefix) {
+  if (!CanariIsLinkId(value)) {
+    NSLog(@"[CanariPush] chat link refused: the id is not an id (length=%lu)",
+          (unsigned long)value.length);
+    return nil;
+  }
+  return [NSString stringWithFormat:@"fr.emse.canari://chat/%@%@", prefix, value];
+}
+
+/// The link a tap on a notification opens: the payload's own `deepLink` when it is one of this
+/// app's (`fr.emse.canari:` - a payload naming another scheme would have the app open whatever it
+/// names), else the conversation its CLEARTEXT fields name.
 ///
 /// THE TAP TARGET MUST NOT SIT BEHIND THE DECRYPT. A message or salon push carries no `deepLink`
 /// from the server; the Notification Service Extension writes `chat/<groupId>` (or
@@ -80,7 +106,12 @@ static NSString *CanariDescribeDeepLink(NSString *deepLink) {
 static NSString *_Nullable CanariTapDeepLink(NSDictionary *userInfo) {
   id link = userInfo[@"deepLink"];
   if ([link isKindOfClass:[NSString class]] && [(NSString *)link length] > 0) {
-    return link;
+    NSURLComponents *c = [NSURLComponents componentsWithString:link];
+    if ([c.scheme isEqualToString:@"fr.emse.canari"]) {
+      return link;
+    }
+    NSLog(@"[CanariPush] notification tap: the payload's deepLink is not this app's (%@) - ignored",
+          CanariDescribeDeepLink(link));
   }
   NSString *type = [userInfo[@"type"] isKindOfClass:[NSString class]] ? userInfo[@"type"] : @"message";
   if ([type isEqualToString:@"channel"]) {
@@ -88,14 +119,14 @@ static NSString *_Nullable CanariTapDeepLink(NSDictionary *userInfo) {
         [userInfo[@"channelId"] isKindOfClass:[NSString class]] ? userInfo[@"channelId"] : @"";
     if (channelId.length > 0) {
       NSLog(@"[CanariPush] notification tap: no deepLink - the salon named in clear is opened");
-      return [NSString stringWithFormat:@"fr.emse.canari://chat/channel_%@", channelId];
+      return CanariChatLink(channelId, @"channel_");
     }
   } else if ([type isEqualToString:@"message"]) {
     NSString *groupId =
         [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
     if (groupId.length > 0) {
       NSLog(@"[CanariPush] notification tap: no deepLink - the conversation named in clear is opened");
-      return [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
+      return CanariChatLink(groupId, @"");
     }
   }
   return nil;
@@ -605,7 +636,7 @@ static NSBundle *CanariLocaleBundle(void) {
  * A notification string from `Localizable.strings`, in the app's own language.
  *
  * The extension has its OWN copy of this table and its own twin of this function: an app extension
- * is a separate bundle, so it cannot read the app's. See `canari_NSE/*.lproj`.
+ * is a separate bundle, so it cannot read the app's. See the `<lang>.lproj` folders of `canari_NSE`.
  *
  * COMPOSED ON THE DEVICE AND NOT BY THE SERVER, for a reason no amount of server-side translation
  * would fix: the server does not know the recipient's language, so every sentence it writes is
@@ -2699,9 +2730,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   BOOL isGroup = groupName.length > 0 && ![groupName isEqualToString:senderName];
   NSString *title = isGroup ? groupName : (senderName.length > 0 ? senderName : @"Canari");
   NSString *deepLink =
-      groupId.length > 0
-          ? [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId]
-          : @"fr.emse.canari://chat";
+      (groupId.length > 0 ? CanariChatLink(groupId, @"") : nil) ?: @"fr.emse.canari://chat";
   int notifId = CanariStableNotifId(groupId);
   // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows only
   // the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
@@ -3058,8 +3087,8 @@ static void CanariHandOverCallsToPage(NSString *why) {
   // lock screen the user lands in the app via the CallKit UI's app button instead.
   if (groupId.length > 0) {
     // NAVIGATION ONLY: the answer is the private file above, never a parameter of a link.
-    NSString *link = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
-    NSURL *url = [NSURL URLWithString:link];
+    NSString *link = CanariChatLink(groupId, @"");
+    NSURL *url = link != nil ? [NSURL URLWithString:link] : nil;
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
         [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
@@ -3822,7 +3851,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       attachmentPath = CanariInitialsImagePath(actorName);
     }
 
-    NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
+    NSString *deepLink = CanariChatLink(groupId, @"") ?: @"fr.emse.canari://chat";
     NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
     CanariShowLocalNotification(actorName, CanariReactionBody(emoji), deepLink, groupId,
                                 CanariStableNotifId(groupId), attachmentPath, nil, NO, nil, 0,
@@ -4458,7 +4487,8 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
                                  }];
       });
     } else {
-      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@", deepLink);
+      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@",
+            CanariDescribeDeepLink(deepLink));
     }
   }
   completionHandler();

@@ -52,4 +52,48 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(written.length).toBeGreaterThan(0);
     for (const key of written) expect(allowedKeys, key).toContain(key);
   });
+  it('writes only outcomes and stages the reader allows', () => {
+    const list = (name: string) =>
+      new Set(
+        [
+          ...(
+            rust.match(new RegExp(`const ${name}: &\\[&str\\] = &\\[([^\\]]+)\\]`))?.[1] ?? ''
+          ).matchAll(/"([a-z-]+)"/g),
+        ].map((m) => m[1])
+      );
+    const outcomes = list('OUTCOMES');
+    const stages = list('STAGES');
+    const written = [
+      ...swift.matchAll(/trace\??\.outcome = (?:[^\n]*?\? )?"([a-z-]+)"(?: : "([a-z-]+)")?/g),
+    ].flatMap((m) => [m[1], m[2]].filter(Boolean));
+    const ended = [...swift.matchAll(/\.end\(outcome: "([a-z-]+)"/g)].map((m) => m[1]);
+    const marked = [...swift.matchAll(/\.mark\("([a-z-]+)"\)/g)].map((m) => m[1]);
+    expect(written.length + ended.length).toBeGreaterThan(3);
+    expect(marked.length).toBeGreaterThan(3);
+    for (const o of [...written, ...ended]) expect(outcomes, o).toContain(o);
+    for (const st of [...marked, 'start']) expect(stages, st).toContain(st);
+  });
+
+  it('never brings a marker back after the run ended, and never waits on the hand-back path', () => {
+    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
+    // `end` flips `written` and removes the marker under the Trace's lock; `mark` and the marker
+    // writer refuse once it is set - so an end followed by a mark leaves no marker.
+    const end = block.match(/func end\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
+    expect(end).toMatch(/locked \{\s*guard !written else \{ return \}\s*written = true/);
+    expect(end).toContain('removeItem(at: marker)');
+    const mark = block.match(/func mark\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
+    expect(mark).toMatch(/locked \{\s*guard !written else \{ return \}/);
+    expect(block).toMatch(/func writeMarkerLocked\(\) \{\s*guard !written,/);
+    // The cause is written for a fallback and an expiry only.
+    expect(end).toMatch(/case "expired": why = stageValue/);
+    expect(end).toMatch(/default: why = nil/);
+    // The extension's flock is non-blocking; a busy lock leaves a done record.
+    expect(block).toContain('flock(lockFd, LOCK_EX | LOCK_NB)');
+    expect(block).not.toMatch(/flock\(lockFd, LOCK_EX\)/);
+    expect(swift).toContain('"nse_done."');
+    expect(rust).toContain('"nse_done."');
+    // A marker is stamped with its boot, which the reader compares.
+    expect(block).toContain('fields["boot"] = NseOutcomeLog.bootTime()');
+    expect(rust).toContain('number("boot")');
+  });
 });

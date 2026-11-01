@@ -176,7 +176,7 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
     } else {
       content.threadIdentifier = groupId
-      content.userInfo["deepLink"] = "fr.emse.canari://chat/\(groupId)"
+      if let link = Self.chatLink(groupId) { content.userInfo["deepLink"] = link }
     }
     if !callId.isEmpty {
       content.userInfo["canariCallId"] = callId
@@ -446,7 +446,8 @@ class NotificationService: UNNotificationServiceExtension {
     // we got there, otherwise the server fallback) rather than losing the notification.
     NSLog("[CanariNSE] time expired - delivering best attempt")
     // RECORDED BEFORE THE HANDOFF: iOS may end the process the moment the content is handed back.
-    trace?.end(outcome: "expired", cause: trace?.stage)
+    // The cause of an expiry is the stage the run reached, read by `end` under its own lock.
+    trace?.end(outcome: "expired")
     deliveryLock.lock()
     let handler = contentHandler
     contentHandler = nil
@@ -468,8 +469,8 @@ class NotificationService: UNNotificationServiceExtension {
     deliveryLock.unlock()
     guard let handler = handler, let content = bestAttemptContent else { return }
     if let trace = trace {
-      trace.end(
-        outcome: trace.outcome ?? "fallback", cause: trace.outcome == nil ? "no-outcome-set" : nil)
+      let outcome = trace.outcome
+      trace.end(outcome: outcome ?? "fallback", cause: outcome == nil ? "no-outcome-set" : nil)
     }
     Self.holdSoundForCall(content)
     Self.logFiling(content, via: "finish")
@@ -479,7 +480,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// Records why this run falls back - the FIRST cause found is the one kept, since every later
   /// branch is a consequence of it.
   private func noteCause(_ cause: String) {
-    if trace?.cause == nil { trace?.cause = cause }
+    trace?.noteCause(cause)
   }
 
   /// A CALL HOLDS THE PHONE'S SOUND (owner, 2026-10-31; calls.md "The app's other sounds during a
@@ -519,6 +520,22 @@ class NotificationService: UNNotificationServiceExtension {
     #endif
   }
 
+  /// The id a chat link may carry: `^[A-Za-z0-9_-]{1,128}$`. Twin of `CanariIsLinkId`.
+  static func isLinkId(_ value: String) -> Bool {
+    value.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil
+  }
+
+  /// THE ONE PLACE THE EXTENSION BUILDS A CHAT LINK FROM AN ID, and only from an id: a value
+  /// carrying `/`, `?` or `#` would open another route than the conversation. Nil, logged with its
+  /// length only, on a mismatch. Twin of `CanariChatLink` (canari_push.mm).
+  static func chatLink(_ id: String, prefix: String = "") -> String? {
+    guard isLinkId(id) else {
+      NSLog("[CanariNSE] chat link refused: the id is not an id (length=\(id.count))")
+      return nil
+    }
+    return "fr.emse.canari://chat/\(prefix)\(id)"
+  }
+
   // MARK: - Outcome log ------------------------------------------------------
 
   /// THE OUTCOME OF EVERY RUN, WHERE THE APP CAN READ IT (P1 of 2026-11-01: iPhone notifications
@@ -538,6 +555,9 @@ class NotificationService: UNNotificationServiceExtension {
     static let rotatedFile = "nse_outcomes.1.ndjson"
     static let lockFile = "nse_outcomes.lock"
     static let inflightPrefix = "nse_inflight."
+    /// A run whose line could not be appended WITHOUT WAITING leaves it here instead
+    /// (`nse_done.<pid>.<n>.json`); the reader consumes it under its lock.
+    static let donePrefix = "nse_done."
     /// The writer rotates past this many bytes, so the pair of files stays bounded (~64 KiB).
     static let rotateBytes = 32 * 1024
 
@@ -557,76 +577,140 @@ class NotificationService: UNNotificationServiceExtension {
       return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
-    /// One run's record: what it is, how far it got, and what it decided.
+    /// This boot's `kern.boottime`, in seconds: a marker stamped with another boot is a run that
+    /// died with that boot, whatever process holds its pid now. -1 when the kernel does not answer.
+    static func bootTime() -> Int {
+      var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
+      var tv = timeval()
+      var size = MemoryLayout<timeval>.size
+      guard sysctl(&mib, 2, &tv, &size, nil, 0) == 0 else { return -1 }
+      return Int(tv.tv_sec)
+    }
+
+    /// One run's record: what it is, how far it got, and what it decided. EVERY mutable property is
+    /// read and written under `lock`, because the expiry reads it from another thread while the
+    /// decrypt is still writing it; the marker is written and removed under the same lock.
     final class Trace {
       let kind: String
       let startedAtMs: Int64
       private let started = Date()
       private let markerName: String
+      private let doneName: String
       private let lock = NSLock()
-      private(set) var stage = "start"
-      private(set) var peakMB: Int
-      /// Why a run fell back - a code, set by the branch that decided it.
-      var cause: String?
-      /// What the run produced, set by its handler; `end` writes it.
-      var outcome: String?
-      /// Size of the MLS state the run loaded, in KiB.
-      var stateKB: Int?
+      private var stageValue = "start"
+      private var peakValue: Int
+      private var causeValue: String?
+      private var outcomeValue: String?
+      private var stateKBValue: Int?
+      /// Set once by `end`: no marker is written after it, so an expired run never comes back as
+      /// an in-flight marker the app would later report `killed`.
       private var written = false
+
+      /// What the run produced, set by its handler; `end` writes it.
+      var outcome: String? {
+        get { locked { outcomeValue } }
+        set { locked { outcomeValue = newValue } }
+      }
+      /// Size of the MLS state the run loaded, in KiB.
+      var stateKB: Int? {
+        get { locked { stateKBValue } }
+        set { locked { stateKBValue = newValue } }
+      }
 
       init(kind: String) {
         self.kind = kind
         startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        peakMB = NseOutcomeLog.footprintMB()
+        peakValue = NseOutcomeLog.footprintMB()
         NseOutcomeLog.sequenceLock.lock()
         NseOutcomeLog.sequence += 1
         let n = NseOutcomeLog.sequence
         NseOutcomeLog.sequenceLock.unlock()
         markerName = "\(NseOutcomeLog.inflightPrefix)\(getpid()).\(n).json"
-        writeMarker()
+        doneName = "\(NseOutcomeLog.donePrefix)\(getpid()).\(n).json"
+        locked { writeMarkerLocked() }
+      }
+
+      private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+      }
+
+      /// Records why the run falls back - the FIRST cause found is kept, every later branch being a
+      /// consequence of it.
+      func noteCause(_ cause: String) {
+        locked {
+          if causeValue == nil { causeValue = cause }
+        }
       }
 
       /// Enters a stage: samples the footprint and rewrites the in-flight marker, so a kill in this
-      /// stage is reported with it.
+      /// stage is reported with it. A no-op once the run has ended.
       func mark(_ stage: String) {
-        lock.lock()
-        self.stage = stage
-        peakMB = max(peakMB, NseOutcomeLog.footprintMB())
-        lock.unlock()
-        writeMarker()
+        locked {
+          guard !written else { return }
+          stageValue = stage
+          peakValue = max(peakValue, NseOutcomeLog.footprintMB())
+          writeMarkerLocked()
+        }
       }
 
-      /// Writes this run's one line and removes its marker. Only the first call writes.
-      func end(outcome final: String, cause finalCause: String? = nil) {
-        lock.lock()
-        if written {
-          lock.unlock()
-          return
+      /// Writes this run's one line and removes its marker, under the lock - only the first call
+      /// writes. The cause is written for `fallback` (the first noted) and `expired` (the stage it
+      /// reached), never for another outcome. The append never WAITS for the app's reader: when its
+      /// lock is held, the record goes into the run's own marker, renamed `nse_done.*`.
+      func end(outcome result: String, cause finalCause: String? = nil) {
+        locked {
+          guard !written else { return }
+          written = true
+          peakValue = max(peakValue, NseOutcomeLog.footprintMB())
+          let why: String?
+          switch result {
+          case "expired": why = stageValue
+          case "fallback": why = finalCause ?? causeValue ?? "unknown"
+          default: why = nil
+          }
+          let record = recordLocked(outcome: result, cause: why)
+          NSLog(
+            "[CanariNSE] outcome=\(result) cause=\(why ?? "-") stage=\(stageValue) peakMB=\(peakValue)")
+          guard let dir = NotificationService.appGroupDir() else {
+            NSLog("[CanariNSE] outcome: App Group unavailable - not recorded")
+            return
+          }
+          let marker = dir.appendingPathComponent(markerName)
+          if NseOutcomeLog.append(record, dir: dir) {
+            try? FileManager.default.removeItem(at: marker)
+            return
+          }
+          guard let data = try? JSONSerialization.data(withJSONObject: record),
+            (try? data.write(to: marker, options: .atomic)) != nil
+          else {
+            NSLog("[CanariNSE] outcome: ERROR not appended and not left as a done record")
+            return
+          }
+          if rename(marker.path, dir.appendingPathComponent(doneName).path) != 0 {
+            // The marker now carries its outcome; the reader takes an outcome-bearing marker as done.
+            NSLog("[CanariNSE] outcome: done record left under the marker name errno=\(errno)")
+          } else {
+            NSLog("[CanariNSE] outcome: log busy - left as a done record for the app to take")
+          }
         }
-        written = true
-        peakMB = max(peakMB, NseOutcomeLog.footprintMB())
-        let why = finalCause ?? cause
-        let record = NseOutcomeLog.record(self, outcome: final, cause: why)
-        let reached = stage
-        let peak = peakMB
-        lock.unlock()
-        NSLog("[CanariNSE] outcome=\(final) cause=\(why ?? "-") stage=\(reached) peakMB=\(peak)")
-        guard let dir = NotificationService.appGroupDir() else {
-          NSLog("[CanariNSE] outcome: App Group unavailable - not recorded")
-          return
-        }
-        NseOutcomeLog.append(record, dir: dir)
-        try? FileManager.default.removeItem(at: dir.appendingPathComponent(markerName))
       }
 
-      var elapsedMs: Int { Int(Date().timeIntervalSince(started) * 1000) }
+      private var elapsedMs: Int { Int(Date().timeIntervalSince(started) * 1000) }
 
-      private func writeMarker() {
-        guard let dir = NotificationService.appGroupDir() else { return }
-        lock.lock()
-        let record = NseOutcomeLog.record(self, outcome: nil, cause: cause)
-        lock.unlock()
-        guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
+      private func recordLocked(outcome: String?, cause: String?) -> [String: Any] {
+        NseOutcomeLog.record(
+          kind: kind, at: startedAtMs, outcome: outcome, cause: cause, stage: stageValue,
+          ms: elapsedMs, peakMB: peakValue, stateKB: stateKBValue)
+      }
+
+      /// Called with `lock` held.
+      private func writeMarkerLocked() {
+        guard !written, let dir = NotificationService.appGroupDir() else { return }
+        var fields = recordLocked(outcome: nil, cause: nil)
+        fields["boot"] = NseOutcomeLog.bootTime()
+        guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
         do {
           try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
         } catch {
@@ -635,39 +719,45 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
 
-    /// The record of a run, the ONLY place its keys are named (the reader's allowlist must hold
-    /// every one - `nseOutcomes.test.ts`). `outcome` is nil for an in-flight marker.
-    static func record(_ trace: Trace, outcome: String?, cause: String?) -> [String: Any] {
+    /// The record of a run, the ONLY place its keys are named (the reader's typed allowlist must
+    /// hold every one - `nseOutcomes.test.ts`). `outcome` is nil for an in-flight marker.
+    static func record(
+      kind: String, at: Int64, outcome: String?, cause: String?, stage: String, ms: Int,
+      peakMB: Int, stateKB: Int?
+    ) -> [String: Any] {
       var record: [String: Any] = [:]
       record["v"] = 1
-      record["at"] = trace.startedAtMs
-      record["kind"] = trace.kind
+      record["at"] = at
+      record["kind"] = kind
       if let outcome = outcome { record["outcome"] = outcome }
       if let cause = cause { record["cause"] = cause }
-      record["stage"] = trace.stage
-      record["ms"] = trace.elapsedMs
-      record["peakMB"] = trace.peakMB
-      if let kb = trace.stateKB { record["stateKB"] = kb }
+      record["stage"] = stage
+      record["ms"] = ms
+      record["peakMB"] = peakMB
+      if let kb = stateKB { record["stateKB"] = kb }
       record["pid"] = Int(getpid())
       return record
     }
 
     /// Appends one line under the cross-process lock the app's reader takes too, rotating first
-    /// when the file is past `rotateBytes`.
-    static func append(_ record: [String: Any], dir: URL) {
+    /// when the file is past `rotateBytes`. NON-BLOCKING: this runs on the path that hands the
+    /// content back, so a lock the app holds answers false at once and the caller keeps the record.
+    static func append(_ record: [String: Any], dir: URL) -> Bool {
       guard let data = try? JSONSerialization.data(withJSONObject: record) else {
         NSLog("[CanariNSE] outcome: line not encoded")
-        return
+        return false
       }
       let lockFd = open(dir.appendingPathComponent(lockFile).path, O_WRONLY | O_CREAT, 0o644)
       guard lockFd >= 0 else {
         NSLog("[CanariNSE] outcome: lock file not opened errno=\(errno)")
-        return
+        return false
       }
       defer { close(lockFd) }
-      guard flock(lockFd, LOCK_EX) == 0 else {
-        NSLog("[CanariNSE] outcome: lock not taken errno=\(errno)")
-        return
+      guard flock(lockFd, LOCK_EX | LOCK_NB) == 0 else {
+        if errno != EWOULDBLOCK {
+          NSLog("[CanariNSE] outcome: lock not taken errno=\(errno)")
+        }
+        return false
       }
       defer { flock(lockFd, LOCK_UN) }
       let path = dir.appendingPathComponent(outcomesFile).path
@@ -683,7 +773,7 @@ class NotificationService: UNNotificationServiceExtension {
       let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
       guard fd >= 0 else {
         NSLog("[CanariNSE] outcome: log not opened errno=\(errno)")
-        return
+        return false
       }
       defer { close(fd) }
       var bytes = [UInt8](data)
@@ -691,7 +781,9 @@ class NotificationService: UNNotificationServiceExtension {
       let wrote = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
       if wrote != bytes.count {
         NSLog("[CanariNSE] outcome: short write \(wrote)/\(bytes.count) errno=\(errno)")
+        return false
       }
+      return true
     }
   }
 
@@ -1241,7 +1333,7 @@ class NotificationService: UNNotificationServiceExtension {
     // reachable version where setting it would do anything. iOS stacks by threadIdentifier and
     // writes the summary line itself. Twin of the same removal in canari_push.mm.
     content.userInfo["deepLink"] =
-      groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"
+      (groupId.isEmpty ? nil : Self.chatLink(groupId)) ?? "fr.emse.canari://chat"
 
     // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one targets
     // my own userId, elevate to time-sensitive so it breaks through Focus (requires the app's
@@ -1443,7 +1535,7 @@ class NotificationService: UNNotificationServiceExtension {
         senderId: senderId, nameBook: nameBook, locale: ctx?.locale)
     }
     content.threadIdentifier = "channel_\(channelId)"
-    content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
+    if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
     // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
     // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
     // without it. iOS has no notification-channel concept, so this is the whole Android twin of
