@@ -54,9 +54,9 @@
 # THE APPROVAL is a committed line `<repo-relative path> <sha256 of the file>` in
 # MIGRATION_APPROVALS_FILE. It is bound to the CONTENT, so a file edited after its approval is held
 # again; and a pull request that touches that file - or this one - is NEVER armed for auto-merge
-# (`arm-auto-merge.yml`, `.github/CODEOWNERS`), so the line reaches `main` only by the owner's own
-# merge. A release has no input to carry an approval (`gh release create` takes none), and an
-# environment flag would be a switch nobody reviews.
+# (`arm-auto-merge.yml`), so the line never reaches `main` by automation (a writer can still merge it
+# by hand, a risk the owner accepted on 2026-11-01). A release has no input to carry an approval
+# (`gh release create` takes none), and an environment flag would be a switch nobody reviews.
 #
 # Callers run from the repository root (paths are repo-relative). Mechanism and history:
 # docs/wiki/cicd.md, "A migration the owner must approve is held".

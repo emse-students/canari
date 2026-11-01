@@ -453,14 +453,14 @@ jq -n '[range(2999) | {filename: "f\(.).txt"}]' >"$work/fix/pulls_5_files_per_pa
 # shellcheck disable=SC2209 # a per-call variable for a shell function
 FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
 if [ "$st" = 0 ] && armed; then pass "B32 2999 files, none the owner's, is armed as before"; else fail "B32 a 2999-file pull request was not armed (exit $st)" "$out"; fi
-# THE TWO LISTS ARE ONE: the workflow's and .github/CODEOWNERS', line for line.
+# THE PROTECTED LIST IS EXACTLY THESE FIVE PATHS, as the workflow ships it - a path dropped from it
+# would silently become armable again.
 wf_list="$(awk -v q="'" '$0 ~ "^owner_files=" q { inside = 1; sub("^owner_files=" q, "") } inside { line = $0; done = sub(q "$", "", line); sub(/^[ \t]+/, "", line); print line; if (done) exit }' "$work/step.raw" | sort)"
-co_list="$(grep -vE '^[[:space:]]*(#|$)' "$here/../../CODEOWNERS" | awk '{ sub(/^\//, "", $1); print $1 }' | sort)"
-co_owners="$(grep -vE '^[[:space:]]*(#|$)' "$here/../../CODEOWNERS" | awk '{ $1 = ""; print }' | sort -u)"
-if [ -n "$wf_list" ] && [ "$wf_list" = "$co_list" ] && [ "$co_owners" = ' @DeMASKe' ]; then
-  pass "B32 the workflow's owner files and .github/CODEOWNERS are the same $(grep -c . <<<"$wf_list") paths, all the owner's"
+want_list="$(printf '%s\n' infrastructure/migration-approvals.txt infrastructure/lib/migration-hold.sh infrastructure/lib/migrations.sh .github/workflows/arm-auto-merge.yml .github/CODEOWNERS | sort)"
+if [ "$wf_list" = "$want_list" ]; then
+  pass "B32 the workflow protects exactly the 5 owner's paths"
 else
-  fail "B32 the workflow's owner files and .github/CODEOWNERS differ" "workflow: $wf_list" "CODEOWNERS: $co_list ($co_owners)"
+  fail "B32 the workflow's protected list is not the 5 owner's paths" "workflow: $wf_list"
 fi
 if grep -qE '^ +types: \[[a-z_, ]*auto_merge_enabled\]' "$wf"; then
   pass "B32 the workflow listens to auto_merge_enabled, so an arming made by hand is judged too"

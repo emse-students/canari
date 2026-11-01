@@ -294,23 +294,26 @@ a file edited after its approval is held again, and the refusal says so. Chosen 
 because `gh release create` carries none, and over an environment flag because a switch nobody reviews
 is no approval.
 
-**Only the owner merges it - three locks, one of them his click.**
+**Never merged by automation - two locks, and what they do not cover.**
 - **`arm-auto-merge.yml` never arms a pull request that touches the OWNER'S FILES**, whoever opened it
   (its first `canari-only` region): the approvals file, and what decides that a line in it means
-  anything - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`), the workflow
-  itself and `.github/CODEOWNERS`. A push that adds one to an armed pull request disarms it; an
-  unreadable file list, or one at GitHub's 3000-file cap (which may be cut short), refuses and
-  disarms.
-- **An arming made by hand is judged too.** The workflow listens to `auto_merge_enabled` (Canari only;
+  anything - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`) and the workflow
+  itself - plus `.github/CODEOWNERS`, so a pull request bringing one back is never armed either
+  (`release-chain.test.sh` refuses the file outright). A push that adds one of them to an armed pull
+  request disarms it; an unreadable file list, or one at GitHub's 3000-file cap (which may be cut
+  short), refuses and disarms.
+- **An arming made by hand is undone too.** The workflow listens to `auto_merge_enabled` (Canari only;
   `tools/ecosystem-shape` reads it as a declared `# canari-only:shared` line), so a writer's own
   `gh pr merge --auto` on such a pull request is disarmed again; elsewhere that event does nothing.
   Its concurrency group is its own, so the event the workflow's own arming raises cannot cancel the
-  run that armed.
-- **`.github/CODEOWNERS` names the owner on the same five paths**, and with the ruleset's "Require
-  review from Code Owners" ticked GitHub refuses the merge without his review, however the pull
-  request was armed - the lock the first two cannot give on a pull request from a fork, which the job
-  skips. That tick is the owner's (backlog, "Owed to the user"). The workflow's list and CODEOWNERS'
-  are asserted equal. `arm-auto-merge-app.test.sh` B32 pins all of it.
+  run that armed. `arm-auto-merge-app.test.sh` B32 pins both.
+- **THE RESIDUAL RISK, ACCEPTED BY THE OWNER ON 2026-11-01: a person with write access can still merge
+  one of those pull requests BY HAND.** The protection is "never armed by automation", not "only the
+  owner". A CODEOWNERS file with the ruleset's "Require review from Code Owners" would close it, and
+  was refused that day: agents open pull requests under the owner's account, GitHub never counts an
+  author's own review, so every such merge would need his admin bypass - reserved for emergencies -
+  and it would bring back the review requests he asked to be rid of on 2026-09-04 (below). A pull
+  request from a fork is skipped by the job and merged by a human anyway.
 
 **Where it is asked, twice.**
 - **Gate 6 of the release preflight** (`held_migrations_since` in `release-preconditions.sh`): every
@@ -1489,10 +1492,7 @@ the release, which is the only place it changes anything.
 pull request in a repository whose written model is that no approval is required (user, 2026-08-31:
 _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
-about a decision nobody makes. **It came back on 2026-11-01 narrowed to the owner's five files** (the
-migration approvals and what judges them, [above](#a-migration-the-owner-must-approve-is-held-2026-11-01)):
-those pull requests never merge themselves and wait for the owner's own decision, so a review request
-there is the decision, not noise. `release-chain.test.sh` refuses any path outside that list.
+about a decision nobody makes.
 
 ### A major bump of a data store is refused, and which images may cross a major is an allowlist (#2742, 2026-10-31)
 
