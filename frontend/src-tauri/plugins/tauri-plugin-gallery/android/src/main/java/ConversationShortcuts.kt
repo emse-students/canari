@@ -82,8 +82,8 @@ object ConversationShortcuts {
     /**
      * Removes the RECORDED conversation shortcuts whose id starts with [prefix] - an allowlist read
      * from the record, never a match against whatever the launcher holds - and drops them from the
-     * record. Returns how many (0 when none is recorded), or null when the removal failed, which
-     * [remove] has already logged and the caller must not take for done.
+     * record. Returns how many (0 when none is recorded), or null when the record is unreadable or
+     * the removal failed - both already logged, and neither may be taken for done.
      *
      * A shortcut the user PINNED to the home screen is disabled too ([disablePinnedShortcuts]): it
      * stays on the launcher, greyed, and tapping it says it is no longer available.
@@ -94,7 +94,7 @@ object ConversationShortcuts {
      */
     @Synchronized
     fun removeRecordedWithPrefix(context: Context, prefix: String): Int? {
-        val ids = record.read(context)
+        val ids = record.readOrNull(context) ?: return null
         val doomed = ids.filter { it.startsWith(prefix) }
         if (doomed.isEmpty()) return 0
         if (!remove(context, doomed)) return null

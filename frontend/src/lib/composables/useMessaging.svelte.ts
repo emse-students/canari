@@ -65,6 +65,7 @@ import {
   getUserDisplayNameSync,
   resolveNotificationSenderName,
 } from '$lib/utils/users/displayName';
+import { flushNameMirror } from '$lib/utils/users/nameMirror';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import {
@@ -747,23 +748,33 @@ export function useMessaging() {
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
     // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
-    void resolveNotificationSenderName(senderId, convo).then((senderName) =>
-      ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-        // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-        // plain notification, it asks the native builder for the SAME one a push would raise. See
-        // `nativeNotification.ts` for the pair of notifications this replaced.
-        conversationId: conversationKey,
-        senderId,
-        senderName,
-        groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-        body: notificationBody,
-        mentionsMe,
-        sentAt,
-        serverAt: serverAt ?? 0,
-        covers,
-        authorProven,
+    void resolveNotificationSenderName(senderId, convo)
+      // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT. Resolving the sender notes the name
+      // for `display_names.json`, whose write follows at the end of the task; the Android builder
+      // reads that FILE to name a salon's speaker, so posting first raced the write and a proven
+      // author could read "Quelqu'un". `flushNameMirror` resolves once the write it finds - or the
+      // one in flight - is done (or kept after a failure, which it says).
+      .then(async (senderName) => {
+        await flushNameMirror();
+        return senderName;
       })
-    );
+      .then((senderName) =>
+        ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
+          // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+          // plain notification, it asks the native builder for the SAME one a push would raise. See
+          // `nativeNotification.ts` for the pair of notifications this replaced.
+          conversationId: conversationKey,
+          senderId,
+          senderName,
+          groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+          body: notificationBody,
+          mentionsMe,
+          sentAt,
+          serverAt: serverAt ?? 0,
+          covers,
+          authorProven,
+        })
+      );
   }
 
   /**

@@ -2741,12 +2741,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     } else if (alreadyPosted) {
                         // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
                         // posted the same message first - so its icon describes nothing shown. The
-                        // face is the one of the line the shade shows last.
-                        val shownFace = style.messages.lastOrNull()?.person?.icon?.toIcon(this@showMessageNotification)
+                        // face is the one of the last line SOMEBODY ELSE wrote: the reader's own
+                        // inline reply (the style's user, or a line with no Person) is never the
+                        // conversation's face.
+                        val shownFace = style.messages
+                            .lastOrNull { it.person != null && it.person?.name != selfPerson.name }
+                            ?.person?.icon?.toIcon(this@showMessageNotification)
                         if (shownFace != null) {
                             setLargeIcon(shownFace)
                         } else {
-                            // Our own reply with no avatar of ours cached: an ordinary state, no face.
+                            // No line by somebody else carries a face (an unnamed speaker's is drawn as
+                            // initials into the icon, so this is a line with no icon): no large icon.
                             Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
                         }
                     } else {
