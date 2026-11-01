@@ -2193,24 +2193,16 @@ pub(crate) const DEVICE_NOTICES_DIR: &str = "device_notices";
 /// commit raises no local notification for them - and returns the keys nobody had announced yet.
 ///
 /// Phones only: the ledger exists because a background engine may see the commit first, and only
-/// a phone has one. The app calls it from `nativeDeviceNotices.ts` on Android and iOS alone.
+/// a phone has one. The app calls it from `deviceNoticeWiring.ts` on Android and iOS alone.
 #[tauri::command]
 pub(crate) fn claim_device_notices(
     app: tauri::AppHandle,
     keys: Vec<String>,
 ) -> Result<Vec<String>, String> {
     log::debug!("[DEVICE_NOTICE] app claims {} key(s)", keys.len());
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = &app;
-        let dir = crate::app_group::app_group_dir()?;
-        Ok(crate::mobile::device_notice::claim_device_notices(
-            &dir, &keys,
-        ))
-    }
-    #[cfg(target_os = "android")]
-    {
-        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let dir = device_notices_data_dir(&app)?;
         Ok(crate::mobile::device_notice::claim_device_notices(
             &dir, &keys,
         ))
@@ -2218,7 +2210,51 @@ pub(crate) fn claim_device_notices(
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (app, keys);
-        Err("the device-notice ledger exists on a phone only".to_string())
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The app's pre-claim of `user_id`'s older devices at registration (`preclaimOldOwnDevices`):
+/// records `keys`, then the account's pre-claim marker, without which the background engines
+/// announce nothing for it (`mobile::device_notice::preclaim_device_notices`). Answers whether the
+/// marker is in place. Phones only, as [`claim_device_notices`].
+#[tauri::command]
+pub(crate) fn preclaim_device_notices(
+    app: tauri::AppHandle,
+    user_id: String,
+    keys: Vec<String>,
+) -> Result<bool, String> {
+    log::debug!("[DEVICE_NOTICE] app pre-claims {} key(s)", keys.len());
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let dir = device_notices_data_dir(&app)?;
+        Ok(crate::mobile::device_notice::preclaim_device_notices(
+            &dir, &user_id, &keys,
+        ))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, user_id, keys);
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The refusal off a phone, where no background engine shares a device-notice ledger.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const NO_DEVICE_NOTICE_LEDGER: &str = "the device-notice ledger exists on a phone only";
+
+/// The directory that holds the device-notice ledger: the App Group container on iOS, the app data
+/// directory on Android.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn device_notices_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        crate::app_group::app_group_dir()
+    }
+    #[cfg(target_os = "android")]
+    {
+        app.path().app_data_dir().map_err(|e| e.to_string())
     }
 }
 

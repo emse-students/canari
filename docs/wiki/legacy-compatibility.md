@@ -583,12 +583,16 @@ refusal (`SealError`), and the three migration functions go. A client floor, not
 **Shim (2026-11-01):** the device-notice ledger names a marker by the SHA-256 of its key since 1.6.1;
 before, by the whole key in hex, which the filesystem refused for any key over 127 bytes
 ([mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
-So an old marker exists only for a SHORT key, and the claim reads it as "already announced" so the
-upgrade posts nothing twice. It is read, never written.
+So an old marker exists only for a SHORT key: **the shim applies only to accounts with a short user
+id** (a key of at most 127 bytes, so a user id of roughly 40 characters or fewer); every other
+account never had a marker written. The claim reads such a marker as "already announced", so the
+upgrade posts nothing twice, and on that hit MIGRATES it: the digest marker is created
+(`create_new`) beside it. It is never written under the old name.
 **Removal condition:** `minClientVersion` at or above 1.6.1, on both estates, with both stores
-serving it, and every installed build has registered once since: the registration pre-claims every
-old key of the account under its digest name, so a short key's legacy marker answers nothing the new
-one does not. Data at rest, so the floor alone does not retire it - the pre-claim does.
+serving it, AND every installed build has run since and migrated its legacy markers. The
+registration pre-claim does NOT settle it: it skips devices idle for 30 days (absent from the device
+list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
+migration on a hit retires one. Data at rest, so the floor alone does not retire this.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 

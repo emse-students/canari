@@ -7,4 +7,7 @@ account"; 1.6.1 names them by the key's SHA-256
 The fix is proven by `cargo test` only. **Owed:** on the Mi 9T running the build that carries it,
 with the app closed, add a device to the bench account, and read the local notification posted
 ONCE (and not again on the next push or app open), with no `[DEVICE_NOTICE] marker ... not written`
-line in the log. Closes with that reading.
+line in the log. **And, right after the update and before the app's first open**, push a heal
+commit naming an OLD device of the account: no "new device" notification may appear, and the log
+must show the engine's `not announced by the background engine: the app has not pre-claimed` line
+until the first open writes the pre-claim marker. Closes with that reading.

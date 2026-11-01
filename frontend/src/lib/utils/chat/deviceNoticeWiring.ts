@@ -206,7 +206,10 @@ export async function ownEnrolledAtOf(
  * PHONES: claims, in the ledger the background engines share, every key of this account's other
  * devices that is NOT new by the app's rule (`isNewToItsOwner`) - so a background engine, which has
  * no key ages, never posts "a new device was added" for an old device a heal brings back. Done at
- * registration; a device registered since is left to the background engine and to the app.
+ * registration; a device registered since is left to the background engine and to the app. Until
+ * it has succeeded once on this install, the engines announce nothing for the account (they run a
+ * new build before the app's first launch after an update), so an unanswered key age leaves it
+ * for the next registration rather than guessing.
  */
 async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId: string) {
   try {
@@ -229,8 +232,19 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
         if (!isNew) old.push(`${identity}|${fingerprint}`);
       }
     }
-    if (old.length > 0) await claimNativeDeviceNotices(old);
-    console.log(`[DEVICE_NOTICE] ${old.length} key(s) of this account's older devices pre-claimed`);
+    // Even with nothing to record: the call also writes the account's pre-claim marker, without
+    // which the background engines announce nothing for it (`preclaim_device_notices`).
+    const { invoke } = await import('@tauri-apps/api/core');
+    const marked = await invoke<boolean>('preclaim_device_notices', { userId, keys: old });
+    if (marked) {
+      console.log(
+        `[DEVICE_NOTICE] ${old.length} key(s) of this account's older devices pre-claimed`
+      );
+    } else {
+      console.error(
+        `[DEVICE_NOTICE] ${old.length} older key(s) not all recorded - the background engines stay quiet for this account until the next registration`
+      );
+    }
   } catch (e) {
     console.error('[DEVICE_NOTICE] pre-claim of the older own devices failed:', e);
   }
