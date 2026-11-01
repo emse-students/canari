@@ -37,6 +37,7 @@
 "notif.social.follow_request.body" = "Tap to answer";
 "notif.social.join_ask.title" = "%@ wants to join";
 "notif.social.join_ask.body" = "this conversation";
+"notif.social.join_ask_anon.title" = "Someone wants to join";
 "notif.social.follow_accepted.title" = "%@ accepted your request";
 "notif.social.follow_accepted.body" = "Your request was accepted";
 "notif.social.live_cut.title" = "Your live was stopped";

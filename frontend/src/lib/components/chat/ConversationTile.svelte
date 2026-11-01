@@ -231,7 +231,7 @@
         -->
         {#if pendingAsks > 0}
           <span
-            class="text-2xs inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1.5 font-bold text-white shadow-sm"
+            class="text-2xs bg-cn-yellow text-cn-ink inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
             data-join-asks={pendingAsks}
             role="img"
             aria-label={m.join_request_pending_badge_label({ count: pendingAsks })}

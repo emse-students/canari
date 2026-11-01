@@ -1215,10 +1215,13 @@ of them touching the rule:
   "session".
 - *The loser of a tap race is not told it failed.* A refusal of the member's own Add carries a typed
   `JoinRefusalKind` (`joinAnswers.ts`, from `BulkAdditionRefusal`: `add-lock-busy` is `busy`,
-  `removed-meanwhile` and `commit-race-lost` are `raced`, never read from the `reason` text).
-  `answerJoinRequestOutcome` returns it and `answerJoinRequestOrToast` says "another member is
-  answering" or "another member already answered"; the ask stays until the server's settlement frame
-  clears it. Any other refusal is still "try again".
+  `removed-meanwhile` is `raced`, never read from the `reason` text). `busy` is only an ANSWERED
+  refusal: `acquireAddLockAnswer` tells the server's "held" from a transport error or a non-2xx, which
+  is `add-lock-unanswered` and a plain failure. `commit-race-lost` and the other aborts prove nobody
+  answered this ask, so they are failures too. `answerJoinRequestOutcome` returns the kind and
+  `answerJoinRequestOrToast` says "someone is adding people, try again in a moment" or "another member
+  already answered"; the ask stays until the server's settlement frame clears it. Any other refusal is
+  still "try again".
 
 **One push per ask, to the members already admitted (owner, 2026-11-01).** A member who has the app
 closed learned of an ask only at the next open. The invitation-link acceptance now sends ONE ordinary,
@@ -1226,12 +1229,22 @@ user-visible push per `askId` ("X veut rejoindre", the conversation's name as th
 the device from `contentKey = chat_join_ask` (`composeServerNotification` on Android, the NSE on iOS;
 category `messages`, so the account's messages switch and a conversation muted to `none` silence it).
 It is NOT the background-add wake, which an awaiting seat still suppresses (`notifyWelcomeRequest`):
-that wake lets a phone answer by itself and no push answers an ask. Deduplicated on durable state:
-`pushJoinAsk` claims the seat row (`dm_group_members."joinAskNotified"`, migration 043) with a
-conditional UPDATE and only the caller that flipped it sends, so a re-follow of the link or a second
-replica sends nothing, while a fresh ask after a Decline is a new seat row and sends again. Never to
-the joiner nor to a seat that itself awaits a member. At-most-once: a send failing after the claim is
-logged per recipient, not retried. **Migration 043 is owed the owner's yes before production.**
+that wake lets a phone answer by itself and no push answers an ask.
+
+**One push per member Decline, never per seat.** The claim is a row keyed `(groupId, userId)`
+(`dm_join_ask_pushes`, migration 043), NOT the seat: a self-withdrawal (`members.controller.ts`)
+deletes the seat and a re-follow writes a new one, so a claim on the seat let the joiner push every
+member again and again with no member acting. `pushJoinAsk` inserts the row with `gen` = the person's
+`dm_seat_evictions."declinedAtSeatGeneration"` (0 when none) `ON CONFLICT DO UPDATE ... WHERE old gen
+< new gen RETURNING 1`: only a MEMBER's Decline moves that counter, so accept / withdraw / accept sends
+once, a Decline then a new ask sends again, and an expiry re-arms nothing. Two replicas race on the one
+statement and only one gets a row back. Never to the joiner, to a seat that itself awaits a member,
+or to a member for whom a block stands between them and the asker (either direction, `isBlockedBetween`,
+logged). With no resolvable name the actor is empty and every device says "Someone wants to join" -
+the lock screen never shows an id (the failed lookup is a WARN). At-most-once: a send failing after
+the claim is logged per recipient (summary `sent / failed / muted / blocked`), not retried. **The push
+is not withdrawn when the ask ends**: an ordinary push cannot be recalled, and the card in the
+conversation says the ask is over. Migration 043 is purely additive (a new table).
 
 **A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
 2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -

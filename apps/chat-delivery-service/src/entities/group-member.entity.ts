@@ -129,17 +129,6 @@ export class GroupMember {
   awaitingAdmission: boolean;
 
   /**
-   * Whether the ONE push that tells the admitted members "X wants to join" was already claimed for
-   * THIS ask. The ask's identity is this row's id (a withdrawn seat is deleted and a new link writes
-   * a new row, so a fresh ask after a Decline starts at `false`). Claimed by a conditional UPDATE
-   * (`MessagingService.notifyJoinAsk`), so two replicas, a retried request or a re-follow of the
-   * link send it once: durable state, never a timer. Meaningless once the seat is admitted.
-   * Migration 043.
-   */
-  @Column({ type: 'boolean', default: false })
-  joinAskNotified: boolean;
-
-  /**
    * When this membership was CREATED, and never anything else.
    *
    * It is not refreshed. Both writers go through `ensureGroupMember`, which says nothing on

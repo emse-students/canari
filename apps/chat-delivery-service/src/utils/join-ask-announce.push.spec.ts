@@ -1,6 +1,5 @@
 import type { EntityManager } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
-import { Group } from '../entities/group.entity';
 import {
   joinAskAnnouncementsSettled,
   pushJoinAsk,
@@ -8,9 +7,9 @@ import {
 } from './join-ask-announce';
 
 /**
- * ONE ORDINARY PUSH PER JOIN ASK, to the admitted members, never to the joiner. The claim is the
- * seat row's `joinAskNotified`, flipped by a conditional UPDATE - so these tests run the real
- * decision over an in-memory table with that exact semantics, and wait on the announcement's own
+ * ONE ORDINARY PUSH PER MEMBER DECLINE, to the admitted members, never to the joiner. The claim is
+ * a row keyed (group, person) compared against the person's Decline counter, so these tests run the
+ * real decision over an in-memory model of exactly that table, and wait on the announcement's own
  * settlement hook instead of a clock.
  */
 const GROUP = '7e931024-0000-4000-8000-000000000001';
@@ -20,69 +19,104 @@ interface Seat {
   groupId: string;
   userId: string;
   awaitingAdmission: boolean;
-  joinAskNotified: boolean;
   notifLevel: string;
 }
 
 function seat(id: string, userId: string, over: Partial<Seat> = {}): Seat {
-  return {
-    id,
-    groupId: GROUP,
-    userId,
-    awaitingAdmission: false,
-    joinAskNotified: false,
-    notifLevel: 'all',
-    ...over,
-  };
+  return { id, groupId: GROUP, userId, awaitingAdmission: false, notifLevel: 'all', ...over };
 }
 
-/** Just enough of an EntityManager: the seat table, one group, and the users' names. */
-function fakeManager(seats: Seat[], names: Record<string, string> = {}) {
+interface World {
+  seats: Seat[];
+  names: Record<string, string>;
+  /** `declinedAtSeatGeneration` per person (absent: none), moved only by a member's Decline. */
+  declined: Record<string, number>;
+  /** The claim table: gen per person. */
+  pushes: Map<string, number>;
+  /** Pairs between whom a block stands, as `a|b` in either order. */
+  blocks: Set<string>;
+}
+
+const world = (seats: Seat[], over: Partial<World> = {}): World => ({
+  seats,
+  names: {},
+  declined: {},
+  pushes: new Map(),
+  blocks: new Set(),
+  ...over,
+});
+
+/** Just enough of an EntityManager over a {@link World}. */
+function fakeManager(w: World) {
   const matches = (row: Seat, where: Partial<Seat>) =>
     Object.entries(where).every(([k, v]) => row[k as keyof Seat] === v);
   const memberRepo = {
-    update: async (where: Partial<Seat>, set: Partial<Seat>) => {
-      const hit = seats.filter((s) => matches(s, where));
-      hit.forEach((s) => Object.assign(s, set));
-      return { affected: hit.length };
-    },
-    find: async ({ where }: { where: Partial<Seat> }) => seats.filter((s) => matches(s, where)),
+    findOne: async ({ where }: { where: Partial<Seat> }) =>
+      w.seats.find((s) => matches(s, where)) ?? null,
+    find: async ({ where }: { where: Partial<Seat> }) => w.seats.filter((s) => matches(s, where)),
   };
-  const groupRepo = {
-    findOne: async () => ({ name: 'Club photo', isGroup: true }),
-  };
+  const groupRepo = { findOne: async () => ({ name: 'Club photo', isGroup: true }) };
   return {
     getRepository: (entity: unknown) => (entity === GroupMember ? memberRepo : groupRepo),
     findOne: async (entity: unknown, opts: { where: Partial<Seat> }) =>
-      entity === GroupMember ? (seats.find((s) => matches(s, opts.where)) ?? null) : null,
-    query: async (_sql: string, [id]: [string]) =>
-      names[id] ? [{ id, displayName: names[id], firstName: null, lastName: null }] : [],
+      entity === GroupMember ? (w.seats.find((s) => matches(s, opts.where)) ?? null) : null,
+    query: async (sql: string, params: string[]) => {
+      if (sql.includes('INSERT INTO dm_join_ask_pushes')) {
+        const [, userId] = params as [string, string];
+        const gen = w.declined[userId] ?? 0;
+        const had = w.pushes.get(userId);
+        // INSERT ... ON CONFLICT DO UPDATE ... WHERE old < new RETURNING 1
+        if (had === undefined || had < gen) {
+          w.pushes.set(userId, gen);
+          return [{ '?column?': 1 }];
+        }
+        return [];
+      }
+      if (sql.includes('FROM user_blocks')) {
+        const [a, b] = params as [string, string];
+        return w.blocks.has(`${a}|${b}`) || w.blocks.has(`${b}|${a}`) ? [{}] : [];
+      }
+      if (sql.includes('FROM users')) {
+        const [id] = params as [string];
+        return w.names[id]
+          ? [{ id, displayName: w.names[id], firstName: null, lastName: null }]
+          : [];
+      }
+      throw new Error(`unexpected query: ${sql.slice(0, 60)}`);
+    },
   } as unknown as EntityManager;
 }
 
 const ASK = { userId: 'carol', askId: 'seat-carol' };
-const sender = () => jest.fn(async () => ({ sent: 1, failed: 0 }));
+const sender = () => jest.fn(async (..._a: unknown[]) => ({ sent: 1, failed: 0 }));
+const pushedTo = (push: ReturnType<typeof sender>) => push.mock.calls.map((c) => c[0]);
+
+async function raise(w: World, push: ReturnType<typeof sender>, ask = ASK) {
+  pushJoinAsk(fakeManager(w), GROUP, ask, push as never);
+  await joinAskAnnouncementsSettled();
+}
 
 describe('pushJoinAsk', () => {
   it('sends one ordinary push to each admitted member, naming the asker and the group', async () => {
-    const seats = [
-      seat('s1', 'alice'),
-      seat('s2', 'bob'),
-      seat('seat-carol', 'carol', { awaitingAdmission: true }),
-    ];
+    const w = world(
+      [
+        seat('s1', 'alice'),
+        seat('s2', 'bob'),
+        seat('seat-carol', 'carol', { awaitingAdmission: true }),
+      ],
+      { names: { carol: 'Carol Dupont' } }
+    );
     const push = sender();
 
-    pushJoinAsk(fakeManager(seats, { carol: 'Carol Dupont' }), GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push);
 
-    expect(push).toHaveBeenCalledTimes(2);
-    const [userId, title, body, data] = push.mock.calls[0] as unknown as [
+    expect(pushedTo(push)).toEqual(['alice', 'bob']);
+    const [, title, body, data] = push.mock.calls[0] as unknown as [
       string,
       string,
       string,
       Record<string, string>,
     ];
-    expect(userId).toBe('alice');
     expect(title).toBe('Carol Dupont');
     expect(body).toBe('Carol Dupont veut rejoindre Club photo');
     expect(data).toMatchObject({
@@ -96,76 +130,127 @@ describe('pushJoinAsk', () => {
   });
 
   it('never pushes the joiner, nor a seat that itself awaits a member', async () => {
-    const seats = [
+    const w = world([
       seat('s1', 'alice'),
       seat('seat-carol', 'carol', { awaitingAdmission: true }),
       seat('s3', 'dave', { awaitingAdmission: true }),
-    ];
+    ]);
     const push = sender();
 
-    pushJoinAsk(fakeManager(seats), GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push);
 
-    expect(push.mock.calls.map((c) => (c as unknown as [string])[0])).toEqual(['alice']);
+    expect(pushedTo(push)).toEqual(['alice']);
   });
 
-  it('is sent ONCE per ask: a second raise of the same askId sends nothing', async () => {
-    const seats = [seat('s1', 'alice'), seat('seat-carol', 'carol', { awaitingAdmission: true })];
-    const manager = fakeManager(seats);
+  it('is sent ONCE: a second raise of the same ask sends nothing', async () => {
+    const w = world([
+      seat('s1', 'alice'),
+      seat('seat-carol', 'carol', { awaitingAdmission: true }),
+    ]);
     const push = sender();
 
-    pushJoinAsk(manager, GROUP, ASK, push);
-    pushJoinAsk(manager, GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
-    pushJoinAsk(manager, GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push);
+    await raise(w, push);
 
     expect(push).toHaveBeenCalledTimes(1);
   });
 
-  it('sends a new push for a fresh ask after a Decline: a new seat is a new askId', async () => {
-    const seats = [seat('s1', 'alice'), seat('seat-carol', 'carol', { awaitingAdmission: true })];
-    const manager = fakeManager(seats);
+  it('THE LOOP: accept, self-remove, accept again pushes ONCE - the joiner cannot re-arm it', async () => {
+    const w = world([
+      seat('s1', 'alice'),
+      seat('seat-carol', 'carol', { awaitingAdmission: true }),
+    ]);
     const push = sender();
-    pushJoinAsk(manager, GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push);
 
-    // The Decline deleted the seat; following the link again wrote a new row.
-    seats.splice(1, 1, seat('seat-carol-2', 'carol', { awaitingAdmission: true }));
-    pushJoinAsk(manager, GROUP, { userId: 'carol', askId: 'seat-carol-2' }, push);
-    await joinAskAnnouncementsSettled();
+    // The joiner withdraws (seat deleted, no member Decline: the counter does not move) and follows
+    // the link again: a NEW seat row, a new askId.
+    w.seats.splice(1, 1, seat('seat-carol-2', 'carol', { awaitingAdmission: true }));
+    await raise(w, push, { userId: 'carol', askId: 'seat-carol-2' });
+    w.seats.splice(1, 1, seat('seat-carol-3', 'carol', { awaitingAdmission: true }));
+    await raise(w, push, { userId: 'carol', askId: 'seat-carol-3' });
+
+    expect(push).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends again after a MEMBER declined them: only a Decline moves the counter', async () => {
+    const w = world([
+      seat('s1', 'alice'),
+      seat('seat-carol', 'carol', { awaitingAdmission: true }),
+    ]);
+    const push = sender();
+    await raise(w, push);
+
+    w.declined.carol = 7; // a member's Decline, at the group's seat generation
+    w.seats.splice(1, 1, seat('seat-carol-2', 'carol', { awaitingAdmission: true }));
+    await raise(w, push, { userId: 'carol', askId: 'seat-carol-2' });
+    // A re-follow after that Decline's push, with no further Decline: nothing more.
+    w.seats.splice(1, 1, seat('seat-carol-3', 'carol', { awaitingAdmission: true }));
+    await raise(w, push, { userId: 'carol', askId: 'seat-carol-3' });
 
     expect(push).toHaveBeenCalledTimes(2);
   });
 
   it('sends nothing for an ask a member already answered (the seat no longer awaits)', async () => {
-    const seats = [seat('s1', 'alice'), seat('seat-carol', 'carol')];
+    const w = world([seat('s1', 'alice'), seat('seat-carol', 'carol')]);
     const push = sender();
 
-    pushJoinAsk(fakeManager(seats), GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push);
 
     expect(push).not.toHaveBeenCalled();
   });
 
   it('skips a member who muted the conversation, and one failing push costs no other member theirs', async () => {
-    const seats = [
+    const w = world([
       seat('s1', 'alice', { notifLevel: 'none' }),
       seat('s2', 'bob'),
       seat('s3', 'erin'),
       seat('seat-carol', 'carol', { awaitingAdmission: true }),
-    ];
-    const push = jest.fn(async (userId: string) => {
+    ]);
+    const push = jest.fn(async (userId: unknown) => {
       if (userId === 'bob') throw new Error('fcm down');
       return { sent: 1, failed: 0 };
     });
 
-    pushJoinAsk(fakeManager(seats), GROUP, ASK, push);
-    await joinAskAnnouncementsSettled();
+    await raise(w, push as never);
 
-    expect(push.mock.calls.map((c) => c[0])).toEqual(['bob', 'erin']);
+    expect(pushedTo(push as never)).toEqual(['bob', 'erin']);
+  });
+
+  it('skips a recipient when a block stands between them and the asker, in either direction', async () => {
+    const w = world(
+      [
+        seat('s1', 'alice'),
+        seat('s2', 'bob'),
+        seat('s3', 'erin'),
+        seat('seat-carol', 'carol', { awaitingAdmission: true }),
+      ],
+      { blocks: new Set(['alice|carol', 'carol|bob']) }
+    );
+    const push = sender();
+
+    await raise(w, push);
+
+    expect(pushedTo(push)).toEqual(['erin']);
+  });
+
+  it('NEVER puts an id on the lock screen: with no resolvable name the actor is empty', async () => {
+    const w = world([
+      seat('s1', 'alice'),
+      seat('seat-carol', 'carol', { awaitingAdmission: true }),
+    ]);
+    const push = sender();
+
+    await raise(w, push);
+
+    const [, title, body, data] = push.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+      Record<string, string>,
+    ];
+    expect(data.actorName).toBe('');
+    expect(title).not.toContain('carol');
+    expect(body).toBe("Quelqu'un veut rejoindre Club photo");
   });
 });
-
-// `Group` is imported so a rename of the entity breaks this spec rather than the fake silently.
-void Group;

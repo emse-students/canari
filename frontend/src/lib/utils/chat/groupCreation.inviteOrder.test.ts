@@ -128,6 +128,27 @@ describe('inviteMembersToGroup - says what it did', () => {
     expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
+  it('answers `add-lock-busy` only for an ANSWERED refusal; no answer is `add-lock-unanswered`', async () => {
+    const held = inviteDeps();
+    (held.mlsService as { acquireAddLockAnswer?: unknown }).acquireAddLockAnswer = vi.fn(
+      async () => 'held'
+    );
+    expect(await inviteMembersToGroup(['bob'], convo, held.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'add-lock-busy',
+    });
+
+    const silent = inviteDeps();
+    (silent.mlsService as { acquireAddLockAnswer?: unknown }).acquireAddLockAnswer = vi.fn(
+      async () => 'unanswered'
+    );
+    expect(await inviteMembersToGroup(['bob'], convo, silent.deps as never)).toEqual({
+      kind: 'not-added',
+      reason: 'add-lock-unanswered',
+    });
+    expect(silent.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
   it('answers `no-device-added` when every key package was skipped', async () => {
     const d = inviteDeps();
     d.mlsService.addMembersBulk = vi.fn(async () => ({

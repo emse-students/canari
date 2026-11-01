@@ -465,7 +465,8 @@ describe('a join by invitation link, end to end', () => {
     const expected = {
       'add-lock-busy': 'busy',
       'removed-meanwhile': 'raced',
-      'commit-race-lost': 'raced',
+      'commit-race-lost': 'failed',
+      'add-lock-unanswered': 'failed',
       failed: 'failed',
       'no-device-added': 'failed',
     } as const;

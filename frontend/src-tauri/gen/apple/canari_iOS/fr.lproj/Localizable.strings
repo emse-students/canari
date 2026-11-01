@@ -54,6 +54,9 @@
 "notif.social.live_started.body" = "Appuyez pour regarder";
 "notif.social.follow_request.title" = "%@ demande à vous suivre";
 "notif.social.follow_request.body" = "Appuyez pour répondre";
+"notif.social.join_ask.title" = "%@ veut rejoindre";
+"notif.social.join_ask.body" = "cette conversation";
+"notif.social.join_ask_anon.title" = "Quelqu'un veut rejoindre";
 "notif.social.follow_accepted.title" = "%@ a accepté votre demande";
 "notif.social.follow_accepted.body" = "Votre demande a été acceptée";
 "notif.social.live_cut.title" = "Votre live a été interrompu";

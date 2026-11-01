@@ -43,7 +43,7 @@ export type JoinAnswerResult =
  * WHY AN ANSWER DID NOT HAPPEN WHEN ANOTHER MEMBER IS THE CAUSE, classified where it is known
  * (`admitJoinRequest`, from the Add's typed refusal) and never read back from the `reason` prose:
  * `busy` - another device holds the group's add lock, so someone is answering now; `raced` - the
- * ask was settled under this member's tap (the Add lost to a Decline or to another Add). Either way
+ * ask was declined or removed under this member's tap. Either way
  * the settlement frame clears the card, so the member is told who answered, not that something broke.
  */
 export type JoinRefusalKind = 'busy' | 'raced';

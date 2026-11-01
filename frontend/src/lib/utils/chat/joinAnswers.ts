@@ -146,7 +146,9 @@ export async function admitJoinRequest(
 
 /**
  * The refusals of an Add that mean ANOTHER MEMBER is the cause ({@link JoinRefusalKind}): the
- * group's add lock is held, or the Add lost to a Decline or another Add the server ordered first. A
+ * group's add lock is held (an ANSWERED refusal - no answer at all is a failure), or the Add was
+ * abandoned because the person was declined or removed meanwhile. A lost commit race is neither: it
+ * proves no one answered this ask. A
  * typed switch on the refusal, never a read of its text.
  */
 function refusalKindOf(reason: BulkAdditionRefusal): JoinRefusalKind | undefined {
@@ -154,7 +156,6 @@ function refusalKindOf(reason: BulkAdditionRefusal): JoinRefusalKind | undefined
     case 'add-lock-busy':
       return 'busy';
     case 'removed-meanwhile':
-    case 'commit-race-lost':
       return 'raced';
     default:
       return undefined;

@@ -3584,7 +3584,7 @@
   "join_request_declined_line": "Vous avez refusé la demande de {user}",
   "join_request_failed": "La réponse n'a pas pu être enregistrée. Réessayez.",
   "join_request_row_text": "{user} veut rejoindre la conversation",
-  "join_request_other_member_answering": "Un autre membre est en train de répondre à cette demande.",
+  "join_request_other_member_answering": "Quelqu'un est en train d'ajouter des personnes, réessayez dans un instant.",
   "join_request_other_member_answered": "Un autre membre a déjà répondu à cette demande.",
   "join_request_pending_badge_label": "Demandes pour rejoindre : {count}",
   "chat_awaiting_admission_notice": "Votre demande a été transmise. Vous pourrez écrire ici dès qu'un membre vous aura ajouté.",

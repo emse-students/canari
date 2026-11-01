@@ -92,10 +92,12 @@ export type MlsDeliveryFetch = typeof fetch;
  * What the add-lock acquire answered (`apps/chat-delivery-service/src/utils/add-lock.ts`): taken,
  * with the token its release names; or refused, with how long the holder's lock has left. Either
  * field is absent from a server that predates it, and `retryAfterMs` also when nothing answered.
+ * `answered` tells a refusal the server GAVE (the lock is held) from one that is only the lack of an
+ * answer (a transport error, a non-2xx): only the first means another device is adding.
  */
 export type AddLockAnswer =
   | { acquired: true; token: string | undefined }
-  | { acquired: false; retryAfterMs: number | undefined };
+  | { acquired: false; retryAfterMs: number | undefined; answered: boolean };
 
 /**
  * The longest wait a refused acquire may state: the server's `ADD_LOCK_TTL_SEC` (30 s) plus 1 s.
@@ -1913,7 +1915,7 @@ export class MlsDeliveryApi {
         console.warn(
           `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire was answered ${res.status} - not taken, and not known to be held`
         );
-        return { acquired: false, retryAfterMs: undefined };
+        return { acquired: false, retryAfterMs: undefined, answered: false };
       }
       const data = (await res.json()) as {
         acquired?: unknown;
@@ -1925,6 +1927,7 @@ export class MlsDeliveryApi {
       }
       return {
         acquired: false,
+        answered: true,
         retryAfterMs: typeof data.retryAfterMs === 'number' ? data.retryAfterMs : undefined,
       };
     } catch (e) {
@@ -1934,7 +1937,7 @@ export class MlsDeliveryApi {
       console.warn(
         `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire got no answer - not taken, and not known to be held: ${String(e).slice(0, 120)}`
       );
-      return { acquired: false, retryAfterMs: undefined };
+      return { acquired: false, retryAfterMs: undefined, answered: false };
     }
   }
 

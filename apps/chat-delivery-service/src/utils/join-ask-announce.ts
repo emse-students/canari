@@ -5,6 +5,7 @@ import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { readGroupNotificationLevel } from '../services/notification-preferences';
 import { resolveUserDisplayName } from './display-name';
+import { isBlockedBetween } from './user-blocks';
 import {
   type EvalCapable,
   JOIN_ASK_CAPABILITY,
@@ -312,15 +313,21 @@ export const JOIN_ASK_CONTENT_KEY = 'chat_join_ask';
  * suppresses on purpose (`notifyWelcomeRequest`): that wake lets a phone answer by itself, and no
  * push answers an ask. This one only tells a person, who answers by opening the app.
  *
- * ONE PER ASK, FROM DURABLE STATE: the ask's identity is the seat's id, and the push is CLAIMED by a
- * conditional UPDATE on that row (`joinAskNotified`, migration 043) - only the caller that flipped it
- * sends, so a second replica, a retried request or a re-follow of the link sends nothing. A fresh ask
- * after a Decline is a new seat, so a new row, so a new push. At-most-once by construction: a send
- * that fails after the claim is logged, not retried (the card and the conversation badge stand).
+ * ONE PER MEMBER DECLINE, FROM DURABLE STATE, AND THE JOINER CANNOT RE-ARM IT. The claim is a row
+ * keyed `(groupId, userId)` (`dm_join_ask_pushes`, migration 043), not the seat: a self-withdrawal
+ * deletes the seat and a re-follow writes a new one, so a claim on the seat let the joiner push every
+ * member again and again. The row holds `gen`, the person's `declinedAtSeatGeneration` (0 when none),
+ * a counter ONLY a member's Decline moves; the claim succeeds only for a strictly larger value. So
+ * accept, withdraw, accept sends once; a Decline then a new ask sends again; an expiry re-arms
+ * nothing. Two replicas race on the one INSERT ... ON CONFLICT and only one gets a row back.
+ * At-most-once: a send that fails after the claim is logged, not retried. The push is NOT withdrawn
+ * when the ask ends - an ordinary push cannot be recalled, and the card says the ask is over.
  *
- * NEVER TO THE JOINER, nor to a seat that itself awaits a member ({@link ADMITTED_SEAT}). A member
- * who muted the conversation (`none`) is not pushed; the account's category switch is applied by the
- * sender. Started, never awaited ({@link dispatch}).
+ * NEVER TO THE JOINER, nor to a seat that itself awaits a member ({@link ADMITTED_SEAT}), nor to a
+ * member for whom a block stands between them and the asker, in either direction. A member who muted
+ * the conversation (`none`) is not pushed; the account's category switch is applied by the sender.
+ * THE LOCK SCREEN NEVER SHOWS AN ID: with no resolvable name the actor is empty and the devices say
+ * "Someone wants to join". Started, never awaited ({@link dispatch}).
  */
 export function pushJoinAsk(
   m: EntityManager,
@@ -329,19 +336,29 @@ export function pushJoinAsk(
   push: JoinAskPushSender
 ): void {
   dispatch(async () => {
-    const claimed = await m.getRepository(GroupMember).update(
-      {
-        id: ask.askId,
-        groupId,
-        userId: ask.userId,
-        awaitingAdmission: true,
-        joinAskNotified: false,
-      },
-      { joinAskNotified: true }
+    const short = ask.askId.slice(0, 8);
+    // A seat a member already answered is not an ask: nothing to tell anyone.
+    const seat = await m.getRepository(GroupMember).findOne({
+      where: { id: ask.askId, groupId, userId: ask.userId, awaitingAdmission: true },
+      select: { id: true },
+    });
+    if (!seat) {
+      logger.log(`[JOIN_ASK] push for ask=${short} not sent - the ask was already answered`);
+      return;
+    }
+    const claimed: unknown[] = await m.query(
+      `INSERT INTO dm_join_ask_pushes ("groupId", "userId", "gen")
+       SELECT $1::uuid, $2::varchar,
+              COALESCE((SELECT "declinedAtSeatGeneration" FROM dm_seat_evictions
+                         WHERE "groupId" = $1::uuid AND "userId" = $2::varchar), 0)
+       ON CONFLICT ("groupId", "userId") DO UPDATE SET "gen" = EXCLUDED."gen"
+         WHERE dm_join_ask_pushes."gen" < EXCLUDED."gen"
+       RETURNING 1`,
+      [groupId, ask.userId]
     );
-    if (!claimed.affected) {
+    if (claimed.length === 0) {
       logger.log(
-        `[JOIN_ASK] push for ask=${ask.askId.slice(0, 8)} not sent - already sent, or the ask was answered`
+        `[JOIN_ASK] push for ask=${short} not sent - this person's ask was already pushed and no member declined since`
       );
       return;
     }
@@ -350,33 +367,52 @@ export function pushJoinAsk(
       select: { userId: true },
     });
     const recipients = [...new Set(seats.map((s) => s.userId))].filter((u) => u !== ask.userId);
-    if (recipients.length === 0) return;
+    if (recipients.length === 0) {
+      logger.log(`[JOIN_ASK] push for ask=${short} not sent - no admitted member to tell`);
+      return;
+    }
     const [asker, group] = await Promise.all([
       resolveUserDisplayName(m, ask.userId),
       m
         .getRepository(Group)
         .findOne({ where: { id: groupId }, select: { name: true, isGroup: true } }),
     ]);
+    if (!asker) {
+      // The lock screen must not show an id, so the devices say "Someone": accuse the lookup.
+      logger.warn(
+        `[JOIN_ASK] name of asker=${cutUserId(ask.userId)} not resolved for ask=${short} - pushed as "someone"`
+      );
+    }
     const groupName = group?.isGroup ? (group.name ?? '') : '';
-    const actor = asker || ask.userId;
     let sent = 0;
+    let failed = 0;
+    let muted = 0;
+    let blocked = 0;
     for (const userId of recipients) {
       try {
+        if (await isBlockedBetween(m, userId, ask.userId)) {
+          blocked++;
+          logger.log(
+            `[JOIN_ASK] push to user=${cutUserId(userId)} skipped for ask=${short} - a block stands between them and the asker`
+          );
+          continue;
+        }
         if (
           isGroupUuid(groupId) &&
           (await readGroupNotificationLevel(m, groupId, userId)) === 'none'
         ) {
+          muted++;
           continue;
         }
         const result = await push(
           userId,
-          actor,
+          asker || 'Canari',
           // Old clients, with no table for the key, show this; the device's own wording replaces it.
-          `${actor} veut rejoindre ${groupName || 'la conversation'}`,
+          `${asker || "Quelqu'un"} veut rejoindre ${groupName || 'la conversation'}`,
           {
             type: 'social',
             contentKey: JOIN_ASK_CONTENT_KEY,
-            actorName: actor,
+            actorName: asker,
             contentArg: groupName,
             deepLink: `fr.emse.canari://chat/${groupId}`,
             groupId,
@@ -385,15 +421,17 @@ export function pushJoinAsk(
           }
         );
         sent += result.sent;
+        failed += result.failed;
       } catch (e) {
         // Per recipient: one member's failure never costs another their push.
+        failed++;
         logger.warn(
-          `[JOIN_ASK] push to user=${cutUserId(userId)} failed ask=${ask.askId.slice(0, 8)}: ${String(e)}`
+          `[JOIN_ASK] push to user=${cutUserId(userId)} failed ask=${short}: ${String(e)}`
         );
       }
     }
     logger.log(
-      `[JOIN_ASK] PUSHED group=${groupId} asker=${cutUserId(ask.userId)} ask=${ask.askId.slice(0, 8)} devices=${sent}`
+      `[JOIN_ASK] PUSHED group=${groupId} asker=${cutUserId(ask.userId)} ask=${short} sent=${sent} failed=${failed} muted=${muted} blocked=${blocked}`
     );
   });
 }

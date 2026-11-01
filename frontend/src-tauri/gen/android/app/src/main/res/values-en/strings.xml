@@ -77,6 +77,7 @@
     <string name="notif_social_follow_request_body">Tap to answer</string>
     <string name="notif_chat_join_ask_title">%1$s wants to join</string>
     <string name="notif_chat_join_ask_body">this conversation</string>
+    <string name="notif_chat_join_ask_anon_title">Someone wants to join</string>
     <string name="notif_social_follow_accepted_title">%1$s accepted your request</string>
     <string name="notif_social_follow_accepted_body">Your request was accepted</string>
     <string name="notif_social_live_cut_title">Your live was stopped</string>
