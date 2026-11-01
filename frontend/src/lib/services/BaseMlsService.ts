@@ -42,7 +42,7 @@ import {
   type PendingInvitationRow,
   WelcomeTargetUnknownError,
   isTerminalWelcomeRefusal,
-  admitRefusalMakesWelcomeUndeliverable,
+  whyWelcomeUndeliverable,
   type RefusedAdmit,
   ADD_LOCK_WAIT_BOUND_MS,
   boundAddLockWait,
@@ -397,12 +397,14 @@ const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailur
 
 /**
  * The admits an ACCEPTED commit's answer says the gate did not record (`refusedAdmits`) - each said
- * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link admitRefusalMakesWelcomeUndeliverable}) -
+ * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link whyWelcomeUndeliverable}) -
  * returned, so the merge owes them nothing and the caller sends them nothing.
  *
  * NEVER LEARNED BY FAILING (DEV-3, 2026-10-25): a device its owner revoked while a member's Add was
  * in flight is dropped by the gate (`no_key_package`), and the member still sent it a Welcome,
  * which came back a 500 and stayed owed for every later connection. The answer had said it first.
+ * The same held for a person a key group's gate refused (`not_entitled`, RM-5 2026-10-26): the
+ * Welcome went out and came back `403 WELCOME_TARGET_NOT_MEMBER`, logged as an error.
  * The leaf stays in the tree with no seat, and the stray sweep removes it.
  */
 function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefined): RefusedAdmit[] {
@@ -411,11 +413,12 @@ function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefine
   const undeliverable: RefusedAdmit[] = [];
   for (const r of refused) {
     const who = `${sanitizeForLog(r.userId).slice(0, 8)}:${sanitizeForLog(r.deviceId)}`;
-    if (admitRefusalMakesWelcomeUndeliverable(r.reason)) {
+    const why = whyWelcomeUndeliverable(r.reason);
+    if (why !== null) {
       undeliverable.push(r);
       console.log(
-        `[COMMIT] ${short}... ${who} NOT admitted by the gate (${r.reason}: revoked, or its account ` +
-          'erased) - no Welcome is owed or sent; its leaf has no seat and the stray sweep removes it'
+        `[COMMIT] ${short}... ${who} NOT admitted by the gate (${r.reason}: ${why}) - no Welcome ` +
+          'is owed or sent; its leaf has no seat and the stray sweep removes it'
       );
     } else {
       // At debug: `already_active` is an ordinary answer to a re-Add, not news on every commit.
