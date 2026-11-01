@@ -47,6 +47,7 @@ export type PushContentKey =
   | 'form_paid_over_capacity'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
+  | 'lydia_refund_issued'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
@@ -416,6 +417,20 @@ export function lydiaPaymentsPausedContent(associationName: string): PushContent
     arg: associationName,
     legacyTitle: 'Paiements Lydia suspendus',
     legacyBody: `Les paiements Lydia de ${associationName} sont suspendus : Lydia a refusé une demande de paiement.`,
+  };
+}
+
+/**
+ * A payer was REFUNDED through Canari (lot 4): the association's name is the one datum, the amount
+ * stays in the app (the payer opens the notifications list).
+ */
+export function lydiaRefundIssuedContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_refund_issued',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Remboursement',
+    legacyBody: `${associationName} vous a remboursé un paiement.`,
   };
 }
 

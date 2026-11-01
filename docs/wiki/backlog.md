@@ -1485,8 +1485,9 @@ member's Add); and an entry no member made is written in the conversation and re
 deployed with the build; `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
 than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
-production once the build serves both stores; the four review findings below; and a second step on the receiving side (private
-operations notes).
+production once the build serves both stores; the four review findings below. The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
+see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
+[backlog.d](backlog.d/p1-the-admission-rule-fix-forward.md).
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 

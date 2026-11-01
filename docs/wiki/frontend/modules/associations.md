@@ -366,3 +366,15 @@ left in its kind).
 `/associations/me/list` filters them out. If archived associations are ever to be refused as
 authors, the refusal goes in `canPostAs` first and the group turns `disabled` with a reason in the
 same change - the picker must never offer what the server refuses, nor hide what it accepts.
+
+## The external profile projection
+
+`GET /api/external/profile/:sub` (core-service, `x-api-key`, consumed by Sky) relays social-service's
+internal `GET users/:userId/associations` unchanged - there is no DTO or whitelist in between. Both
+arrays, `current` and `former`, carry `type` (`association` | `list` | `institution`) and `promo`
+(a list's campaign year, else `null`); `former` rows also carry `slug` (`null` when the association
+no longer exists). The fields are additive: the only consumer of the route is that controller.
+Sky shows a list only until 1 August of its `promo` (`isPastCampaignList`, mirrored from
+`frontend/src/lib/associations/campaign.ts`), never in its former section, and matches a past
+mandate against a current one by `slug`.
+Pinned by `apps/social-service/src/internal/internal-user-associations.spec.ts`.

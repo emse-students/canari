@@ -75,6 +75,8 @@ holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhe
 saturate(180%)`, a light edge and a soft shadow), the one place the app builds a surface from
 translucency. The layout and the reasons are in [chat](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30).
 
+**WIDENED BY THE OWNER, 2026-10-31: `.glass-chrome` IS THE MATERIAL OF EVERYTHING THAT FLOATS ABOVE CONTENT** - the feed bar, the header pieces, menus, popovers (post, community, ecosystem, emoji pickers) and sticky headers over a scrolling list; cards and lists stay opaque. One `--glass-chrome-blur` token carries the blur, and `@supports not (backdrop-filter)` or `prefers-reduced-transparency: reduce` sets it to `none` and the background to `--cn-surface` (opaque). Never glass a bar that no content scrolls under (the bottom nav, the desktop top bar): the blur would cost a low-end Android for nothing. Never stack two blurs.
+
 ## 4. The reference radii
 
 | value | count (MSG / FB) | what has it |
@@ -3299,6 +3301,8 @@ and a tap on the reel slide it out on the drag release snap, the reel growing ba
 comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
 never a page of older comments, never the swap of the reader's local id for the server's row), and
 the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.
+
+Two more (owner, 2026-10-31): the feed tab pill is ONE measured element moved by `transform` with `--motion-slow` (`FeedTabRow`; the first placement and a re-layout never slide), and the reel viewer grows out of the clapper button (`reels/expandFrom.ts`): a view transition named `reel-open` (button and `[data-reel-viewer]`, `::view-transition` is `pointer-events: none`), else `motion-expand-in` scaling from the button's centre; the fallback is logged at debug, and reduced motion starts neither.
 
 ## Avatar placeholders: eight gradient hues, picked from the entity's ID (user, 2026-10-30)
 

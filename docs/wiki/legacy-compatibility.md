@@ -111,6 +111,7 @@ REST: those rows need a count, then a migration.
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
+| `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -313,6 +314,43 @@ tables (Android, the iOS app and its notification extension), the client row, `K
 `payments` section of the association edit page. The push opens the notifications list (`notifications`
 host): no deep-link host exists for an association's edit section. The type names are shared through
 `libs/contracts/lydia-refusal-codes.json`.
+
+**Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
+they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
+while it is off nothing is written and Lydia's own SMS reaches the person. **Flip condition:**
+`minClientVersion` at or above the first release carrying Lydia enrolment lot 3, on BOTH estates, once
+Play and the App Store serve it - then a one-line pull request sets the constant to `true` and changes the
+spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
+row only, no push (so no push key, category or native string is owed); the client row, the type in
+`KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
+
+**What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**
+While the number change is switched off (`LYDIA_CASHIER_ADD_ENABLED = false`), core answers another
+number with `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code those clients already word ("the Responsable's
+number cannot be changed yet"); a lot 3 client reads the same code as "not possible yet" through the
+same flag. **After the flip**, those clients can reach a number change and meet codes they do not
+know, each drawn as their generic "Could not save the Responsable." with nothing lost:
+`LYDIA_CASHIER_PHONE_IN_USE` (the number is already a cashier's - nothing claimed, nothing asked of
+Lydia), and `LYDIA_CASHIER_REMOVAL_PRECONDITION` or `LYDIA_CASHIER_REVOKE_UNCONFIRMED` (the new number
+is recorded; the old one is still listed in the cashiers, with its "Retirer cet autre numéro" button,
+on any up-to-date client). `LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN` is a 403, which they word as
+"not allowed to manage the payout account". Nothing to remove: these are wordings, and the floor
+rule above (`minClientVersion` at or above lot 3) retires them.
+
+**Built and waiting on its floor (2026-10-31): `lydia_refund_issued`**, the notice telling a payer that an
+association refunded one of their payments (Lydia enrolment lot 4). It ships behind
+`LYDIA_REFUND_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/refunds/lydia-refund-notifier.service.ts`);
+while it is off nothing is written, Lydia's own e-mail to the payer (`notify_payer`) tells them and the
+refund's row is the record. **Flip condition:** `minClientVersion` at or above the first release carrying
+Lydia enrolment lot 4 (PR to be numbered), on BOTH estates, once Play and the App Store serve it - then a
+one-line pull request sets the constant to `true` and changes the spec that pins it. A client older than
+that release draws it as the neutral unknown-type row. Done in the same pull request: the push key and
+French legacy sentence, the `forms` push category, the native tables (Android, the iOS app and its
+notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the destination (the payer's
+`/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
+contract file (`refund.notificationTypes`).
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

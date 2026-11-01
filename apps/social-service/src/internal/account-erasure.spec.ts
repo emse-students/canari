@@ -175,7 +175,13 @@ describe('jsonStringLikePattern', () => {
 describe('InternalController.deleteUserData', () => {
   const SECRET = 'erasure-secret';
 
-  function make(opts: { workspacesFail?: boolean; candidates?: unknown[] } = {}) {
+  function make(
+    opts: {
+      workspacesFail?: boolean;
+      candidates?: unknown[];
+      revoke?: () => Promise<Set<string>>;
+    } = {}
+  ) {
     process.env.INTERNAL_SECRET = SECRET;
     const queries: string[] = [];
     const manager = {
@@ -200,6 +206,9 @@ describe('InternalController.deleteUserData', () => {
       announceErasedPins: jest.fn(async () => 0),
     };
     const redis = { deleteByPattern: jest.fn(async () => 0) };
+    const lydiaCashiers = {
+      revokeBeforeErasure: jest.fn(opts.revoke ?? (async () => new Set<string>())),
+    };
     const controller = new InternalController(
       postRepo as never,
       {} as never,
@@ -208,10 +217,20 @@ describe('InternalController.deleteUserData', () => {
       {} as never,
       channelService as never,
       redis as never,
-      postMediaRetention as never
+      postMediaRetention as never,
+      lydiaCashiers as never
     );
-    return { controller, queries, postRepo, channelService, manager };
+    return { controller, queries, postRepo, channelService, manager, lydiaCashiers };
   }
+
+  it('asks Lydia to remove the numbers of the account cashier rows BEFORE the rows go', async () => {
+    const { controller, postRepo, lydiaCashiers } = make();
+    await controller.deleteUserData('erased', SECRET);
+    expect(lydiaCashiers.revokeBeforeErasure).toHaveBeenCalledWith('erased');
+    expect(lydiaCashiers.revokeBeforeErasure.mock.invocationCallOrder[0]).toBeLessThan(
+      postRepo.manager.transaction.mock.invocationCallOrder[0]
+    );
+  });
 
   it('runs every statement and the reaction removal inside one transaction', async () => {
     const { controller, queries, postRepo } = make();

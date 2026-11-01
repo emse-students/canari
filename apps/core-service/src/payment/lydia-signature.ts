@@ -21,8 +21,10 @@ function md5OfSortedPairs(
  * Computes a Lydia signature over the RAW values: the signature Lydia puts on what IT sends
  * (`request/do` callbacks, `request/state` answers). Measured raw: every callback carried an
  * `order_ref` with `:` and verified unencoded (sandbox 2026-10-16, production 2026-10-23,
- * docs/wiki/lydia-api.md section 3). It serves verification only - a request Canari SENDS is
- * signed by {@link signLydiaRequest}, and encoding this one would refuse every callback.
+ * docs/wiki/lydia-api.md section 3). It verifies what Lydia sends, and signs ONE call Canari sends:
+ * `transaction/refund`, measured on homologation 2026-10-31 to verify only over the raw values
+ * (`signLydiaRefund`). Every other request Canari sends is signed by {@link signLydiaRequest}, and
+ * encoding this one would refuse every callback.
  * The field set to sign is call-specific - `fields` must already contain exactly those fields,
  * never the "sig" key itself.
  */

@@ -85,6 +85,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       ds.getRepository(UserFollow),
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
 

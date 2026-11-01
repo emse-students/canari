@@ -21,6 +21,7 @@
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
  *   POST /media/internal/live/:liveId/:name - store one sealed live segment (X-Internal-Secret)
  *   POST /media/internal/live-purge - delete every segment of an ended live (X-Internal-Secret)
+ *   POST /media/internal/live-segments-delete - delete named segments behind a RUNNING live's window (X-Internal-Secret)
  *   GET  /media/public/live/:liveId/:name - one sealed live segment, by the name its manifest gave
  *                         (NO JWT: ciphertext, cached by Canari's nginx - WP-L4)
  *   (the three live routes answer 404 unless LIVE_ENABLED=true - docs/wiki/services/lives.md)
@@ -84,6 +85,8 @@ import {
   LiveSegmentsService,
   isLiveEnabled,
   type LivePurgeResult,
+  LIVE_TRIM_MAX_NAMES,
+  type LiveTrimResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { fetchLivesMode } from './lives-mode';
@@ -867,6 +870,34 @@ export class MediaController {
     assertInternalSecret(internalSecret);
     if (typeof body?.liveId !== 'string') throw new BadRequestException('liveId must be a string');
     return this.liveSegments.purge(body.liveId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/live-segments-delete - the segments behind a running live's window
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named segments of one live that is still on air (at most {@link LIVE_TRIM_MAX_NAMES}
+   * per call). Sole consumer: social-service's trim, which names only segments behind the manifest
+   * window plus its margin. Runs whatever the switch says, as the purge does: a live started while
+   * it was on is still trimmed.
+   */
+  @Post('internal/live-segments-delete')
+  async deleteLiveSegments(
+    @Body() body: { liveId?: unknown; names?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<LiveTrimResult> {
+    assertInternalSecret(internalSecret);
+    if (typeof body?.liveId !== 'string') throw new BadRequestException('liveId must be a string');
+    const names = body.names;
+    if (
+      !Array.isArray(names) ||
+      names.length === 0 ||
+      names.length > LIVE_TRIM_MAX_NAMES ||
+      names.some((n) => typeof n !== 'string')
+    ) {
+      throw new BadRequestException(`names must be 1 to ${LIVE_TRIM_MAX_NAMES} strings`);
+    }
+    return this.liveSegments.deleteSegments(body.liveId, names as string[]);
   }
 
   // ---------------------------------------------------------------------------

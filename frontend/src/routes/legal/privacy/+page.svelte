@@ -158,24 +158,38 @@
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
           (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
           d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
-          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Aucune
-          donnée bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un
-          formulaire (par exemple un CV) sont lisibles par l'association qui l'a créé.
+          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
+          association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
+          paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
+          responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
+          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
+          une personne, et il figure tel quel dans le relevé que les responsables du compte de
+          paiement de l'association peuvent télécharger. Un remboursement total retire ce que le
+          paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
+          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
+          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
+          l'association qui l'a créé.
         </dd>
       </div>
       <div>
-        <dt>Responsable du compte de paiement Lydia d'une association</dt>
+        <dt>Caissiers du compte de paiement Lydia d'une association</dt>
         <dd>
-          Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
-          de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
-          reçoit un SMS de Lydia et devient caissier de ce compte. Le numéro est saisi par le
-          trésorier : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
-          accepte ce rôle. Canari garde l'identifiant du membre, celui du trésorier qui l'a désigné,
-          la date, et le numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers
-          chiffres sont affichés. Le numéro chiffré et ses deux derniers chiffres sont effacés quand
-          le compte Lydia est délié de l'association ; les deux identifiants restent jusqu'à la
-          suppression de votre compte Canari, avec laquelle la ligne est supprimée. Lydia conserve
-          ses propres données selon sa politique.
+          Quand un responsable des paiements de son association désigne un membre comme caissier du
+          compte Lydia de cette association (Responsable, trésorier ou vendeur), Canari transmet à
+          Lydia le numéro de téléphone de ce membre, qui reçoit un SMS de Lydia et peut alors
+          utiliser l'application Lydia Pro pour l'association. Le numéro est saisi par le
+          responsable : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle ; Canari peut aussi l'en avertir par une notification. Canari garde
+          l'identifiant du membre, celui de la personne qui l'a ajouté, son rôle, les dates, et le
+          numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers chiffres sont
+          affichés. Quand le Responsable change de numéro, l'autre numéro (l'ancien, ou le nouveau
+          tant que Lydia ne l'a pas confirmé) est gardé chiffré de la même façon, jusqu'à ce que
+          Lydia confirme qu'il a été retiré. Quand un caissier est retiré, Canari demande à Lydia de
+          lui ôter ses droits et vérifie auprès de Lydia qu'il n'en a plus ; ses numéros sont alors
+          effacés. Ils le sont aussi quand le compte Lydia est délié de l'association. Les deux
+          identifiants restent jusqu'à la suppression de votre compte Canari : avant de supprimer la
+          ligne, Canari demande à Lydia de retirer vos numéros de caissier. Lydia conserve ses
+          propres données selon sa politique.
         </dd>
       </div>
       <div>
@@ -457,7 +471,9 @@
           e-mail que vous saisissez pour recevoir la demande de paiement ; cette adresse n'est pas
           conservée par Canari. Vos coordonnées bancaires sont traitées uniquement par Lydia. Pour
           le Responsable du compte Lydia d'une association, il reçoit aussi son numéro de téléphone,
-          afin de l'ajouter comme caissier de ce compte.
+          afin de l'ajouter comme caissier de ce compte. Pour un remboursement, il reçoit la
+          référence du paiement et le montant remboursé, et rend l'argent sur le moyen de paiement
+          utilisé.
         </p>
       </li>
       <li>
@@ -706,10 +722,11 @@
             <td>90 jours après leur traitement</td>
           </tr>
           <tr>
-            <td>Achats et paiements</td>
+            <td>Achats, paiements et remboursements</td>
             <td>
               Conservés pour la comptabilité des associations ; détachés de votre compte à sa
-              suppression. Lydia conserve ses propres données selon sa politique.
+              suppression (un remboursement est conservé aussi longtemps que le paiement qu'il
+              rembourse). Lydia conserve ses propres données selon sa politique.
             </td>
           </tr>
           <tr>

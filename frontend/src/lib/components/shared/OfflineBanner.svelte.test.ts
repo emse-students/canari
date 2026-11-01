@@ -11,6 +11,8 @@ const session = vi.hoisted(() => ({ isLoggedIn: true, isOfflineSession: false })
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ globalSession: session }));
 
 import OfflineBanner from './OfflineBanner.svelte';
+import SlowLinkAnnouncer from './SlowLinkAnnouncer.svelte';
+import { slowLink } from '$lib/stores/slowLink.svelte';
 import { SLOW_IN_FLIGHT_MS, connectivity } from '$lib/stores/connectivity.svelte';
 import { m } from '$lib/paraglide/messages';
 
@@ -41,19 +43,31 @@ describe('OfflineBanner', () => {
     expect(mountBanner().textContent?.trim()).toBe('');
   });
 
-  it('shows the calm slow hint, not the offline one, when answers are slow', async () => {
+  it('draws nothing itself when answers are slow: the avatar ring owns that state', async () => {
     const target = mountBanner();
     connectivity.trackRequest();
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
     flushSync();
-    const icon = target.querySelector('[data-testid="slow-link-indicator"]');
-    expect(icon?.getAttribute('aria-label')).toBe(m.slow_indicator_label());
-    expect(icon?.getAttribute('title')).toBe(m.slow_indicator_label());
-    // An icon, not a strip: no visible text, nothing in the flow.
+    expect(slowLink.active).toBe(true);
     expect(target.textContent?.trim()).toBe('');
-    expect(target.textContent).not.toContain(m.offline_banner_title());
-    // Placed below the banner column, never over the dev environment strip that heads it.
-    expect(icon?.className).toContain('var(--app-banner-height');
+    expect(target.querySelector('[data-testid="slow-link-indicator"]')).toBeNull();
+  });
+
+  it('the announcer region is always mounted and only its text switches on slow', async () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(SlowLinkAnnouncer, { target });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    const before = target.querySelector('[data-testid="slow-link-indicator"]');
+    expect(before?.getAttribute('role')).toBe('status');
+    expect(before?.textContent?.trim()).toBe('');
+    connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
+    flushSync();
+    const live = target.querySelector('[data-testid="slow-link-indicator"]');
+    expect(live).toBe(before);
+    expect(live?.textContent?.trim()).toBe(m.slow_indicator_label());
   });
 
   it('the offline banner wins when the server is unreachable', async () => {

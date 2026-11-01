@@ -54,6 +54,10 @@ function makeContext() {
     userId: 'me',
     authToken: 't',
     selectedContact: CHANNEL,
+    // Live, like the page's: a test that moves the selection moves what is on screen.
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     setAuthToken: vi.fn(),
     setSendError: vi.fn(),
     playSendTone: vi.fn(),

@@ -125,6 +125,7 @@ export function createMlsServiceStub(
     removeDepartedMembers: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+    setAdmissionPolicy: vi.fn().mockResolvedValue(undefined),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     getGroupRosterAtGeneration: vi.fn().mockResolvedValue({ members: [], seatGeneration: 0 }),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),

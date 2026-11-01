@@ -2168,6 +2168,44 @@ mod tests {
         assert_eq!(info["kind"], "SecretReuse");
     }
 
+    /// THE ADMISSION RULE IS DISARMED ON THE PUSH PATH TOO (owner, 2026-10-31): an external commit
+    /// by a user holding no leaf of a CLOSED group is applied like any control frame. Refusing it
+    /// for good is what froze a conversation for every legitimate self-rejoin (`mls-core`
+    /// `admission.rs`).
+    #[test]
+    fn an_uninvited_external_commit_in_a_closed_group_is_not_refused_for_good() {
+        let _fg = quiet_foreground();
+        let tag = "uninvited";
+        let (mut alice, _bob, group_id) = joined_pair(tag);
+        alice.set_admission_policy(&group_id, mls_core::AdmissionPolicy::Closed);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let mut stranger = MlsManager::load_or_create(&format!("{tag}-stranger"), "dev-s", None)
+            .expect("stranger");
+        let group_info = alice.export_group_info(&group_id).expect("group info");
+        let (_gid, commit) = stranger
+            .join_by_external_commit(&group_info)
+            .expect("external commit");
+
+        let info = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-stranger"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_ne!(info["reason"], "mls-refused-for-good");
+        assert_eq!(
+            info["reason"], "control-frame",
+            "the commit is applied: {info}"
+        );
+    }
+
     /// A NEW v1 seed never reaches the mirror (channel-encryption section 21.7): the frame still
     /// reads as key material, so it rings nobody, but it carries no seed for Kotlin to store.
     #[test]

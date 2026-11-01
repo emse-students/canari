@@ -5,6 +5,7 @@
  * threshold films until it lifts, the result is reviewed, and a discard brings the preview back. The
  * threshold's timer is the only clock, advanced by the test.
  */
+import { stubCameraCount } from '../../../test/cameraDevices';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelCapture from './ReelCapture.svelte';
@@ -99,7 +100,9 @@ function stream(microphone = true): MediaStream {
   return s as unknown as MediaStream;
 }
 
+let unstubCameras = () => {};
 beforeEach(() => {
+  unstubCameras = stubCameraCount(2);
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   framed.photo.mockResolvedValue(new Blob(['jpg'], { type: 'image/jpeg' }));
   framed.start.mockReturnValue({ stream: stream(), bitrate: 3_000_000, stop: framed.stop });
@@ -119,6 +122,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  unstubCameras();
   runtime.iosApp = false;
   router.after.length = 0;
   router.before.length = 0;
@@ -916,6 +920,7 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
         sourceBytes: 8,
         outputBytes: 4,
       })),
+      placeholder: vi.fn(async () => null),
       upload: vi.fn(async () => ({
         type: 'video' as const,
         mediaId: 'm-1',

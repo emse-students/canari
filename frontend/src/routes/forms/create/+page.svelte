@@ -1,7 +1,8 @@
 <script lang="ts">
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
-  import { internalPath, safeInternalPath } from '$lib/utils/internalPath';
+  import { safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -257,7 +258,9 @@
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
         goto(resolve('/posts'));
       } else {
-        goto(resolve(internalPath(returnTo)));
+        gotoAppPath(returnTo).catch((err: unknown) =>
+          console.error('[forms] the form is saved, but leaving the builder failed:', err)
+        );
       }
     } catch (e: any) {
       error = providerRefusalMessage(e) ?? e.message;

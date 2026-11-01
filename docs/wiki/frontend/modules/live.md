@@ -28,7 +28,7 @@ reached by API, and is unaffected.
 | L1 | Who may start a live? | **Any member.** |
 | L2 | Who may watch? | **The whole Canari network** - C9: the live's key travels in the row, as a post CEK does. **Narrowed 2026-10-19 by the lead on review (a safe default, reversible): a live RESPECTS SPACES LIKE A POST** - a member's live is watched by, and pushed to, readers sharing a space with the broadcaster; an association's live by the readers the association reaches (its members, its rules, a read grant for watching only). One predicate, `liveVisibleToUserSql` in `spaces/reader-spaces.ts`, gates the list, the key, the manifest and the push ([lives](../../services/lives.md#who-may-watch-the-rule-of-a-post)). |
 | L3 | Is a live kept afterwards? | **No replay: a live disappears when it ends.** The broadcaster may save it locally on their own device. |
-| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). |
+| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). **NO DURATION CAP (owner, 2026-10-31):** a live lasts as long as its broadcaster sends; the 60-minute cap and the byte budget derived from it are removed (server, client, sheet), and the server TRIMS the segments behind the newest 20 while the live runs, so what a live stores is at most 20 x 4 MiB whatever its duration ([lives](../../services/lives.md#what-one-broadcaster-may-store)). "30 to 60 minutes" above is a planning figure, no longer a limit. |
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
@@ -727,8 +727,8 @@ goes out under the identity chosen in the composer: the member, or an associatio
 "anonymous" is chosen, nor while the chosen association is missing from the list read.
 
 **The pre-live screen is the rules, shown before EVERY live (L11)**: visible like a post by the same
-identity and only while on air; reportable and cuttable by moderation; at most `maxDurationMs`; the
-camera may be away at most `reconnectWindowMs` - both read from `GET /api/lives/limits`. A warning
+identity and only while on air; reportable and cuttable by moderation; with no longest duration (L4, 2026-10-31); the
+camera may be away at most `reconnectWindowMs`, read from `GET /api/lives/limits`. A warning
 under 60 % battery where the engine has the Battery API (Android; WebKit has none), charging or not
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
@@ -808,7 +808,7 @@ disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the
 while the End drains labels the end screen as the server's (or as a cut, below), never as
 the member's. On air, a `410` from the uploader ends the screen with no end call - the cause is
 `cut` when its `endReason` says so (title `live_broadcast_cut_title`, no sentence under it:
-"Votre live a été interrompu par la modération"), `server` otherwise (the hour; the sentence no
+"Votre live a été interrompu par la modération"), `server` otherwise (the sentence no
 longer mentions moderation); a cut read on return from the background (`fetchLive` answering `410`
 `cut`) and one answering the End are the same cause; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
@@ -1086,3 +1086,132 @@ exactness, what happens when Redis does not answer) is
 - The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
 - The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
   never draws under the iOS status bar (`LiveBroadcaster.svelte`).
+
+## Broadcasting the screen on a desktop browser (2026-10-31, owner)
+
+Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+
+- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
+  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
+  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
+  `LiveBroadcast.chooseSource`, preview only.
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
+  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
+  `start()`.
+- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
+- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
+  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
+  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
+  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
+  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
+  stops both sources and closes the context.
+- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
+  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
+  recorder takes the display's video track like a camera's, and the viewer's string is the same.
+- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
+  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
+  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
+  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
+  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
+- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
+  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
+  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
+  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Review fixes (2026-10-31)**:
+  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
+    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
+  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
+    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
+    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
+    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
+    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
+  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
+    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
+  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
+    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
+    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
+    Retry message promises "go back to the camera" only in the preview, where the source buttons are
+    enabled; on air or away it says the share stopped and nothing else.
+  - **The source buttons are locked while the picker is open** (`choosingSource`).
+  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
+    windows included.
+- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
+  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
+  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
+  until the bump, so it is refused. There is no override and none is to be added: set `version` in
+  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
+  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
+- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
+  switch-camera button is hidden while the source is the screen.
+
+## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
+
+"Cet appareil ne peut pas diffuser en direct" had ONE cause in the code: `liveRecordingSupported()`
+(`liveRecorder.ts`) is `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)` and nothing else. The camera
+facing (L-F5) is fixed (ideal facing first, `cameraFacing.ts`) and a camera that cannot open has its OWN
+text (`CAMERA_FAULT_TEXT`), so neither can produce it. **The owner's browser is Firefox**, whose
+`MediaRecorder` records WebM (VP8/VP9 + Opus), never MP4/H.264.
+
+| Browser | Records `video/mp4;codecs=avc1.42E01F,mp4a.40.2` | Source |
+| --- | --- | --- |
+| Chrome 156, Windows | **yes** (also `avc1.42E01E`, bare `avc1`, `video/mp4`, WebM) | MEASURED 2026-10-31, `isTypeSupported` in the rig's Chrome |
+| Edge (Chromium) | yes from 126, same engine as Chrome | not run here; Chromium shares the recorder |
+| Chrome / Edge before 126 | **no** (no MP4 in `MediaRecorder`) | documented behaviour, not run here |
+| Firefox (any) | **no** (WebM and Ogg only) | documented behaviour and the owner's report; not run here |
+| Safari 14.1+ (macOS, iOS) | yes - the iPhone 12 bench used exactly this string | iPhone bench (WP-L1) |
+| Chromium on Linux without H.264 | depends on the build | not run here |
+
+**The format is not too strict where MP4 is recorded at all**: Chrome accepts any `avc1.*`, so a looser
+recorder string would not admit one more browser. The VIEWER is the strict side: MSE needs the codec
+string quoted in full (`avc1.42E01F,mp4a.40.2` plays, bare `avc1` and `video/mp4` do NOT, measured the
+same day), and iOS plays through `ManagedMediaSource` on the same string. So the recorder string stays.
+
+**Where the 126 comes from**: Chromium added MP4 containers to `MediaRecorder` in release 126 (Chrome
+Platform Status, "MediaRecorder: MP4 support"; the same engine in Edge). It is the one number
+`LIVE_CHROMIUM_MP4_FROM` in `liveRecorder.ts` holds, and it only chooses WHICH words the sheet shows - the
+capability itself is always `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)`, never the user agent.
+
+The sheet now says why, by cause (`classifyRecordingGap`, a user-agent read, tested): Firefox is named,
+a Chromium before 126 is told to update, anything else gets the generic text; all three point at Chrome,
+Edge or the app.
+
+### Supporting Firefox - options, costs, recommendation (NOT BUILT)
+
+1. **A WebM recording path** (Firefox's MediaRecorder records WebM natively). Costs: the segment shape
+   (every segment self-contained: init + one fragment, "The segment seal format") is built on fMP4;
+   WebM segments cut by MediaRecorder are not independently decodable (only the first has the header,
+   later chunks are clusters), so the "join on the newest two segments" playback breaks. And iOS Safari
+   plays WebM through MSE only from 17.4 on some devices, not reliably through `ManagedMediaSource`.
+   A server-side remux means media-service touches the media path it does not touch today. **Costly and
+   risky: not recommended.**
+2. **WebCodecs in the broadcaster** (`VideoEncoder` H.264 + `AudioEncoder` AAC, then a small fMP4 muxer in
+   JS). It would give every browser the SAME container the viewers already play, and would also remove
+   the dependence on `MediaRecorder`'s chunking quirks (L-F1). Costs: a muxer to write and test, a
+   keyframe/segment cutter of our own, CPU on the main thread or a worker, and a new class of bug on a
+   path now proven on phones. **Support in Firefox is NOT verified here**: its WebCodecs shipped on desktop
+   in 130, but H.264 ENCODE depends on the platform codecs and **AAC encode is, to my knowledge, not
+   offered by Firefox** (Opus is) - which would leave Firefox with H.264 video and no AAC audio, so the
+   MP4 would need Opus-in-MP4, which iOS cannot play. Owed before any design: a probe of
+   `VideoEncoder.isConfigSupported({codec:'avc1.42E01F'})` and `AudioEncoder.isConfigSupported({codec:'mp4a.40.2'})`
+   in a real Firefox.
+3. **Do nothing for Firefox** (the shipped answer): name it, point at Chrome, Edge and the app. Desktop
+   broadcasting is a minority path; the phones (the audience of lives) are unaffected.
+
+**Recommendation: option 3 now, and run the two `isConfigSupported` probes in Firefox before spending
+anything on option 2.** If AAC encode is absent, option 2 is dead for Firefox and the answer stays 3.
+
+## The switch-camera button needs two cameras (2026-10-31)
+
+`CameraSession.canSwitch` gates the button of the live sheet and of the CanaReels camera (`CameraScreen`,
+which also stands the double-tap flip down). **It fails open (review, 2026-10-31): the button and the
+double-tap are hidden ONLY on a measured count of exactly 1.** An unknown count (list unreadable, or a
+browser that listed no camera) keeps them: a phone that wrongly lost the front/back flip would lose it for
+good, whereas a desktop with one webcam and a visible button merely does nothing on a tap. The count is
+`countVideoInputs()` (`enumerateDevices()` filtered on `videoinput`, the ONE implementation - the call
+screen's `CallService.refreshCameraCount` uses it too), read AFTER the camera is open (labels and devices
+can be hidden before the grant) and again on `devicechange`; the listener is removed on `stop()`, and a
+read that lands after `stop()` writes nothing (`#watchEpoch`).
+
+**The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
+`[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`videoinput=1`, the rule is wrong for that browser and the line is the evidence.
