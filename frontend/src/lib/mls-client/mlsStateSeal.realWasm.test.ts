@@ -74,9 +74,11 @@ describe('a v2 state blob through the real WASM client', () => {
     } catch (e) {
       rejection = e;
     }
+    // The message is the variant's DETAIL, without the code: the typed error leads with the code
+    // itself, and a message carrying it too was logged `STATE_ALTERED: STATE_ALTERED: ...`.
     expect(rejection).toEqual({
       code: 'STATE_ALTERED',
-      message: expect.stringMatching(/^STATE_ALTERED: /),
+      message: expect.not.stringMatching(/STATE_ALTERED/),
     });
   });
 
@@ -97,6 +99,9 @@ describe('a v2 state blob through the real WASM client', () => {
       );
       expect(error).toBeInstanceOf(MlsStateVerdictError);
       expect((error as MlsStateVerdictError).code).toBe(code);
+      // The code leads the logged text exactly ONCE.
+      expect((error as Error).message.split(code)).toHaveLength(2);
+      expect((error as Error).message.startsWith(`${code}: `)).toBe(true);
     }
   });
 

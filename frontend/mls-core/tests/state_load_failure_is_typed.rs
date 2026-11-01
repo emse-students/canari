@@ -332,12 +332,13 @@ fn a_state_load_refusal_carries_its_code_from_the_variant_and_never_from_the_tex
         ),
     ] {
         assert_eq!(err.state_load_code(), Some(code), "{err:?}");
-        let message = err.to_string();
+        // The message is the DETAIL alone: the code is the field, and the frontend's typed error
+        // leads with it - carried in both, it was printed twice (`STATE_ALTERED: STATE_ALTERED: x`).
         assert_eq!(
             StateLoadRefusal::from(err),
             StateLoadRefusal {
                 code: Some(code),
-                message
+                message: "x".to_string()
             }
         );
     }
@@ -345,6 +346,10 @@ fn a_state_load_refusal_carries_its_code_from_the_variant_and_never_from_the_tex
     let prose = MlsError::OpenMls("STATE_ALTERED: in a sentence".into());
     assert_eq!(prose.state_load_code(), None);
     assert_eq!(StateLoadRefusal::from(prose).code, None);
+    // An untyped refusal keeps its whole `Display`: it has no code field to lead its log line.
+    let untyped = MlsError::OpenMls("a codec error".into());
+    let shown = untyped.to_string();
+    assert_eq!(StateLoadRefusal::from(untyped).message, shown);
     assert_eq!(
         StateLoadRefusal::from("IDENTITY_MISMATCH: a String".to_string()).code,
         None

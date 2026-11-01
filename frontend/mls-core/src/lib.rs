@@ -293,16 +293,26 @@ pub struct StateLoadRefusal {
     /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
     /// `KEYSTORE_KEY_UNAVAILABLE`, or `None`.
     pub code: Option<&'static str>,
-    /// The failure's own text - evidence for a reader of the logs, never a discriminator.
+    /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
+    /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
+    /// code already crosses as its own field and the frontend's typed error puts it back in front,
+    /// so carrying it here too printed it twice (`STATE_ALTERED: STATE_ALTERED: ...`). An untyped
+    /// refusal keeps the whole `Display`, the only text it has.
     pub message: String,
 }
 
 impl From<MlsError> for StateLoadRefusal {
     fn from(e: MlsError) -> Self {
-        Self {
-            code: e.state_load_code(),
-            message: e.to_string(),
-        }
+        let code = e.state_load_code();
+        let message = match e {
+            MlsError::StateAltered(detail)
+            | MlsError::StateSealedUnderAnotherKey(detail)
+            | MlsError::StateUndecryptable(detail)
+            | MlsError::StateIdentityMismatch(detail)
+            | MlsError::KeystoreKeyUnavailable(detail) => detail,
+            other => other.to_string(),
+        };
+        Self { code, message }
     }
 }
 

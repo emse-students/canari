@@ -2850,7 +2850,9 @@ has the before/after table).
   `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
   recovery stays reachable. The Tauri command and the WASM constructor carry the same code as a
   field (`StateLoadRefusal`), and it is also each variant's `Display` prefix, for the logs (pinned in
-  `state_load_failure_is_typed.rs`). A REJECTION from
+  `state_load_failure_is_typed.rs`). A coded refusal's `message` is the variant's detail WITHOUT that
+  prefix, because the typed TypeScript error leads with the code itself - carried in both, a log line
+  read `STATE_ALTERED: STATE_ALTERED: ...`. A REJECTION from
   `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
   the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
   not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)

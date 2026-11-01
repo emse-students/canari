@@ -26,12 +26,15 @@ describe('mlsStateLoadErrorOf', () => {
     expect(typed).toBeInstanceOf(MlsStateVerdictError);
     expect((typed as MlsStateVerdictError).code).toBe(code);
     expect((typed as MlsStateVerdictError).refusal).toBeNull();
+    // The code leads the log text ONCE: `mls-core` sends the detail alone, the type adds the code.
+    expect(typed.message).toBe(`${code}: whatever the text says`);
     expect(error).not.toHaveBeenCalled();
   });
 
   it('types an empty keystore as KeystoreKeyUnavailableError', () => {
     const typed = mlsStateLoadErrorOf({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'no key' });
     expect(typed).toBeInstanceOf(KeystoreKeyUnavailableError);
+    expect(typed.message).toBe('KEYSTORE_KEY_UNAVAILABLE: no key');
     expect(error).not.toHaveBeenCalled();
   });
 

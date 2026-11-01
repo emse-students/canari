@@ -1932,10 +1932,11 @@ mod state_load_refusal_tests {
             ),
         ];
         for (err, code) in cases {
-            let message = err.to_string();
+            // The message is the variant's detail alone: the code crosses as its own field, and a
+            // message that led with it too was printed twice once typed (`STATE_ALTERED: STATE_ALTERED`).
             assert_eq!(
                 wire(StateLoadRefusal::from(err)),
-                serde_json::json!({ "code": code, "message": message }),
+                serde_json::json!({ "code": code, "message": "x" }),
             );
         }
     }
