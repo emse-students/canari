@@ -2,6 +2,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
+  conversationStartedAtStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   messageOrderColumnsStatements,
@@ -165,7 +166,7 @@ describe('conversationServerReadWatermarksStatement (v16)', () => {
       engine.prepare('SELECT read_watermarks, server_read_watermarks FROM conversations').get()
     ).toEqual({ read_watermarks: '{"me":5}', server_read_watermarks: null });
     expect(conversationServerReadWatermarksStatement(columnsOf())).toBeNull();
-    expect(SCHEMA_VERSION).toBe(16);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(16);
   });
 
   it('adds the order key and its pending flag to an existing messages table, only the ones it lacks', () => {
@@ -179,5 +180,42 @@ describe('conversationServerReadWatermarksStatement (v16)', () => {
     expect(
       messageOrderColumnsStatements([...CURRENT_MESSAGE_COLUMNS, 'order_at', 'order_pending'])
     ).toEqual([]);
+  });
+});
+
+/**
+ * v16 -> v17 on a REAL in-memory SQLite: the group's start was declared persisted and SQLite dropped
+ * it on every save. A stored conversation reads NULL - unknown until the next group sweep - and a
+ * rerun does nothing.
+ */
+describe('conversationStartedAtStatement (v17)', () => {
+  const columnsOf = (engine: any): string[] =>
+    engine
+      .prepare('PRAGMA table_info(conversations)')
+      .all()
+      .map((c: { name: string }) => c.name);
+
+  it('adds the column to an existing conversations table, NULL on every row', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT, awaiting_admission INTEGER)'
+    );
+    engine.exec("INSERT INTO conversations (id, name, lifecycle) VALUES ('g1', 'Group', 'active')");
+
+    const sql = conversationStartedAtStatement(columnsOf(engine));
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT started_at, lifecycle FROM conversations').get()).toEqual({
+      started_at: null,
+      lifecycle: 'active',
+    });
+    expect(conversationStartedAtStatement(columnsOf(engine))).toBeNull();
+  });
+
+  it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
+    expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
+    expect(SCHEMA_VERSION).toBe(17);
   });
 });
