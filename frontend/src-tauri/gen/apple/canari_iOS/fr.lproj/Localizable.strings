@@ -14,6 +14,7 @@
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";
+"notif.quickreply.notsent" = "Votre réponse n'a pas été envoyée. Ouvrez Canari pour la réécrire.";
 "notif.channel.unnamed" = "Salon";
 /* A mention token in a decrypted body: the one user the app can name, and everybody else. */
 "notif.mention.you" = "vous";

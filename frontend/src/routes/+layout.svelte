@@ -5,6 +5,7 @@
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
+  import { markRouterReady } from '$lib/navigation/routerReady';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
@@ -142,6 +143,8 @@
   });
 
   onMount(() => {
+    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
+    markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of

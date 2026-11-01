@@ -310,6 +310,8 @@
   "chat_message_placeholder": "Write…",
   "chat_send_message_label": "Send message",
   "chat_send_error_generic": "The message could not be sent. Try again in a moment.",
+  "chat_quick_reply_waiting": "Your reply from the notification will be sent as soon as the conversation is loaded.",
+  "chat_quick_reply_lost": "Your reply from the notification could not be sent. Please write it again in the conversation.",
   "chat_send_held": "Sending as soon as the conversation is ready ({count} waiting)",
   "chat_send_held_not_sent": [
     {

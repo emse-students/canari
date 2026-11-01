@@ -1406,6 +1406,14 @@ class NotificationService: UNNotificationServiceExtension {
       if let sentAt = media?.sentAt, sentAt > 0 {
         content.userInfo["sentAt"] = sentAt
       }
+      // The ACCOUNT this notification was decrypted for: a quick reply typed on it is sent as that
+      // account, never as whoever holds `push_context.json` when the reply is typed (review of
+      // #2843, M3; canari_push.mm `kCanariRecipientKey`, same key).
+      if let recipient = ctx?.userId, !recipient.isEmpty {
+        content.userInfo["recipientId"] = recipient
+      } else {
+        NSLog("[CanariNSE] ERROR a message notification with no push context names no recipient - a quick reply on it is refused, visibly")
+      }
     }
     // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
     // iOS 15.0 and is ignored by the system, and the deployment target is 16.0 - so there is no

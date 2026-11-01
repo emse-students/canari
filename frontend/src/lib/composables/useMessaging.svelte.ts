@@ -102,7 +102,13 @@ import type {
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
+import {
+  awaitOutboxSettled,
+  enqueueOutboxMessage,
+  isEnqueueQuotaFailure,
+  type OutboxSettlement,
+} from '$lib/utils/chat/outbox';
+import { MessagePairWriteError } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -1130,6 +1136,7 @@ export function useMessaging() {
     );
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
+    let pairWriteFailure: MessagePairWriteError | null = null;
     if (ctx.storage && !skipDbSave) {
       try {
         const row = {
@@ -1147,7 +1154,19 @@ export function useMessaging() {
         // message the sender could see and no queue would ever send (TAB-5, 2026-09-05). Every other
         // caller - an inbound message, an FCM upgrade - has no entry and takes the single-store path.
         if (options.outboxEntry) {
-          await ctx.storage.saveMessageWithOutboxEntry(row, options.outboxEntry, ctx.deviceKeyB64);
+          try {
+            await ctx.storage.saveMessageWithOutboxEntry(
+              row,
+              options.outboxEntry,
+              ctx.deviceKeyB64
+            );
+            options.onPairWritten?.();
+          } catch (e) {
+            // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
+            // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
+            console.error('[DB] the message and its outbox entry were NOT written:', e);
+            pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+          }
         } else {
           await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
         }
@@ -1156,6 +1175,7 @@ export function useMessaging() {
         console.error('[DB] Failed to persist message:', e);
       }
     }
+    if (pairWriteFailure) throw pairWriteFailure;
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
     // `chatContainer.scrollTop = chatContainer.scrollHeight`, asking nobody - not whether the
@@ -2576,6 +2596,57 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Sends `text` to a conversation that is NOT necessarily the one on screen, through the same
+   * `sendChatMessage` the composer reaches (echo + durable outbox entry in one write). Used for a
+   * reply typed in a notification while the page holds the MLS state (`quickReplyDrain.ts`).
+   *
+   * `queued` is true once the message is the queue's or a visible failed row's: it is then owned by
+   * the page and must not be handed back. False means nothing was written.
+   */
+  async function sendTextTo(
+    text: string,
+    targetName: string,
+    ctx: MessagingContext
+  ): Promise<{ outcome: OutboxSettlement | 'not-queued' | 'gone'; error?: string }> {
+    const convo = ctx.conversations.get(targetName);
+    // A CONVERSATION THAT WILL NEVER TAKE IT is `gone`, read from the facts - the row in memory, else
+    // the stored row - never from a refusal's wording (round-4 review of #2843): REMOVED, and only
+    // that. A notification proves its conversation exists on the server, so a row MISSING here is a
+    // Welcome this device has not installed yet (a first contact), not a gone conversation: it is
+    // `not-queued`, like one stored and not loaded yet, and a later take retries it.
+    if (convo?.lifecycle === 'removed') return { outcome: 'gone', error: 'conversation removed' };
+    if (!convo) {
+      if (!ctx.storage) return { outcome: 'not-queued', error: 'no storage to look it up' };
+      let stored: Awaited<ReturnType<IStorage['getConversation']>>;
+      try {
+        stored = await ctx.storage.getConversation(targetName);
+      } catch (e) {
+        // Unreadable proves nothing: the reply waits for a take that can read it.
+        ctx.log(`[SEND] sendTextTo: the conversation row could not be read: ${String(e)}`);
+        return { outcome: 'not-queued', error: 'conversation row unreadable' };
+      }
+      if (stored?.lifecycle === 'removed')
+        return { outcome: 'gone', error: 'conversation removed' };
+      if (!stored) {
+        ctx.log(
+          `[SEND] sendTextTo: ${targetName.slice(0, 8)} has no row here yet, its Welcome is awaited`
+        );
+        return { outcome: 'not-queued', error: 'conversation not installed yet' };
+      }
+      return { outcome: 'not-queued', error: 'conversation not loaded yet' };
+    }
+    const result = await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
+    if (!(result.success || result.echoed === true)) {
+      return { outcome: 'not-queued', error: result.error };
+    }
+    // QUEUED IS NOT SENT (review of #2843, H1): the enqueue only starts the flush. A caller that
+    // holds a process for this message waits for the queue to SETTLE it. A salon's text is not in
+    // the queue; a notification never offers a reply into a salon, so it is only said pending.
+    if (!result.messageId) return { outcome: 'pending' };
+    return { outcome: await awaitOutboxSettled(result.messageId) };
+  }
+
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
@@ -2638,6 +2709,8 @@ export function useMessaging() {
     takeBackSend,
     resumeUnsentSends,
     forwardMessage,
+    /** Sends a text to any conversation through the composer's send path (a notification reply). */
+    sendTextTo,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
