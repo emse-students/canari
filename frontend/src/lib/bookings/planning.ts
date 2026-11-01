@@ -66,24 +66,18 @@ export function endChoices(units: readonly SlotUnit[], start: SlotUnit, limit: n
   return freeRunFrom(units, start, limit);
 }
 
-/** What the form's start and end name: the first unit and how many it covers, or null when stale. */
-export function resolveRange(
-  units: readonly SlotUnit[],
-  startMs: number,
-  endMs: number,
-  limit: number
-): { first: SlotUnit; count: number } | null {
-  const first = units.find((u) => u.startMs === startMs && u.state === 'free');
-  if (!first) return null;
-  const run = freeRunFrom(units, first, limit);
-  const idx = run.findIndex((u) => u.endMs === endMs);
-  return idx < 0 ? null : { first, count: idx + 1 };
+/**
+ * A unit's identity: its start AND its end. Two slots of a list may start at the same instant
+ * (10:00-11:00 and 10:00-12:00), so a start alone does not name one - `freeRunFrom` matches on both.
+ */
+export function unitKey(unit: { startMs: number; endMs: number }): string {
+  return `${unit.startMs}-${unit.endMs}`;
 }
 
 /**
  * The planning's reading of a unit, as a `RunKind`: taken, blocked, over, free, or free but not
  * offered now (the booking window, a refused start). The organiser (`blockMode`) is not bound by
- * the window, so every free unit that is not over reads `free` for them.
+ * the window, but a block may not start in the past: a unit that has begun reads `closed` for them.
  */
 export function planningKind(
   space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,

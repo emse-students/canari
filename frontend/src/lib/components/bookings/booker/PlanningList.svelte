@@ -18,7 +18,7 @@
    * under the other, each a run of rows - a booking, a block, a free stretch, a stretch not offered
    * now - as the agenda's schedule list is. A taken row opens its reading (`onOpen`, the same sheet
    * the grid opens); a FREE row opens the range form prefilled with its stretch (`onFree`); the
-   * button at the bottom opens it blank (`onAdd`). Nothing is painted with a finger. The list is the
+   * button at the bottom opens it blank (`onAdd`), held ABOVE the bottom bar (`--bottom-nav-reserve`). Nothing is painted with a finger. The list is the
    * week the grid would draw, read once: `days` come from `planningDays`.
    */
   interface Props {
@@ -55,14 +55,23 @@
     isOfferedStart(space, unit, nowMs, lastRefusedStart, blockMode);
 
   let list = $state<HTMLElement | null>(null);
-  let lastFocus = '';
+  /** The day the list has honoured: null until the first draw, which already sits at the top. */
+  let honoured: string | null = null;
   $effect(() => {
     const date = focusDate;
-    if (!list || date === lastFocus) return;
-    const first = lastFocus === '';
-    lastFocus = date;
-    // The first draw already sits at the top; only a day picked afterwards moves the page.
-    if (!first) list.querySelector<HTMLElement>(`[data-day="${date}"]`)?.scrollIntoView?.();
+    // `days` is read so the effect runs again when a week moved to is drawn: a day of a week not
+    // read yet has no section to scroll to, and is honoured once it has.
+    void days;
+    if (!list) return;
+    if (honoured === null) {
+      honoured = date;
+      return;
+    }
+    if (date === honoured) return;
+    const section = list.querySelector<HTMLElement>(`[data-day="${date}"]`);
+    if (!section) return;
+    honoured = date;
+    section.scrollIntoView?.();
   });
 
   const rowClass = (run: GridRun, takeable: boolean) =>
@@ -81,12 +90,11 @@
   {#each days as day (day.date)}
     <section data-day={day.date} aria-label={formatDay(day.date)} class="scroll-mt-2">
       <h3
-        class="text-text-muted px-1 pt-3 pb-1.5 text-xs font-bold tracking-wide uppercase {day.date ===
-        today
+        class="px-1 pt-3 pb-1.5 text-xs font-bold tracking-wide uppercase {day.date === today
           ? 'text-text-main'
-          : ''}"
+          : 'text-text-muted'}"
       >
-        {formatDay(day.date)}{day.rows.length === 0 ? ` - ${m.bookings_day_closed()}` : ''}
+        {formatDay(day.date)}{day.state === 'closed' ? ` - ${m.bookings_day_closed()}` : ''}
       </h3>
       <ul class="space-y-1.5">
         {#each day.rows as run (`${run.startMs}-${run.endMs}-${run.lane}`)}
@@ -142,7 +150,7 @@
   type="button"
   onclick={onAdd}
   aria-label={blockMode ? m.bookings_planning_add_block() : m.bookings_planning_add()}
-  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover focus-visible:ring-cn-yellow sticky bottom-4 z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
+  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover focus-visible:ring-cn-yellow sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
 >
   <Plus size={28} aria-hidden="true" />
 </button>

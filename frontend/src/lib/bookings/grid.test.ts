@@ -16,6 +16,7 @@ import {
   unitDay,
   weekDates,
   HOUR_REM,
+  isOfferedStart,
   firstUsefulMin,
   weekLayout,
   weekReadRange,
@@ -425,5 +426,19 @@ describe('a unit that is over', () => {
     const u = unit('10:00', 30);
     expect(isPastUnit(u, u.endMs - 1)).toBe(false);
     expect(isPastUnit(u, u.endMs)).toBe(true);
+  });
+});
+
+describe('isOfferedStart - the one rule for a range to START (grid, planning rows, range form)', () => {
+  const start = at('2026-11-04T09:00:00Z');
+  const now = at('2026-11-04T12:00:00Z'); // 13:00 Paris: the 10:00 Paris unit is over
+  it('refuses a block that starts in the past or has begun, whatever the booking window says', () => {
+    expect(isOfferedStart(paris, { startMs: start }, now, null, true)).toBe(false);
+    expect(isOfferedStart(paris, { startMs: now }, now, null, true)).toBe(false);
+    expect(isOfferedStart(paris, { startMs: now + 60_000 }, now, null, true)).toBe(true);
+  });
+  it('leaves a booker to the booking window and to a start the server refused', () => {
+    expect(isOfferedStart(paris, { startMs: now + 60_000 }, now, null, false)).toBe(true);
+    expect(isOfferedStart(paris, { startMs: now + 60_000 }, now, now + 60_000, false)).toBe(false);
   });
 });

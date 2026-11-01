@@ -50,7 +50,6 @@ async function open(units: SlotUnit[], onPick = vi.fn(), blockMode = false, days
       space,
       resource,
       layout: weekLayout(units, days, space, NOW),
-      mode: 'day',
       blockMode,
       nowMs: NOW,
       onPick,
@@ -89,9 +88,15 @@ describe('SpaceGrid - past and unavailable units', () => {
     expect(onPick).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps such a unit a control on the organiser's block grid", async () => {
-    const cells = await open([unit(2)], vi.fn(), true);
+  it("keeps a coming unit inside the notice a control on the organiser's block grid", async () => {
+    const cells = await open([unit(3)], vi.fn(), true);
     expect((cells[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('offers the organiser no unit that has begun: the server freezes history', async () => {
+    // unit(2) starts at NOW exactly; it is not "to come", so no block may start on it.
+    const cells = await open([unit(2)], vi.fn(), true);
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('still names the state of a past unit for a screen reader', async () => {

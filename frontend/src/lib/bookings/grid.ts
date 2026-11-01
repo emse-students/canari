@@ -474,8 +474,9 @@ export function unitText(unit: SlotUnit, bookable: boolean): string {
 /**
  * Whether a range may START on `unit` now: the booking window takes its start and the server has not
  * refused it, or a later start, as `started` or `notice` (`lastRefusedStart`). The organiser's block
- * mode is not bound by the window: any free unit may start a block. ONE rule for the grid and the
- * phone's planning.
+ * mode is not bound by the booking window, but the server refuses a block starting in the past or
+ * about to (`history-frozen`), so a block may START only on a unit that has not begun yet. ONE rule
+ * for the grid, the phone's planning rows and the range form.
  */
 export function isOfferedStart(
   space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
@@ -484,7 +485,7 @@ export function isOfferedStart(
   lastRefusedStart: number | null,
   blockMode: boolean
 ): boolean {
-  if (blockMode) return true;
+  if (blockMode) return unit.startMs > nowMs;
   return (
     windowRefusal(space, unit.startMs, nowMs) === null &&
     (lastRefusedStart === null || unit.startMs > lastRefusedStart)

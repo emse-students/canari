@@ -186,3 +186,22 @@ export function blockDensity(heightRem: number): BlockDensity {
   if (heightRem >= 1.5) return 'line';
   return 'icon';
 }
+
+/**
+ * Which way a range being drawn should scroll its box: 1 (down) or -1 (up) when the pointer is
+ * within `edgePx` of the VISIBLE part of the box, 0 otherwise. The box may extend below the window
+ * (its bottom is then off screen), so the edges are clamped to the viewport first: a pointer can
+ * never reach an edge it cannot see.
+ */
+export function edgeScrollDirection(
+  y: number,
+  box: { top: number; bottom: number },
+  viewportHeight: number,
+  edgePx: number
+): -1 | 0 | 1 {
+  const top = Math.max(box.top, 0);
+  const bottom = Math.min(box.bottom, viewportHeight);
+  if (y > bottom - edgePx) return 1;
+  if (y < top + edgePx) return -1;
+  return 0;
+}
