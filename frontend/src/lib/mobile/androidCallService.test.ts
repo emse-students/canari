@@ -20,7 +20,7 @@ import {
   type OngoingCallSpec,
 } from './androidCallService';
 
-/** What the recording bridge's `takeDndRegrantOwed` answers. */
+/** What the recording bridge's `isDndRegrantOwed` answers. */
 let dndOwed = false;
 
 /** A window with a recording `canariCall` and a real event target the test can dispatch on. */
@@ -34,10 +34,11 @@ function host(withBridge = true) {
     pageLoaded: () => calls.push({ method: 'pageLoaded', arg: '' }),
     ringStart: (arg) => calls.push({ method: 'ringStart', arg }),
     ringStop: (callId, arg) => calls.push({ method: 'ringStop', arg, callId }),
-    takeDndRegrantOwed: () => {
-      calls.push({ method: 'takeDndRegrantOwed', arg: '' });
+    isDndRegrantOwed: () => {
+      calls.push({ method: 'isDndRegrantOwed', arg: '' });
       return dndOwed;
     },
+    dndRegrantAnswered: (arg) => calls.push({ method: 'dndRegrantAnswered', arg }),
     openCallChannelSettings: () => calls.push({ method: 'openCallChannelSettings', arg: '' }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
@@ -451,15 +452,39 @@ describe('the calls channel Do Not Disturb ask (Canari ring, 2026-11-01)', () =>
     dndOwed = false;
   });
 
-  it('asks once when native says the old channel had it, with a button to the channel settings', () => {
+  type Shown = { message: string; action: { label: string; run: () => void }; onClose: () => void };
+
+  it('asks when native says the old channel had it; the button answers it and opens the settings', () => {
     dndOwed = true;
     const { h, calls } = host();
-    const shown: { message: string; action: { label: string; run: () => void } }[] = [];
-    askCallChannelDndIfOwed(h, (message, action) => shown.push({ message, action }));
+    const shown: Shown[] = [];
+    askCallChannelDndIfOwed(h, (message, action, onClose) =>
+      shown.push({ message, action, onClose })
+    );
     expect(shown).toHaveLength(1);
     expect(shown[0].message).not.toBe('');
+    // Only ASKING clears nothing: an ask nobody saw is asked again.
+    expect(calls.map((c) => c.method)).toEqual(['isDndRegrantOwed']);
     shown[0].action.run();
-    expect(calls.map((c) => c.method)).toEqual(['takeDndRegrantOwed', 'openCallChannelSettings']);
+    expect(calls.map((c) => [c.method, c.arg])).toEqual([
+      ['isDndRegrantOwed', ''],
+      ['dndRegrantAnswered', 'settings'],
+      ['openCallChannelSettings', ''],
+    ]);
+  });
+
+  it('closing the notice answers it too, without opening anything', () => {
+    dndOwed = true;
+    const { h, calls } = host();
+    const shown: Shown[] = [];
+    askCallChannelDndIfOwed(h, (message, action, onClose) =>
+      shown.push({ message, action, onClose })
+    );
+    shown[0].onClose();
+    expect(calls.map((c) => [c.method, c.arg])).toEqual([
+      ['isDndRegrantOwed', ''],
+      ['dndRegrantAnswered', 'dismissed'],
+    ]);
   });
 
   it('shows nothing when nothing is owed, or with no bridge', () => {

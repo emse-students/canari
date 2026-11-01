@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
@@ -224,11 +225,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
         private const val CALL_NOTIF_ID_BASE = 700_000
 
-        /**
-         * callIds currently ringing, from the server's `call_ring` push - the only ring source. A
-         * ring delivered twice (FCM may redeliver) rings once.
-         */
-        private val activeCallRings = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+        // The calls whose native ring is up live in `CallRingPlayer.rings` ([RingSequencer]), the one
+        // state the native ring and the in-app player share: a ring delivered twice (FCM may
+        // redeliver) rings once, and a call the app rings, or one that ended, is never posted.
 
         // Starts at 10_000 to avoid overlapping the stable IDs (1000-9998) or the summary (9999).
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
@@ -405,11 +404,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
-                // and so does each ring's call screen, which must never outlive its ring.
-                for (ringing in activeCallRings.toList()) {
+                // and so does each ring's call screen, which must never outlive its ring. Under the
+                // rings' lock, so a post cannot land between the snapshot above and this clear.
+                CallRingPlayer.rings.clearNative { ringing ->
+                    manager.cancel(callNotifId(ringing))
                     IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
                 }
-                activeCallRings.clear()
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
@@ -1103,14 +1103,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /** Whether [callId] still rings on this device - the call screen asks before it shows. */
-        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
+        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && CallRingPlayer.rings.nativeRinging(callId)
 
         /**
          * Whether a call holds the phone's sound - the ongoing-call service holds one, or a call rings
          * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
          */
         internal fun callHoldsSound(): Boolean =
-            CallSoundHold.held(CallForegroundService.running, activeCallRings.size, CallRingPlayer.ringingCallId != null)
+            CallSoundHold.held(CallForegroundService.running, CallRingPlayer.rings.nativeCount(), CallRingPlayer.ringingCallId != null)
 
         /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
@@ -1119,7 +1119,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * that opens [IncomingCallActivity] (shown at once on a locked or idle device when the OS
          * grants USE_FULL_SCREEN_INTENT), names the caller from this phone's copy, draws the photo
          * once it is read, and self-expires after [CALL_RING_TIMEOUT_MS]. Called by the server's
-         * `call_ring` push only; deduped per callId (FCM may redeliver).
+         * `call_ring` push, and by [CallRingPlayer] when the app leaves the screen while it rings -
+         * always OFF the main thread (the photo is a Keystore read and a fetch).
+         *
+         * THE CLAIM AND THE POST ARE ONE CRITICAL SECTION ([RingSequencer.claimNative]): a call the
+         * app rings, one already posted, or one answered, ended or silenced is refused and logged;
+         * and an in-app start cannot fall between the claim and `notify`, which is how a late post
+         * used to leave two rings of one call.
          */
         internal fun showIncomingCallNotification(
             context: Context,
@@ -1141,41 +1147,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (MainActivity.isInForeground) {
                 Log.i(TAG, "showIncomingCallNotification: app in front with no socket (PIN gate) -> the native ring is the only one call=$callId")
             }
-            if (!activeCallRings.add(callId)) {
-                Log.d(TAG, "showIncomingCallNotification: already ringing call=$callId -> dedupe")
-                return
-            }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(context, manager)
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
-
-            // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
-            // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
-            // pending accept from the facts recorded here. The webview joins on those facts once
-            // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
-            // answer from the ring joins on the ring's facts").
-            val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
-            val answerIntent = Intent(context, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                setData(Uri.parse("fr.emse.canari://chat/$groupId"))
-                CallRingAnswer.putAnswer(this, callId, answerNonce)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            val answerPending = PendingIntent.getActivity(
-                context, notifId, answerIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
-                action = ACTION_CALL_DECLINE
-                putExtra(EXTRA_GROUP_ID, groupId)
-                putExtra(EXTRA_CALL_ID, callId)
-            }
-            val declinePending = PendingIntent.getBroadcast(
-                context, notifId + 1, declineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
             val name = knownCallerName(context, callerId)
             val title = name ?: res.getString(R.string.notif_call_unknown_caller)
             val body = res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call)
@@ -1183,31 +1158,62 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // is fetched, here and on the call screen, only for a caller the phone has named.
             val photoOf = if (name != null) callerId else ""
 
-            // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
-            // locked phone Android launches the full-screen intent BY ITSELF, which would have
-            // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
-            // and answers only on the user's tap.
-            val fullScreenPending = PendingIntent.getActivity(
-                context, notifId + 2,
-                IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            // Refused (and said so by the sequencer): a call the app rings, one already up, or one
+            // that may not ring again.
+            val (answerP, declineP, fullScreenP) = CallRingPlayer.rings.claimNative(callId) {
+                // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
+                // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
+                // pending accept from the facts recorded here. The webview joins on those facts once
+                // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
+                // answer from the ring joins on the ring's facts").
+                val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
+                val answerIntent = Intent(context, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    setData(Uri.parse("fr.emse.canari://chat/$groupId"))
+                    CallRingAnswer.putAnswer(this, callId, answerNonce)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                val answerPending = PendingIntent.getActivity(
+                    context, notifId, answerIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                    action = ACTION_CALL_DECLINE
+                    putExtra(EXTRA_GROUP_ID, groupId)
+                    putExtra(EXTRA_CALL_ID, callId)
+                }
+                val declinePending = PendingIntent.getBroadcast(
+                    context, notifId + 1, declineIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
 
-            // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
-            // Without the grant the same notification rings as a heads-up - Android's own behaviour,
-            // not a path of ours - and the log says which one this phone got, so a reading of a
-            // locked phone that did not light up names its cause.
-            if (android.os.Build.VERSION.SDK_INT >= 34) {
-                val fsi = manager.canUseFullScreenIntent()
-                if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
-                else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
-            }
+                // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
+                // locked phone Android launches the full-screen intent BY ITSELF, which would have
+                // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
+                // and answers only on the user's tap.
+                val fullScreenPending = PendingIntent.getActivity(
+                    context, notifId + 2,
+                    IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
 
-            val notif = buildIncomingCallNotification(
-                context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
-            )
-            manager.notify(notifId, notif)
-            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+                // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
+                // Without the grant the same notification rings as a heads-up - Android's own behaviour,
+                // not a path of ours - and the log says which one this phone got, so a reading of a
+                // locked phone that did not light up names its cause.
+                if (android.os.Build.VERSION.SDK_INT >= 34) {
+                    val fsi = manager.canUseFullScreenIntent()
+                    if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
+                    else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
+                }
+
+                val notif = buildIncomingCallNotification(
+                    context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
+                )
+                manager.notify(notifId, notif)
+                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+                Triple(answerPending, declinePending, fullScreenPending)
+            } ?: return
 
             // The ring's end is armed BEFORE the photo is fetched: a fetch on a slow radio must
             // never delay it. Belt-and-braces with setTimeoutAfter (API 26+); it also drops the
@@ -1227,16 +1233,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val avatar = context.fetchAvatar(photoOf)
                 if (avatar == null) {
                     Log.d(TAG, "showIncomingCallNotification: no caller photo - the ring keeps the name alone")
-                } else if (!activeCallRings.contains(callId)) {
-                    Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
                 } else {
-                    manager.notify(
-                        notifId,
-                        buildIncomingCallNotification(
-                            context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar, res,
-                        ),
-                    )
-                    Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                    // Re-posted only while the ring is still up, under the same lock as its end: a
+                    // photo must never bring back a ring that was taken down meanwhile.
+                    val drawn = CallRingPlayer.rings.whileNativeRinging(callId) {
+                        manager.notify(
+                            notifId,
+                            buildIncomingCallNotification(
+                                context, title, body, hasVideo, answerP, declineP, fullScreenP, avatar, res,
+                            ),
+                        )
+                    }
+                    if (drawn) {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                    } else {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
+                    }
                 }
             }
         }
@@ -1303,19 +1315,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return notif
         }
 
-        /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
-        internal fun cancelIncomingCallNotification(context: Context, callId: String) {
+        /**
+         * The call ENDED for this phone (the caller hung up, answered elsewhere, the timeout, a
+         * decline, the page left the incoming state): it may not ring again ([RingClosed.ENDED]),
+         * its in-app ring stops and its native ring goes, in one critical section of
+         * [CallRingPlayer.rings].
+         */
+        internal fun cancelIncomingCallNotification(context: Context, callId: String, reason: String = "the ring of this call ended") {
             if (callId.isEmpty()) return
             // The answer record dies with the ring, whether or not this process still shows it.
             CallRingAnswer.forget(context, callId)
-            // So does the on-screen player of the same call (`call_ring_end`, a decline, the timeout).
-            CallRingPlayer.stopIfRinging(context, callId, "the ring of this call ended")
-            if (!activeCallRings.remove(callId)) return
+            CallRingPlayer.rings.close(callId, RingClosed.ENDED, reason)
+        }
+
+        /**
+         * Takes the native ring of [callId] down - its notification and its call screen - WITHOUT
+         * ending the call: the app now rings it ([RingSequencer.startInApp]), or it ended
+         * ([RingSequencer.close]). Called under the rings' lock only.
+         */
+        internal fun takeDownRingNotification(context: Context, callId: String) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))
             // The full-screen call screen goes with its ring, whoever ended it.
             IncomingCallActivity.finishFor(callId, "the ring stopped")
-            Log.d(TAG, "cancelIncomingCallNotification: ring stopped call=$callId")
+            Log.d(TAG, "takeDownRingNotification: native ring taken down call=$callId")
         }
 
         /**
@@ -2269,9 +2292,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } finally {
                     conn.disconnect()
                 }
+            } catch (e: java.io.IOException) {
+                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either. Said
+                // at WARN: the picture is lost for this notification, and a run of these is a radio
+                // or a server worth reading about.
+                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}: ${e.message}) -> initials, not remembered")
+                null
             } catch (e: Exception) {
-                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either.
-                Log.d(TAG, "$label: ${e.message} -> initials fallback, not remembered")
+                // Not the network: a defect in how this was called - a fetch on the main thread
+                // (`NetworkOnMainThreadException`, the review of #2877), a bad URL. It ACCUSES.
+                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}")
                 null
             }
         }

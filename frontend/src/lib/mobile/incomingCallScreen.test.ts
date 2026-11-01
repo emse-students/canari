@@ -102,20 +102,22 @@ describe('the call screen never outlives its ring', () => {
     const body = between(
       push,
       'fun cancelAllMessageNotifications(context: Context)',
-      'activeCallRings.clear()',
+      'CallRingAnswer.forgetAll(context)',
       'cancelAllMessageNotifications'
     );
+    expect(body).toContain('CallRingPlayer.rings.clearNative {');
     expect(body).toContain('IncomingCallActivity.finishFor(ringing,');
   });
 
   it('the end of a ring closes its screen', () => {
-    const cancel = between(
+    // Every end closes the call (`RingSequencer.close`), which takes the native ring down here.
+    const takeDown = between(
       push,
-      'internal fun cancelIncomingCallNotification(',
-      'Log.d(TAG, "cancelIncomingCallNotification',
-      'cancelIncomingCallNotification'
+      'internal fun takeDownRingNotification(',
+      'Log.d(TAG, "takeDownRingNotification',
+      'takeDownRingNotification'
     );
-    expect(cancel).toContain('IncomingCallActivity.finishFor(callId,');
+    expect(takeDown).toContain('IncomingCallActivity.finishFor(callId,');
   });
 });
 
@@ -177,7 +179,7 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
     const ring = between(
       push,
       'internal fun showIncomingCallNotification(',
-      'if (!activeCallRings.add(callId))',
+      'CallRingPlayer.rings.claimNative(callId)',
       'showIncomingCallNotification'
     );
     expect(ring).toMatch(/if \(foregroundPageRings\(\)\) \{[\s\S]*?return\s*\}/);
@@ -318,7 +320,7 @@ describe('the native answer is a private intent carrying every fact the join nee
     const cancel = between(
       push,
       'internal fun cancelIncomingCallNotification(',
-      'Log.d(TAG, "cancelIncomingCallNotification',
+      'CallRingPlayer.rings.close(',
       'cancelIncomingCallNotification'
     );
     expect(cancel).toContain('CallRingAnswer.forget(context, callId)');

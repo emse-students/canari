@@ -98,7 +98,7 @@ describe('the bridge, both sides of the WebView', () => {
     expect(bridgeTs).toContain('canariCall?: AndroidCallBridge');
   });
 
-  it('the eight methods the page calls are the eight the interface exposes', () => {
+  it('the nine methods the page calls are the nine the interface exposes', () => {
     for (const method of [
       'start(json: String)',
       'update(json: String)',
@@ -106,7 +106,8 @@ describe('the bridge, both sides of the WebView', () => {
       'pageLoaded()',
       'ringStart(json: String)',
       'ringStop(callId: String, reason: String)',
-      'takeDndRegrantOwed()',
+      'isDndRegrantOwed()',
+      'dndRegrantAnswered(how: String)',
       'openCallChannelSettings()',
     ]) {
       expect(bridgeKt).toMatch(
@@ -121,7 +122,8 @@ describe('the bridge, both sides of the WebView', () => {
       'pageLoaded(): void;',
       'ringStart(json: string): void;',
       'ringStop(callId: string, reason: string): void;',
-      'takeDndRegrantOwed(): boolean;',
+      'isDndRegrantOwed(): boolean;',
+      'dndRegrantAnswered(how: string): void;',
       'openCallChannelSettings(): void;',
     ]) {
       expect(bridgeTs).toContain(method);

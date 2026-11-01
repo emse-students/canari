@@ -7,12 +7,18 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import fr.emse.canari.call.IncomingRing
+import fr.emse.canari.call.RingClosed
+import fr.emse.canari.call.RingFacts
+import fr.emse.canari.call.RingOutput
+import fr.emse.canari.call.RingSequencer
 
 /**
  * THE RING OF A CALL ARRIVING WHILE THE APP IS ON SCREEN, PLAYED NATIVELY (owner, 2026-11-01).
@@ -24,44 +30,30 @@ import fr.emse.canari.call.IncomingRing
  * (`USAGE_NOTIFICATION_RINGTONE`), looped by the player itself, holding transient audio focus, and
  * honours the phone's state as the system ring does ([IncomingRing.plan]): silent rings nothing,
  * vibrate only vibrates, another call in progress only vibrates, and the vibration REPEATS until the
- * ring stops.
+ * ring stops. It does NOT read the channel's importance: a user who turned the calls channel down
+ * still hears the open app ring, as the system dialler's own in-call screen does.
  *
- * IT RINGS ONLY WHILE THE APP IS ON SCREEN ([MainActivity.isInForeground]). Off screen the ring is
- * the native CallStyle ring ([CanariFirebaseMessagingService.showIncomingCallNotification]) - ONE
- * ring, never both:
- * - a start that arrives while the app is not in front (the page's ask raced `onStop`) is REFUSED,
- *   and the native ring is posted from the facts the page gave;
- * - leaving the screen ([handOverOffScreen], `MainActivity.onStop`) stops the player and posts the
- *   native ring, which carries Answer, Decline and the full-screen screen the open app had;
- * - coming back, the page asks again: the native ring of that call is cancelled and the player rings.
+ * WHO RINGS WHICH CALL IS [rings] ([RingSequencer]), the one state the player and the native ring
+ * share: one ring per call, and a call answered, ended or silenced never rings again. This object is
+ * its Android half ([RingOutput]): the player, the vibrator, the audio focus, the screen held on,
+ * and the native ring posted from a worker.
  *
- * The page drives it through `window.canariCall.ringStart` / `ringStop` ([CallBridge.JsInterface]).
- * Every end of the native ring ([CanariFirebaseMessagingService.cancelIncomingCallNotification]:
- * `call_ring_end`, a decline, the timeout) stops the player of that call too ([stopIfRinging]).
- * Its state - [ringingCallId] - is a fact of this process, so a message notification posted while it
- * rings is posted silent ([fr.emse.canari.push.CallSoundHold]), and it dies with the process.
- *
- * Every method is `@Synchronized`: the bridge posts to the main thread, the FCM service's cancel runs
- * on its own.
+ * - The page drives it through `window.canariCall.ringStart` / `ringStop` ([CallBridge.JsInterface]).
+ * - Off screen ([MainActivity.isInForeground] false) a start is refused and the native ring posted.
+ * - Leaving the screen ([leftScreen], `MainActivity.onStop`) hands the call to the native ring - or,
+ *   when the SCREEN went off (the power button), silences it, as the system ring does.
+ * - While it rings the activity keeps the screen on ([screenHold]): a screen that times out mid-ring
+ *   would read as the power button.
  */
 object CallRingPlayer {
     private const val TAG = "CallRingPlayer"
 
-    /** What the page knows of the ringing call - what the native ring needs to be posted. */
-    data class Ring(
-        val callId: String,
-        val groupId: String,
-        val callerId: String,
-        val hasVideo: Boolean,
-        val appSounds: Boolean,
-    )
+    private val main = Handler(Looper.getMainLooper())
 
-    /** The call this phone rings for on screen right now, or null. Read by any thread. */
+    /** Set by [MainActivity] while it lives: keeps its window on while a ring plays. Main thread only. */
     @Volatile
-    var ringingCallId: String? = null
-        private set
+    var screenHold: ((Boolean) -> Unit)? = null
 
-    private var ring: Ring? = null
     private var player: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private var focus: AudioFocusRequest? = null
@@ -71,26 +63,58 @@ object CallRingPlayer {
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
 
+    /** The process's one context: the player outlives any activity, and stops after one is gone. */
+    private val context: Context
+        get() = checkNotNull(CanariApplication.appContext()) {
+            "CallRingPlayer used before CanariApplication.onCreate - no component of ours can be"
+        }
+
+    private val output = object : RingOutput {
+        override fun play(ring: RingFacts) = playRing(ring)
+
+        override fun silence(callId: String, reason: String) = silenceRing(callId, reason)
+
+        override fun cancelNative(callId: String) =
+            CanariFirebaseMessagingService.takeDownRingNotification(context, callId)
+
+        override fun postNative(ring: RingFacts, why: String) {
+            Log.i(TAG, "native ring of call=${short(ring.callId)} posted from a worker ($why)")
+            // OFF the main thread and OFF the sequencer's lock: the post builds the caller's name and
+            // fetches the photo (Keystore, HTTP), and comes back through `rings.claimNative` itself.
+            Thread({
+                CanariFirebaseMessagingService.showIncomingCallNotification(
+                    context, ring.groupId, ring.callId, ring.callerId, ring.hasVideo,
+                )
+            }, "canari-ring-post").start()
+        }
+
+        override fun log(accuse: Boolean, message: String) {
+            if (accuse) Log.w(TAG, message) else Log.i(TAG, message)
+        }
+    }
+
+    /** Who rings each call, and which calls may not ring again. Shared with the FCM service. */
+    val rings = RingSequencer({ MainActivity.isInForeground }, output)
+
+    /** The call this phone rings for on screen right now, or null. Read by any thread. */
+    val ringingCallId: String? get() = rings.ringingInApp
+
+    /** The page asks for the in-app ring of [r] ([RingSequencer.startInApp]). */
+    fun start(r: RingFacts) = rings.startInApp(r)
+
     /**
-     * Starts ringing [r] on screen. A second start for the same call is a no-op, logged; a ring of
-     * ANOTHER call is stopped first (the page shows one incoming call at a time). Refused off screen:
-     * the native ring is posted instead.
+     * The app left the screen. [screenOff] (the display is not interactive: the power button)
+     * silences the ring; otherwise the native ring takes the call over ([RingSequencer.leftScreen]).
      */
-    @Synchronized
-    fun start(context: Context, r: Ring) {
-        if (!MainActivity.isInForeground) {
-            Log.w(TAG, "start REFUSED: call=${short(r.callId)} - the app is not on screen; the native ring rings it instead")
-            postNativeRing(context, r, "the page asked while off screen")
-            return
-        }
-        if (ringingCallId == r.callId) {
-            Log.i(TAG, "start: call=${short(r.callId)} already rings - nothing to do")
-            return
-        }
-        ringingCallId?.let { stopLocked(it, "another call rings") }
-        // The page rings it now: a native ring of the same call (handed over when the app left the
-        // screen, or posted by a `call_ring` that raced the page) would ring it twice.
-        CanariFirebaseMessagingService.cancelIncomingCallNotification(context, r.callId)
+    fun leftScreen(screenOff: Boolean) = rings.leftScreen(screenOff)
+
+    /** A new page loaded: the ring of the page before rings for a call no page shows any more. */
+    fun pageLoaded() {
+        val callId = ringingCallId ?: return
+        rings.close(callId, RingClosed.ENDED, "a new page loaded - the ring of the previous page is gone")
+    }
+
+    private fun playRing(r: RingFacts) {
         val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val ringerMode = audio.ringerMode
         val audioMode = audio.mode
@@ -99,55 +123,13 @@ object CallRingPlayer {
             TAG,
             "start: call=${short(r.callId)} ringerMode=$ringerMode audioMode=$audioMode appSounds=${r.appSounds} -> sound=${plan.sound} vibrate=${plan.vibrate}",
         )
-        ring = r
-        ringingCallId = r.callId
-        if (plan.sound) play(context, audio)
-        if (plan.vibrate) vibrate(context)
+        if (plan.sound) startPlayer(audio)
+        if (plan.vibrate) vibrate()
+        holdScreen(true)
     }
 
-    /** Stops the ring of [callId]. A stop for a call that does not ring here is logged and ignored. */
-    @Synchronized
-    fun stop(context: Context, callId: String, reason: String) {
-        if (ringingCallId != callId) {
-            Log.i(TAG, "stop: call=${short(callId)} does not ring here (ringing=${short(ringingCallId)}) - $reason")
-            return
-        }
-        stopLocked(callId, reason, context)
-    }
-
-    /**
-     * The native ring of [callId] ended ([CanariFirebaseMessagingService.cancelIncomingCallNotification]):
-     * its player stops too. Silent when this call does not ring here - every cancel calls it.
-     */
-    @Synchronized
-    fun stopIfRinging(context: Context, callId: String, reason: String) {
-        if (ringingCallId == callId) stopLocked(callId, reason, context)
-    }
-
-    /**
-     * The app left the screen (`MainActivity.onStop`): the player stops and the call rings on as the
-     * native CallStyle ring - Answer, Decline, the lock-screen screen - until it is answered, declined
-     * or ended. Without it a Home press during the ring left a call nobody heard: Android's WebView
-     * never reports `hidden`, so the page's own deferred notice never posts there.
-     */
-    @Synchronized
-    fun handOverOffScreen(context: Context) {
-        val r = ring ?: return
-        stopLocked(r.callId, "the app left the screen - handed over to the native ring", context)
-        postNativeRing(context, r, "the app left the screen")
-    }
-
-    private fun postNativeRing(context: Context, r: Ring, why: String) {
-        Log.i(TAG, "native ring posted for call=${short(r.callId)} ($why)")
-        CanariFirebaseMessagingService.showIncomingCallNotification(
-            context.applicationContext, r.groupId, r.callId, r.callerId, r.hasVideo,
-        )
-    }
-
-    private fun stopLocked(callId: String, reason: String, context: Context? = null) {
+    private fun silenceRing(callId: String, reason: String) {
         Log.i(TAG, "stop: call=${short(callId)} - $reason")
-        ringingCallId = null
-        ring = null
         player?.let {
             try {
                 it.stop()
@@ -160,18 +142,26 @@ object CallRingPlayer {
         vibrator?.cancel()
         vibrator = null
         focus?.let { request ->
-            val audio = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            if (audio == null) {
-                Log.w(TAG, "stop: no AudioManager to abandon the ring's audio focus")
-            } else {
-                val result = audio.abandonAudioFocusRequest(request)
-                Log.i(TAG, "stop: audio focus abandoned (result=$result)")
-            }
+            val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val result = audio.abandonAudioFocusRequest(request)
+            Log.i(TAG, "stop: audio focus abandoned (result=$result)")
         }
         focus = null
+        holdScreen(false)
     }
 
-    private fun play(context: Context, audio: AudioManager) {
+    private fun holdScreen(on: Boolean) {
+        main.post {
+            val hold = screenHold
+            if (hold == null) {
+                Log.i(TAG, "screen hold $on: no activity to hold")
+            } else {
+                hold(on)
+            }
+        }
+    }
+
+    private fun startPlayer(audio: AudioManager) {
         // Transient focus, as the system's own ringtone takes it: music pauses while it rings.
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(ringAttributes)
@@ -201,7 +191,7 @@ object CallRingPlayer {
         }
     }
 
-    private fun vibrate(context: Context) {
+    private fun vibrate() {
         val v = if (Build.VERSION.SDK_INT >= 31) {
             (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {

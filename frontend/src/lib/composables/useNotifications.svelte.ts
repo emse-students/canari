@@ -401,8 +401,8 @@ export function useNotifications() {
       notifNav.navigate(groupId);
       try {
         window.focus();
-      } catch {
-        /* ignore */
+      } catch (e) {
+        appendLog(`[NOTIF] incoming-call tap: the window could not take the focus (${String(e)})`);
       }
     };
 
@@ -417,8 +417,10 @@ export function useNotifications() {
           incomingCallNotifId = notifId;
           return;
         }
-      } catch {
-        /* fallback */
+      } catch (e) {
+        // The native notification of a ringing call was refused: the web Notification below is
+        // what is left, and reaching it is a defect of the native path, said at error level.
+        console.error(`[NOTIF] the native incoming-call notification of ${groupId} failed:`, e);
       }
     }
 
@@ -444,8 +446,10 @@ export function useNotifications() {
         n.onclose = () => {
           if (incomingCallNotification === n) incomingCallNotification = null;
         };
-      } catch {
-        /* ignore */
+      } catch (e) {
+        // A browser that refuses the constructor (Chrome on Android wants a service worker): the
+        // ring still shows in the page, but the OS says nothing - said, never swallowed.
+        console.warn(`[NOTIF] the incoming-call notification of ${groupId} was refused:`, e);
       }
     }
   }

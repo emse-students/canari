@@ -1,5 +1,6 @@
 import type { AndroidCallHost, NativeRingFacts } from '$lib/mobile/androidCallService';
 import { onAppScreenChange } from '$lib/utils/appForeground';
+import { hasPendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import { appendLog } from '$lib/utils/sessionLog';
 import { playTone } from '$lib/utils/toneOutput';
@@ -25,12 +26,15 @@ import { playTone } from '$lib/utils/toneOutput';
  * `ChatBackgroundService`). Leaving the screen releases the output, and what rings then depends on
  * the platform:
  * - Android: `MainActivity.onStop` stops the player and posts the native CallStyle ring from the
- *   facts `ringStart` carried (`CallRingPlayer.handOverOffScreen`) - it rings on, with Answer and
- *   Decline, until answered, declined or ended;
+ *   facts `ringStart` carried (`RingSequencer.leftScreen`) - it rings on, with Answer and Decline,
+ *   until answered, declined or ended. The POWER BUTTON is not a hand-over: it silences the ring, as
+ *   it does the system's own, and the call stays answerable on the page without ringing again;
  * - web, desktop and the iPhone's open app: the tone output closes, and `useNotifications` posts ONE
  *   OS notification (`notifyIncomingCall`'s deferred notice) - one sound, not a repeating ring;
  * its return, while the call still rings, starts the ring again (Android cancels its native ring
- * first). Both are events, so the ring never outlives its call nor its screen.
+ * first) - unless the return is the native ring's ANSWER, which never rings again (here: a pending
+ * accept; natively: the call is closed). Both are events, so the ring never outlives its call nor its
+ * screen.
  */
 
 /** The rendered loop, served from `static/sounds/`. */
@@ -175,6 +179,15 @@ function armScreenWatch(): void {
       // The tone output is closed by `toneOutput` itself, the native player by `onStop` (which hands
       // the call to the native ring): forget the handle.
       stopTone = null;
+      return;
+    }
+    // Back on screen BECAUSE the native ring was answered: the page joins, it never rings again.
+    // (Native refuses the start too - `RingSequencer`, the call is ANSWERED - but the drain of the
+    // answer may land before or after this event, and the page says what it knows.)
+    if (hasPendingCallAccept(ringing.callId)) {
+      appendLog(
+        `[Call] in-app ring of ${ringing.callId.slice(0, 8)} not restarted - it was answered on the native ring`
+      );
       return;
     }
     sound(ringing, 'the app is back on screen');

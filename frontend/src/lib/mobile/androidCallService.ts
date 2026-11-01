@@ -92,8 +92,13 @@ export interface AndroidCallBridge {
   ringStart(json: string): void;
   /** Stops that ring, and the native ring it was handed over to off screen. */
   ringStop(callId: string, reason: string): void;
-  /** True once when the old calls channel had Do Not Disturb, which the user must grant again. */
-  takeDndRegrantOwed(): boolean;
+  /**
+   * True while the old calls channel's Do Not Disturb grant is owed to the user - until
+   * {@link AndroidCallBridge.dndRegrantAnswered}, so an ask the user never saw is asked again.
+   */
+  isDndRegrantOwed(): boolean;
+  /** The user answered the ask (`settings` or `dismissed`): it is not asked again. */
+  dndRegrantAnswered(how: string): void;
   /** Opens the calls channel's system settings. */
   openCallChannelSettings(): void;
 }
@@ -112,24 +117,33 @@ export interface NativeRingFacts {
 export const DND_REGRANT_TOAST_MS = 15_000;
 
 /**
- * Called ONCE per page load on Android. Canari's ring moved to a new channel (`canari_calls_v2`), and
- * the "override Do Not Disturb" a user had granted the old one cannot be carried by the app - only
- * the user grants it. Native records that the grant is owed when it deletes the old channel; this
- * asks once, with a button to the channel's settings.
+ * Called once per page load on Android, AFTER the user is in (logged in and past the PIN), never on
+ * the login screen. Canari's ring moved to a new channel (`canari_calls_v2`), and the "override Do
+ * Not Disturb" a user had granted the old one cannot be carried by the app - only the user grants
+ * it. Native records that the grant is owed when it deletes the old channel; this asks, with a
+ * button to the channel's settings, until the user ANSWERS - the button, or closing the notice. A
+ * notice that only timed out was maybe never seen, and is asked again at the next launch.
  */
 export function askCallChannelDndIfOwed(
   host: AndroidCallHost,
-  show: (message: string, action: { label: string; run: () => void }) => void
+  show: (message: string, action: { label: string; run: () => void }, onClose: () => void) => void
 ): void {
   const bridge = host.canariCall;
-  if (!bridge?.takeDndRegrantOwed()) return;
+  if (!bridge?.isDndRegrantOwed()) return;
   appendLog(
     '[Call] the old calls channel overrode Do Not Disturb - asking the user to grant it again'
   );
-  show(m.call_dnd_regrant_message(), {
-    label: m.call_dnd_regrant_action(),
-    run: () => bridge.openCallChannelSettings(),
-  });
+  show(
+    m.call_dnd_regrant_message(),
+    {
+      label: m.call_dnd_regrant_action(),
+      run: () => {
+        bridge.dndRegrantAnswered('settings');
+        bridge.openCallChannelSettings();
+      },
+    },
+    () => bridge.dndRegrantAnswered('dismissed')
+  );
 }
 
 /**

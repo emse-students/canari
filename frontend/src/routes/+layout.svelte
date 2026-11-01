@@ -156,10 +156,6 @@
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
     if (isAndroidTauriRuntime()) {
       releaseCallServiceOfPreviousPage(window);
-      // Canari's ring moved channel: a Do Not Disturb grant the old one had is asked for once.
-      askCallChannelDndIfOwed(window, (message, action) =>
-        showToast(message, 'warning', DND_REGRANT_TOAST_MS, action)
-      );
     }
     // Its iOS twin: the proximity sensor a reloaded page may have left armed.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
@@ -234,6 +230,17 @@
   $effect(() => {
     setTabUnread(
       globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    );
+  });
+
+  // ── The calls channel's Do Not Disturb ask (Android, Canari's ring, 2026-11-01) ──────
+  // Once the user is IN - logged in and past the PIN - never on the login screen, once per page load.
+  let dndAskDone = false;
+  $effect(() => {
+    if (dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
+    dndAskDone = true;
+    askCallChannelDndIfOwed(window, (message, action, onClose) =>
+      showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
     );
   });
 

@@ -2685,12 +2685,16 @@ rendered by `tools/notification-sounds/render.mjs` for every surface:
 with the ring, the bypass-DND request, the ringtone usage and the vibration pattern
 (`IncomingRing.VIBRATION_PATTERN`). The user can still choose another sound in its settings.
 **What the user set on the old channel is read and logged before the delete**
-(`supersededCallsChannel`: `importance=... canBypassDnd=... shouldVibrate=...`): the IMPORTANCE and
-the vibration are carried (`IncomingRing.inheritedImportance` - a channel turned off, `NONE`, stays
-off; a fresh install gets `HIGH`). **"Override Do Not Disturb" cannot be carried**: only the user
-grants it. When the old channel had it, native records a one-time ask; the next page load reads it
-(`canariCall.takeDndRegrantOwed()`, true once) and shows a toast (`call_dnd_regrant_message`, fr+en)
-whose button opens the channel's settings (`openCallChannelSettings()`).
+(`supersededCallsChannel`: `importance=... canBypassDnd=... shouldVibrate=... silent=...
+lockscreenVisibility=... showBadge=...`): the IMPORTANCE, the vibration, the lock-screen visibility
+and the badge are carried (`IncomingRing.inheritedImportance` - a channel turned off, `NONE`, stays
+off; a fresh install gets `HIGH`), and a sound the user set to None STAYS None. **"Override Do Not
+Disturb" cannot be carried**: only the user grants it. When the old channel had it, native records
+the ask; once the user is in (logged in and past the PIN - never on the login screen) the page reads
+it (`canariCall.isDndRegrantOwed()`) and shows a toast (`call_dnd_regrant_message`, fr+en) whose
+button opens the channel's settings (`openCallChannelSettings()`). Only the user's ANSWER clears it
+(`dndRegrantAnswered('settings' | 'dismissed')`, the button or the close button): a toast that only
+timed out may never have been seen, and is shown again at the next launch.
 `IncomingRingTest.kt` holds the ids and the inheritance; `notificationChannels.test.ts`,
 `callsCompiled.test.ts` and `androidCallRing.test.ts` hold the Kotlin, the TypeScript twin and the
 file together.
@@ -2706,13 +2710,28 @@ by `ChatBackgroundService` from the incoming state:
   with the ringtone attributes, so music pauses; abandoned at the stop), the phone's state honoured as
   the system ring does (`IncomingRing.plan`: silent rings nothing, vibrate only vibrates, ANOTHER CALL
   in progress - `audio.mode != MODE_NORMAL` - only vibrates), a vibration that REPEATS until the ring
-  stops. The app's own "sounds" setting off leaves the vibration. Its state is a fact of the process
-  (`CallRingPlayer.ringingCallId`), so `CallSoundHold` posts a banner silent while it rings.
-- **ONE ring on Android, and only on screen.** `CallRingPlayer.start` refuses unless
-  `MainActivity.isInForeground` (`start REFUSED`), which also refuses a start that raced `onStop`, and
-  posts the native ring instead. It cancels any native ring of the same call before it plays. Every
-  end of the native ring (`cancelIncomingCallNotification`: `call_ring_end`, a decline, the 60 s
-  timeout) stops the player of that call (`stopIfRinging`), and the page's `ringStop` ends both.
+  stops. The app's own "sounds" setting off leaves the vibration. It does NOT read the calls
+  channel's importance: a user who turned the channel down still hears the open app ring, as the
+  dialler's own incoming screen does. Its state is a fact of the process
+  (`CallRingPlayer.ringingCallId`), so `CallSoundHold` posts a banner silent while it rings. While it
+  rings the activity keeps the screen on (`FLAG_KEEP_SCREEN_ON`), so the screen goes off only by the
+  user's hand.
+- **ONE ring per call, and a closed call never rings again: [RingSequencer](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/call/RingSequencer.kt).**
+  The in-app player and the native CallStyle ring share ONE state, every transition under its lock
+  (review of #2877, which found every defect between two states that used to be kept apart):
+  - a start is refused off screen (`start REFUSED`, which also refuses one that raced `onStop`) and
+    the native ring is posted instead, from a worker thread - the post reads the caller's name and
+    fetches the photo (Keystore, HTTP), so never on the main thread;
+  - the in-app start takes the call from a native ring IN THE SAME CRITICAL SECTION as the cancel,
+    and the native post claims the call and calls `notify` in ONE critical section
+    (`claimNative`): a `call_ring` post landing after the in-app ring started is refused (`native
+    ring REFUSED: ... rings in the app`), never left as a second ring; the photo's re-post too;
+  - a call is CLOSED - and refused by both rings from then on - when it is ANSWERED on the native ring
+    (`CallRingAnswer.takeAnswer`), ENDED (`call_ring_end`, a decline, the 60 s timeout, the MLS
+    end, the page's `ringStop`) or SILENCED (the power button). Before, answering on the native ring
+    rang the app: the resume's `canari:foreground` restarted the page's ring after the answer. The
+    same set refuses a stale incoming state after Doze and a late FCM redelivery;
+  - the second call silences the first - releasing its audio focus - before it plays.
 - A build without the bridge rings NOTHING in the open app and says so at error level
   (`console.error`, `[Call] this Android build has no canariCall bridge`): the server's `call_ring`
   still rings it natively, and a media-volume beep in its place would only hide the defect.
@@ -2720,32 +2739,42 @@ by `ChatBackgroundService` from the incoming state:
   ends it, which suspends the output as any tone does. The file is decoded once per page by an
   `OfflineAudioContext`, which opens no device.
 - **Leaving the screen** releases the output, and what rings then is per platform:
-  - **Android**: `MainActivity.onStop` -> `CallRingPlayer.handOverOffScreen` stops the player and posts
-    the native CallStyle ring from the facts `ringStart` carried - it loops on the channel, with Answer,
-    Decline and the lock-screen screen, until answered, declined or ended. Before this a Home press
-    during the ring left the call SILENT with no notification at all: Android's WebView never reports
-    `hidden`, so the page's deferred notice never posts there.
+  - **Android, Home or another app**: `MainActivity.onStop` -> `RingSequencer.leftScreen` stops the
+    player and posts the native CallStyle ring from the facts `ringStart` carried - it loops on the
+    channel, with Answer, Decline and the lock-screen screen, until answered, declined or ended.
+    Before this a Home press during the ring left the call SILENT with no notification at all:
+    Android's WebView never reports `hidden`, so the page's deferred notice never posts there.
+  - **Android, the power button**: `onStop` finds the display not interactive
+    (`PowerManager.isInteractive`) and SILENCES the ring, as the power button silences the system's
+    own: no hand-over, no full-screen re-ring. The call stays on the page, answerable, and does not
+    ring again on the return (`SILENCED`).
   - **iPhone (open app), web, desktop**: the tone output closes and `notifyIncomingCall`'s deferred
     notice posts ONE OS notification - ONE sound. A minimised desktop window or a background browser
     tab used to keep hearing the repeating 2.4 s beep (a `setInterval` re-opened the output); it now
     hears that one notification. On the iPhone, a VoIP push arriving while the app is backgrounded
     still rings CallKit.
   Coming back while the call still rings starts the in-app ring again (on Android after cancelling
-  the native ring of that call). A page loaded afresh (`pageLoaded`) stops a ring left by the page
-  before.
+  the native ring of that call) - unless the return is the ANSWER on the native ring: the page sees
+  the pending accept (`hasPendingCallAccept`) and does not ask, and native refuses it anyway
+  (`ANSWERED`). A page loaded afresh (`pageLoaded`) closes a ring left by the page before.
 - Logged: `[Call] in-app ring of <id> on the native ringtone (...)`, `... plays on the tone output`,
-  `... stops (<reason>)`; natively `CallRingPlayer: start: call=... ringerMode=... -> sound=... vibrate=...`.
+  `... stops (<reason>)`, `... not restarted - it was answered on the native ring`.
 - Logged natively: `CallRingPlayer: start: call=... ringerMode=... audioMode=... -> sound=... vibrate=...`,
   `play: transient audio focus granted`, `play: the Canari ring plays on the ringtone stream, looped`,
-  `start REFUSED`, `native ring posted for call=... (the app left the screen)`, `stop: ... audio focus
-  abandoned`; on the iPhone `[CanariCallKit] ringtone set to canari_ring_callkit.wav`.
-- Pinned by `callRing.test.ts` (native vs tone output, the facts handed to native, the loop, the stop
-  releasing the output, a stop before the decode, the sounds setting, the restart on return through
-  `canari:foreground` on Android and visibility on the web, the bridge-less Android build ringing
-  nothing), `androidCallRing.test.ts` (at source level, since the JVM cannot run the player: the
-  foreground guard first, the handover in `onStop`, the stops on every end, the audio focus, the
+  `start REFUSED`, `native ring of call=... posted from a worker (...)`, `native ring REFUSED: call=...
+  is ANSWERED | rings in the app`, `closed: call=... ENDED - ...`, `stop: ... audio focus abandoned`;
+  on the iPhone `[CanariCallKit] ringtone set to canari_ring_callkit.wav`. A photo fetch that fails
+  on the network is a WARN; any other throw there (a fetch on the main thread) is an ERROR.
+- Pinned by `RingSequencerTest.kt` (the plain JVM, the screen injected and every effect recorded in
+  order: one ring at a time, the off-screen refusal, the hand-over and the return, a late native post
+  refused, the power button, the answer, every end, the second call's stop before its play, a failed
+  post releasing its claim), `callRing.test.ts` (native vs tone output, the facts handed to native,
+  the loop, the stop releasing the output, a stop before the decode, the sounds setting, the restart
+  on return through `canari:foreground` on Android and visibility on the web, NO restart after an
+  answer on the native ring, the bridge-less Android build ringing nothing), `androidCallRing.test.ts`
+  (only the wiring the JVM cannot see: each Android caller reaching the sequencer with its fact, the
   channel inheritance), `IncomingRingTest.kt`, `CallSoundHoldTest.kt` and
-  `androidCallServiceManifest.test.ts` (the eight bridge methods).
+  `androidCallServiceManifest.test.ts` (the nine bridge methods).
 
 **Verified by compiling, never by running:** the app's Kotlin, by the `Compile Android app` job of
 `ci.yml` on this pull request (and by hand, `:app:compileArm64DebugKotlin`). **The Objective-C and
@@ -2764,8 +2793,9 @@ behind a bridge on iOS like Android's, or by CallKit for every call (owed,
 | RING-0, the first pre-release | `ios.yml` builds green (the first compile of the `canari_push.mm` change), and the archive's `CpResource` lines list `canari_ring_callkit.wav` in the app |
 | RING-1, Mi 9T, app KILLED | a call rings with the Canari ring (not the system ringtone), looping until answered or the 60 s window |
 | RING-2, Mi 9T, app OPEN | the in-app screen rings with the Canari ring at the RINGER volume (media volume at 0 does not silence it), music pauses under it; silent mode rings nothing, vibrate mode vibrates repeatedly; during a phone call it only vibrates; logcat `CallRingPlayer: start` / `stop` |
-| RING-2b, Mi 9T, Home during the ring | the player stops and the CallStyle ring takes over at once (one ring, never two); back in the app the in-app ring resumes and the notification goes |
-| RING-3, Mi 9T, settings | Settings -> Apps -> Canari -> Notifications: one calls channel, its sound "canari_ring", the old `canari_calls` entry gone, the importance the old one had; picking another sound there is honoured; with DND granted on the old channel before the upgrade, the one-time toast appears and its button opens the channel |
+| RING-2b, Mi 9T, Home during the ring | the player stops and the CallStyle ring takes over at once (one ring, never two); back in the app the in-app ring resumes and the notification goes; Answer on the CallStyle ring joins with NO ring in the app (`native ring REFUSED`/`start REFUSED: ... is ANSWERED`) |
+| RING-2c, Mi 9T, power button during the ring | the ring stops, no full-screen re-ring; screen back on: the call is still on the page, answerable, silent |
+| RING-3, Mi 9T, settings | Settings -> Apps -> Canari -> Notifications: one calls channel, its sound "canari_ring", the old `canari_calls` entry gone, the importance the old one had; picking another sound there is honoured; with DND granted on the old channel before the upgrade, the toast appears after the PIN (not on the login screen) and its button opens the channel; closing it, it is not asked again |
 | RING-4, iPhone 12, CallKit | a VoIP-pushed call on a locked phone rings with the Canari ring, not the system tone; no `[CanariCallKit] ERROR canari_ring_callkit.wav is not in the bundle` in the device log |
 
 ### The app's other sounds during a call (2026-10-31)
@@ -2780,7 +2810,7 @@ the call. Messages still arrive and are shown; only their sound goes.**
 | Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing. Each is counted (one `Log.d` line per tone, which the in-app log does not record); the count is told once on the gate's release line, `[AUDIO] the call released the app's sound (...) - N tone(s) silenced during the call`. The incoming ring passes `purpose: 'call'` and is exempt |
 | Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on, until unmuted (`volumechange` pauses them). Nothing resumes on the call's end - the reader presses play. The reel review is now registered, so it also follows "one media at a time" and the pause on leaving the screen |
 | Browser notification (web, desktop browser) | raised with `silent: true` |
-| Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
+| Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`RingSequencer.nativeCount`), or the open app ringing (`CallRingPlayer.ringingCallId`). All are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
 | iOS banners drawn by the notification service extension | `content.sound = nil` while `CXCallObserver` lists a call not ended (the CallKit ring, a call answered on it, a cellular call). In the foreground the app already presents no banner at all |
 
 **The one gate.** Each `CallService` states its `callState` under its holder id; the gate is held while

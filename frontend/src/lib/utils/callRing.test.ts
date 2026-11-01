@@ -18,6 +18,7 @@ import {
   stopCallRing,
   type CallRingHost,
 } from '$lib/utils/callRing';
+import { setPendingCallAccept, takePendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { resetToneOutputForTest } from '$lib/utils/toneOutput';
 
 /** Whether the page runs in the Android app: a bridge-less Android build is a defect, not a path. */
@@ -217,6 +218,24 @@ it('on Android, a ring still up when the app comes back on screen asks the nativ
   androidForeground(false);
   androidForeground(true);
   expect(calls.filter((c) => c.startsWith('start'))).toHaveLength(2);
+});
+
+it('on Android, coming back BECAUSE the native ring was answered never rings again', () => {
+  android = true;
+  const { host, calls } = bridgeHost();
+  startCallRing(call('call-1'), host);
+  androidForeground(false);
+  // The Answer on the native ring: `takeAnswer` wrote the accept, the page drained it.
+  setPendingCallAccept({
+    groupId: 'g-1',
+    callId: 'call-1',
+    hasVideo: false,
+    callerId: 'u-1',
+    acceptedAt: Date.now(),
+  });
+  androidForeground(true);
+  expect(calls, 'no ringStart after the answer').toEqual(['start call-1 true']);
+  takePendingCallAccept();
 });
 
 it('on the web, a ring still up when the tab comes back starts the tone again', async () => {

@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import fr.emse.canari.call.CallServiceCommand
 import fr.emse.canari.call.OffScreenGate
 import fr.emse.canari.call.OngoingCallSpec
+import fr.emse.canari.call.RingFacts
 import fr.emse.canari.call.SpecResult
 import fr.emse.canari.call.StartRefusal
 import org.json.JSONException
@@ -28,7 +29,7 @@ import org.json.JSONObject
  * Down: `MainActivity` registers [JsInterface] as `window.canariCall` - `start(json)`, `update(json)`,
  * `stop(callId, reason)`, `pageLoaded()`, the in-app ring's `ringStart(json)` / `ringStop(callId,
  * reason)` ([CallRingPlayer]) and the calls channel's one-time Do Not Disturb ask
- * (`takeDndRegrantOwed()`, `openCallChannelSettings()`) - ONLY in a build whose manifest declares the service (the
+ * (`isDndRegrantOwed()`, `dndRegrantAnswered(how)`, `openCallChannelSettings()`) - ONLY in a build whose manifest declares the service (the
  * main manifest, since the calls flip of 2026-10-22; a build that lost the declaration registers no bridge). The page reads the absence of `canariCall` as
  * "this build cannot keep a call alive in the background" and says so at error level when it is
  * placing calls (`frontend/src/lib/mobile/androidCallService.ts`). `start` and `update` carry the
@@ -197,7 +198,7 @@ object CallBridge {
         fun ringStart(json: String) {
             val ring = try {
                 val o = JSONObject(json)
-                CallRingPlayer.Ring(
+                RingFacts(
                     callId = o.optString("callId", ""),
                     groupId = o.optString("groupId", ""),
                     callerId = o.optString("callerId", ""),
@@ -213,7 +214,7 @@ object CallBridge {
                 Log.e(TAG, "ringStart refused: no call id or no conversation (call=${ring.callId.isNotBlank()} group=${ring.groupId.isNotBlank()})")
                 return
             }
-            mainHandler.post { CallRingPlayer.start(context, ring) }
+            mainHandler.post { CallRingPlayer.start(ring) }
         }
 
         /**
@@ -227,18 +228,22 @@ object CallBridge {
                 return
             }
             val why = reason.ifBlank { "unspecified" }
+            // The call ended for this phone: neither ring may ring it again (RingClosed.ENDED).
             mainHandler.post {
-                CallRingPlayer.stopIfRinging(context, callId, why)
-                CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
+                CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId, "the page: $why")
             }
         }
 
         /**
-         * Whether the user must be asked, once, to grant Do Not Disturb to the new calls channel
-         * again (the old `canari_calls` had it, and no app can grant it). True at most once.
+         * Whether the user must still be asked to grant Do Not Disturb to the new calls channel again
+         * (the old `canari_calls` had it, and no app can grant it). True until [dndRegrantAnswered].
          */
         @JavascriptInterface
-        fun takeDndRegrantOwed(): Boolean = CanariApplication.takeDndRegrantOwed(context)
+        fun isDndRegrantOwed(): Boolean = CanariApplication.isDndRegrantOwed(context)
+
+        /** The user answered the ask ([how]: `settings` or `dismissed`): it is not asked again. */
+        @JavascriptInterface
+        fun dndRegrantAnswered(how: String) = CanariApplication.dndRegrantAnswered(context, how.ifBlank { "unspecified" })
 
         /** Opens the calls channel's system settings, where "override Do Not Disturb" is granted. */
         @JavascriptInterface
@@ -265,7 +270,7 @@ object CallBridge {
         fun pageLoaded() {
             // A ring of the page before rings for a call no page shows any more.
             mainHandler.post {
-                CallRingPlayer.ringingCallId?.let { CallRingPlayer.stop(context, it, "a new page loaded - the ring of the previous page is gone") }
+                CallRingPlayer.pageLoaded()
             }
             if (!CallForegroundService.running) return
             Log.w(TAG, "a page loaded while the call service ran - the call of the previous page is gone")

@@ -9,7 +9,7 @@ package fr.emse.canari.push
  * - the ongoing-call foreground service holds a call (`CallForegroundService.running`): the page
  *   started it once the microphone was held, so from the caller's ring out until the call's end, and
  *   from the callee's answer until its end. It dies with the process, so it cannot go stale;
- * - a native ring is up (`CanariFirebaseMessagingService.activeCallRings`): the CallStyle incoming
+ * - a native ring is up (`RingSequencer.nativeCount`, `CallRingPlayer.rings`): the CallStyle incoming
  *   ring, from its `call_ring` until it is answered, declined, ended or expired;
  * - the open app rings a call (`CallRingPlayer.ringingCallId`): the page's incoming screen, from the
  *   invite until the answer, the decline or the end - the seconds before the answer, which neither
