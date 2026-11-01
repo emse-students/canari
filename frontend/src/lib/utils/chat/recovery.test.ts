@@ -1415,7 +1415,7 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     expect(lines.join(' | ')).toContain('did not reach the server');
   });
 
-  it('says a REFUSED request is refused - never "elected", never a dead end proven by nobody online', async () => {
+  it('says a REFUSED request is refused - never "elected" - and records it against the pair', async () => {
     const lines: string[] = [];
     const deps = makeDeps();
     deps.log = (m: string) => lines.push(m);
@@ -1426,8 +1426,10 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
 
     await requestReAdd('g1', deps);
 
-    expect(lines.join(' | ')).toContain('was REFUSED (not_a_member)');
-    expect(provenDeadEnds()).toEqual([]);
+    const out = lines.join(' | ');
+    expect(out).toContain('was REFUSED (not_a_member)');
+    expect(out).toContain('recorded against 283/284');
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
   });
 });
 
@@ -1542,6 +1544,34 @@ describe('requestReAdd - a dead end the server already proved', () => {
     expect(lines.join(' | ')).toContain('a member is reachable again');
 
     // The record is gone, so the next pass is a whole pass against the unchanged pair.
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+  });
+
+  it('a REFUSED request does not repeat the whole pass - only the election is re-asked', async () => {
+    // Until the refusal was recorded, every watchdog pass ran the memberships, the row, the join and
+    // the ask again, to be refused again: nothing durable said it had already been asked.
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.getDeviceMemberships).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(3);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
+
+    // A commit (re-admission) moves the pair, and the whole pass runs again.
+    deps.mlsService.getGroupMeta = metaAt(283, 285);
     advanceClockPastThrottle();
     await requestReAdd('g1', deps);
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);

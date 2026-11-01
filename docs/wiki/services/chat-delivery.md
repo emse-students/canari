@@ -1458,8 +1458,13 @@ every non-2xx with its status and code, and returns a `DeliveryRefusal` (`not_a_
 non-2xx is still "no answer". `sendBaseRefreshRequest`, `sendHistoryRequest` and `sendWelcomeRequest`
 carry it as `refused`, and no caller reads a refusal as an election: `recovery.ts` keeps its
 no-repairer record and logs `REFUSED` (it used to read a 403 as `noPeerOnline: false`, "the server
-elected one", and discharged the record), and `historyReconcile.ts` sends no probe and defers
-nothing.
+elected one", and discharged the record), and a first refusal of a stale-base ask is RECORDED in that
+same map against the join's epoch pair, so the watchdog re-asks only the election rather than the
+whole four-call pass until a commit moves the pair; `historyReconcile.ts` sends no probe and defers
+nothing, and the scrollback (`requestOlderFromPeers`) answers `unavailable` without a range frame.
+
+**The gateway's WebSocket copies of these asks are gone or gated** - the retired `welcome_request`
+frame and the seat-checked `typing` frame are in [chat-gateway](chat-gateway.md#inbound-frames-typing-is-seat-checked-welcome_request-is-retired-2026-11-01).
 
 **A reaction has a second kind of conversation**: a SALON's push names `groupId = channel_<id>`,
 which is no group of this service. Its roster is social-service's, so `assertCallerReactsIn` asks

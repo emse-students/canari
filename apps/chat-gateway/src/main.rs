@@ -1,6 +1,7 @@
 mod addressing;
 mod audience;
 mod handlers;
+mod log_repeat;
 mod models;
 mod presence;
 mod state;

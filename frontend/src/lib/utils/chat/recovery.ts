@@ -922,17 +922,7 @@ export async function requestReAdd(
         // "nobody" would stop a repair on a dropped packet. The next pass asks again.
         return { noPeerOnline: false };
       });
-    if (asked.refused) {
-      // REFUSED, NOT ELECTED: nobody will republish. Neither a dead end proven against the pair (that
-      // is "no member online") nor a request in flight - said as it is; the next pass reads the
-      // roster again, where a refusal of membership is decided.
-      deps.log(
-        `[READD] ${groupId.slice(0, 8)}... the base-refresh request was REFUSED (${asked.refused}) - ` +
-          `no member was asked to republish`
-      );
-      return;
-    }
-    if (!asked.noPeerOnline) return;
+    if (!asked.refused && !asked.noPeerOnline) return;
     // THE PAIR THE VERDICT WAS TAKEN AGAINST IS THE JOIN'S OWN, not the one read at the top of this
     // pass: `externalJoin` is the call the gate actually refused, and the two numbers it reports are
     // the ones that refused it. Reading the older pair would record a proof against a state nothing
@@ -941,6 +931,22 @@ export async function requestReAdd(
       baseEpoch: outcome.baseEpoch,
       activeEpoch: outcome.serverEpoch,
     });
+    if (asked.refused) {
+      // REFUSED, NOT ELECTED: nobody will republish, and nothing this device does changes that while
+      // the pair stands - a seat is given back or admitted by a COMMIT, which moves `activeEpoch`. So
+      // it is recorded the way "no member online" is: the next passes skip the three known answers
+      // and re-ask only the election ({@link reAskTheElection}, one call, which keeps the record on
+      // a second refusal), instead of repeating the whole four-call pass every minute.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... the base-refresh request was REFUSED (${asked.refused}) - ` +
+          `no member was asked to republish` +
+          (provenAt === undefined
+            ? ''
+            : `; recorded against ${provenAt}, waiting for either epoch to move`)
+      );
+      if (provenAt !== undefined) noRepairerAt.set(groupId, provenAt);
+      return;
+    }
     if (provenAt === undefined) return;
     noRepairerAt.set(groupId, provenAt);
     deps.log(

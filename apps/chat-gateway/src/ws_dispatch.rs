@@ -6,11 +6,14 @@
 // here are control/signalling messages only.
 //
 // Remaining inbound frame types:
-//   • welcome_request   - forwarded to one online peer
-//   • read              - no-op
+//   • disconnect        - retires this connection's session
+//   • typing            - relayed to the group's other online members, sender's seat checked
+//   • welcome_request   - RETIRED 2026-11-01: ignored and logged (`RETIRED_FRAMES`)
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
+
+use crate::log_repeat::RepeatCounter;
 
 use crate::state::AppState;
 
@@ -22,8 +25,6 @@ pub struct WsConn<'a> {
     pub state: &'a Arc<AppState>,
     pub user_id: &'a str,
     pub device_id: &'a str,
-    /// Channel to push frames back to this client.
-    pub tx: &'a mpsc::Sender<String>,
 }
 
 // ── Parsed incoming frame ─────────────────────────────────────────────────
@@ -123,41 +124,56 @@ pub async fn handle_disconnect(
     }
 }
 
-// ── Handler: "welcome_request" ────────────────────────────────────────────
+// ── Retired frames ────────────────────────────────────────────────────────
 
-/// Handle a `welcome_request` frame from a client that wants to join a group.
+/// Frame types the gateway no longer acts on.
 ///
-/// Builds a notification JSON object and forwards it to exactly one online
-/// group peer that is not the sender.  If no peer is reachable, sends
-/// `no_peer_online` back to the requester.
-pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
-    tracing::info!(
-        "Processing welcome_request from {}:{} for group {}",
-        conn.user_id,
-        conn.device_id,
-        frame.group_id
-    );
+/// `welcome_request` (retired 2026-11-01): a re-add request goes over HTTP
+/// (`POST mls/welcome-request`), where chat-delivery checks the caller's seat first. The WebSocket
+/// path relayed it to one online member with no seat check, and no client sends it any more.
+pub const RETIRED_FRAMES: &[&str] = &["welcome_request"];
 
-    let notification = serde_json::json!({
-        "type": "welcome_request",
-        "groupId": frame.group_id,
-        "requesterUserId": conn.user_id,
-        "requesterDeviceId": conn.device_id,
-    })
-    .to_string();
+/// True when `msg_type` names a frame in [`RETIRED_FRAMES`].
+pub fn is_retired_frame(msg_type: &str) -> bool {
+    RETIRED_FRAMES.contains(&msg_type)
+}
 
-    let sender_key = format!("{}:{}", conn.user_id, conn.device_id);
-    forward_to_one_peer(conn, &frame.group_id, &sender_key, notification).await;
+/// Repeats of one sender's retired frame - a client still speaking the old protocol keeps doing it.
+static RETIRED_FRAME_REPEATS: LazyLock<RepeatCounter> = LazyLock::new(|| RepeatCounter::new(5000));
+
+/// Ignore a retired frame, and say so: an old client, or a hand-written one, is still sending it.
+/// Nothing is answered.
+pub fn handle_retired_frame(user_id: &str, device_id: &str, frame: &WsFrame) {
+    let subject = format!("{}:{}:{}", frame.msg_type, user_id, device_id);
+    if let Some(n) = RETIRED_FRAME_REPEATS.hit(&subject) {
+        tracing::warn!(
+            "[WS] retired frame type={} from {}:{} group={} IGNORED (occurrence {}) - this path is HTTP now",
+            frame.msg_type,
+            user_id,
+            device_id,
+            frame.group_id,
+            n
+        );
+    }
 }
 
 // ── Handler: "typing" ─────────────────────────────────────────────────────
+
+/// Repeats of one sender's typing into one group it holds no seat in.
+static TYPING_REFUSAL_REPEATS: LazyLock<RepeatCounter> = LazyLock::new(|| RepeatCounter::new(5000));
 
 /// Relay an ephemeral typing signal to every other online member of the group.
 ///
 /// Best-effort, fire-and-forget: typing is non-critical, never persisted and
 /// never queued. Only used for MLS groups/DMs (channels route typing through
 /// the social-service `chat:channel_events` path, which knows channel members).
+///
+/// The sender must appear in the group's routing set (`group:members:{groupId}`): a signal from an
+/// account holding no seat is dropped and logged at each power of ten of its count, since a client
+/// can send one per keystroke.
 pub async fn handle_typing(conn: &WsConn<'_>, frame: &WsFrame) {
+    use redis::AsyncCommands;
+
     if frame.group_id.is_empty() {
         return;
     }
@@ -166,6 +182,50 @@ pub async fn handle_typing(conn: &WsConn<'_>, frame: &WsFrame) {
     } else {
         "start"
     };
+
+    let mut con = match conn
+        .state
+        .redis_client
+        .get_multiplexed_async_connection()
+        .await
+    {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!(
+                "[TYPING] Redis unavailable, signal for {} dropped: {}",
+                frame.group_id,
+                e
+            );
+            return;
+        }
+    };
+    let members_key = format!("group:members:{}", frame.group_id);
+    let members = match con.smembers::<_, Vec<String>>(&members_key).await {
+        Ok(members) => members,
+        Err(e) => {
+            tracing::warn!(
+                "[TYPING] roster of {} unreadable, signal dropped: {}",
+                frame.group_id,
+                e
+            );
+            return;
+        }
+    };
+
+    let Some(audience) = typing_audience(&members, conn.user_id) else {
+        let subject = format!("{}:{}", conn.user_id, frame.group_id);
+        if let Some(n) = TYPING_REFUSAL_REPEATS.hit(&subject) {
+            tracing::warn!(
+                "[TYPING] {}:{} holds no seat in group {} - signal REFUSED (occurrence {})",
+                conn.user_id,
+                conn.device_id,
+                frame.group_id,
+                n
+            );
+        }
+        return;
+    };
+
     let notification = serde_json::json!({
         "type": "typing",
         "groupId": frame.group_id,
@@ -174,104 +234,67 @@ pub async fn handle_typing(conn: &WsConn<'_>, frame: &WsFrame) {
     })
     .to_string();
 
-    broadcast_to_group_members(conn, &frame.group_id, conn.user_id, notification).await;
-}
-
-/// Send a frame to every online connection of every group member except the
-/// sender's own devices. Looks up `group:members:{group_id}` in Redis.
-async fn broadcast_to_group_members(
-    conn: &WsConn<'_>,
-    group_id: &str,
-    sender_user: &str,
-    notification: String,
-) {
-    use redis::AsyncCommands;
-
-    let Ok(mut con) = conn
-        .state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-    else {
-        return;
-    };
-    let members_key = format!("group:members:{}", group_id);
-    let Ok(members) = con.smembers::<_, Vec<String>>(&members_key).await else {
-        return;
-    };
-
-    // Exclude the sender's own devices (key is `userId:deviceId`).
-    let sender_prefix = format!("{}:", sender_user);
     let targets: Vec<mpsc::Sender<String>> = {
         let map = conn.state.connected_users.lock().unwrap();
-        members
+        audience
             .iter()
-            .filter(|m| !m.starts_with(&sender_prefix))
-            .filter_map(|m| map.get(m))
+            .filter_map(|m| map.get(*m))
             .flat_map(|senders| senders.values().cloned())
             .collect()
     };
-
     for tx in targets {
         let _ = tx.try_send(notification.clone());
     }
 }
 
-// ── Shared helper ─────────────────────────────────────────────────────────
+/// The routing-set entries (`userId:deviceId`) a typing signal from `sender_user` reaches - every
+/// device but the sender's own - or `None` when no device of the sender is in the set, i.e. the
+/// sender holds no seat this gateway can see.
+fn typing_audience<'m>(members: &'m [String], sender_user: &str) -> Option<Vec<&'m str>> {
+    let sender_prefix = format!("{}:", sender_user);
+    if !members.iter().any(|m| m.starts_with(&sender_prefix)) {
+        return None;
+    }
+    Some(
+        members
+            .iter()
+            .filter(|m| !m.starts_with(&sender_prefix))
+            .map(String::as_str)
+            .collect(),
+    )
+}
 
-/// Forward a notification to exactly one online group member that is not the sender.
-///
-/// Looks up the group member list in Redis (`group:members:{group_id}`), then
-/// iterates the in-memory `connected_users` map to find the first online peer.
-/// Sends `no_peer_online` back to the original sender if no peer is reachable.
-async fn forward_to_one_peer(
-    conn: &WsConn<'_>,
-    group_id: &str,
-    sender_key: &str,
-    notification: String,
-) {
-    use redis::AsyncCommands;
+#[cfg(test)]
+mod tests {
+    use super::{is_retired_frame, typing_audience};
 
-    let mut forwarded = false;
-
-    if let Ok(mut con) = conn
-        .state
-        .redis_client
-        .get_multiplexed_async_connection()
-        .await
-    {
-        let members_key = format!("group:members:{}", group_id);
-        if let Ok(members) = con.smembers::<_, Vec<String>>(&members_key).await {
-            // Drop the MutexGuard before any .await boundary.
-            let target = {
-                let map = conn.state.connected_users.lock().unwrap();
-                members
-                    .iter()
-                    .filter(|m| m.as_str() != sender_key)
-                    .find_map(|m| {
-                        map.get(m)
-                            .and_then(|senders| senders.values().next().cloned())
-                            .map(|s| (m.clone(), s))
-                    })
-            };
-
-            if let Some((member, sender)) = target {
-                let _ = sender.try_send(notification);
-                forwarded = true;
-                tracing::info!("forwarded to {}", member);
-            }
-        }
+    #[test]
+    fn a_welcome_request_frame_is_retired_and_typing_is_not() {
+        assert!(is_retired_frame("welcome_request"));
+        assert!(!is_retired_frame("typing"));
+        assert!(!is_retired_frame("disconnect"));
     }
 
-    if !forwarded {
-        let no_peer =
-            serde_json::json!({ "type": "no_peer_online", "groupId": group_id }).to_string();
-        let _ = conn.tx.send(no_peer).await;
-        tracing::info!(
-            "no_peer_online sent back to {}:{} for group {}",
-            conn.user_id,
-            conn.device_id,
-            group_id
-        );
+    #[test]
+    fn a_seated_sender_reaches_every_other_member_but_not_its_own_devices() {
+        let members = vec![
+            "alice:phone".to_string(),
+            "alice:laptop".to_string(),
+            "bob:phone".to_string(),
+        ];
+        assert_eq!(typing_audience(&members, "alice"), Some(vec!["bob:phone"]));
+    }
+
+    #[test]
+    fn a_sender_with_no_seat_reaches_nobody() {
+        let members = vec!["alice:phone".to_string(), "bob:phone".to_string()];
+        assert_eq!(typing_audience(&members, "mallory"), None);
+        assert_eq!(typing_audience(&[], "mallory"), None);
+    }
+
+    #[test]
+    fn a_user_id_that_prefixes_another_is_not_a_seat() {
+        let members = vec!["alice2:phone".to_string()];
+        assert_eq!(typing_audience(&members, "alice"), None);
     }
 }

@@ -10,6 +10,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { ChannelService } from '../channels/channel.service';
+import { RepeatCounter } from '../common/log-repeat';
 import { assertInternalSecret } from './internal-secret.util';
 
 interface ChannelReadBody {
@@ -39,6 +40,8 @@ interface ChannelReadBody {
 @Controller('internal/channels')
 export class InternalChannelReadController {
   private readonly logger = new Logger(InternalChannelReadController.name);
+  /** Repeats of one user's "not a reader" in one salon: a client can react in a loop. */
+  private readonly notAReaderRepeats = new RepeatCounter();
 
   constructor(private readonly channels: ChannelService) {}
 
@@ -100,10 +103,14 @@ export class InternalChannelReadController {
     const reader = await this.channels.isReaderOfChannel(channelId, userId);
     if (!reader) {
       // Only the refusal speaks: a reader is every reaction in a salon, a non-reader is a caller
-      // chat-delivery is about to refuse, and that is worth a line on both sides.
-      this.logger.warn(
-        `[SALON_READER] user=${userId.slice(0, 8)} channel=${channelId.slice(0, 8)} is not a reader`
-      );
+      // chat-delivery is about to refuse, and that is worth a line on both sides - once per user and
+      // salon, then at each power of ten, since one client can ask again and again.
+      const n = this.notAReaderRepeats.hit(`${userId}:${channelId}`);
+      if (n !== null) {
+        this.logger.warn(
+          `[SALON_READER] user=${userId.slice(0, 8)} channel=${channelId.slice(0, 8)} is not a reader (occurrence ${n})`
+        );
+      }
     }
     return { reader };
   }

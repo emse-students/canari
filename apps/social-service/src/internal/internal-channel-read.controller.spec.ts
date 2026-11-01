@@ -105,6 +105,19 @@ describe('InternalChannelReadController', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('is not a reader'));
     });
 
+    it('says a repeated refusal once, then at each power of ten', async () => {
+      isReaderOfChannel.mockResolvedValue(false);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockClear();
+      for (let i = 0; i < 10; i++) {
+        await controller.reader('shared-secret', SALON, { userId: 'u-3' });
+      }
+      const refusals = warn.mock.calls.filter(([line]) => String(line).includes('user=u-3'));
+      expect(refusals.map(([line]) => String(line))).toEqual([
+        expect.stringContaining('(occurrence 1)'),
+        expect.stringContaining('(occurrence 10)'),
+      ]);
+    });
+
     it('refuses a caller without the internal secret, and a question with no user', async () => {
       await expect(controller.reader('wrong', SALON, { userId: 'u-1' })).rejects.toBeInstanceOf(
         ForbiddenException
