@@ -318,6 +318,25 @@ classify plain backslash-and-quote-in-strings 'COMMENT ON COLUMN t.a IS E'"'"'a 
 classify held psql-gexec 'SELECT format('"'"'DROP TABLE %%I'"'"', tablename) FROM pg_tables WHERE false\n\\gexec\n'
 classify held psql-shell '\\! rm -rf /tmp/x\nSELECT 1;\n'
 classify held merge 'MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE;\n'
+classify held copy-program 'COPY t FROM PROGRAM '"'"'curl -s x'"'"';\n'
+classify held detach-partition 'ALTER TABLE p DETACH PARTITION p1;\n'
+classify held create-rule 'CREATE RULE r AS ON DELETE TO t DO INSTEAD NOTHING;\n'
+classify held create-or-replace-rule 'CREATE OR REPLACE RULE r AS ON INSERT TO t DO INSTEAD DELETE FROM u;\n'
+
+# WHERE THE SCANNER CANNOT BE SURE IT CUTS THE TEXT AS psql DOES, IT HOLDS (verification of #2873:
+# each of these was plain, an unapproved DROP applied). A bare CR ends a `--` comment for psql; a
+# byte from 0x80 up is a letter to PostgreSQL - a dollar tag, or a name glued to an `E` that is then
+# no E-string; `standard_conforming_strings = off` makes a backslash escape every quote.
+# shellcheck disable=SC2016,SC1003 # the dollar quotes are SQL, kept literal on purpose, and a backslash before a quote is SQL text
+{
+  classify held bare-cr-ends-a-comment 'CREATE TABLE a (id int); -- note\rDROP TABLE users;\n'
+  classify held non-ascii-dollar-tag 'SELECT $\303\251$ " $\303\251$; DROP TABLE users; SELECT $\303\251$ " $\303\251$;\n'
+  classify held standard-conforming-strings-off 'SET standard_conforming_strings = off;\nSELECT '"'"'a\\'"'"' -- '"'"'; DROP TABLE users; -- '"'"';\n'
+  classify held non-ascii-name-before-an-e-quote 'CREATE DOMAIN "\303\251e" AS text;\nSELECT \303\251E'"'"'x\\'"'"' ; SELECT '"'"'-- '"'"' ; DROP TABLE users; --'"'"';\n'
+  classify held non-ascii-tag-hides-a-gexec 'SELECT $\303\251$ $a$ $\303\251$;\nSELECT '"'"'DR'"'"' || '"'"'OP TABLE users'"'"' \\gexec\n-- $a$\n'
+  classify plain non-ascii-in-a-comment-and-a-string '-- cr\303\251e la colonne\n/* d\303\251j\303\240 */ COMMENT ON TABLE t IS '"'"'cr\303\251\303\251e'"'"';\nALTER TABLE t ADD COLUMN IF NOT EXISTS "\303\251" int;\n'
+  classify plain crlf-line-ends 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int; -- note\r\nSELECT 1;\r\n'
+}
 
 # A BYTE-ORDER MARK before `--` hid the marker from the line match: held now, wherever it stands.
 classify held bom-before-the-marker '\357\273\277-- canari:hold-for-owner\nUPDATE t SET a = 1;\n'

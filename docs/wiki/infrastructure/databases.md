@@ -152,8 +152,10 @@ Rules, all of them load-bearing:
 - **A migration the owner must see is HELD, never "owed the owner's yes" in prose.** A line of its
   own reading `-- canari:hold-for-owner`, or any statement that is not plainly additive (any `DROP`
   but `CONSTRAINT`, `DEFAULT`, `NOT NULL` and `INDEX|TRIGGER <name>`, matched on whole tokens;
-  `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE`, a column `TYPE` change, dynamic `EXECUTE`, a psql
-  backslash meta-command), refuses the release tag and makes the deploy FAIL before anything is
+  `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE`, a column `TYPE` change, dynamic `EXECUTE`,
+  `COPY ... PROGRAM`, `DETACH PARTITION`, `CREATE RULE`, a psql backslash meta-command; and anything
+  the scanner cannot be sure it reads as psql does - a non-ASCII byte outside a string or comment, a
+  CR inside a line, `standard_conforming_strings`), refuses the release tag and makes the deploy FAIL before anything is
   applied until `infrastructure/migration-approvals.txt` approves that file's checksum - a line the
   owner merges by hand. **So a held file merged to `main` blocks every release until it is approved
   or reverted.** An approved one is applied right after a database dump

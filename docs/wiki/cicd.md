@@ -270,8 +270,9 @@ contains a statement that is not plainly additive. **That list is an allowlist**
 `DROP CONSTRAINT`, `DROP DEFAULT`, `DROP NOT NULL` and `DROP INDEX|TRIGGER <name>` (the re-create
 idiom, a relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE` (its `WHEN MATCHED THEN
 DELETE` deletes), a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`), `EXECUTE` of dynamic
-SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger and `GRANT EXECUTE ON FUNCTION` are not), and
-**any backslash outside a string, a comment or a dollar quote**: the deploy pipes each file into
+SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger and `GRANT EXECUTE ON FUNCTION` are not),
+`COPY ... PROGRAM` (a shell on the database host), `DETACH PARTITION`, `CREATE [OR REPLACE] RULE` (a
+rule rewrites every later statement on its table), and **any backslash outside a string, a comment or a dollar quote**: the deploy pipes each file into
 `psql`, which reads it as a meta-command (`\gexec` runs every row a query returns as SQL, `\!` runs a
 shell). The first version matched spellings (`DROP TABLE|COLUMN`) and its review listed what walked
 past it - `ALTER TABLE t DROP foo`, a statement split over lines, `DROP TYPE ... CASCADE`, a
@@ -287,6 +288,16 @@ plain to the first lexer); an unterminated string, comment or dollar quote is HE
 **Inside a string or a dollar-quoted body, `"` and `\` are text and leave the scanner as spaces**: the
 token pass read a `"` in a string as the start of a quoted identifier and swallowed everything after
 it (`COMMENT ON COLUMN t.size IS '... 6.1"';` then `DROP COLUMN email` was plain - final review).
+**Where the scanner cannot be sure it cuts the text as psql does, it does not try - it HOLDS.** The
+verification of that review found four places where the two disagree, each an unapproved `DROP`
+called plain, and each is now a held row rather than a patched rule: a CR that does not end a line
+(psql ends a `--` comment there, the scanner did not), a byte from 0x80 up OUTSIDE a string, a
+comment, a quoted name or a dollar body (PostgreSQL reads it as a letter, so `$\xe9$` is a dollar tag
+and `\xe9E'x'` is a name and a standard string, not an E-string), and any mention of
+`standard_conforming_strings` (off, a backslash escapes a quote in every string). Non-ASCII inside a
+comment or a string is read as before: the 7 of the 174 migrations that carry French text have it
+only there, and all 174 keep their verdict (147 plain, 27 held). The scanner runs the same under
+gawk, mawk 1.3.4 and busybox awk (188 verdicts compared, 2026-11-01).
 **A dollar-quoted body is kept verbatim otherwise, comments included**: it may be code that runs
 (`DO`, a function) or a literal, and no reader of the outer text can tell, so a `DROP` in a comment of
 a body holds the file - a false hold, never a missed one. An `UPDATE` backfill is not matched: the
@@ -320,8 +331,9 @@ or the file is reverted. That is the design: the yes is asked where it can no lo
   request number, so it describes whatever the head was at that read**: the head is read after it,
   and the run arms only while that head is still the event's own commit. A head that moved means a
   newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
-  owner's file); what is left is the instant between that read and the arming call, and a push there
-  raises that same run.
+  owner's file). And the arming itself names that commit (`gh pr merge --auto --match-head-commit`,
+  as the Dependabot path always did), so a push between the guard and the arming call makes GitHub
+  refuse it: that run fails, and the run the push raised judges the new head.
 - **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
   its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads
   it as a declared `# canari-only:shared` line), so a writer's own `gh pr merge --auto` on such a pull

@@ -407,6 +407,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          # canari-only:begin
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # canari-only:end
         run: |
           set -euo pipefail
 
@@ -423,7 +426,11 @@ jobs:
           # `allow_auto_merge` before any of this works at all - both are repository settings, both
           # are invisible in this tree, and both are inventoried in `infrastructure/MIGRATION.md`
           # section 3bis alongside the ruleset.
-          if gh pr merge "$PR" --auto --squash --repo "$REPO"; then
+          # Canari arms ONLY the head the guard above judged (`--match-head-commit`, verification of
+          # #2873): a push between the two steps makes GitHub refuse, this run fails loudly below,
+          # and the run that push raised judges the new head and arms it.
+          # canari-only:shared if gh pr merge "$PR" --auto --squash --repo "$REPO"; then
+          if gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
             echo "Auto-merge armed. GitHub will squash-merge #$PR as soon as CI passed goes green."
             exit 0
           fi

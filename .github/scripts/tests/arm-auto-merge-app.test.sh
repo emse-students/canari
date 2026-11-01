@@ -491,6 +491,21 @@ if grep -qE '^ +types: \[[a-z_, ]*auto_merge_enabled\]' "$wf"; then
 else
   fail "B32 arm-auto-merge.yml does not listen to auto_merge_enabled"
 fi
+# THE ARMING NAMES THE HEAD THE GUARD JUDGED: without `--match-head-commit`, a push between the guard
+# and the merge step would be armed on a file list read of another head. Every `--auto` arming in
+# the file must carry it, and the step that arms an ordinary pull request must be given HEAD_SHA.
+# shellcheck disable=SC2016 # the dollar signs are the workflow's own shell text, matched literally
+{
+  arm_lines="$(grep -E '^ +(if )?gh pr merge "\$PR" --auto ' "$wf")"
+  merge_step="$(awk '/^      - name: /{ step = $0 } step ~ /Ask GitHub to merge it/' "$wf")"
+  if [ -n "$arm_lines" ] && ! grep -vqF -- '--match-head-commit "$HEAD_SHA"' <<<"$arm_lines" &&
+    grep -qE '^          HEAD_SHA: \$\{\{ github.event.pull_request.head.sha \}\}$' <<<"$merge_step" &&
+    grep -qF 'gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"' <<<"$merge_step"; then
+    pass "B32 every arming names the head the guard judged (--match-head-commit), the ordinary one included"
+  else
+    fail "B32 an arming does not pin the judged head with --match-head-commit" "$arm_lines"
+  fi
+}
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then

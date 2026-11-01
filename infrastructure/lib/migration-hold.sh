@@ -27,7 +27,8 @@
 #     relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE` (whose `WHEN MATCHED THEN
 #     DELETE` deletes), a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`), `EXECUTE` of
 #     dynamic SQL (whose text no reader can judge; `EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger
-#     and `GRANT EXECUTE ON FUNCTION` are not dynamic SQL), and ANY backslash outside a string, a
+#     and `GRANT EXECUTE ON FUNCTION` are not dynamic SQL), `COPY ... PROGRAM` (a shell on the
+#     database host), `DETACH PARTITION`, `CREATE [OR REPLACE] RULE`, and ANY backslash outside a string, a
 #     comment or a dollar quote: the deploy pipes the file into psql, which reads it as a
 #     meta-command (`\gexec` runs every row a query returns as SQL, `\!` runs a shell). An `UPDATE`
 #     backfill is NOT matched: it is the author's to mark.
@@ -50,6 +51,13 @@
 # dollar-quoted body a `"` and a `\` are TEXT and leave the scanner as spaces: the token pass read a
 # `"` in a string as the opening of a quoted identifier, and everything after it vanished into that
 # "name" (final review of #2873: `COMMENT ... IS '... 6.1"';` then a `DROP COLUMN` was plain).
+#
+# WHERE IT CANNOT BE SURE IT CUTS THE TEXT AS psql DOES, IT DOES NOT TRY (fail closed, verification of
+# #2873): a byte from 0x80 up outside a string, a comment, a quoted name or a dollar body (to
+# PostgreSQL a letter: `$\xe9$` is a tag, and `\xe9E'x'` is NOT an E-string), a CR that does not end a
+# line (it ends a `--` comment for psql), or any mention of `standard_conforming_strings` (off, a
+# backslash escapes a quote in every string) holds the file. Non-ASCII text in a comment or a
+# string - the French in this repository's migrations - is read as it always was.
 #
 # A DOLLAR-QUOTED BODY IS KEPT VERBATIM, comments and all. It may be a function body or a `DO` block,
 # whose content IS the SQL that runs, or a plain literal - and no reader of the outer text can tell
@@ -77,12 +85,17 @@ readonly MIGRATION_HOLD_MARKER_PATTERN='^[[:space:]]*--[[:space:]]*canari:hold-f
 
 # Prints the SQL of file $1 on ONE line, upper-cased, comments removed, whitespace collapsed to one
 # space, every dollar-quote delimiter set apart by a space on each side (so `$x$DROP` cannot glue the
-# keyword to the tag). Exits non-zero (and prints nothing useful) when a string, a comment or a
-# dollar quote never closes. Byte-wise (`LC_ALL=C`), so a multi-byte character is never split
+# keyword to the tag). Exits non-zero (and prints nothing useful) when it cannot be sure it cuts the
+# text as psql does: 3 when a string, a comment or a dollar quote never closes, 4 on a byte from 0x80
+# up outside a string, a comment, a quoted name or a dollar body, 5 on a CR that does not end a line. Byte-wise (`LC_ALL=C`), so a multi-byte character is never split
 # differently on two hosts.
 migration_sql_normalized() {
   LC_ALL=C awk '
-    BEGIN { state = 0; depth = 0; last = " "; dtag = "" }
+    BEGIN {
+      state = 0; depth = 0; last = " "; dtag = ""; fail = 0
+      # Every byte from 0x80 up, built with %c rather than a regex range, which awks read differently.
+      for (b = 128; b < 256; b++) high = high sprintf("%c", b)
+    }
     function emit(s) {
       if (s ~ /^[ \t\r\f\v]$/) { if (last != " ") { printf " "; last = " " } return }
       printf "%s", toupper(s); last = s
@@ -94,6 +107,9 @@ migration_sql_normalized() {
     function inert(s) { if (s == "\"" || s == "\\") { emit(" ") } else { emit(s) } }
     {
       line = $0; n = length(line); i = 1
+      # A CR anywhere but at the end of a line is a line end to psql (a `--` comment stops at it) and
+      # not to this scanner: the two would cut the text differently, so the file is not read at all.
+      if (index(substr(line, 1, n - 1), "\r") > 0) { fail = 5; exit }
       while (i <= n) {
         c = substr(line, i, 1); d = substr(line, i + 1, 1)
         if (state == 4) {
@@ -104,9 +120,15 @@ migration_sql_normalized() {
           inert(c); i++; continue
         }
         if (state == 0) {
+          # A byte from 0x80 up, OUTSIDE a string, a comment, a quoted name or a dollar body:
+          # PostgreSQL reads it as a letter (an identifier, a dollar tag `$\xe9$`, a name `\xe9E` before a
+          # quote that is then NOT an E-string), and this scanner knows only ASCII letters. Not read,
+          # held. Inside those four it is text, as it is in every French comment here.
+          if (index(high, c) > 0) { fail = 4; exit }
           # A dollar quote opens on `$tag$` or `$$` - not inside an identifier (`a$b$`), which
           # PostgreSQL reads as one name, and not on a parameter (`$1`).
-          if (c == "$" && substr(line, i - 1, 1) !~ /[A-Za-z0-9_$]/ &&
+          # (`i > 1` before every look-behind: `substr(s, 0, 1)` is "" in gawk, not in every awk.)
+          if (c == "$" && (i == 1 || substr(line, i - 1, 1) !~ /[A-Za-z0-9_$]/) &&
               match(substr(line, i), /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/)) {
             dtag = substr(line, i, RLENGTH)
             emit(" "); emit(dtag); emit(" "); i += RLENGTH; state = 4; continue
@@ -114,7 +136,7 @@ migration_sql_normalized() {
           if (c == "-" && d == "-") { i = n + 1; continue }
           if (c == "/" && d == "*") { state = 3; depth = 1; i += 2; emit(" "); continue }
           if (c == "\047") {
-            p = substr(line, i - 1, 1); q = substr(line, i - 2, 1)
+            p = (i > 1) ? substr(line, i - 1, 1) : ""; q = (i > 2) ? substr(line, i - 2, 1) : ""
             esc = ((p == "E" || p == "e") && q !~ /[A-Za-z0-9_$]/) ? 1 : 0
             state = 1; emit(c); i++; continue
           }
@@ -139,7 +161,7 @@ migration_sql_normalized() {
       }
       emit(" ")
     }
-    END { printf "\n"; if (state != 0) exit 3 }
+    END { printf "\n"; if (fail) exit fail; if (state != 0) exit 3 }
   ' "$1"
 }
 
@@ -173,10 +195,39 @@ migration_hold_reason() {
     ;;
   esac
 
-  if ! sql="$(migration_sql_normalized "$migration")"; then
+  # `standard_conforming_strings = off` makes a backslash escape a quote in EVERY string, so the
+  # text after it is cut into strings differently from the text before it - which this scanner,
+  # reading the file once, cannot follow. Any mention of it holds the file.
+  LC_ALL=C grep -qi 'standard_conforming_strings' "$migration"
+  case $? in
+  0)
+    printf 'it mentions standard_conforming_strings, which changes how its strings are read - held, not guessed'
+    return 0
+    ;;
+  1) ;;
+  *)
+    printf '::error::%s could not be read to decide whether it is held\n' "$migration" >&2
+    return 2
+    ;;
+  esac
+
+  local rc=0
+  sql="$(migration_sql_normalized "$migration")" || rc=$?
+  case $rc in
+  0) ;;
+  4)
+    printf 'it has a byte from 0x80 up outside a string, a comment or a dollar body, which PostgreSQL reads as a letter and this scanner cannot - held, not guessed'
+    return 0
+    ;;
+  5)
+    printf 'it has a carriage return that does not end a line, which ends a comment for psql and not for this scanner - held, not guessed'
+    return 0
+    ;;
+  *)
     printf 'its SQL could not be scanned (an unterminated string, comment or dollar quote) - held, not guessed'
     return 0
-  fi
+    ;;
+  esac
 
   found="$(migration_unplain_statements <<<"$sql")"
   if [ -n "$found" ]; then
@@ -232,6 +283,14 @@ migration_unplain_statements() {
           report("TRUNCATE")
         } else if (t == "MERGE") {
           report("MERGE")
+        } else if (t == "COPY") {
+          # `COPY ... TO|FROM PROGRAM` runs a shell command on the database host.
+          for (j = m + 1; j <= k && tok[j] != ";"; j++) if (tok[j] == "PROGRAM") { report("COPY PROGRAM"); break }
+        } else if (t == "DETACH" && a == "PARTITION") {
+          report("DETACH PARTITION")
+        } else if (t == "CREATE" && (a == "RULE" || (a == "OR" && b == "REPLACE" && c == "RULE"))) {
+          # A rule rewrites every later statement on its table (`DO INSTEAD DELETE`), unseen here.
+          report("CREATE RULE")
         } else if (t == "\\") {
           report("A PSQL META-COMMAND \\" a)
         } else if (t == "DELETE" && a == "FROM") {
