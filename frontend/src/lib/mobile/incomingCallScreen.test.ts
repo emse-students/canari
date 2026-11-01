@@ -332,7 +332,7 @@ describe('the native answer is a private intent carrying every fact the join nee
       'performAnswerCallAction'
     );
     expect(answerMm).toContain('@"callerId" : callerId,');
-    expect(answerMm).toContain('@"fr.emse.canari://chat/%@", groupId');
+    expect(answerMm).toContain('CanariChatLink(groupId, @"")');
     expect(pushMm).not.toContain('acceptCall');
     // Both rings record the caller for it.
     expect([...pushMm.matchAll(/@"callerId" : callerId \?: @"",/g)]).toHaveLength(2);

@@ -59,6 +59,7 @@ use crate::commands::mls::{
     welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
@@ -1731,6 +1732,7 @@ pub fn run() {
             ack_fcm_cache,
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
+            take_nse_outcomes,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,

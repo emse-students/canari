@@ -2484,10 +2484,11 @@ undecryptable frame, whereas a missed mention costs one unread line they will se
 passive` in the APNs payload are cleartext to Google and Apple, like `silent` and `isGroup` already
 are: they say how loud this member keeps this conversation, never what was said or who was named.
 
-**The iOS target gap.** The extension's deployment target is 18.2 while the app's is 15.6 (and the
-XcodeGen project 14.0): on an iPhone older than 18.2 the extension cannot run, so every `mentions`
-frame stays the server's passive alert and a mention never rings - the undecidable rule, applied to
-the whole device. Check on a device before relying on the iOS half of `mentions`.
+**The iOS target gap - closed 2026-11-01.** The extension's deployment target was 18.2 while the app
+installs from 16.0, so on an iPhone older than 18.2 the extension never ran: every `mentions` frame
+stayed the server's passive alert, and every message the server's generic banner. Every target is
+16.0 now ([mobile](../frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
+Check on a device before relying on the iOS half of `mentions`.
 
 **Older builds.** A client predating the field ignores `notifLevel` and draws a `mentions` frame as
 `all` (on iOS, passive - the server's alert). `none` works on every build, because it is the server's.

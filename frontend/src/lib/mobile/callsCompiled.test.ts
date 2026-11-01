@@ -295,7 +295,7 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
     );
     expect(body).not.toMatch(/content\.(title|body|subtitle) =/);
     expect(body).toContain('content.threadIdentifier = groupId');
-    expect(body).toContain('"fr.emse.canari://chat/\\(groupId)"');
+    expect(body).toContain('Self.chatLink(groupId)');
     expect(body).not.toContain('acceptCall');
     expect(body).toContain('.timeSensitive');
     expect(body).toContain('content.userInfo["canariCallId"] = callId');
@@ -314,7 +314,7 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
 
   it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {
     expect(pushMm).toContain('[deepLink hasPrefix:@"fr.emse.canari://chat"]');
-    expect(nse).toContain('content.userInfo["deepLink"] = "fr.emse.canari://chat/');
+    expect(nse).toContain('"fr.emse.canari://chat/\\(prefix)\\(id)"');
   });
 });
 

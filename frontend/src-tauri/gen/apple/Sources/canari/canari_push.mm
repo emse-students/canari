@@ -68,6 +68,71 @@ static NSString *CanariDescribeDeepLink(NSString *deepLink) {
   return out;
 }
 
+/// The id a chat link may carry: `^[A-Za-z0-9_-]{1,128}$` - every group id (a UUID) and every
+/// channel id fits it. Twin of `NotificationService.isLinkId`.
+static BOOL CanariIsLinkId(NSString *_Nullable value) {
+  static NSRegularExpression *re;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    re = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9_-]{1,128}$" options:0 error:nil];
+  });
+  return value != nil &&
+         [re numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)] == 1;
+}
+
+/// THE ONE PLACE A CHAT LINK IS BUILT FROM AN ID (`fr.emse.canari://chat/<prefix><id>`), and only
+/// when the id is an id: a value carrying `/`, `?`, `#` or `..` would otherwise open another route
+/// than the conversation. Nil, logged with its length only, on a mismatch. Twin of the extension's
+/// `NotificationService.chatLink`.
+static NSString *_Nullable CanariChatLink(NSString *_Nullable value, NSString *prefix) {
+  if (!CanariIsLinkId(value)) {
+    NSLog(@"[CanariPush] chat link refused: the id is not an id (length=%lu)",
+          (unsigned long)value.length);
+    return nil;
+  }
+  return [NSString stringWithFormat:@"fr.emse.canari://chat/%@%@", prefix, value];
+}
+
+/// The link a tap on a notification opens: the payload's own `deepLink` when it is one of this
+/// app's (`fr.emse.canari:` - a payload naming another scheme would have the app open whatever it
+/// names), else the conversation its CLEARTEXT fields name.
+///
+/// THE TAP TARGET MUST NOT SIT BEHIND THE DECRYPT. A message or salon push carries no `deepLink`
+/// from the server; the Notification Service Extension writes `chat/<groupId>` (or
+/// `chat/channel_<id>`) when it runs. When it does not - killed for memory, out of time, or not
+/// loadable on the phone's iOS - the banner is the server's generic one AND the tap opened the app
+/// on nothing, though `groupId` / `channelId` were in the payload all along (P1 of 2026-11-01). The
+/// same strings as the extension's, so both paths land identically. Nil when nothing names a target.
+static NSString *_Nullable CanariTapDeepLink(NSDictionary *userInfo) {
+  id link = userInfo[@"deepLink"];
+  if ([link isKindOfClass:[NSString class]] && [(NSString *)link length] > 0) {
+    NSURLComponents *c = [NSURLComponents componentsWithString:link];
+    if ([c.scheme isEqualToString:@"fr.emse.canari"]) {
+      return link;
+    }
+    NSLog(@"[CanariPush] notification tap: the payload's deepLink is not this app's (%@) - ignored",
+          CanariDescribeDeepLink(link));
+  }
+  NSString *type = [userInfo[@"type"] isKindOfClass:[NSString class]] ? userInfo[@"type"] : @"message";
+  if ([type isEqualToString:@"channel"]) {
+    NSString *channelId =
+        [userInfo[@"channelId"] isKindOfClass:[NSString class]] ? userInfo[@"channelId"] : @"";
+    if (channelId.length > 0) {
+      NSLog(@"[CanariPush] notification tap: no deepLink - the salon named in clear is opened");
+      return CanariChatLink(channelId, @"channel_");
+    }
+  } else if ([type isEqualToString:@"message"]) {
+    NSString *groupId =
+        [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
+    if (groupId.length > 0) {
+      NSLog(@"[CanariPush] notification tap: no deepLink - the conversation named in clear is opened");
+      return CanariChatLink(groupId, @"");
+    }
+  }
+  return nil;
+}
+
+
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 // How many queued messages one drain ATTEMPTS. The cap is on the ENCRYPT, deliberately: encrypting
 // consumes a ratchet generation whether or not the frame is ever POSTed, so encrypting a backlog
@@ -571,7 +636,7 @@ static NSBundle *CanariLocaleBundle(void) {
  * A notification string from `Localizable.strings`, in the app's own language.
  *
  * The extension has its OWN copy of this table and its own twin of this function: an app extension
- * is a separate bundle, so it cannot read the app's. See `canari_NSE/*.lproj`.
+ * is a separate bundle, so it cannot read the app's. See the `<lang>.lproj` folders of `canari_NSE`.
  *
  * COMPOSED ON THE DEVICE AND NOT BY THE SERVER, for a reason no amount of server-side translation
  * would fix: the server does not know the recipient's language, so every sentence it writes is
@@ -1345,7 +1410,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
     content.subtitle = subtitle;
   }
   // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
-  // iOS 15.0 and is ignored by the system, and the deployment target is 18.2 - so there is no
+  // iOS 15.0 and is ignored by the system, and the deployment target is 16.0 - so there is no
   // reachable version where setting it would do anything. iOS stacks by threadIdentifier and
   // writes the summary line itself. The Android twin (GROUP_KEY_MESSAGES, refreshBadgeSummary)
   // has no iOS counterpart; giving iOS a real summary line is a separate, unbuilt feature.
@@ -2675,9 +2740,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   BOOL isGroup = groupName.length > 0 && ![groupName isEqualToString:senderName];
   NSString *title = isGroup ? groupName : (senderName.length > 0 ? senderName : @"Canari");
   NSString *deepLink =
-      groupId.length > 0
-          ? [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId]
-          : @"fr.emse.canari://chat";
+      (groupId.length > 0 ? CanariChatLink(groupId, @"") : nil) ?: @"fr.emse.canari://chat";
   int notifId = CanariStableNotifId(groupId);
   // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows only
   // the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
@@ -3034,8 +3097,8 @@ static void CanariHandOverCallsToPage(NSString *why) {
   // lock screen the user lands in the app via the CallKit UI's app button instead.
   if (groupId.length > 0) {
     // NAVIGATION ONLY: the answer is the private file above, never a parameter of a link.
-    NSString *link = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
-    NSURL *url = [NSURL URLWithString:link];
+    NSString *link = CanariChatLink(groupId, @"");
+    NSURL *url = link != nil ? [NSURL URLWithString:link] : nil;
     if (url != nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
         [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
@@ -3798,7 +3861,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       attachmentPath = CanariInitialsImagePath(actorName);
     }
 
-    NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
+    NSString *deepLink = CanariChatLink(groupId, @"") ?: @"fr.emse.canari://chat";
     NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
     CanariShowLocalNotification(actorName, CanariReactionBody(emoji), deepLink, groupId,
                                 CanariStableNotifId(groupId), attachmentPath, nil, NO, nil, 0,
@@ -4412,13 +4475,11 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     return;
   }
 
-  NSString *deepLink = nil;
-  if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
-    deepLink = userInfo[@"deepLink"];
-  }
-  // THE TAP OPENS WHAT THE PAYLOAD NAMES AND NOTHING ELSE, so an absent link is a payload that lost
-  // its field and says so: a post, form or agenda push used to arrive with none (the server sent
-  // only postId / formId) and the tap launched the app and stayed put, with nothing in the log.
+  NSString *deepLink = CanariTapDeepLink(userInfo);
+  // THE TAP OPENS WHAT THE PAYLOAD NAMES (its `deepLink`, else the conversation its clear fields name,
+  // `CanariTapDeepLink`), so an absent link is a payload that lost its field and says so: a post,
+  // form or agenda push used to arrive with none (the server sent only postId / formId) and the tap
+  // launched the app and stayed put, with nothing in the log.
   // A deep link carries ids, tokens and query parameters: the log names its SHAPE only (scheme +
   // host, and whether a query was present), never the path or the values.
   NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
@@ -4436,7 +4497,8 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
                                  }];
       });
     } else {
-      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@", deepLink);
+      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@",
+            CanariDescribeDeepLink(deepLink));
     }
   }
   completionHandler();
