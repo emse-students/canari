@@ -1,3 +1,4 @@
+import CallKit
 import Security
 import UIKit
 import UserNotifications
@@ -433,6 +434,7 @@ class NotificationService: UNNotificationServiceExtension {
     // we got there, otherwise the server fallback) rather than losing the notification.
     NSLog("[CanariNSE] time expired - delivering best attempt")
     if let handler = contentHandler, let content = bestAttemptContent {
+      Self.holdSoundForCall(content)
       Self.logFiling(content, via: "expired")
       handler(content)
     }
@@ -442,8 +444,23 @@ class NotificationService: UNNotificationServiceExtension {
   private func finish() {
     guard let handler = contentHandler, let content = bestAttemptContent else { return }
     contentHandler = nil
+    Self.holdSoundForCall(content)
     Self.logFiling(content, via: "finish")
     handler(content)
+  }
+
+  /// A CALL HOLDS THE PHONE'S SOUND (owner, 2026-10-31; calls.md "The app's other sounds during a
+  /// call"): the notification is still delivered and shown, only its sound goes. "A call is up" is
+  /// the system's own record, `CXCallObserver`: any call CallKit knows and has not ended - this app's
+  /// native ring and the calls answered on it, and a cellular call too, which is no time for a trill
+  /// either. A call the app runs WITHOUT CallKit (an outgoing call, an in-app ring) is not in that
+  /// record, so it is not covered here: that waits for CallKit on every call (calls.md).
+  private static func holdSoundForCall(_ content: UNMutableNotificationContent) {
+    guard content.sound != nil else { return }
+    let up = CXCallObserver().calls.contains { !$0.hasEnded }
+    guard up else { return }
+    content.sound = nil
+    NSLog("[CanariNSE] a call is up - delivered without sound")
   }
 
   /// HOW THE NOTIFICATION IS FILED, for the cross-client rig on a BENCH build only (observable O13,
