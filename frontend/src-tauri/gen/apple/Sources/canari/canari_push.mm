@@ -4267,7 +4267,11 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
           }
           body = text.length > 0 ? text : nil;
           id proven = ((NSDictionary *)json)[@"authorProven"];
-          authorProven = body != nil && [proven isKindOfClass:[NSNumber class]] && [proven boolValue];
+          // ONLY THE JSON LITERAL `true`: a JSON `1` is an NSNumber whose `boolValue` is YES too,
+          // so the CFBoolean type is the test - as in the NSE (`isJSONTrue`) and on Android.
+          authorProven = body != nil && [proven isKindOfClass:[NSNumber class]] &&
+                         CFGetTypeID((__bridge CFTypeRef)proven) == CFBooleanGetTypeID() &&
+                         [proven boolValue];
         } else {
           id reason = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"reason"]
                                                                   : nil;

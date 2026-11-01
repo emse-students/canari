@@ -291,6 +291,11 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinHandler).toContain(
       'authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))'
     );
+    // The Apple composers read ONLY the JSON literal `true`: a JSON `1` bridges to true through
+    // NSNumber, so the CFBoolean type is the test, as `authorProvenOf` is on Android.
+    expect(swiftSource).toContain('return isJSONTrue(dict["authorProven"])');
+    expect(swiftSource).toContain('CFGetTypeID(number) == CFBooleanGetTypeID()');
+    expect(objcSource).toContain('CFGetTypeID((__bridge CFTypeRef)proven) == CFBooleanGetTypeID()');
     expect(kotlinSource).toContain('.apply { senderKey?.let { setKey(it) } }');
     // The socket trigger takes the same rule, with the WebView's proof, and the same keys for a
     // salon - one answer per message, whichever trigger arrives first (review of #2881, HIGH-1).

@@ -2448,7 +2448,17 @@ class NotificationService: UNNotificationServiceExtension {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return false }
-    return (dict["authorProven"] as? Bool) == true
+    return isJSONTrue(dict["authorProven"])
+  }
+
+  /// Whether a JSONSerialization value is the JSON literal `true`. `as? Bool` is not that test: a
+  /// JSON `1` bridges to `true` through NSNumber, so only a CFBoolean counts - as on Android
+  /// (`ChannelBannerAuthor.authorProvenOf`) and in `canari_push.mm`.
+  static func isJSONTrue(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+      return false
+    }
+    return number.boolValue
   }
 
   /// Maps a media MIME type to a file extension so iOS infers the attachment type.

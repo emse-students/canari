@@ -1308,7 +1308,8 @@ three answers and reason codes as Android:
   v1 row, a push naming nobody) - `[SALON_AUTHOR] display_names.json names nobody reason=...` from the
   tokens, at the same levels. The NSE decides the speaker before rendering the tokens for that.
 
-An older native library answers without `authorProven`, which reads as not proven: such a build
+Only the JSON literal `true` proves (a CFBoolean: `isJSONTrue`, and the same test in `canari_push.mm`; a
+JSON `1` does not). An older native library answers without `authorProven`, which reads as not proven: such a build
 names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
 reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 
