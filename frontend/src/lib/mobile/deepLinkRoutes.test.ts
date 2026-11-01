@@ -14,10 +14,13 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://posts')).toBe('/posts');
     expect(route('fr.emse.canari://calendar')).toBe('/calendar');
     expect(route('fr.emse.canari://admin-agenda')).toBe('/admin/agenda');
-    // A live opens the feed until WP-L5's viewer page exists.
-    expect(route('fr.emse.canari://live/l1')).toBe('/posts');
+    // A live opens its own page; a payload without an id falls back to the feed.
+    expect(route('fr.emse.canari://live/l1')).toBe('/lives/l1');
+    expect(route('fr.emse.canari://live')).toBe('/posts');
     // WP-L8b: a cut live, a suspension, a withdrawal - their row on the notifications list.
     expect(route('fr.emse.canari://notifications')).toBe('/notifications');
+    // WP-N: the bookings' notices - the Reservations page.
+    expect(route('fr.emse.canari://bookings')).toBe('/bookings');
     // The organiser alert: one form's responses, on the forms list.
     expect(route('fr.emse.canari://form-responses/f1')).toBe('/forms?responses=f1');
   });
@@ -43,6 +46,10 @@ describe('appRouteForDeepLink', () => {
     );
     expect(route('fr.emse.canari://calendar')).toBe(
       notificationHref({ type: 'event_validated', postId: 'a1' })
+    );
+    // WP-F4: a follow request's push and its in-app row land on the same inbox.
+    expect(route('fr.emse.canari://follow-requests')).toBe(
+      notificationHref({ type: 'follow_request', postId: 'asker-1' })
     );
     // D38b: the push of a request to the author and its in-app row land on the same inbox.
     expect(route('fr.emse.canari://republication-requests')).toBe(

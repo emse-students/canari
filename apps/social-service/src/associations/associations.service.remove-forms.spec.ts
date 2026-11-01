@@ -51,7 +51,8 @@ function makeService(posters: { id: string }[] = [], stillCited: string[] = []) 
     redis as never, // redis
     httpService as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   jest
     .spyOn(

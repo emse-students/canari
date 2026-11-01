@@ -12,6 +12,8 @@ pub mod display_names;
 pub mod handoff;
 pub mod mls;
 pub mod notifications;
+// The iOS notification extension's outcome log, carried into the app log (2026-11-01).
+pub mod nse_outcomes;
 pub mod picked_files;
 pub mod push;
 pub mod push_registration;

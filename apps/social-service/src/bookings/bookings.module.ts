@@ -22,6 +22,9 @@ import { BookingFile } from './entities/booking-file.entity';
 import { BookingFilesService } from './booking-files.service';
 import { BookingPosterMedia } from './booking-poster-media';
 import { BookingRetentionScheduler } from './booking-retention.scheduler';
+import { BookingNotificationsService } from './booking-notifications.service';
+import { BookingReminderScheduler } from './booking-reminder.scheduler';
+import { PostsModule } from '../posts/posts.module';
 
 /** Every table of the module (migrations 087 onwards), in parent-to-child order. */
 export const BOOKING_ENTITIES = [
@@ -41,7 +44,8 @@ export const BOOKING_ENTITIES = [
  * `BookingsController`), the organiser's (WP-B4, `BookingSpacesController`) and a booking's
  * signed `.ics` (WP-B5, `BookingCalendarController`); the file answers, the poster, the retention
  * purge and the export (WP-B6, `BookingFilesService`, `BookingPosterMedia`,
- * `BookingRetentionScheduler`).
+ * `BookingRetentionScheduler`); the notices and the reminder (WP-N, `BookingNotificationsService`,
+ * `BookingReminderScheduler`, through `PostsModule`'s one notification pipeline).
  */
 @Module({
   imports: [
@@ -51,6 +55,7 @@ export const BOOKING_ENTITIES = [
     PricingModule,
     UserTagModule,
     FormsModule,
+    PostsModule,
   ],
   controllers: [BookingsController, BookingSpacesController, BookingCalendarController],
   providers: [
@@ -60,6 +65,8 @@ export const BOOKING_ENTITIES = [
     BookingFilesService,
     BookingPosterMedia,
     BookingRetentionScheduler,
+    BookingNotificationsService,
+    BookingReminderScheduler,
   ],
   exports: [BookingSlotsService],
 })

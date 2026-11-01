@@ -7,7 +7,7 @@
  *
  *   bun archive/invariant-selftest.mjs
  */
-import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict, settleDecision, settledRounds } from '../invariantverdict.mjs';
+import { FORBIDDEN, behindServer, forbiddenIn, forgiveProvoked5xx, invariantVerdict, movedUnderJudge, settleDecision, settledRounds } from '../invariantverdict.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -237,6 +237,11 @@ ok('never settled after the action: judged anyway, noted UNSETTLED with who was 
 const dr = settleDecision('after a reload of every web client', never, { judgeUnsettled: false });
 ok('never settled after the reload: unjudged, the reason carried, nothing failed', !dr.judge && dr.unjudged?.unsettled?.startsWith('the group never settled after a reload') && dr.unjudged.failures.length === 0);
 ok('... and settled after the reload: judged', settleDecision('after a reload of every web client', quick, { judgeUnsettled: false }).judge);
+
+// A commit landing between the settlement and the judge's reads (`movedUnderJudge`): DEV-2 alpha.5.
+ok('settled at 3, the server at 4 after the judge: moved, judge again', movedUnderJudge(quick, 4));
+ok('settled at 3, the server still at 3: the pass stands', !movedUnderJudge(quick, 3));
+ok('an unsettled settlement is never "moved" - it is judged or unjudged as it was', !movedUnderJudge(never, 4));
 
 console.log(failures ? `[invariant] ${failures} FAILURE(S)` : '[invariant] clean - every invariant fails on its own fault, and every approximation is named');
 process.exit(failures ? 1 : 0);

@@ -1,0 +1,91 @@
+{
+  "description": "The MLS leaf identity `userId:deviceId` chat-delivery-service answers about (POST mls/groups/:groupId/revoked-leaves, parseLeafIdentity in apps/chat-delivery-service/src/utils/sanitize.ts) and the client sends (isAddressableLeafIdentity in frontend/src/lib/mls-client/leafIdentity.ts): exactly one ':' between two halves, each matching libs/contracts/device-id.json's pattern, untrimmed. Both sides' specs run every case. Real identities are 147 (web) to 149 (tauri) characters: the device id embeds its user.",
+  "accept": [
+    {
+      "name": "a real web identity (147)",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "a real tauri identity (149)",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:tauri-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "an upper-case user half",
+      "identity": "A3F1C9E07B2D4856A3F1C9E07B2D4856A3F1C9E07B2D4856A3F1C9E07B2D4856:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "both halves at exactly 128",
+      "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "name": "the shortest",
+      "identity": "u:d"
+    }
+  ],
+  "reject": [
+    {
+      "name": "a legacy bare leaf (no colon)",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856"
+    },
+    {
+      "name": "two colons",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3:x"
+    },
+    {
+      "name": "an empty user half",
+      "identity": ":web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "an empty device half",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:"
+    },
+    {
+      "name": "a user half of 129",
+      "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "a device half of 129",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "name": "a space in the device half",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web- 1"
+    },
+    {
+      "name": "a tab in the device half",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-\t1"
+    },
+    {
+      "name": "a newline in the user half",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856\n:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "a quote in the device half",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-'1"
+    },
+    {
+      "name": "a slash in the user half",
+      "identity": "a/b:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "leading whitespace",
+      "identity": " a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3"
+    },
+    {
+      "name": "trailing whitespace",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856-mh9x2k1q-a7c3 "
+    },
+    {
+      "name": "a non-ASCII letter",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-\u00e9"
+    },
+    {
+      "name": "an emoji",
+      "identity": "a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856a3f1c9e07b2d4856:web-\ud83d\ude00"
+    },
+    {
+      "name": "the empty string",
+      "identity": ""
+    }
+  ]
+}

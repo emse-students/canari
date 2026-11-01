@@ -248,6 +248,87 @@ describe('FormsService pricing, through submit', () => {
       await submit(service, {});
       expect(saved).toHaveLength(1);
     });
+
+    it('types the refusal FORM_NOT_OPEN_TO_YOU, never a sentence to parse', async () => {
+      const { service } = makeService({
+        form: form({ submitCondition: { formation: { values: ['ICM'] } } }),
+        facts: { formation: 'ISMIN' },
+      });
+      await expect(submit(service, {})).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'FORM_NOT_OPEN_TO_YOU' },
+      });
+    });
+  });
+
+  /**
+   * Owner, 2026-10-30: a form reserved to people who do NOT hold a given cotisation, so nobody pays
+   * it twice. Refused at submit on the SERVER - a page that hid the form would leave an older client,
+   * or a crafted request, free to answer.
+   */
+  describe('a form for people who do NOT hold a cotisation', () => {
+    const notBde = { notCotisation: { variantKeys: ['bde'] } };
+
+    it('refuses a holder of that tier, typed FORM_COTISATION_HELD', async () => {
+      const { service, saved } = makeService({
+        form: form({ submitCondition: notBde }),
+        facts: { cotisationTiers: ['bde'] },
+      });
+      await expect(submit(service, {})).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'FORM_COTISATION_HELD' },
+      });
+      expect(saved).toHaveLength(0);
+    });
+
+    it('accepts a non-holder, and a holder of another tier', async () => {
+      for (const tiers of [[], ['other']]) {
+        const { service, saved } = makeService({
+          form: form({ submitCondition: notBde }),
+          facts: { cotisationTiers: tiers },
+        });
+        await submit(service, {});
+        expect(saved).toHaveLength(1);
+      }
+    });
+
+    it('anyTier refuses a holder of any tier of the association', async () => {
+      const { service } = makeService({
+        form: form({ submitCondition: { notCotisation: { anyTier: true } } }),
+        facts: { cotisationTiers: [null] },
+      });
+      await expect(submit(service, {})).rejects.toMatchObject({
+        response: { code: 'FORM_COTISATION_HELD' },
+      });
+    });
+
+    // What a 1.5.1 client reads: it knows nothing of `notCotisation`, and needs nothing - `maySubmit`
+    // is the server's answer, so it shows a holder the form as closed.
+    it('reports a holder as not admitted on the check, with the typed reason', async () => {
+      const { service } = makeService({
+        form: form({ submitCondition: notBde }),
+        facts: { cotisationTiers: ['bde'] },
+      });
+      const check = await service.hasSubmission('f1', 'user1');
+      expect(check.maySubmit).toBe(false);
+      expect(check.refusalCode).toBe('FORM_COTISATION_HELD');
+    });
+
+    it('reports a non-holder as admitted, with no reason', async () => {
+      const { service } = makeService({ form: form({ submitCondition: notBde }) });
+      const check = await service.hasSubmission('f1', 'user1');
+      expect(check.maySubmit).toBe(true);
+      expect(check.refusalCode).toBeNull();
+    });
+
+    it('hides a question for non-holders from a holder', async () => {
+      const onlyNew = { ...MENU_QUESTION, id: 'q_new', showIf: notBde };
+      const { service } = makeService({
+        form: form({ items: [MENU_QUESTION, onlyNew] }),
+        facts: { cotisationTiers: ['bde'] },
+      });
+      expect((await service.hasSubmission('f1', 'user1')).hiddenItemIds).toEqual(['q_new']);
+    });
   });
 
   /**

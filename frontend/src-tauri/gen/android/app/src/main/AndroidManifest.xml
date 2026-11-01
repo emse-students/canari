@@ -55,16 +55,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- WP-XP-4: push-token re-registration + outbox drain at boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- WP-XP-5 declared USE_FULL_SCREEN_INTENT here for the locked-screen CallStyle ring. It is
-         GONE while the native ring is held off (frontend/src/lib/features.ts,
-         CALLS_NATIVE_RING_COMPILED, its own switch since 2026-10-21): Play grants
-         that permission only to apps whose core function is calling or alarms, and declaring it for
-         a surface no user can reach is the Play analogue of the `voip` background mode App Review
-         refused on 2026-08-31. The tag is deleted rather than commented out on purpose - a commented
-         tag still satisfies a `toContain` guardrail, which is how a removal turns into a false
-         green. Restore it in the same commit that flips CALLS_NATIVE_RING_COMPILED
-         (callsCompiled.test.ts asserts the two agree), not with CALLS_COMPILED: in-app calls ship
-         first, without the native ring. -->
+    <!-- THE LOCKED-SCREEN CALL RING (WP-XP-5, back with CALLS_NATIVE_RING_COMPILED on 2026-10-30):
+         the incoming CallStyle notification's full-screen intent. Play grants it from Android 14 on
+         only to apps whose core function includes calling, through the Play Console's full-screen
+         intent declaration - an owner action; without the grant Android shows the ring as a
+         heads-up notification and the push service says so (`canUseFullScreenIntent`).
+         callsCompiled.test.ts asserts the tag agrees with CALLS_NATIVE_RING_COMPILED. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- THE ONGOING-CALL SERVICE (WP-C-BG-A, B8), declared since the flip of CALLS_COMPILED: an
          in-app call keeps its socket and its microphone while the app is hidden or the screen is
          locked. Play reviews the foreground-service type (declaration filled 2026-10-21).
@@ -282,6 +279,19 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
+                <data android:host="follow-requests" />
+                
+                
+                
+                
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
                 <data android:host="notifications" />
                 
                 
@@ -296,6 +306,19 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="form-responses" />
+                
+                
+                
+                
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="bookings" />
                 
                 
                 
@@ -330,10 +353,24 @@
                 <data android:pathPrefix="/calendar/" />
                 <data android:pathPrefix="/shop/" />
                 <data android:pathPrefix="/bookings/" />
+                <data android:pathPrefix="/lives/" />
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
+
+        <!-- THE INCOMING-CALL SCREEN (the native ring, 2026-10-30): the ring notification's
+             full-screen intent, shown over the lock screen. Its own task, never in Recents, and not
+             exported: only the ring's PendingIntent opens it. See IncomingCallActivity.kt. -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

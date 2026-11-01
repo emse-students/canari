@@ -53,7 +53,7 @@ export type StaleBuildVerdict =
 /**
  * Decides what a failed lazy load calls for. Pure, so every branch is a test.
  *
- * @param runningVersion - the build this tab booted on (`$app/environment`'s `version`).
+ * @param runningVersion - the build this tab booted on (`$app/env`'s `version`).
  * @param servedVersion - the build `version.json` names now, or `null` when it could not be read.
  * @param reloadedFor - the served build a reload was already accepted for in this tab, if any.
  */

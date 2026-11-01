@@ -27,7 +27,7 @@
  */
 import { LOGIN_SHOWING, awaitGatewayConnected, evaluate, requestsSince, send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
-import { closeOverlays, openGroup } from '../groupnav.mjs';
+import { closeOverlays, deleteGroup, openGroup } from '../groupnav.mjs';
 import { onRoster } from '../ccrows.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
 import {
@@ -68,6 +68,7 @@ import {
   resubmissionLine,
   sessionSurvived,
   settleNarration,
+  dup2DeferredJoinNarration,
   settledOnce,
 } from '../settlerows.mjs';
 import { GROUP_CREATION_NARRATION, REMOVE_NARRATION, awaitLine, consoleLines } from '../watch.mjs';
@@ -91,6 +92,8 @@ if (!SETTLE_ROWS[id]) {
 const spec = SETTLE_ROWS[id];
 const since = new Date().toISOString();
 let seats = null;
+/** The groups this row minted on W1 (the side group, then the row's), deleted after a passing verdict. */
+const minted = [];
 
 const REFRESH = /\/api\/auth\/refresh(\?|$)/;
 /** The commit POST's url, for COUNTING requests (`COMMIT_POST` is a fault rule, matched by prefix and method). */
@@ -204,15 +207,20 @@ const ACTIONS = {
     const settled = await awaitLine(c.cx('W1'), resubmissionLine(c.group.id, c.fromEpoch, 'accepted'), 30_000);
     const gesture = await g;
     const rep = await f.disarm();
+    const subjectNarration = [];
     return {
       premise,
       records: rep.records,
       vacuous: vacuousOf(rules, rep),
       joiners: [spec.subject],
       removed: [spec.intervening.remove],
-      narrationBy: { [spec.intervening.by]: REMOVE_NARRATION },
+      // W2's narration is decided by the judge, which runs after the invariant: by then the Welcome
+      // its add-lock wait was waiting for has arrived or has not (`dup2DeferredJoinNarration`).
+      narrationBy: { [spec.intervening.by]: REMOVE_NARRATION, [spec.subject]: subjectNarration },
       detail: { gesture, w4Gesture: w4, heldMs, clientSettled: settled },
-      judge: (view, seq) => [
+      judge: (view, seq) => {
+        subjectNarration.push(...dup2DeferredJoinNarration(consoleLines(c.cx(spec.subject)), c.group.id));
+        return [
         firedAtLeast('hold', byRule(rep.records, 0), 2),
         firedAtLeast('lose-answer', byRule(rep.records, 1), 1),
         { what: `W4's Remove of W5 completed${w4.ok ? '' : ` (${w4.error})`}`, ok: w4.ok },
@@ -226,7 +234,8 @@ const ACTIONS = {
           joined: [c.user[spec.subject]],
           removed: [c.user[spec.intervening.remove]],
         }),
-      ],
+      ];
+      },
     };
   },
 
@@ -561,6 +570,7 @@ async function play() {
   let side = null;
   if (spec.side) {
     side = await mintRowGroup(cx('W1'), id, user.W1);
+    minted.push(side.name);
     assertRowOwns({ kind: 'group', id: side.id, name: side.name }, id);
     await openGroup(cx('W1'), side.name, { navigate: false, label: id });
     await addMembers(cx('W1'), [name('W2')]);
@@ -568,6 +578,7 @@ async function play() {
     await closeOverlays(cx('W1'));
   }
   const group = await mintRowGroup(cx('W1'), id, user.W1);
+  minted.push(group.name);
   assertRowOwns({ kind: 'group', id: group.id, name: group.name }, id);
   await openGroup(cx('W1'), group.name, { navigate: false, label: id });
   if (spec.setup.length) {
@@ -645,7 +656,19 @@ try {
     verdict,
     { ...out.detail, own: out.own ?? [], failures, invariant: invariantDetail(out.invariant ?? null), serverWindowSince: since },
     observers,
-    () => closeSeats(seats)
+    async () => {
+      // THE ROW'S GROUPS GO ONCE ITS VERDICT IS ON DISK, and only when its own assertions held: a
+      // passing row's group is debris every later row of the cluster would list (TOK-3 and OFF-2 left
+      // theirs, 2026-10-27), while a failing row's group is the evidence a reader opens next, left
+      // for `cleanup.mjs`. A deletion that fails is said and left to the same sweep.
+      if (verdict === 'PASS') {
+        for (const name of minted) {
+          const gone = await deleteGroup(seats.seat.W1.cx, name).catch((e) => `NOT deleted: ${String(e?.message ?? e).slice(0, 160)}`);
+          console.log(`[${id}] the row's group ${name}: ${gone}`);
+        }
+      }
+      closeSeats(seats);
+    }
   );
 } catch (e) {
   console.error(`[${id}] ${e?.stack ?? e}`);

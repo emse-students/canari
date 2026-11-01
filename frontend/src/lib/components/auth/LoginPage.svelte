@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { appPathFromPathname, internalPath, safeInternalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
-  import { goto } from '$app/navigation';
+  import { appPathFromPathname, safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
   import {
     startOidcLogin,
@@ -133,17 +132,24 @@
       if (await hasStoredSession()) {
         try {
           await getToken();
-          const target = getSafeReturnTarget();
-          const current = appPathFromPathname(window.location.pathname) + window.location.search;
-
-          // Only redirect when not already on the target page, and never twice in a row to a
-          // target that just bounced back here.
-          if (target !== current && shouldAutoRedirectTo(target)) {
-            await goto(resolve(internalPath(target)), { replaceState: true });
-          }
         } catch {
           // Token expired or invalid: stay on login so the user can re-authenticate.
           console.debug('Session expired or invalid, re-login required.');
+          return;
+        }
+        const target = getSafeReturnTarget();
+        const current = appPathFromPathname(window.location.pathname) + window.location.search;
+
+        // Only redirect when not already on the target page, and never twice in a row to a
+        // target that just bounced back here. A navigation that fails is a navigation failure,
+        // logged as one - never read as an expired session.
+        if (target !== current && shouldAutoRedirectTo(target)) {
+          await gotoAppPath(target, { replace: true }).catch((err: unknown) =>
+            console.error(
+              '[LOGIN] signed in, but leaving /login for the return target failed:',
+              err
+            )
+          );
         }
         return;
       }
@@ -174,7 +180,9 @@
       const attempt = await attemptRestore();
       if (attempt.outcome === 'restored') {
         console.debug('[LOGIN] session restored, leaving /login');
-        await goto(resolve(internalPath(getSafeReturnTarget())), { replaceState: true });
+        await gotoAppPath(getSafeReturnTarget(), { replace: true }).catch((err: unknown) =>
+          console.error('[LOGIN] session restored, but leaving /login failed:', err)
+        );
         return;
       }
       if (attempt.outcome === 'refused' && attempt.shown) loginError = attempt.shown;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -37,14 +38,16 @@
     space: BookerSpace;
     resource: BookerResource;
     run: SlotUnit[];
+    /** The units a drag over the organiser's grid already covered (1 for a tap, WP-R5). */
+    initialCount?: number;
     /** Re-reads the grid and the reader's bookings. */
     onReread: () => Promise<void>;
     onClose: (changed: boolean) => void;
   }
 
-  let { space, resource, run, onReread, onClose }: Props = $props();
+  let { space, resource, run, initialCount = 1, onReread, onClose }: Props = $props();
 
-  let count = $state(1);
+  let count = $state(untrack(() => Math.max(1, Math.min(initialCount, run.length))));
   let reason = $state('');
   let reasonVisible = $state(false);
   let submitting = $state(false);

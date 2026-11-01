@@ -1,4 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { assertReviewCohortConfigured } from './review-cohort';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
@@ -23,6 +25,11 @@ import { finishJoinAskWorkInFlight } from './utils/join-ask-announce';
  * `docs/wiki/services/chat-gateway.md`.
  */
 async function bootstrap() {
+  // A bad SERVICE_ACCOUNT_USER_ID entry stops the boot HERE, before anything is served
+  // (review-cohort.ts): the review accounts are never left visible by a typo.
+  new Logger('ReviewCohort').log(
+    `[REVIEW_COHORT] ${assertReviewCohortConfigured()} review account(s)`
+  );
   const app = await NestFactory.create(AppModule);
 
   app.use(bodyParser.json({ limit: '10mb' }));

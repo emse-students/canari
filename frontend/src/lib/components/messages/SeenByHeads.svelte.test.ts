@@ -66,3 +66,19 @@ describe('SeenByHeads', () => {
     expect(counter?.getAttribute('title')).toBe('d, e');
   });
 });
+
+/**
+ * THE SCREEN-READER LABEL MUST NOT ESCAPE THE TRANSCRIPT. `sr-only` is `position: absolute`; with no
+ * positioned ancestor below the thread panel it was placed against the panel itself, far under the
+ * list, and gave that overflow-hidden panel scrollable overflow that a scrollIntoView then moved -
+ * the header ended off-screen (BIG-2, 1.4.1 alpha.5). Layout is not measurable here, so the
+ * invariant is structural: the status element is the containing block of its own label.
+ */
+describe('SeenByHeads containment', () => {
+  it('is its own containing block, so its sr-only label cannot reach an ancestor scroller', () => {
+    const el = render(['a', 'b']);
+    const status = el.querySelector<HTMLElement>('.msg-status-read')!;
+    expect(status.classList.contains('relative')).toBe(true);
+    expect(status.querySelector('.sr-only')).not.toBeNull();
+  });
+});

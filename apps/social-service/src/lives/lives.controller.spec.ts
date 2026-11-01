@@ -4,6 +4,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { LiveEnabledGuard, isLiveEnabled } from './live-enabled.guard';
+import { guardContext } from './live-guard-context.test-helper';
 import { LIVE_SEGMENT_MAX_BYTES } from './live.constants';
 import { LivesController } from './lives.controller';
 import type { LivesService } from './lives.service';
@@ -50,14 +51,14 @@ describe('the live switch (LIVE_ENABLED)', () => {
       expect(isLiveEnabled()).toBe(false);
       // The deploy lock is asked FIRST: a closed estate never reads the database, even with lives on.
       const { db, query } = platformDb([{ lives_mode: 'on' }]);
-      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(
+      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate(guardContext()))).toBe(
         HttpStatus.NOT_FOUND
       );
       expect(query).not.toHaveBeenCalled();
     }
     process.env.LIVE_ENABLED = 'true';
     await expect(
-      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate()
+      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate(guardContext())
     ).resolves.toBe(true);
   });
 
@@ -86,7 +87,9 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
 
   it('answers 404 while the switch is off, the answer of the deploy lock', async () => {
     const { db, query } = platformDb([{ lives_mode: 'off' }]);
-    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate(guardContext()))).toBe(
+      HttpStatus.NOT_FOUND
+    );
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('SELECT lives_mode FROM platform_config')
     );
@@ -96,16 +99,16 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
     const answers = [[{ lives_mode: 'on' }], [{ lives_mode: 'off' }]];
     const query = jest.fn(async () => answers.shift());
     const guard = new LiveEnabledGuard({ manager: { query } } as unknown as DataSource);
-    await expect(guard.canActivate()).resolves.toBe(true);
-    expect(await statusOf(() => guard.canActivate())).toBe(HttpStatus.NOT_FOUND);
+    await expect(guard.canActivate(guardContext())).resolves.toBe(true);
+    expect(await statusOf(() => guard.canActivate(guardContext()))).toBe(HttpStatus.NOT_FOUND);
     expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('answers 404 when the row is missing, and says so at error', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    expect(await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate())).toBe(
-      HttpStatus.NOT_FOUND
-    );
+    expect(
+      await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate(guardContext()))
+    ).toBe(HttpStatus.NOT_FOUND);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('MISSING'));
     error.mockRestore();
   });
@@ -114,14 +117,14 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
     'refuses (throws, never opens) on an unknown value %p',
     async (value) => {
       await expect(
-        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate()
+        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate(guardContext())
       ).rejects.toThrow(/unknown value/);
     }
   );
 
   it('refuses when the read fails - a switch that cannot be read is not read as open', async () => {
     await expect(
-      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate()
+      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate(guardContext())
     ).rejects.toThrow('connection lost');
   });
 });

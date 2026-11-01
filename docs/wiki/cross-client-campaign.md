@@ -60,7 +60,7 @@ the web/phone split from `ORIGIN[device] === SITE` precisely so this stays one f
 
 **The rig is in this repository**, at `tools/cross-client-harness/` - the scripts that run, not a
 copy of them. **Its STATE is deliberately outside**, in `../../canari-harness` (moved one level up
-on 2026-09-03, so that nothing of the LITHIUM rig can be inherited by accident): the account file,
+on 2026-09-03, so that nothing of the previous machine's rig can be inherited by accident): the account file,
 the two Chrome profiles (which ARE W1 and W2 - their MLS identity, their history, their login), the
 verdict record, the APK and the phone baseline. **Two files stayed behind in the old directory on
 purpose** - `play-console-sa.json` and `google-services.json` - because they are store and build
@@ -149,6 +149,20 @@ production.
 ## Standing rules for every check
 
 Decided with the user, not to be re-litigated.
+
+- **THREE COMMANDS RUN BEFORE ANY MEASUREMENT IS BELIEVED**, each because skipping it has already
+  cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
+  free of debris that would REATTRIBUTE the run - and it PRINTS what it does not sweep), `bun
+  identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
+  `fcmlink.mjs`. The counts and incidents behind them are on [methodology](testing-methodology.md).
+- **FOUR STANDING RULES FOR A RUN.** The bar is `PASS`, **never `PASS-DIRTY`** (user) - a P1 met on
+  the way is fixed in the SAME session, P2/P3 go to [backlog](backlog.md) rather than inline. **READ
+  THE LOGS ON EVERY PASS** (user, 2026-08-28): a heal that works is not a heal that was observed.
+  **READ THE OTHER END BEFORE FILING A CLIENT DEFECT** - one P1 died to three `docker logs`, every
+  load-bearing claim wrong. **A killed run can destroy a measurement seconds from being recorded**,
+  and losing a `chrome-w1`/`chrome-w2` profile costs a DEVICE.
+- **PIN's four rows change a PIN or restart a browser, so they run last**; HEAL-NEW's rung redesign
+  is open on a clean pass ([backlog](backlog.md)).
 
 - **THE REFRESH COOKIE IS NOT THE SAME LOCALLY, AND EVERY ROW THAT REASONS ABOUT IT SAYS SO.**
   `auth.controller.ts` emits `Secure; SameSite=None` in production and flips to `SameSite=Lax`
@@ -430,9 +444,9 @@ real device. Three lessons generalise to every future one:
   SvelteKit boots from an inline module, so a selector-based assertion finds nothing and silently
   asserts nothing.
 
-**Leon pushes to Canari's `main` too**, and the same reasoning applies to every commit of his:
-`git fetch` at the START of a session and again before any measurement, then `git pull` his work in.
-His work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
+**Another contributor pushes to Canari's `main` too**, and the same reasoning applies to every commit of theirs:
+`git fetch` at the START of a session and again before any measurement, then `git pull` their work in.
+That work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
 taken against a tree that is behind `main` is a verdict about something nobody is running, and that
 is how a cell becomes wrong without anyone touching it.
 

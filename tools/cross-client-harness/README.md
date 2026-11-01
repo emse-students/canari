@@ -138,6 +138,15 @@ pinned by `archive/campaign-selftest.mjs`):
 - **`cleanup.mjs` on dev needs `--only <ids> --expect N`**: the name shapes choose candidates, then
   only the named ids, each owned, with the expected count, are taken - anything off refuses the
   whole sweep. `--dry` prints the exact flags.
+- **`stale-devices.mjs` is the device half of that sweep, in the preflight**: every browser device of
+  the rig's accounts that no live seat holds and the ledger records creating (each DEV row mints and
+  abandons one). Read only by default; `--purge --expect N` purges exactly the N it printed, through
+  `purge-devices.mjs`. A web seat that does not answer refuses the plan - its device would look stale.
+- **The "Nouvel appareil" notices a mint leaves on the owner's other seats** are dismissed by the
+  minting row itself, after its verdict, through the banner's "Compris" (`devicenotice.mjs`, pinned
+  by `archive/devicenotice-selftest.mjs`; wired in `archive/devrows.mjs` and `archive/removals.mjs`).
+  It is an allowlist of the ids the row minted: the first notice of any other device stops it and is
+  reported at `error`, for a human to read. `cleanup.mjs` does not touch notices.
 - **Not guarded, deliberately**: `dismissLocally` (it removes only the rig device's own copy of a
   conversation already deleted) and the message deletions of `mut.mjs` and `search.mjs`, which pick
   the bubble by the run term of a message the row itself sent seconds earlier.
@@ -469,6 +478,23 @@ brotli-compressed inside `lib/<abi>/libmines_app_lib.so`, so there is nothing to
 instead every build appends its APK's sha256, origin and bundle verdict to `a1-builds.ndjson`, and
 `installVerdict` refuses an artefact whose hash was never recorded as passing for this estate.
 Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
+
+**A Play TESTER build is recorded, never installed, by `bun a1tester.mjs --tag vX.Y.Z-alpha.N`.**
+A Play-signed app cannot be replaced by the rig's APK (another signature, and no uninstall), so a
+phone the tester programme moved stays there, and `pin.mjs` refuses an app no record vouches for.
+`a1tester.mjs` reads the facts where they live: the installed versionName/versionCode from `dumpsys`,
+the running bundle's stamp from the app, and the release, its Android job and that job's log from
+GitHub. `testerbuild.mjs` (pinned by `archive/testerbuild-selftest.mjs`) accepts only when all of
+these hold:
+- the tag is a pre-release;
+- its Android job succeeded and printed `Android build targets dev`;
+- the phone's bundle names the commit that job checked out and was built inside the job's window;
+- the versionName is the tag's.
+On acceptance it appends `source: 'play-tester'` to `a1-builds.ndjson`. Its `bundleOk: true` is INHERITED from
+the job log's dev line, not from a bundle grep: a release APK embeds its bundle compressed, so the
+rig cannot rescan it, and `android.yml` refused anything but dev before printing that line. A STABLE (a production build)
+is refused first, an unknown build stays `unrecorded`, and a tester record carries no APK sha, so it
+never authorises a `--no-build` install.
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may

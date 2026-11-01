@@ -405,7 +405,11 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
   feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.
   Allowed here and refused for ordinary media because a reel message cannot be forwarded, so no other
-  conversation can cite the blob.
+  conversation can cite the blob. **Since the owner's decision of 2026-10-30 one take may be sent to
+  several conversations - and published on the feed - as ONE file**, so the reason now reads "no
+  other PERSON's message cites it": every citation is the sender's own. The object then carries
+  reference-counted holds (`post`, `chat`) and this `DELETE` releases the `chat` hold; the salon purge
+  must also prove the moderator's salon names the file ([reels-in-chat section 15](../frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built), RC-14, not built).
 - **Account deletion takes it** (not `survivesAccountDeletion`).
 - **Stats**: `GET internal/storage-stats` gains `chatReelCount`, `chatReelBytes`,
   `chatReelOverdueCount`, `chatReelOverdueBytes` and `chatReelRetentionMs`; an overdue figure that does
@@ -749,7 +753,7 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
 | `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
 | `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
-| `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on dev, `false` on production ([lives](lives.md)) |
+| `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on both estates since 2026-10-30; `lives_mode` closes the routes at runtime ([lives](lives.md)) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

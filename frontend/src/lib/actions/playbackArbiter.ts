@@ -1,6 +1,7 @@
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
+import { callHoldsAppSound, callSoundHeld } from '$lib/utils/callSoundGate';
 
 /**
  * ONE MEDIA PLAYS AT A TIME, IN THE WHOLE APP (user, 2026-10-02: *"commencer une video doit en
@@ -27,6 +28,11 @@ import { Log } from '$lib/utils/Log';
  * EVERY registered media is paused too: playback there would stop mid-stream and leave the output
  * `started`. A web or desktop tab keeps a voice note the reader started playing behind another tab.
  * Coming back resumes only the ambient video on screen, through {@link onPlaybackIdle}.
+ *
+ * A CALL HOLDS THE SOUND (`callSoundGate`, 2026-10-31): when a call starts ringing out or in, every
+ * registered media playing WITH sound is paused, and one that starts with sound during the call (an
+ * autoplaying reel, a live, a tap on a voice note) is paused on its `play`. Muted ones play on - until
+ * they are unmuted (`volumechange`), which pauses them too.
  *
  * WHAT IT DELIBERATELY DOES NOT DO: a refused `play()` raises no `play` event, so it claims nothing and
  * pauses nothing; notification sounds and a call's streams are not registered, so they are untouched.
@@ -70,10 +76,31 @@ export function pausePlayback(except?: HTMLMediaElement, ambientOnly = false, re
   }
 }
 
+/**
+ * Pauses every registered media that is playing WITH SOUND: a call holds the app's sound
+ * (`callSoundGate`). A muted one (the feed's ambient videos, a muted reel) plays on - it makes none.
+ */
+function pauseAudible(reason: string) {
+  for (const el of registry.keys()) {
+    if (!isPlaying(el) || el.muted) continue;
+    Log.d('VIDEO', `playback arbiter: pausing a ${el.tagName.toLowerCase()} (${reason})`);
+    el.pause();
+  }
+}
+
 /** `el` starts playing: it takes the app's one playback, or - if ambient - gives way. */
 export function claimPlayback(el: HTMLMediaElement) {
   const entry = registry.get(el);
   if (!entry) return;
+  if (!el.muted && callHoldsAppSound()) {
+    // An autoplay (a reel opened, a live joined) or a tap during a call: the call keeps the sound.
+    Log.d(
+      'VIDEO',
+      `playback arbiter: a ${el.tagName.toLowerCase()} started with sound during a call - paused`
+    );
+    if (isPlaying(el)) el.pause();
+    return;
+  }
   if (entry.ambient) {
     if (isForegroundPlaying(el)) {
       // Raced a foreground media that started first: the background yields, it does not steal.
@@ -125,6 +152,11 @@ function armScreenWatch() {
     );
     pausePlayback(undefined, !everything, 'the app left the screen');
   });
+  // A call starting (ringing out or in) silences whatever plays with sound. Nothing resumes it when
+  // the call ends: the reader left it paused at its position and presses play again.
+  callSoundHeld.subscribe((held) => {
+    if (held) pauseAudible('a call holds the sound');
+  });
 }
 
 /**
@@ -136,11 +168,23 @@ export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions
   registry.set(el, { ambient: options.ambient === true });
   const onPlay = () => claimPlayback(el);
   const onQuiet = () => notifyIfIdle();
+  // A muted media playing during a call (a reel, the feed) that is UNMUTED becomes a sound: the
+  // call keeps it. `play` does not fire for that, `volumechange` does.
+  const onVolume = () => {
+    if (!isPlaying(el) || el.muted || !callHoldsAppSound()) return;
+    Log.d(
+      'VIDEO',
+      `playback arbiter: a ${el.tagName.toLowerCase()} was unmuted during a call - paused`
+    );
+    el.pause();
+  };
   el.addEventListener('play', onPlay);
   el.addEventListener('pause', onQuiet);
   el.addEventListener('ended', onQuiet);
+  el.addEventListener('volumechange', onVolume);
   return {
     destroy() {
+      el.removeEventListener('volumechange', onVolume);
       el.removeEventListener('play', onPlay);
       el.removeEventListener('pause', onQuiet);
       el.removeEventListener('ended', onQuiet);

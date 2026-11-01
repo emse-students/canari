@@ -8,7 +8,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
  * A live broadcast (WP-L2, docs/wiki/services/lives.md, migration 091).
  *
  * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by staff (`cut`, WP-L8), by the sweep when
- * the broadcaster's segments stopped (`dropped`) or the hour ran out (`max_duration`), or by an
+ * the broadcaster's segments stopped (`dropped`), or by an
  * account erasure (`erased`) - and from then on every read answers 410, no segment is accepted, and
  * the sweep deletes the segments and then this row. There is no replay (L3).
  *
@@ -97,7 +97,7 @@ export class Live {
   @Column({ type: 'varchar', length: 16, nullable: true })
   endReason: LiveEndReason | null;
 
-  /** The sum of the stored segments' sizes, which the per-live byte budget reads. bigint: a string. */
+  /** The sum of the stored segments' sizes, an OBSERVATION of what a live holds in the store, not a limit (no total budget since 2026-10-31). bigint: a string. */
   @Column({ type: 'bigint', default: 0 })
   storedBytes: string;
 

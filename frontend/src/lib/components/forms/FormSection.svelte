@@ -17,9 +17,19 @@
     /** Section heading. */
     title: string;
     /** Lucide icon shown in the yellow tile. */
-    icon: Component;
+    icon?: Component;
+    /**
+     * The section's place in a numbered list (the bookings editor's five questions): a numbered disc
+     * replaces the icon tile, and the summary lines up under the title. Omit for an icon section.
+     */
+    step?: number;
     /** Small pill on the right of the header, e.g. a question count. */
     badge?: string;
+    /**
+     * One line under the title: the section's current answer, so a closed section still reads. It is
+     * OUTSIDE the header button (a button holds phrasing content only) and describes it.
+     */
+    summary?: string;
     /** When true, the header toggles the body open and shut. */
     collapsible?: boolean;
     /** Initial state of a collapsible section; ignored otherwise. */
@@ -33,12 +43,15 @@
   let {
     title,
     icon: SectionIcon,
+    step,
     badge,
+    summary,
     collapsible = false,
     startOpen = true,
     dense = false,
     children,
   }: Props = $props();
+  const uid = $props.id();
 
   /**
    * Null until the header is pressed, so the section follows `startOpen` until someone decides
@@ -48,6 +61,8 @@
   let userToggled = $state<boolean | null>(null);
   const open = $derived(userToggled ?? startOpen);
   const bodyIsVisible = $derived(!collapsible || open);
+  /** Names the summary line, so a collapsible header's button is DESCRIBED by it (it cannot hold it). */
+  const summaryId = `${uid}-summary`;
 </script>
 
 <section
@@ -56,10 +71,18 @@
     : 'p-4'}"
 >
   {#snippet header()}
-    <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
-      <SectionIcon size={20} />
-    </div>
-    <h2 class="text-text-main min-w-0 text-lg font-bold break-words">{title}</h2>
+    {#if step !== undefined}
+      <span
+        class="bg-control-fill text-text-main grid size-7 shrink-0 place-items-center rounded-full text-sm font-bold tabular-nums before:content-[attr(data-step)]"
+        data-step={step}
+        aria-hidden="true"
+      ></span>
+    {:else if SectionIcon}
+      <span class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
+        <SectionIcon size={20} />
+      </span>
+    {/if}
+    <span class="text-text-main min-w-0 flex-1 basis-0 text-lg font-bold break-words">{title}</span>
     {#if badge}
       <span
         class="text-text-muted bg-cn-border/40 ml-auto rounded-full px-2.5 py-1 text-xs font-semibold"
@@ -69,24 +92,50 @@
     {/if}
   {/snippet}
 
+  <!-- The heading wraps the button, never the reverse: a button holds phrasing content only. -->
   {#if collapsible}
-    <button
-      type="button"
-      onclick={() => (userToggled = !open)}
-      aria-expanded={open}
-      class="flex w-full flex-wrap items-center gap-2.5 text-left"
-    >
-      {@render header()}
-      <ChevronDown
-        size={18}
-        class="text-text-muted transition-transform {badge ? '' : 'ml-auto'} {open
-          ? 'rotate-180'
-          : ''}"
-      />
-    </button>
+    <h2>
+      <button
+        type="button"
+        onclick={() => (userToggled = !open)}
+        aria-expanded={open}
+        aria-describedby={summary ? summaryId : undefined}
+        class="flex w-full flex-wrap items-center gap-2.5 text-left"
+      >
+        {@render header()}
+        <ChevronDown
+          size={18}
+          class="text-text-muted transition-transform {badge ? '' : 'ml-auto'} {open
+            ? 'rotate-180'
+            : ''}"
+        />
+      </button>
+    </h2>
+    {#if summary}
+      <p
+        id={summaryId}
+        class="text-text-muted text-xs break-words {step !== undefined
+          ? 'ms-[2.375rem] mt-1'
+          : 'mt-2'}"
+      >
+        {summary}
+      </p>
+    {/if}
   {:else}
-    <div class="mb-4 flex flex-wrap items-center gap-2.5 sm:mb-5">
-      {@render header()}
+    <div class="mb-4 sm:mb-5">
+      <h2 class="flex flex-wrap items-center gap-2.5">
+        {@render header()}
+      </h2>
+      {#if summary}
+        <p
+          id={summaryId}
+          class="text-text-muted text-xs break-words {step !== undefined
+            ? 'ms-[2.375rem] mt-1'
+            : 'mt-2'}"
+        >
+          {summary}
+        </p>
+      {/if}
     </div>
   {/if}
 

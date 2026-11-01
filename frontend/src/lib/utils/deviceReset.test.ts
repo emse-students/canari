@@ -4,9 +4,13 @@ import { wipeDeviceToFactory } from './deviceReset';
 // Mutable, because the two runtimes are exactly what the branch below is about.
 let tauri = false;
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
+// The native-session helper reads the runtime from its own module.
+vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => tauri }));
 
-const invokeMock = vi.fn(async (_cmd: string) => {});
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string) => invokeMock(cmd) }));
+const invokeMock = vi.fn(async (_cmd: string, _args?: Record<string, unknown>) => {});
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (cmd: string, args?: Record<string, unknown>) => invokeMock(cmd, args),
+}));
 // Both entry points are mocked, because WHICH one the wipe reaches is the assertion: `disable`
 // raises an Android activity and can be refused, `forget` asks nothing.
 /**
@@ -286,11 +290,29 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     vi.unstubAllGlobals();
   });
 
+  /**
+   * The wipe ends the native MLS session WITH its state, through the one helper, before the native
+   * app data goes: a manager left installed over a wiped directory would write `mls.bin` back.
+   */
+  it('ends the native MLS session, sweeping its state, before the native app data is cleared', async () => {
+    const calls: [string, Record<string, unknown> | undefined][] = [];
+    invokeMock.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      calls.push([cmd, args]);
+    });
+
+    await wipeDeviceToFactory();
+
+    const end = calls.findIndex(([cmd]) => cmd === 'terminer_session_mls');
+    expect(end).toBeGreaterThanOrEqual(0);
+    expect(calls[end][1]).toMatchObject({ reason: 'factory wipe', sweepState: true });
+    expect(end).toBeLessThan(calls.findIndex(([cmd]) => cmd === 'clear_app_data'));
+  });
+
   it('deletes the WebView databases as well as the native files', async () => {
     const failures = await wipeDeviceToFactory();
 
     expect(failures).toEqual([]);
-    expect(invoked).toContain('delete_mls_state');
+    expect(invoked).toContain('terminer_session_mls');
     expect(invoked).toContain('clear_app_data');
     // The half that was missing: a phone kept this.
     expect(deleted).toContain('CanariDB_u1');

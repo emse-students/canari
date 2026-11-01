@@ -22,7 +22,6 @@ import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
-import { FollowsService } from '../follows/follows.service';
 import { ModerationService } from '../moderation/moderation.service';
 import {
   CreatePostDto,
@@ -43,7 +42,6 @@ export class PostsController {
     private readonly interactions: PostInteractionsService,
     private readonly notifications: PostNotificationsService,
     private readonly associationsService: AssociationsService,
-    private readonly followsService: FollowsService,
     private readonly moderationService: ModerationService
   ) {}
 
@@ -172,32 +170,6 @@ export class PostsController {
       kind: query.kind,
       singlePhotos: query.singlePhotos === true,
     });
-  }
-
-  // ── User follows (under /api/posts/users/:userId/follow) ─────────────────
-
-  /** Follows a user. */
-  @UseGuards(NginxAuthGuard)
-  @HttpPost('users/:userId/follow')
-  followUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    if (userId === xUserId) throw new BadRequestException('Cannot follow yourself');
-    return this.followsService.followUser(xUserId, userId);
-  }
-
-  /** Unfollows a user. */
-  @UseGuards(NginxAuthGuard)
-  @Delete('users/:userId/follow')
-  unfollowUser(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    return this.followsService.unfollowUser(xUserId, userId);
-  }
-
-  /** Returns whether the calling user follows the given user. */
-  @UseGuards(NginxAuthGuard)
-  @Get('users/:userId/follow-status')
-  getUserFollowStatus(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
-    return this.followsService
-      .isFollowingUser(xUserId, userId)
-      .then((following) => ({ following }));
   }
 
   /** Creates a new post on behalf of the calling user or a managed association. */

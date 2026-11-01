@@ -1,3 +1,0 @@
-### Added - the test rig builds the phone's debug APK for the dev estate, and an old client from a tag
-
-`a1apk.mjs` plans the build from the estate: dev gets no `adb reverse`, no local-estate overlay and dev's identity provider; the whole bundle must name no production origin outside the link module's own chunk, `--no-build` installs only an APK whose hash a passing build recorded, and `--accept-dead-production-literal` admits an old ref's dead push fallback for ADM-5..7 alone ([harness README](tools/cross-client-harness/README.md#the-target-the-local-estate-or-dev-and-production-is-refused)).

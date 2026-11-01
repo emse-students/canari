@@ -14,7 +14,7 @@
  * WHERE A LINE BREAKS IS THE BROWSER'S ANSWER, AND IT IS READ, NEVER RE-DERIVED. A wrapped run is
  * measured line by line ({@link groupCharsIntoLines}) and each line is drawn at its own baseline.
  * Handing jsPDF a width and letting it re-break the string cannot work: it measures in its own
- * metrics, and it broke "Lounes BRIAND--RAVIDAT" as "BRIAND--R / AVIDAT" - mid-word - while the
+ * metrics, and it broke "Lilian VERNAY--MAZOYER" as "VERNAY--M / AZOYER" - mid-word - while the
  * preview showed it whole. A run that fits one line is drawn as one string, with nothing to decide.
  *
  * MARKUP CONTRACT: put `data-pdf-text` on the element whose box IS the text's line box - a bare
@@ -547,7 +547,7 @@ function drawTextSpecs(
 
     // THE BROWSER ALREADY BROKE THIS RUN, SO NOTHING HERE BREAKS IT AGAIN: each line is drawn at
     // its own measured baseline, anchored on its own inked extent. Re-deriving the breaks from a
-    // width is what split "Lounes BRIAND--R / AVIDAT" across two lines mid-word while the preview
+    // width is what split "Lilian VERNAY--M / AZOYER" across two lines mid-word while the preview
     // showed it whole - jsPDF measures in its own metrics and cannot reach the browser's answer.
     if (s.lines.length > 0) {
       for (const line of s.lines) {

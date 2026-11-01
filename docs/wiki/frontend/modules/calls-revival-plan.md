@@ -195,7 +195,7 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
 (`frontend/src/lib/utils/callStats.ts`; tests in `callStats.test.ts` and `CallService.p2p.test.ts`):
 
 ```
-[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms=<tap->first remote audio> engine=<[tauri-<shell>/]Chrome/N|Safari/N|iOS/N|Firefox/N>
+[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= ring_ms=<ring start->answer> connect_ms=<answer->first E2E proof> engine=<[tauri-<shell>/]Chrome/N|Safari/N|iOS/N|Firefox/N>
   ice=<state> pair=<local type>/<proto>-><remote type>/<proto> relayed=<yes|no> [relay_proto=] [rtt_ms=] turn=<host:port, no credential>
   out_kbps= in_kbps= loss_in_pct= jitter_ms= audio_level_out= audio_level_in=
   e2e=<on|-> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
@@ -216,15 +216,25 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
   stamped and READ at the hangup, while the peer connection and the worker are still alive (cleanup
   releases them when the 1.5 s summary closes), and WRITTEN after a tick still in flight, so no tick
   line follows it. Nothing waits on it: teardown is unchanged, and a read that fails says
-  `WARN call report (end) not written`. A call that never built a peer connection writes none.
+  `WARN call report (end) not written`. A call whose peer connection never met its peer (the
+  caller's, built during a ring nobody answered) writes none.
 
 - `call=` is the room id, the same value as the SFU's `room=` - the only join key between the halves
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.
-- `setup_ms` and `audio_level_in > 0` are the two numbers a "the call connected but nobody heard
+- **`ring_ms` and `connect_ms` (2026-10-31) replace `setup_ms`**, which ran from the tap to the first
+  remote audio and so counted a person taking 40 s to answer as 40 s of setup. `ring_ms` is the
+  ring - from the moment the caller's ring LEFT (the server's fan-out answered; its setup before
+  that is the app's, not the human's), or the callee's page starting to ring, to the answer (the callee's tap,
+  the caller's first `PeerReady`) - a HUMAN's time, never a defect. `connect_ms` is the app's: the
+  answer to the first E2E proof (`[Call] E2E proven ... (connect_ms=N)`), the moment the screen
+  shows the shield. A call answered from a system surface rings the page only for its join, so its
+  callee `ring_ms` is near 0 by construction. Both are `-` until they happen. A build before this
+  split writes `setup_ms`; never compare the two.
+- `connect_ms` and `audio_level_in > 0` are the two numbers a "the call connected but nobody heard
   anything" report needs; `dec_fail` with `dec_frames=0` separates an E2E key mismatch from no media.
 - No SDP, no candidate string, no credential, no name in the line (the in-app log is exported).
 - Server side: `[ring] rang=N/M`, `[call] ice connected after_ms=`, `session end disposition=` exist;
-  add the client's `setup_ms` nowhere else - the two are joined by `room=`, never duplicated.
+  add the client's `ring_ms` / `connect_ms` nowhere else - the two are joined by `room=`, never duplicated.
 
 ## 7. The test matrix
 
@@ -270,7 +280,9 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
 | K11 | Rejoin after a network change (N7; ENDS the call until WP-C10) |
 | K12 | Decline / cancel / unanswered 60 s / second call while busy (CALL-4, -5, -7, -17) |
 
-**Observables, every cell:** ICE selected pair type and transport, `setup_ms`, in/out bitrate, inbound
+**Observables, every cell:** ICE selected pair type and transport, `connect_ms` (the app's time,
+answer to E2E proof - the number a cell is judged on) with `ring_ms` beside it (a human's, never
+judged), in/out bitrate, inbound
 loss, audio level both ways (non-zero), E2E `dec_frames > 0` and `dec_fail = 0`, the SFU `session end`
 disposition (`client-close` or `sibling-evicted` only). Until WP-C2 lands, WP-C1 reads the same from a
 local-only `getStats` dump and `chrome://webrtc-internals`.
@@ -384,7 +396,7 @@ migrations and the adversarial reviews; **sonnet** for mechanical work.
 | WP-C8 | The campaign: rung 15 CALL-1..20 + the matrix tiers B then C, video recorded from the iPhone cells | [board](../../cross-client-testing.md), `tools/cross-client-harness/README.md` | the rows themselves | lead + device agents + the user for N4/SIM/headset | WP-C2..C7 | Tier B green on an alpha (mode `testers`); Tier C green before the stable |
 | WP-C9 | Store: the Apple video + notes, privacy labels, Play FSI/FGS declarations, privacy policy text | this page section 8, `store/`, [store-listings](../../store-listings.md) | `submit.mjs --check-notes` | sonnet + the user (App Store Connect, Play Console are one-off clicks) | WP-C8 Tier B | the stable passes App Review with `voip` declared |
 | WP-C10 | ICE restart on network change (K11) instead of ending the call | `CallService.ts` `onconnectionstatechange`, SFU renegotiation | K11 on both phones | opus | WP-C4 | Wi-Fi -> 4G keeps the call with a gap measured in `[CALL_REPORT]` |
-| WP-C11 | Group calls: one stream per remote participant, tile grid, the SFU's per-peer subscription | `CallService.handleRemoteTrack` / `publishRemoteStream`, `CallOverlay.svelte`, `main.rs` room tracks | K4 with 3 then 5 legs | opus | **F3**, WP-C4 | 5-leg call `PASS`; host egress measured against F3 |
+| WP-C11 | Group calls: one stream per remote participant, tile grid, the SFU's per-peer subscription. **Decided 2026-10-31 (owner, D-A): a P2P MESH up to 4 participants in audio and 3 in video (Q3, section 14: the Mi 9T already drops frames encoding for 2 receivers; audio ~48 kbit/s a peer), a relay SFU beyond; the mesh-to-SFU switch is an open design point** ([backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)) | `CallService.handleRemoteTrack` / `publishRemoteStream`, `CallOverlay.svelte`, `main.rs` room tracks | K4 with 3 then 5 legs | opus | **F3**, WP-C4 | 5-leg call `PASS`; host egress measured against F3 |
 | WP-C12 | Screen share, desktop | `CallService` (`getDisplayMedia`, a second video sender) | K5 on E1/E2 | sonnet | WP-C11 | a shared tab readable at 1280 |
 | WP-C13 | Server-side switch (section 9) | `platform-config.entity.ts`, `calls.service.ts` guards, `appVersion.ts`, admin platform page | controller specs per mode; client gate test | sonnet + opus review (migration) | the user's yes on the migration | `off` stops rings server-side, measured on E4 |
 
@@ -449,7 +461,7 @@ the only copy. What it changes here:
   Owed: mobile data (no SIM in the Mi 9T), campus Wi-Fi, the iPhone (the probe page needs a public
   origin). A CREDENTIALED allocation is measured since (section 14, Q1). **Dev has no Cloudflare TURN pair**, so dev's
   `/api/calls/ice-servers` answers 503 until the user gives it one.
-- **The DSI rule (UDP 3478 out from `.67`) is needed only if the Rust SFU stays on the host.**
+- **The DSI rule (UDP 3478 out from the host's egress address) is needed only if the Rust SFU stays on the host.**
 
 ## 14. Probes of 2026-10-16: clients
 
@@ -496,4 +508,4 @@ What this changes:
 - [chat-delivery calls](../../services/chat-delivery.md#calls) - room tokens, ICE, ring fan-out
 - [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) - the App Review letter
 - [device-verification](../../device-verification.md) - the bench and its rules
-- [backlog: calls held off](../../backlog.md#p3-blocked-calls-held-off---the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
+- [backlog: calls held off](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md)

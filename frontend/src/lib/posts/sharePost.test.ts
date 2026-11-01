@@ -10,9 +10,12 @@ vi.mock('$lib/sharing/shareLanding', () => ({
   landShareOn: (id: string) => landShareOn(id),
 }));
 const shareTextOut = vi.fn(async (_text: string) => {});
-vi.mock('$lib/sharing/shareOut', () => ({
-  shareTextOut: (text: string) => shareTextOut(text),
-}));
+vi.mock('$lib/sharing/shareOut', async () => {
+  // The real `runShareOut` (the toast on failure) over a mocked sheet.
+  const actual =
+    await vi.importActual<typeof import('$lib/sharing/shareOut')>('$lib/sharing/shareOut');
+  return { ...actual, shareTextOut: (text: string) => shareTextOut(text) };
+});
 const copyPublicShareLink = vi.fn(async (_path: string) => {});
 vi.mock('$lib/utils/copyShareLink', () => ({
   copyPublicShareLink: (path: string) => copyPublicShareLink(path),
@@ -41,7 +44,7 @@ describe('sharePost', () => {
   });
 
   it('sends into a conversation by offering the link to it and opening it - never sending', () => {
-    sendPostLinkInApp('p1', 'group-1');
+    expect(sendPostLinkInApp('p1', 'group-1')).toBe(true);
     expect(incomingShare.pending).toEqual({
       text: 'https://canari.emse.fr/posts/p1',
       files: [],
@@ -58,9 +61,8 @@ describe('sharePost', () => {
     await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error'));
   });
 
-  it('copies the link and confirms with a toast', async () => {
+  it('copies the link through the shared helper, which owns the confirmation', () => {
     copyPostLink('p1');
     expect(copyPublicShareLink).toHaveBeenCalledWith('/posts/p1');
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.any(String), 'info'));
   });
 });

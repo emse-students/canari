@@ -95,17 +95,12 @@ export async function withSeatLock<T>(
  * Which of `devices` still have their key package, read `FOR SHARE` in `m` - the read every writer
  * that admits a device into a group (an `active` row, or a `pending` one owed a Welcome) makes
  * first, under the group's seat lock, so the result is the set of `userId:deviceId` keys it may
- * write a row for. TWO KNOWN EXCEPTIONS:
- *
- * - The demotion (`MessagingService.deactivateDeviceMembership`), deliberately: it only UPDATES a
- *   row that exists to `pending` and removes its route itself - it never inserts one, so it admits
- *   nobody - and the stale-device cron demotes precisely a device with no recent key package, so
- *   requiring one would make it a no-op.
- * - `MembersController.addGroupMember` (a group invite, and the opening of a 1:1 DM), a
- *   pre-existing writer not yet converted: it reads the key packages outside any lock and writes the
- *   roster row, its interval and `pending` seats with no seat lock. So an erased account CAN be
- *   re-enrolled by a peer's invite, roster row included, even after the erasure's final pass
- *   (backlog, P2 "addGroupMember can enrol an erased account after the final erasure pass").
+ * write a row for. ONE KNOWN EXCEPTION, deliberate: the demotion
+ * (`MessagingService.deactivateDeviceMembership`) only UPDATES a row that exists to `pending` and
+ * removes its route itself - it never inserts one, so it admits nobody - and the stale-device cron
+ * demotes precisely a device with no recent key package, so requiring one would make it a no-op.
+ * `MembersController.addGroupMember`, the creator's enrolment included, writes through
+ * `writePendingSeats`.
  *
  * THE KEY PACKAGE IS WHAT AN ACCOUNT ERASURE TAKES FIRST, in a transaction of its own
  * (`InternalController.deleteUserData`), and AGAIN before its last sweep. A writer either holds the
@@ -215,6 +210,18 @@ export async function seatClaimHolds(
   if (now.generation !== claim.generation) return 'evicted_since_claim';
   if (now.owed) return 'departure_in_progress';
   return null;
+}
+
+/**
+ * `groupId`'s seat generation as it stands - 0 for a group with no row. Never decreases: every
+ * writer only increments it ({@link bumpSeatGeneration}), so a number read here is never later than
+ * the group's current one.
+ */
+export async function readSeatGeneration(m: EntityManager, groupId: string): Promise<number> {
+  const rows = (await m.query(`SELECT "seatGeneration" FROM dm_groups WHERE id = $1`, [
+    groupId,
+  ])) as Array<{ seatGeneration: number | string }>;
+  return Number(rows[0]?.seatGeneration ?? 0);
 }
 
 /**

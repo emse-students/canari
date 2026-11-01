@@ -27,14 +27,21 @@ interface Transformer {
   };
 }
 
-/** The rig's key, captured from the same `setKey` the app worker receives (whole-frame experiment). */
-let rigKey: CryptoKey | null = null;
-self.addEventListener('message', (e: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
-  if (e.data?.type !== 'setKey' || !e.data.payload) return;
-  void crypto.subtle
-    .importKey('raw', e.data.payload, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
-    .then((k) => (rigKey = k));
-});
+/**
+ * The rig's two direction keys, captured from the same `setKeys` the app worker receives
+ * (whole-frame experiment): this side encrypts with `send`, decrypts with `receive`.
+ */
+const rigKeys: { send: CryptoKey | null; receive: CryptoKey | null } = { send: null, receive: null };
+self.addEventListener(
+  'message',
+  (e: MessageEvent<{ type: string; send?: ArrayBuffer; receive?: ArrayBuffer }>) => {
+    if (e.data?.type !== 'setKeys' || !e.data.send || !e.data.receive) return;
+    const importKey = (raw: ArrayBuffer) =>
+      crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    void importKey(e.data.send).then((k) => (rigKeys.send = k));
+    void importKey(e.data.receive).then((k) => (rigKeys.receive = k));
+  }
+);
 
 /** Frames the whole-frame experiment could not encrypt or decrypt (dropped). */
 let wholeFrameFailures = 0;
@@ -43,6 +50,7 @@ let wholeFrameFailures = 0;
 function wholeFrame(op: 'encrypt' | 'decrypt') {
   return new TransformStream({
     async transform(frame: { data: ArrayBuffer }, controller) {
+      const rigKey = op === 'encrypt' ? rigKeys.send : rigKeys.receive;
       if (!rigKey) return;
       try {
         if (op === 'encrypt') {

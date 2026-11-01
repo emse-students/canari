@@ -62,6 +62,36 @@ export function liveRecordingSupported(): boolean {
   );
 }
 
+/** The first Chromium (Chrome, Edge) whose MediaRecorder records fragmented MP4 with H.264 and AAC. */
+export const LIVE_CHROMIUM_MP4_FROM = 126;
+
+/**
+ * WHY a browser cannot record a live, in the words the sheet can say plainly. Only an engine that
+ * cannot record {@link LIVE_RECORDER_MIME} reaches it, and the cause is read from the user agent
+ * because nothing else tells the engines apart:
+ * - `firefox`: its MediaRecorder records WebM only, never MP4/H.264 (live.md, "Firefox");
+ * - `outdated`: Chrome and Edge record MP4 from {@link LIVE_CHROMIUM_MP4_FROM} on, so an older one
+ *   needs updating;
+ * - `other`: anything else (a Chromium build without H.264, an old Safari).
+ */
+export type LiveRecordingGap = 'firefox' | 'outdated' | 'other';
+
+/** Classifies the user agent of a browser that cannot record a live. Pure. */
+export function classifyRecordingGap(userAgent: string): LiveRecordingGap {
+  if (/\bFirefox\/\d/.test(userAgent)) return 'firefox';
+  const chromium = /\bChrome\/(\d+)/.exec(userAgent);
+  if (chromium && Number(chromium[1]) < LIVE_CHROMIUM_MP4_FROM) return 'outdated';
+  return 'other';
+}
+
+/** Null when this engine records a live; otherwise why it cannot. */
+export function liveRecordingGap(): LiveRecordingGap | null {
+  if (liveRecordingSupported()) return null;
+  const gap = classifyRecordingGap(typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  console.warn(`[LIVE-REC] this browser cannot record a live (${gap})`);
+  return gap;
+}
+
 /**
  * Starts recording `stream` in {@link LIVE_SEGMENT_MS} chunks.
  * @throws {LiveRecorderError} `unsupported` or `start`.

@@ -233,6 +233,29 @@ else
   echo "skip the identity provider runs production's postgres major (${auth_major:-unreadable}); ceiling.test.sh still covers its crossing"
 fi
 
+# -- #2742, END TO END, ON THE FILE THE BASE BRANCH CARRIES (2026-10-31) -------------------------
+# Dependabot's exact trailer and branch. The compose file is a fixture at 16, which is what the job
+# reads now that it checks out the BASE; on the merge ref the same file said 18 and this passed.
+mkdir -p "$work/infrastructure/authentik"
+printf 'services:\n  postgresql:\n    image: docker.io/library/postgres:16-alpine\n    volumes:\n      - database:/var/lib/postgresql/data\n' > "$work/infrastructure/authentik/compose.yml"
+cat > "$work/pr2742.json" <<'FIXTURE'
+Bumps library/postgres from 16-alpine to 18-alpine.
+
+---
+updated-dependencies:
+- dependency-name: library/postgres
+  dependency-version: 18-alpine
+  dependency-type: direct:production
+...
+FIXTURE
+CEILING_AUTHENTIK_COMPOSE="$work/infrastructure/authentik/compose.yml" \
+  CEILING_HEAD_REF=dependabot/docker_compose/infrastructure/authentik/library/postgres-18-alpine \
+  check "#2742: a postgres major on the identity provider's 16 cluster is refused, naming a migration plan" 1 "$work/pr2742.json" "a migration plan"
+sed -i 's/postgres:16-alpine/postgres:18-alpine/' "$work/infrastructure/authentik/compose.yml"
+CEILING_AUTHENTIK_COMPOSE="$work/infrastructure/authentik/compose.yml" \
+  CEILING_HEAD_REF=dependabot/docker_compose/infrastructure/authentik/library/postgres-18-alpine \
+  check "...and the merge ref's bumped file reads as same-major, which is why the job checks out the base" 0 "$work/pr2742.json" "postgres -> 18-alpine"
+
 cat > "$work/gradle.json" <<'FIXTURE'
 chore(deps): bump com.google.firebase:firebase-messaging-ktx
 
@@ -244,7 +267,9 @@ updated-dependencies:
 FIXTURE
 CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-24.1.1
 export CEILING_HEAD_REF
-check "a Gradle update to the Android app is refused: nothing builds it on a pull request" 1 "$work/gradle.json" "compiles the Android"
+check "a Gradle update to the Android app is judged by compile-android-app, so it is let through" 0 "$work/gradle.json" "firebase-messaging-ktx -> 24.1.1"
+CEILING_HEAD_REF=dependabot/gradle/some/new/directory/com.google.firebase-firebase-messaging-ktx-24.1.1
+check "a Gradle update in a directory no job builds is still refused" 1 "$work/gradle.json" "compiles the Gradle tree"
 CEILING_HEAD_REF=dependabot/gradle/frontend/src-tauri/android-tests/com.google.firebase-firebase-messaging-ktx-24.1.1
 check "a Gradle update to the JVM test project is the suite's business" 0 "$work/gradle.json" "firebase-messaging-ktx -> 24.1.1"
 unset CEILING_HEAD_REF

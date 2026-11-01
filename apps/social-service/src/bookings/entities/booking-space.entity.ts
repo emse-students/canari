@@ -54,6 +54,10 @@ export type BookingQuotaPeriod = 'day' | 'week';
   'booking_spaces_step_shape',
   `("slotMode" = 'step' AND COALESCE("stepMinutes", 0) > 0 AND COALESCE("maxSteps", 0) >= 1) OR ("slotMode" = 'slots' AND "stepMinutes" IS NULL AND "maxSteps" IS NULL)`
 )
+@Check(
+  'booking_spaces_slot_minutes',
+  `"slotMinutes" IS NULL OR ("slotMode" = 'slots' AND "slotMinutes" BETWEEN 15 AND 120)`
+)
 @Check('booking_spaces_name_visibility', `"nameVisibility" IN ('names', 'occupied')`)
 @Check('booking_spaces_discoverability', `discoverability IN ('listed', 'link')`)
 @Check(
@@ -67,6 +71,10 @@ export type BookingQuotaPeriod = 'day' | 'week';
 @Check('booking_spaces_participant_withdraw_min', `"participantWithdrawMinMinutes" >= 0`)
 @Check('booking_spaces_max_people', `"maxPeople" IS NULL OR "maxPeople" >= 1`)
 @Check('booking_spaces_retention_days', `"retentionDays" BETWEEN 1 AND 30`)
+@Check(
+  'booking_spaces_reminder_range',
+  `"reminderMinutes" IS NULL OR "reminderMinutes" BETWEEN 5 AND 10080`
+)
 export class BookingSpace {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -106,6 +114,14 @@ export class BookingSpace {
   /** At most this many consecutive steps in one booking. */
   @Column({ type: 'int', nullable: true })
   maxSteps: number | null;
+
+  /**
+   * How long one fixed slot of a 'slots' space lasts (migration 116): the length the painter opens
+   * new slots with. NULL on every 'step' space, and on a 'slots' space created before 116 - that one
+   * keeps inferring its length from its lines.
+   */
+  @Column({ type: 'int', nullable: true })
+  slotMinutes: number | null;
 
   @Column({ type: 'varchar', length: 8, default: 'occupied' })
   nameVisibility: BookingNameVisibility;
@@ -160,6 +176,13 @@ export class BookingSpace {
   /** Answers and files are purged this many days after the slot's end, 1 to 30 (D23). */
   @Column({ type: 'int', default: 7 })
   retentionDays: number;
+
+  /**
+   * The DEFAULT reminder delay before a slot, in minutes, copied onto each person of a new booking
+   * (WP-N, D53, Q-R1, migration 115); each person may change their own. NULL = no reminder.
+   */
+  @Column({ type: 'int', nullable: true, default: 60 })
+  reminderMinutes: number | null;
 
   /**
    * The poster (D35, migration 092): a media reference ENCRYPTED BY THE CLIENT, its key in this

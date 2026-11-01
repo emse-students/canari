@@ -24,6 +24,7 @@ import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
 import {
   answerJoinRequest,
+  answerJoinRequestOutcome,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -74,7 +75,12 @@ function linkSeat(): FakeSeat {
 
 /** The member's side: a tree that holds `leaves`, and an Add that puts the joiner in it. */
 function memberSide(
-  opts: { addOutcome?: BulkAdditionOutcome; leaves?: string[]; seat?: FakeSeat } = {}
+  opts: {
+    addOutcome?: BulkAdditionOutcome;
+    leaves?: string[];
+    seat?: FakeSeat;
+    collectorFails?: boolean;
+  } = {}
 ) {
   const seat = opts.seat ?? linkSeat();
   const leaves = [...(opts.leaves ?? ['me:self', 'peer:p1'])];
@@ -89,6 +95,14 @@ function memberSide(
       .fn()
       .mockResolvedValue([{ deviceId: JOINER_DEVICE, keyPackage: new Uint8Array([7]) }]),
     getGroupMemberIdentities: vi.fn(async () => [...leaves]),
+    // The seat as the roster read at a generation answers it.
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [
+        { userId: 'me' },
+        ...(seat.exists ? [{ userId: JOINER, awaitingAdmission: seat.awaitingAdmission }] : []),
+      ],
+      seatGeneration: 1,
+    })),
     // The server's guarded withdrawal: only a seat that still awaits a member.
     declineJoinRequest: vi.fn(async () => {
       if (!seat.exists) return 'gone' as const;
@@ -110,13 +124,21 @@ function memberSide(
     }
     return outcome;
   });
+  // The stray collector: takes out the joiner's leaves, as it does for a leaf under no admitted seat.
+  const collectStrayLeaves = vi.fn(async () => {
+    if (opts.collectorFails) return false;
+    const before = leaves.length;
+    leaves.splice(0, leaves.length, ...leaves.filter((l) => !l.startsWith(`${JOINER}:`)));
+    return leaves.length < before;
+  });
   const deps: JoinAnswerDeps = {
     mlsService: mlsService as unknown as JoinAnswerDeps['mlsService'],
     conversations: conversations(),
     invite,
+    collectStrayLeaves,
     log: vi.fn(),
   };
-  return { mlsService, invite, deps, leaves, seat };
+  return { mlsService, invite, deps, leaves, seat, collectStrayLeaves };
 }
 
 /**
@@ -221,7 +243,18 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
     const m = memberSide();
 
     expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
-    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP));
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), undefined);
+  });
+
+  it('answers AS the ask it was tapped on: the Add carries its identity', async () => {
+    // So the Add stops before its stage if a Decline settled that ask first (`rosterPremise`).
+    const m = memberSide();
+
+    expect(await admitJoinRequest({ ...request, askId: 'ask-1' }, m.deps)).toEqual({ done: true });
+    expect(m.invite).toHaveBeenCalledWith([JOINER], m.deps.conversations.get(GROUP), {
+      userId: JOINER,
+      askId: 'ask-1',
+    });
   });
 
   it('is not done when the Add did not happen, and names why', async () => {
@@ -230,6 +263,7 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
     expect(await admitJoinRequest(request, m.deps)).toEqual({
       done: false,
       reason: 'the Add did not happen (add-lock-busy)',
+      kind: 'busy',
     });
   });
 
@@ -240,10 +274,35 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
   });
 
   it('adds nobody when another member already did', async () => {
-    const m = memberSide({ leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`] });
+    const m = memberSide({
+      leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`],
+      seat: { ...linkSeat(), awaitingAdmission: false },
+    });
 
     expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
     expect(m.invite).not.toHaveBeenCalled();
+    expect(m.collectStrayLeaves).not.toHaveBeenCalled();
+  });
+
+  it('a leaf is not an admission: under a seat still awaiting, it is removed and the member Adds', async () => {
+    const m = memberSide({ leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`] });
+
+    expect(await admitJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(m.collectStrayLeaves).toHaveBeenCalledExactlyOnceWith(GROUP);
+    expect(m.invite).toHaveBeenCalledOnce();
+    // The member's own Add lifted the seat, not the leaf it found.
+    expect(m.seat.awaitingAdmission).toBe(false);
+  });
+
+  it('is not done while a leaf under a seat still awaiting could not be removed', async () => {
+    const m = memberSide({
+      leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`],
+      collectorFails: true,
+    });
+
+    expect((await admitJoinRequest(request, m.deps)).done).toBe(false);
+    expect(m.invite).not.toHaveBeenCalled();
+    expect(m.seat.awaitingAdmission).toBe(true);
   });
 
   it('answers nothing about a 1:1 conversation', async () => {
@@ -399,6 +458,31 @@ describe('a join by invitation link, end to end', () => {
 
       expect(pendingJoinRequests()).toHaveLength(1);
       expect(m.leaves).not.toContain(`${JOINER}:${JOINER_DEVICE}`);
+    }
+  });
+
+  it('classifies a refusal caused by another member by TYPE, and every other as a failure', async () => {
+    const expected = {
+      'add-lock-busy': 'busy',
+      'removed-meanwhile': 'raced',
+      'commit-race-lost': 'failed',
+      'add-lock-unanswered': 'failed',
+      failed: 'failed',
+      'no-device-added': 'failed',
+    } as const;
+    for (const [reason, outcome] of Object.entries(expected)) {
+      resetJoinRequests();
+      resetReAddCooldowns();
+      const m = memberSide({
+        addOutcome: { kind: 'not-added', reason: reason as keyof typeof expected },
+      });
+      register(m);
+      await joinByLink(m);
+
+      const [ask] = pendingJoinRequests();
+      expect(await answerJoinRequestOutcome(ask, 'approve')).toBe(outcome);
+      // Whatever the cause, the ask stays until the server's settlement frame clears it.
+      expect(pendingJoinRequests()).toHaveLength(1);
     }
   });
 });

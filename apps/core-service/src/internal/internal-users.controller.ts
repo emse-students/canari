@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
+import { isInReviewCohort } from '../review-cohort';
 
 /** The minimum a `/profile/:id` share needs to render a preview, and nothing else. */
 export interface InternalPublicProfile {
@@ -70,6 +71,13 @@ export class InternalUsersController {
     @Headers('x-internal-secret') secret?: string
   ): Promise<InternalPublicProfile> {
     assertInternalSecret(secret);
+    // A review account has no public identity (review-cohort.ts): the shared-link preview is served
+    // to whoever opens `/profile/<id>`, signed in or not, so it never names one - the same 404 as
+    // an unknown id.
+    if (isInReviewCohort(id)) {
+      this.logger.debug(`internal public-profile withheld id=${id.slice(0, 8)}: review cohort`);
+      throw new NotFoundException();
+    }
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) {
       this.logger.debug(`internal public-profile miss id=${id.slice(0, 8)}`);

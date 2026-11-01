@@ -1,6 +1,7 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
   import { getInitials } from '$lib/utils/avatar';
+  import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
   import { associationLogoSrc } from '$lib/associations/api';
   import {
     releaseAssociationLogoDisplayUrl,
@@ -8,6 +9,8 @@
   } from '$lib/utils/associationLogoCache';
 
   interface Props {
+    /** Stable id of the association: seeds the placeholder colour, never the name. */
+    id: string;
     /** Association display name, used for initials fallback. */
     name: string;
     /** Logo URL (relative /api/… path or absolute). Null/undefined shows initials only. */
@@ -20,7 +23,7 @@
     shape?: 'soft' | 'circle';
   }
 
-  let { name, logoUrl, size = 'md', fill = false, shape = 'soft' }: Props = $props();
+  let { id, name, logoUrl, size = 'md', fill = false, shape = 'soft' }: Props = $props();
 
   let imageFailed = $state(false);
   let displaySrc = $state<string | null>(null);
@@ -85,11 +88,11 @@
     }}
   />
 {:else}
-  <div
-    class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center font-bold"
+  <AvatarPlaceholder
+    seed={id}
+    {initials}
+    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses}"
     title={name}
-    aria-label={m.association_logo_aria_label({ name })}
-  >
-    <span class="text-zoom-exempt">{initials}</span>
-  </div>
+    ariaLabel={m.association_logo_aria_label({ name })}
+  />
 {/if}

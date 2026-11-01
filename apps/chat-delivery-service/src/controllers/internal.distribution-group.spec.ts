@@ -18,6 +18,8 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -325,6 +327,88 @@ describe('InternalController - the community distribution group', () => {
       expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toBeNull();
     });
 
+    // ONE DOOR AT A TIME, SERVED WITH THE BASE (channel-encryption section 20). The asking device's
+    // seat is read AFTER the base, so a base an Add stored is never served without that Add's seat.
+    describe("the asking device's seat", () => {
+      const order: string[] = [];
+      const seatFixture = (
+        rows: Array<{ deviceId: string; status: 'pending' | 'active' }>,
+        welcomeQueued: boolean,
+        lock: string | null | Error
+      ) => {
+        order.length = 0;
+        groupRepo.findOne.mockResolvedValue({ id: 'g-1', activeEpoch: 4 });
+        messagingService.readGroupInfo.mockImplementation(async () => {
+          order.push('base');
+          return { groupInfo: 'Z2k=', baseEpoch: 4, activeEpoch: 4 };
+        });
+        Object.assign(deviceGroupRepo, {
+          find: jest.fn(async () => {
+            order.push('seat');
+            return rows;
+          }),
+        });
+        Object.assign(queuedMessageRepo, {
+          find: jest.fn(async () => (welcomeQueued ? [{ groupId: 'g-1' }] : [])),
+        });
+        Object.assign(redis, {
+          mget: jest.fn(async () => {
+            if (lock instanceof Error) throw lock;
+            return [lock];
+          }),
+        });
+      };
+      const read = () =>
+        controller.getDistributionGroup('workspace', WORKSPACE, SECRET, 'u-reader', 'web-1');
+
+      it('serves a pending seat with an Add in flight, read after the base', async () => {
+        seatFixture([{ deviceId: 'web-1', status: 'pending' }], false, 'u:d#t');
+
+        expect((await read())?.seat).toEqual({
+          status: 'pending',
+          welcomeQueued: false,
+          addInFlight: true,
+        });
+        expect(order).toEqual(['base', 'seat']);
+      });
+
+      it('serves a queued Welcome, an active seat, and no seat at all', async () => {
+        seatFixture([{ deviceId: 'web-1', status: 'pending' }], true, null);
+        expect((await read())?.seat).toEqual({
+          status: 'pending',
+          welcomeQueued: true,
+          addInFlight: false,
+        });
+
+        seatFixture([{ deviceId: 'web-1', status: 'active' }], false, null);
+        expect((await read())?.seat).toEqual({ status: 'active' });
+
+        seatFixture([{ deviceId: 'tauri-1', status: 'pending' }], false, null);
+        const got = await read();
+        expect(got?.seat).toEqual({ status: 'none' });
+        expect(got?.memberDevices).toEqual(['tauri-1']);
+      });
+
+      it('leaves addInFlight out when the add lock could not be read - unknown, never false', async () => {
+        seatFixture([{ deviceId: 'web-1', status: 'pending' }], false, new Error('ECONNRESET'));
+
+        expect((await read())?.seat).toEqual({ status: 'pending', welcomeQueued: false });
+      });
+
+      it('serves no seat when no device asked', async () => {
+        seatFixture([{ deviceId: 'web-1', status: 'pending' }], false, null);
+
+        const got = await controller.getDistributionGroup(
+          'workspace',
+          WORKSPACE,
+          SECRET,
+          'u-reader'
+        );
+        expect(got?.seat).toBeUndefined();
+        expect(got?.memberDevices).toEqual(['web-1']);
+      });
+    });
+
     it('refuses a call without the internal secret', async () => {
       await expect(
         controller.getDistributionGroup('workspace', WORKSPACE, 'wrong')
@@ -581,6 +665,8 @@ describe('InternalController - the community distribution group', () => {
         GroupInvite,
         GroupMembershipInterval,
         SeatEviction,
+        JoinAskPush,
+        RevokedDeviceGroup,
       ]);
       expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window

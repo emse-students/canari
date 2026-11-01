@@ -1,15 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import {
-    CalendarRange,
-    Database,
-    Download,
-    Info,
-    ListChecks,
-    Plus,
-    Trash2,
-    Users,
-  } from '@lucide/svelte';
+  import { Columns3, Download, Plus, Trash2 } from '@lucide/svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
@@ -25,15 +16,17 @@
   import SpacePosterField from './SpacePosterField.svelte';
   import {
     addResource,
-    bookingExportLabels,
     deleteSpace,
-    exportBookings,
     updateSpace,
     type ManagedResource,
     type ManagedSpace,
+    type SlotMode,
   } from '$lib/bookings/api';
+  import { DEFAULT_SLOT_MINUTES, durationChoices, SLOT_LENGTH_CHOICES } from '$lib/bookings/wizard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
+  import { columnsHidden } from '$lib/bookings/columns';
+  import { sectionSummaries } from '$lib/bookings/spaceSummaries';
   import { guardUnsavedChanges } from '$lib/navigation/unsavedChanges';
   import StrandedBookings from './StrandedBookings.svelte';
   import {
@@ -49,14 +42,19 @@
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { downloadSpaceExport } from '$lib/bookings/bookingActions';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
+  import { reminderFromValue, reminderOptions } from '$lib/bookings/reminder';
   import { Log } from '$lib/utils/Log';
 
   /**
-   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections: General; Resources and
-   * availability; Who and how; Booking rules (collapsed, a badge counting what is set); Data
-   * (collapsed). The space's settings save together through the bar at the bottom; each resource
+   * THE ORGANISER'S EDITOR OF ONE SPACE (WP-B4), in D35's five sections, worded as the questions an
+   * organiser asks (WP-R6, D51, Q-R13): L'essentiel; Quand peut-on reserver ?; Qui peut reserver,
+   * et que demande-t-on ? (who, names, discoverability, the people ceiling, the questions and the
+   * after-booking information); Regles de reservation (collapsed, a badge counting what is set);
+   * Donnees (collapsed, a badge with the retention). Each title carries the section's current
+   * answer on a line below it. The space's settings save together through the bar at the bottom; each resource
    * and its availability save on their own, because each is its own call and the server may refuse
    * one (D29) while the others stand. Loading and navigation are the page's
    * (`routes/bookings/spaces/[spaceId]/edit`); this component only edits what it is handed.
@@ -81,6 +79,11 @@
   let saveError = $state('');
   let addingResource = $state(false);
   let resourceError = $state('');
+  /** The space shows no columns while it has exactly one (D44). */
+  const hidden = $derived(columnsHidden(space.name, space.resources));
+  /** "Ajouter une colonne" on a hidden column: the form naming the new one is open. */
+  let revealing = $state(false);
+  let newColumnName = $state('');
   /** The bookings the last refused save named (D29), and a key so a new refusal is a new list. */
   let stranded = $state<{ ids: string[]; key: number }>({ ids: [], key: 0 });
 
@@ -98,9 +101,49 @@
   );
   const problems = $derived(draftProblems(draft));
   const rulesActive = $derived(activeRuleCount(draft));
+  /** The one line under each title: what the fields hold now (D51). */
+  const summaries = $derived(sectionSummaries(draft, space.resources.length));
+  /** The data section's badge: how long answers and files are kept. */
+  const retentionBadge = $derived(
+    /^\d+$/.test(draft.retentionDays.trim())
+      ? m.bookings_retention_badge({ days: draft.retentionDays.trim() })
+      : undefined
+  );
   const zones = $derived(timeZoneChoices(draft.timeZone));
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
+  /** The slot length a painted slot opens: the SAVED one too, null when none is stored. */
+  const savedSlotMinutes = $derived(space.slotMode === 'slots' ? space.slotMinutes : null);
+  /**
+   * The slot lengths offered: the wizard's. A slots space created before the length was stored
+   * (migration 116) is offered "read from the slots" too, which keeps it unstored.
+   */
+  const slotLengthOptions = $derived([
+    ...(space.slotMode === 'slots' && space.slotMinutes === null
+      ? [{ value: '', label: m.bookings_slot_length_inferred() }]
+      : []),
+    ...durationChoices(SLOT_LENGTH_CHOICES),
+  ]);
+
+  /**
+   * The mode switch. Turning a SAVED step space into fixed slots chooses a slot length at once
+   * (the wizard's default, changed in the field below), so the switch stores one; going back to the
+   * saved mode restores the saved length, so a switch undone leaves nothing unsaved.
+   */
+  function selectMode(mode: SlotMode) {
+    Log.d('BOOKINGS', `space mode=${mode} saved=${space.slotMode}`);
+    draft.slotMode = mode;
+    if (mode === 'slots') {
+      draft.slotMinutes =
+        space.slotMode === 'step'
+          ? String(DEFAULT_SLOT_MINUTES)
+          : space.slotMinutes === null
+            ? ''
+            : String(space.slotMinutes);
+    } else if (space.slotMode === 'step') {
+      draft.slotMinutes = '';
+    }
+  }
 
   function problemOf(field: NumberField | 'name'): string | undefined {
     const p = problems[field];
@@ -119,8 +162,15 @@
     saving = true;
     saveError = '';
     stranded = { ids: [], key: stranded.key };
+    const formerName = space.name;
     try {
       await updateSpace(space.id, settings);
+      // The server carries the hidden column's name along with the space's (WP-R1); the copy
+      // here follows by the same rule, so the column reads right the moment it is revealed.
+      const only = space.resources.length === 1 ? space.resources[0] : null;
+      if (only && settings.name !== undefined && only.name === formerName) {
+        only.name = settings.name;
+      }
       space = { ...space, ...settings };
       savedSettings = snapshot(draft);
       Log.i('BOOKINGS', `settings saved space=${space.id.slice(0, 8)}`);
@@ -133,11 +183,18 @@
     }
   }
 
-  async function newResource() {
+  /** Opens the form naming the column that reveals the columns level (D44). */
+  function startReveal() {
+    newColumnName = m.bookings_resource_default_name();
+    revealing = true;
+    Log.d('BOOKINGS', `reveal columns space=${space.id.slice(0, 8)}`);
+  }
+
+  async function newResource(chosenName?: string) {
     if (addingResource) return;
     addingResource = true;
     resourceError = '';
-    const name = m.bookings_resource_default_name();
+    const name = chosenName?.trim() || m.bookings_resource_default_name();
     const position = space.resources.length;
     try {
       const { id } = await addResource(space.id, { name, position });
@@ -151,6 +208,11 @@
         lines: [],
         exceptions: [],
       });
+      revealing = false;
+      Log.i(
+        'BOOKINGS',
+        `column added space=${space.id.slice(0, 8)} columns=${space.resources.length}`
+      );
     } catch (e) {
       resourceError = describeBookingRefusal(e, m.bookings_resource_add_button());
     } finally {
@@ -176,9 +238,7 @@
     exporting = true;
     exportError = '';
     try {
-      const blob = await exportBookings(space.id, bookingExportLabels());
-      await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
-      Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
+      await downloadSpaceExport(space);
     } catch (e) {
       Log.i('BOOKINGS', `export refused: ${String(e)}`);
       exportError = describeBookingRefusal(e, m.bookings_export_button());
@@ -188,7 +248,10 @@
   }
 
   async function removeSpace() {
-    const confirmed = await showConfirm(m.bookings_delete_space_confirm({ name: space.name }), {
+    const question = BOOKING_NOTIFICATIONS_LIVE
+      ? m.bookings_delete_space_confirm_notified({ name: space.name })
+      : m.bookings_delete_space_confirm({ name: space.name });
+    const confirmed = await showConfirm(question, {
       danger: true,
       confirmLabel: m.common_delete_button(),
     });
@@ -205,7 +268,7 @@
   }
 </script>
 
-<FormSection title={m.bookings_section_general()} icon={Info}>
+<FormSection title={m.bookings_section_general()} summary={summaries.essentials} step={1}>
   <Input
     id="space-name"
     label={m.bookings_field_name()}
@@ -239,22 +302,13 @@
       onValueChange={(v) => (draft.timeZone = v)}
     />
   </div>
-  <div>
-    <Textarea
-      id="space-private"
-      label={m.bookings_field_private_info()}
-      bind:value={draft.privateInfo}
-      rows={2}
-      maxlength={4000}
-    />
-    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
-  </div>
 </FormSection>
 
 <FormSection
   title={m.bookings_section_resources()}
-  icon={CalendarRange}
-  badge={String(space.resources.length)}
+  summary={summaries.when}
+  step={2}
+  badge={hidden ? undefined : String(space.resources.length)}
 >
   <div>
     <span class={CONTROL_LABEL_CLASS}>{m.bookings_field_mode()}</span>
@@ -265,12 +319,22 @@
         { key: 'slots', label: m.bookings_mode_slots() },
       ]}
       value={draft.slotMode}
-      onSelect={(k) => (draft.slotMode = k)}
+      onSelect={selectMode}
     />
     <p class={CONTROL_HINT_CLASS}>
       {draft.slotMode === 'step' ? m.bookings_mode_step_hint() : m.bookings_mode_slots_hint()}
     </p>
   </div>
+  {#if draft.slotMode === 'slots'}
+    <Select
+      id="space-slot-length"
+      label={m.bookings_wizard_slot_length()}
+      hint={m.bookings_slot_length_hint()}
+      value={draft.slotMinutes}
+      options={slotLengthOptions}
+      onValueChange={(v) => (draft.slotMinutes = v)}
+    />
+  {/if}
   {#if draft.slotMode === 'step'}
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Input
@@ -293,6 +357,54 @@
   {#if space.resources.length === 0}
     <p class="text-text-muted text-sm">{m.bookings_resource_none()}</p>
   {/if}
+  {#if hidden}
+    <div class="border-cn-border flex flex-wrap items-start gap-3 rounded-2xl border p-4">
+      <Columns3 size={18} class="text-text-muted mt-0.5 shrink-0" />
+      <!-- A basis, so a phone wraps the button below the hint rather than crushing the hint. -->
+      <div class="min-w-0 flex-1 basis-56">
+        <p class="text-text-main text-sm font-bold">{m.bookings_columns_hidden_title()}</p>
+        <p class={CONTROL_HINT_CLASS}>{m.bookings_columns_hidden_hint()}</p>
+      </div>
+      {#if !revealing}
+        <button
+          type="button"
+          onclick={startReveal}
+          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors"
+        >
+          <Plus size={16} />
+          {m.bookings_resource_add_button()}
+        </button>
+      {/if}
+      {#if revealing}
+        <div class="w-full space-y-3">
+          <Input
+            id="space-new-column"
+            label={m.bookings_columns_new_name()}
+            bind:value={newColumnName}
+            maxlength={120}
+          />
+          <div class="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onclick={() => (revealing = false)}
+              class="text-text-main hover:bg-control-fill rounded-xl px-4 py-2.5 text-sm font-bold"
+            >
+              {m.common_cancel_button()}
+            </button>
+            <button
+              type="button"
+              onclick={() => newResource(newColumnName)}
+              disabled={addingResource || !newColumnName.trim()}
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40"
+            >
+              <Plus size={16} />
+              {m.bookings_columns_add_confirm()}
+            </button>
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div class="space-y-4">
     {#each space.resources as resource (resource.id)}
       <ResourceEditor
@@ -300,9 +412,12 @@
         spaceId={space.id}
         timeZone={space.timeZone}
         stepMinutes={savedStep}
+        fixedSlots={space.slotMode === 'slots'}
+        slotMinutes={savedSlotMinutes}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
         onDirty={(d) => (dirtyResources[resource.id] = d)}
+        {hidden}
       />
     {/each}
   </div>
@@ -314,18 +429,20 @@
       {resourceError}
     </p>
   {/if}
-  <button
-    type="button"
-    onclick={newResource}
-    disabled={addingResource}
-    class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
-  >
-    <Plus size={16} />
-    {m.bookings_resource_add_button()}
-  </button>
+  {#if !hidden}
+    <button
+      type="button"
+      onclick={() => newResource()}
+      disabled={addingResource}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
+    >
+      <Plus size={16} />
+      {m.bookings_resource_add_button()}
+    </button>
+  {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_who()} icon={Users}>
+<FormSection title={m.bookings_section_who()} summary={summaries.who} step={3}>
   <!-- The forms' audience switch (FormAdvancedSettings): off is everybody (null), on starts an
          empty set of criteria for the editor to fill. -->
   <div class="space-y-3">
@@ -367,6 +484,26 @@
       onSelect={(k) => (draft.discoverability = k)}
     />
   </div>
+  <div>
+    <Input
+      id="space-max-people"
+      label={m.bookings_field_max_people()}
+      inputmode="numeric"
+      bind:value={draft.maxPeople}
+      error={problemOf('maxPeople')}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_max_people_hint()}</p>
+  </div>
+  <div>
+    <Textarea
+      id="space-private"
+      label={m.bookings_field_private_info()}
+      bind:value={draft.privateInfo}
+      rows={2}
+      maxlength={4000}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+  </div>
 </FormSection>
 
 <FormQuestionsSection
@@ -379,7 +516,8 @@
 
 <FormSection
   title={m.bookings_section_rules()}
-  icon={ListChecks}
+  summary={summaries.rules}
+  step={4}
   collapsible
   startOpen={false}
   badge={rulesActive ? m.bookings_rules_badge({ count: rulesActive }) : undefined}
@@ -424,13 +562,6 @@
       error={problemOf('maxActiveBookings')}
     />
     <Input
-      id="space-max-people"
-      label={m.bookings_field_max_people()}
-      inputmode="numeric"
-      bind:value={draft.maxPeople}
-      error={problemOf('maxPeople')}
-    />
-    <Input
       id="space-quota"
       label={m.bookings_field_quota()}
       inputmode="numeric"
@@ -461,9 +592,27 @@
     />
     <p class={CONTROL_HINT_CLASS}>{m.bookings_field_withdraw_hint()}</p>
   </div>
+  {#if BOOKING_NOTIFICATIONS_LIVE}
+    <!-- The space's default reminder (Q-R1, the mockup's "Rappel envoye avant le creneau"). -->
+    <Select
+      id="space-reminder"
+      label={m.bookings_reminder_space_label()}
+      hint={m.bookings_reminder_space_hint()}
+      value={draft.reminderMinutes}
+      options={reminderOptions(reminderFromValue(draft.reminderMinutes))}
+      onValueChange={(v) => (draft.reminderMinutes = v)}
+    />
+  {/if}
 </FormSection>
 
-<FormSection title={m.bookings_section_data()} icon={Database} collapsible startOpen={false}>
+<FormSection
+  title={m.bookings_section_data()}
+  summary={summaries.data}
+  badge={retentionBadge}
+  step={5}
+  collapsible
+  startOpen={false}
+>
   <Input
     id="space-retention"
     label={m.bookings_field_retention()}
@@ -526,7 +675,9 @@
   summary={Object.keys(problems).length
     ? m.bookings_problems_summary()
     : dirty
-      ? m.bookings_tab_resources_count({ count: space.resources.length })
+      ? hidden
+        ? m.bookings_unsaved_settings()
+        : m.bookings_tab_resources_count({ count: space.resources.length })
       : m.bookings_saved()}
   saveLabel={m.bookings_save_settings()}
   onSave={saveSettings}

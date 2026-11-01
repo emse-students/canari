@@ -17,9 +17,11 @@
     withdrawWithConfirm,
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
+  import { bookingPlace } from '$lib/bookings/columns';
   import { answerText } from '$lib/forms/answerText';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { showToast } from '$lib/stores/toast.svelte';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { Log } from '$lib/utils/Log';
@@ -183,7 +185,11 @@
       {/if}
 
       {#if coming && space.canManage && !isHolder}
-        <p class="text-text-muted text-xs">{m.bookings_detail_organiser_cancel_note()}</p>
+        <p class="text-text-muted text-xs">
+          {BOOKING_NOTIFICATIONS_LIVE
+            ? m.bookings_detail_organiser_cancel_note_notified()
+            : m.bookings_detail_organiser_cancel_note()}
+        </p>
       {/if}
     {:else if unit.state === 'blocked' && unit.blockReason}
       <p class="text-text-main whitespace-pre-line">{unit.blockReason}</p>
@@ -193,7 +199,7 @@
       {#if booking?.mine && coming}
         <span class="inline-flex items-center gap-1">
           <AddEventToCalendarButton
-            event={bookingCalendarEvent(booking, `${space.name} - ${resource.name}`)}
+            event={bookingCalendarEvent(booking, bookingPlace(space.name, resource.name))}
             resolveIcsUrl={() => bookingIcsUrl(booking.id)}
           />
           <span class="text-text-muted text-xs">{m.calendar_add_title()}</span>

@@ -46,6 +46,22 @@ describe('GET /users/:id/avatar logging', () => {
     return res;
   }
 
+  it('a review account: a bodyless 404 never cached, and no provider asked (review-cohort.ts)', async () => {
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = ID;
+    try {
+      const fetchUserAvatar = jest.fn(async () => IMAGE);
+      const res = await run(fetchUserAvatar);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(headersOf(res)['Cache-Control']).toBe('no-store');
+      expect(res.send).not.toHaveBeenCalled();
+      expect(fetchUserAvatar).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+    }
+  });
+
   it('served: info, 200, truncated target', async () => {
     await run(async () => ({ kind: 'image', body: Buffer.from([1]), contentType: 'image/png' }));
     expect(info).toHaveBeenCalledTimes(1);

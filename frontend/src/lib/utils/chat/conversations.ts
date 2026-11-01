@@ -17,6 +17,8 @@ import {
 } from './history';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { HISTORY_BATCH_MAX_GROUPS } from '$lib/mls-client/mlsDeliveryApi';
+import { isTransportFailure } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
@@ -26,7 +28,7 @@ import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
-import { messageTime } from './messageOrder';
+import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
@@ -95,8 +97,9 @@ export function toConversationMeta(
         ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
         : convo.name,
     lifecycle: convo.lifecycle,
-    // The last-message timestamp, so the sidebar sort order survives DB reloads. Never the local
-    // clock: a conversation with no message has recency 0, identical on every device.
+    // The ordering key, so the sidebar sort order survives DB reloads: the newest real message,
+    // else the seed (a conversation created on this device is seeded with its creation moment,
+    // the one local-clock value here), else `startedAt`, else 0.
     updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
     historyFloor: convo.historyFloor,
@@ -784,6 +787,13 @@ export interface LoadConversationsContext {
    * landing's target, drawn from the local store before the session was up. Null keeps none.
    */
   preserveMessagesOf?: string | null;
+  /**
+   * Receives the conversations whose archive replay this pass SKIPPED because the server got no
+   * answer and the link is known down. The restore runs only at boot and on a Welcome, so without
+   * an owner these archives would wait for the conversation's next open - days, on a phone, against
+   * a mailbox that keeps 14. The owner replays them on the next reconnect (`useConversations`).
+   */
+  onArchiveReplaysSkipped?: (conversationIds: string[]) => void;
 }
 
 /**
@@ -987,18 +997,48 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   await withMlsBulkIngest(
     ctx.mlsService,
     async () => {
+      /**
+       * THE SERVER GOT NO ANSWER THIS PASS, AND EVERY REPLAY BELOW WOULD ASK IT AGAIN.
+       *
+       * Set by the first transport failure of the pass (the group list, then the batch) and read by
+       * every conversation after it, so the archive replay is skipped rather than sent: a replay
+       * reads its own first page and takes the mailbox barrier, which pulls. Measured on production
+       * (`1.5.1`, a phone at a cold start with no network): the batch got no answer, then 125
+       * per-group history reads and 125 mailbox pulls left in one second, all of them failing - 306
+       * `[HISTORY] no answer` and 327 `[PENDING] ... got no answer` lines for one absent link.
+       *
+       * ONLY WHILE THE LINK IS KNOWN DOWN (`connectivity.isOffline`), not on one failure alone: a
+       * single deadline on a slow but working link is a slow moment, and skipping every replay of
+       * the pass on it would be a regression against the per-group path it used to take.
+       *
+       * WHAT IS OWED, AND TO WHOM. The frames queued for this device come with the reconnect's pull
+       * (`initializeConnection` pulls after every connect, and the barrier does not pull while the
+       * link is down - `BaseMlsService.settleBarrier`). The skipped archives are handed to
+       * `ctx.onArchiveReplaysSkipped`, which replays them on the next reconnect - this pass runs
+       * only at boot and on a Welcome. The LOCAL half of this pass - the stored page, the DM repair -
+       * still runs. An ANSWER (a refused chunk, a 4xx/5xx for one group) is not this: the group's
+       * own replay still reads its own page.
+       */
+      let unreachable: unknown = null;
+      /** A transport failure while the link is KNOWN down: the pass stops asking the server. */
+      const linkDown = (e: unknown): boolean => isTransportFailure(e) && connectivity.isOffline;
       let serverGroupIndex = null;
       try {
         const groups = await ctx.mlsService.getUserGroups(ctx.userId);
         serverGroupIndex = buildUserGroupSyncIndex(groups);
-      } catch {
-        ctx.log('[WARN] getUserGroups unavailable — DM/group classification from the local cache');
+      } catch (e) {
+        // A link known down is said once, by the `[CATCHUP]` line below, with what it stops.
+        if (linkDown(e)) unreachable = e;
+        else
+          ctx.log(
+            `[WARN] getUserGroups unavailable — DM/group classification from the local cache: ${String(e)}`
+          );
       }
 
       const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
       let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
         new Map();
-      if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
+      if (unreachable === null && replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
         try {
           batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
             replayMetas.map((meta) => ({
@@ -1014,8 +1054,25 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               `primed in ${requests} request(s)`
           );
         } catch (e) {
-          ctx.log(`[WARN] batch history failed: ${String(e)} — sequential fallback`);
+          // Only a transport failure is thrown (`fetchHistoryBatch`). On a link known down the pass
+          // stops; on a link not known down (one deadline on a slow link) each group reads its own
+          // page, as it always could; anything else is a defect of the batch itself, accused.
+          if (linkDown(e)) unreachable = e;
+          else if (isTransportFailure(e))
+            console.warn(
+              `[CATCHUP] batch history got no answer on a link not known down - each group reads its own page: ${String(e)}`
+            );
+          else console.error('[CATCHUP] batch history threw - each group reads its own page:', e);
         }
+      }
+      if (unreachable !== null && replayMetas.length > 0) {
+        // ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation.
+        console.warn(
+          `[CATCHUP] the server got no answer - the archive replay of ${replayMetas.length} ` +
+            "conversation(s) is skipped this pass: the mailbox is owed to the reconnect's pull, " +
+            `the archives to the next reconnect: ${String(unreachable)}`
+        );
+        ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
       }
 
       for (const meta of mergedConvMetas) {
@@ -1102,6 +1159,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               }
             }
           }
+          // The stored page is drawn; the archive is owed elsewhere (said once, above the loop).
+          if (unreachable !== null) continue;
           // Fetch from network → decrypt → save to DB (no direct UI update)
           const commit = await replayConversationHistory({
             mlsService: ctx.mlsService,
@@ -1171,6 +1230,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 /**
  * THE ONE SIDEBAR ORDERING KEY: the sent time of the conversation's newest message, in ms.
  *
+ * A SYSTEM NOTICE IS NOT ACTIVITY, A CALL RECORD IS ({@link isNoticeRow}).
+ * User, 2026-10-27: "X a ajoute un appareil" moved the conversation up the list. Only real messages count, and a conversation holding notices alone keeps the
+ * position of its seed, which no notice ever advances ({@link advanceLastMessageAt}), then of its
+ * creation (`startedAt`), then 0 - never the arrival time of a notice.
+ *
  * Read from the message list whenever there is one, and only otherwise from the persisted seed
  * (`lastMessageAt`, which loads before the messages do). It used to be the seed alone, kept up to
  * date by two of the ~ten writers that replace `messages` - history replay, channel history, stored
@@ -1179,24 +1243,24 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
  * Two devices holding the same messages therefore ordered them differently. `messages` is kept
  * sorted by `compareMessageOrder` (sent time first), so its last element IS the newest.
  *
- * @param convo the conversation row, only its `messages` and `lastMessageAt` are read
+ * @param convo the conversation row, only its `messages`, `lastMessageAt` and `startedAt` are read
  * @returns the key, 0 for a conversation with no message and no seed
  */
 export function conversationRecency(
-  convo: Pick<Conversation, 'messages' | 'lastMessageAt'>
+  convo: Pick<Conversation, 'messages' | 'lastMessageAt'> & { startedAt?: number }
 ): number {
-  const newest = convo.messages.at(-1);
-  if (newest) {
-    const at = messageTime(newest);
+  for (let i = convo.messages.length - 1; i >= 0; i--) {
+    if (isNoticeRow(convo.messages[i])) continue;
+    const at = messageTime(convo.messages[i]);
     if (Number.isFinite(at)) return at;
   }
-  return convo.lastMessageAt ?? 0;
+  return convo.lastMessageAt ?? convo.startedAt ?? 0;
 }
 
 /** Newest first; equal keys fall back to the id so every device breaks a tie the same way. */
 export function compareConversationRecency(
-  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>,
-  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'>
+  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number },
+  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number }
 ): number {
   return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
 }

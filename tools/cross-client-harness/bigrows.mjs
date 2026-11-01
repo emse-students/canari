@@ -34,6 +34,26 @@ export const BIG_ROWS = {
   },
 };
 
+/**
+ * THE SAME ROWS WITHOUT THE IPHONE (`BIG-1-noI1`...): asked by the coordinator for 1.4.1-alpha.5,
+ * whose TestFlight build lands after the browser seats are ready. A variant is RECORDED UNDER ITS
+ * OWN ID, so its PASS never reads as a PASS of the full row on the board - the full row stays owed
+ * until it runs with I1. Same action, same judges (`variantOf` names the row it plays), one seat fewer.
+ */
+export const WITHOUT_I1 = 'noI1';
+for (const [row, r] of Object.entries(BIG_ROWS)) {
+  BIG_ROWS[`${row}-${WITHOUT_I1}`] = {
+    ...r,
+    devices: r.devices.filter((d) => d !== 'I1'),
+    ...(r.phones && { phones: r.phones.filter((d) => d !== 'I1') }),
+    variantOf: row,
+    what: `${r.what} - WITHOUT I1, a variant: the full row is still owed`,
+  };
+}
+
+/** The row whose action and judges a table id plays: itself, or the row a variant is of. */
+export const playedRow = (id) => BIG_ROWS[id]?.variantOf ?? id;
+
 const low = (s) => String(s ?? '').toLowerCase();
 
 /** The `[MLS] Encrypted state checkpoint persisted. (N ms)` durations in a console, in order. */

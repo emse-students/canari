@@ -69,6 +69,7 @@ import {
   LAYOUT_MODULE,
   LINK_MODULE,
   a1BuildPlan,
+  appTreeDirt,
   buildEnvVerdict,
   bundleTargetVerdict,
   carriesDeadPushFallback,
@@ -78,7 +79,7 @@ import {
   linkModuleOf,
   reversePortFor,
 } from './a1plan.mjs';
-import { apkBuilds, recordApkBuild } from './apkbuild.mjs';
+import { apkBuilds, recordApkBuild, treeState } from './apkbuild.mjs';
 import * as NAMES from './names.mjs';
 import { STATE_DIR } from './names.mjs';
 import { SITE } from './site.mjs';
@@ -113,6 +114,9 @@ function sitePort() {
  *
  * @returns {{frontend: string, repo: string}}
  */
+/** The one tracked file `tauri android build` rewrites (its deep-link intent filters). */
+const REGENERATED_MANIFEST = 'frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml';
+
 function refTree(ref, tag) {
   if (!isBuildableRef(ref)) throw new Error(`--ref '${ref}' is not a tag or branch name`);
   const commit = execFileSync('git', ['-C', REPO, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' }).trim();
@@ -122,6 +126,11 @@ function refTree(ref, tag) {
     if (at !== commit) {
       throw new Error(`${dir} exists at ${at.slice(0, 9)}, not ${ref} (${commit.slice(0, 9)}) - remove it with git worktree remove`);
     }
+    // THE MANIFEST THE LAST BUILD HERE REGENERATED goes back to the commit's, and nothing else does.
+    // `tauri android build` rewrites this file from the deep-link config (`treeState` in
+    // `apkbuild.mjs`), so a reused worktree would otherwise fail the clean-source check on its own
+    // previous build. This is an allowlist of one path, in a worktree this rig created.
+    execFileSync('git', ['-C', dir, 'checkout', '--', REGENERATED_MANIFEST], { stdio: 'inherit' });
   } else {
     console.log(`[${tag}] worktree of ${ref} (${commit.slice(0, 9)}) at ${dir}`);
     execFileSync('git', ['-C', REPO, 'worktree', 'add', '--detach', dir, commit], { stdio: 'inherit' });
@@ -259,6 +268,7 @@ export async function armA1({
   buildOnly = false,
   ref = null,
   acceptDeadProductionLiteral = false,
+  allowDirty = false,
 } = {}) {
   const plan = planFor(release);
   if (ref && !buildOnly) {
@@ -333,6 +343,20 @@ export async function armA1({
       ? 'src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk'
       : 'src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk'
   );
+
+  // THE SOURCE IS READ BEFORE THE BUILD, and a change that can reach the APK is refused unless the
+  // build says so (`--dirty`): a verdict on an APK carrying an unnamed diff is not a verdict on its
+  // commit (coordinator, 2026-10-26). `--dirty` keeps the fix-and-measure loop, recorded as dirty.
+  const source = build ? treeState(tree.repo) : null;
+  if (source) {
+    const appDirt = appTreeDirt(source.dirtyFiles);
+    if (appDirt.length && !allowDirty) {
+      throw new Error(
+        `the tree this APK would be built from has uncommitted changes that reach the app (${appDirt.slice(0, 6).join(', ')}${appDirt.length > 6 ? ', ...' : ''}) - ` +
+          `commit them, build from a clean --ref, or pass --dirty to measure a fix (recorded as dirty)`
+      );
+    }
+  }
 
   if (build) {
     // Relative to the frontend, which is this build's cwd - `--config` resolves against the cwd.
@@ -451,7 +475,7 @@ export async function armA1({
     // AN ACCEPTANCE IS PART OF THE VERDICT, so it is written beside it: a reader of this record must
     // see that the bundle passed only because a dead production literal was accepted, and where.
     const acceptance = verdict.accepted.length ? { acceptedDeadProductionLiteral: verdict.accepted.map((a) => a.split(" ")[0]), accepted: verdict.accepted } : {};
-    const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true, ...acceptance });
+    const provenance = recordApkBuild(tree.repo, { apkSha256: sha256Of(APK), origin: plan.origin, estate: plan.estate, ref, bundleOk: true, ...acceptance }, source);
     console.log(
       `[${TAG}] built from ${provenance.head}` +
         (provenance.dirty
@@ -603,6 +627,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     release: argv.includes('--release'),
     buildOnly: argv.includes('--build-only'),
     acceptDeadProductionLiteral: argv.includes('--accept-dead-production-literal'),
+    allowDirty: argv.includes('--dirty'),
     device,
   }).catch(
     (e) => {

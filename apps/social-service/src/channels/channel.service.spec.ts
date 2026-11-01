@@ -4,6 +4,7 @@ import {
   ConflictException,
   GoneException,
   NotFoundException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
@@ -66,8 +67,14 @@ describe('ChannelService security hardening', () => {
       // A community setting is one column update of the row; 1 row found.
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
-        transaction: jest.fn((cb: (m: { delete: typeof hardDeletes }) => Promise<void>) =>
-          cb({ delete: hardDeletes })
+        // The deletion takes the community removal lock (`query`) and asks its premise again
+        // through the member and role repositories.
+        transaction: jest.fn((cb: (m: Record<string, unknown>) => Promise<void>) =>
+          cb({
+            delete: hardDeletes,
+            query: jest.fn(() => Promise.resolve([])),
+            getRepository: (entity: unknown) => (entity === ChannelRole ? roleRepo : memberRepo),
+          })
         ),
       },
     };
@@ -92,6 +99,9 @@ describe('ChannelService security hardening', () => {
       save: jest.fn(),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       delete: jest.fn(),
+      // An admission re-checks, under the removal lock, that the community still has members;
+      // one member by default, so only the test about an emptied community sees zero.
+      count: jest.fn(() => Promise.resolve(1)),
     };
     // The Graine history floor is the one read that goes through a query builder rather than a
     // `find`. Rows are pushed in by the test that needs them, so every other test sees the honest
@@ -128,6 +138,7 @@ describe('ChannelService security hardening', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       update: jest.fn(() => Promise.resolve({ affected: 1 })),
       increment: jest.fn(() => Promise.resolve()),
+      delete: jest.fn(() => Promise.resolve({ affected: 0 })),
     };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
@@ -138,7 +149,7 @@ describe('ChannelService security hardening', () => {
     };
 
     Object.assign(memberRepo, {
-      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo, inviteRepo })),
     });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -532,6 +543,159 @@ describe('ChannelService security hardening', () => {
       { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1' },
       expect.arrayContaining(['u-bob'])
     );
+  });
+
+  it('a kick names the committing device the actor sent, and drops a malformed one', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'web-1');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1', actorDeviceId: 'web-1' },
+      expect.any(Array)
+    );
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'not/a device');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1' },
+      expect.any(Array)
+    );
+  });
+
+  it('a kick whose announcement fails is still a kick, not a 500', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(service.kickFromWorkspace('ws1', 'u-bob', 'u1')).resolves.toEqual({
+      success: true,
+    });
+  });
+
+  // ── A released Remove (channel-encryption section 10) ──────────────────────
+  // The actor's device claimed the key-group Remove and knows it did not commit it: the remaining
+  // members elect a committer on this event only.
+
+  it('a community release reaches the remaining members, not the actor', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')).resolves.toEqual({
+      success: true,
+    });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      {
+        workspaceId: 'ws1',
+        channelId: null,
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
+      ['u-carol']
+    );
+  });
+
+  it('a release names its releasing device, or is refused before anything is read', async () => {
+    // Receivers re-decide only where they deferred to THAT device's leaf; a release without it
+    // would make every receiver re-decide, and race the election the removal already ran.
+    const { service, memberRepo, redis } = makeService();
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'not a device/id')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(memberRepo.findOne).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a release about somebody still a member is refused, and nothing is announced', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob' }]);
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a release needs the removal permission', async () => {
+    const { service, memberRepo, roleRepo, redis } = makeService();
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a salon release names the salon, refuses a public one and one the person can still read', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    const salon = {
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: true,
+      allowedUsers: ['u1', 'u-carol'],
+    };
+    channelRepo.findOne.mockResolvedValue(salon);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([
+      { userId: 'u1' },
+      { userId: 'u-carol' },
+      { userId: 'u-bob' },
+    ]);
+
+    await service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1');
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      {
+        workspaceId: 'ws1',
+        channelId: 'ch1',
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
+      ['u-carol']
+    );
+
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-carol', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
+    channelRepo.findOne.mockResolvedValue({ ...salon, isPrivate: false });
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('a release that cannot be announced is a 503 - the announcement is the release', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('removeMemberFromChannel reports whether the channel was private', async () => {
@@ -2608,6 +2772,44 @@ describe('ChannelService security hardening', () => {
     expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
   });
 
+  it('leaving a private channel announces a removal whose actor is the leaver', async () => {
+    const repos = makeService();
+    arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+
+    await repos.service.leaveChannel('ch1', { userId: 'u1' });
+
+    // The remaining members elect the device that commits the key-group Remove from this event,
+    // and the leaver's other devices drop the salon from it - so the leaver must be in the list
+    // even though `allowedUsers` no longer names them.
+    expect(repos.redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removed',
+      expect.objectContaining({
+        channelId: 'ch1',
+        workspaceId: 'ws1',
+        removedUserId: 'u1',
+        removedBy: 'u1',
+        isPrivate: true,
+        // The revision the strip left, so a client that saw a later grant does not purge.
+        accessRevision: expect.any(Number),
+      }),
+      expect.arrayContaining(['u1'])
+    );
+    // A leave names no committing device: the leaver's own leaf is the one leaving.
+    const calls = repos.redis.publishChannelEvent.mock.calls as unknown[][];
+    expect(calls[calls.length - 1][1]).not.toHaveProperty('actorDeviceId');
+  });
+
+  it('a leave whose announcement fails is still a leave, not a 500', async () => {
+    const repos = makeService();
+    const { channel } = arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+    repos.redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(repos.service.leaveChannel('ch1', { userId: 'u1' })).resolves.toEqual({
+      success: true,
+    });
+    expect(channel.allowedUsers).toEqual(['boss']);
+  });
+
   // ── The governance postcondition (2026-08-18) ──────────────────────────────────────────────
   //
   // Every operation below used to check what the ACTOR may do and never what the community would
@@ -2638,8 +2840,12 @@ describe('ChannelService security hardening', () => {
     repos.memberRepo.save.mockImplementation((m: unknown) => Promise.resolve(m));
     repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1' });
     repos.roleRepo.find.mockResolvedValue(GOVERNED_ROLES);
-    repos.roleRepo.findOne.mockImplementation(({ where }: { where: { name: string } }) =>
-      Promise.resolve(GOVERNED_ROLES.find((r) => r.name === where.name) ?? null)
+    // By name for the early read, by id for the re-read under the removal lock.
+    repos.roleRepo.findOne.mockImplementation(
+      ({ where }: { where: { name?: string; id?: string } }) =>
+        Promise.resolve(
+          GOVERNED_ROLES.find((r) => (where.id ? r.id === where.id : r.name === where.name)) ?? null
+        )
     );
     repos.channelRepo.find.mockResolvedValue([{ id: 'ch1' }]);
     return rows;

@@ -37,7 +37,7 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
    * the eviction is checkpointed, which is what stops the removed leaf coming back on the next load.
    */
   it('removes a departed leaf from a group it holds, and persists the new epoch', async () => {
-    const removeMember = vi.fn().mockResolvedValue(undefined);
+    const removeDepartedMembers = vi.fn().mockResolvedValue(undefined);
     const mls = {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
@@ -51,8 +51,9 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
         rosters: new Map([['g-live', ['u1']]]),
         refused: new Set(),
         revoked: new Map(),
+        awaiting: new Map(),
       }),
-      removeMember,
+      removeDepartedMembers,
       getEpoch: vi.fn().mockReturnValue(9),
       ...forgetPair(),
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
@@ -72,7 +73,7 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
       log,
     });
 
-    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g-live', ['gone']);
+    expect(removeDepartedMembers).toHaveBeenCalledExactlyOnceWith('g-live', ['gone']);
     // Every roster came from the ONE batch read; the single read is paid only by the group the
     // batch named a stray in, decided again right before its commit.
     expect(mls.getGroupRosters).toHaveBeenCalledExactlyOnceWith(['g-live']);

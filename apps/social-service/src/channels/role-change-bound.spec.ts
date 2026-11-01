@@ -9,6 +9,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { roleUpdateBuilder } from './member-role-update.fake-spec';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import {
   CHANNEL_PERMISSIONS,
   DEFAULT_ADMIN_PERMISSIONS,
@@ -64,18 +65,7 @@ describe('role changes bounded by the actor', () => {
 
     const roleById = (where: { id?: string; name?: string }) =>
       roles.find((r) => (where.id ? r.id === where.id : r.name === where.name));
-    const em = {
-      findOne: jest.fn((_e: unknown, opts: { where: { id: string } }) =>
-        Promise.resolve(copy(roleById(opts.where)))
-      ),
-      save: jest.fn((_e: unknown, row: ChannelRole) => {
-        const stored = roles.find((r) => r.id === row.id)!;
-        stored.permissions = [...row.permissions];
-        return Promise.resolve(copy(stored));
-      }),
-    };
     const roleRepo = {
-      manager: { transaction: jest.fn((fn: (m: typeof em) => Promise<unknown>) => fn(em)) },
       find: jest.fn(
         ({ where }: { where: { id?: FindOperator<string[]>; workspaceId?: string } }) => {
           if (where.id) {
@@ -89,7 +79,13 @@ describe('role changes bounded by the actor', () => {
         Promise.resolve(copy(roleById(where)))
       ),
       create: jest.fn((x: unknown) => x),
-      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      // An edit of an existing role is stored; a new role is only handed back.
+      save: jest.fn((row: ChannelRole) => {
+        const stored = roles.find((r) => r.id === row.id);
+        if (!stored) return Promise.resolve(row);
+        stored.permissions = [...row.permissions];
+        return Promise.resolve(copy(stored));
+      }),
     };
     const memberRepo = {
       findOne: jest.fn(({ where }: { where: { userId: string } }) =>
@@ -101,6 +97,10 @@ describe('role changes bounded by the actor', () => {
       createQueryBuilder: jest.fn(() => roleUpdateBuilder(members)),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    // A role change writes under the community removal lock, through this manager.
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo: noop, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       noop as unknown as Repository<Workspace>,
       noop as unknown as Repository<Channel>,

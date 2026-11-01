@@ -48,3 +48,29 @@ export function callMicNotice(
   }
   return null;
 }
+
+/** What the encryption line of the full screen shows: nothing, the check running, or the shield. */
+export type CallE2eLine = 'none' | 'verifying' | 'proven';
+
+/**
+ * The encryption line for one {@link CallStatusKind}. NOTHING while the call rings (`incoming`,
+ * `ringing`): no media exists yet, so there is nothing to verify, and the "verifying" label shown
+ * through a 6-57 s ring read as the encryption being the wait (owner, Android 1.5.3, 2026-10-31 -
+ * `exportSecret` takes 20-60 ms). From `connecting` on the check is real and named; the shield once
+ * `CallService.e2eProven` holds. The ended summary keeps a shield that was earned and never starts
+ * a check it can no longer finish.
+ */
+export function callE2eLine(kind: CallStatusKind, proven: boolean): CallE2eLine {
+  switch (kind) {
+    case 'idle':
+    case 'incoming':
+    case 'ringing':
+      return 'none';
+    case 'ended':
+      return proven ? 'proven' : 'none';
+    case 'connecting':
+    case 'reconnecting':
+    case 'live':
+      return proven ? 'proven' : 'verifying';
+  }
+}

@@ -2,6 +2,7 @@
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
+  import { copyText } from '$lib/utils/clipboard';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import {
@@ -19,6 +20,7 @@
     Camera,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import ProfileLink from '../shared/ProfileLink.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -217,7 +219,6 @@
   let shareLink = $state('');
   let shareLoading = $state(false);
   let shareError = $state('');
-  let shareCopied = $state(false);
 
   /** Generates a shareable group invite link and copies it to the clipboard. */
   async function generateShareLink() {
@@ -227,18 +228,19 @@
     }
     shareLoading = true;
     shareError = '';
-    shareCopied = false;
-    try {
+    const id = groupId;
+    // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
+    // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
+    // helper; the link stays visible for a manual copy.
+    const link = (async () => {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
-      const { token } = await createGroupInvite(groupId);
+      const { token } = await createGroupInvite(id);
       shareLink = publicAppUrl(`/g/join/${token}`);
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        /* clipboard blocked; link shown for manual copy */
-      }
+      return shareLink;
+    })();
+    try {
+      await copyText(link, { what: 'link' });
     } catch (e) {
       Log.d('chatGroupPanel.generateShareLink failed', e);
       shareError = describeRefusalCode(refusalCode(e)) ?? m.chat_group_link_generation_error();
@@ -264,7 +266,6 @@
     confirmDelete = false;
     confirmLeave = false;
     shareLink = '';
-    shareCopied = false;
     shareError = '';
   });
 
@@ -320,7 +321,7 @@
         title={m.chat_group_change_photo_label()}
         class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
-        <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
+        <GroupAvatar id={groupId} {imageMediaId} name={effectiveDisplayName} fill />
         <span
           class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
         >
@@ -460,11 +461,6 @@
             {m.chat_group_regenerate_button()}
           </button>
         </div>
-        {#if shareCopied}
-          <p class="text-green-ok text-xs font-semibold">
-            {m.chat_group_link_copied_label()}
-          </p>
-        {/if}
       {:else}
         <button
           type="button"
@@ -522,7 +518,7 @@
                   : ''}"
               >
                 <div class="flex min-w-0 items-center gap-3">
-                  <Avatar userId={member} size="sm" />
+                  <ProfileLink userId={member}><Avatar userId={member} size="sm" /></ProfileLink>
                   <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span

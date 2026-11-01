@@ -21,26 +21,47 @@ package fr.emse.canari.call
  * @property connectedAtMs the epoch ms of the first `connected` (`CallService.connectedAt`), the
  *   chronometer's base; null while the call has not connected, and then no chronometer is drawn.
  * @property speaker true routes the voice to the loudspeaker, false to the earpiece or a headset.
+ * @property peerUserId the other party's user id, whose photo becomes the CallStyle person's icon;
+ *   null when the page names no single other party (the icon is then the platform's default).
+ * @property muted the user's own microphone mute, drawn as the notification's mute / unmute action.
+ * @property speakerChosen true when [speaker] is the user's own tap; false when it is only the
+ *   call's DEFAULT (a video call starts on the loudspeaker). A default yields to a connected headset
+ *   ([pickCallOutput]); a choice does not.
  */
 data class OngoingCallSpec(
     val title: String,
     val text: String,
     val connectedAtMs: Long?,
     val speaker: Boolean,
+    val peerUserId: String? = null,
+    val muted: Boolean = false,
+    val speakerChosen: Boolean = false,
 ) {
     companion object {
         /**
          * Validates what crossed the bridge. A refusal names the field: the web wrote it from its own
          * typed state, so a bad value is a defect on that side, never something to repair here.
          */
-        fun of(title: String?, text: String?, connectedAtMs: Long?, speaker: Boolean?): SpecResult {
+        fun of(
+            title: String?,
+            text: String?,
+            connectedAtMs: Long?,
+            speaker: Boolean?,
+            peerUserId: String?,
+            muted: Boolean?,
+            speakerChosen: Boolean?,
+        ): SpecResult {
             if (title.isNullOrBlank()) return SpecResult.Refused("title is empty")
             if (text == null) return SpecResult.Refused("text is missing")
             if (connectedAtMs != null && connectedAtMs <= 0L) {
                 return SpecResult.Refused("connectedAtMs=$connectedAtMs is not an instant")
             }
             if (speaker == null) return SpecResult.Refused("speaker is missing")
-            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker))
+            if (muted == null) return SpecResult.Refused("muted is missing")
+            if (speakerChosen == null) return SpecResult.Refused("speakerChosen is missing")
+            // A blank id names nobody: the same as none, never a fetch of an empty path.
+            val peer = peerUserId?.takeIf { it.isNotBlank() }
+            return SpecResult.Valid(OngoingCallSpec(title, text, connectedAtMs, speaker, peer, muted, speakerChosen))
         }
     }
 }
@@ -66,6 +87,8 @@ sealed class CallServiceCommand {
     data class Stop(val callId: String?, val reason: String) : CallServiceCommand()
     /** The hang-up action of the ongoing notification. */
     object HangUp : CallServiceCommand()
+    /** The mute / unmute action of the ongoing notification. */
+    object ToggleMute : CallServiceCommand()
 }
 
 /** What the service does. Exactly one per command, so every command is logged with its effect. */
@@ -86,6 +109,12 @@ sealed class CallServiceEffect {
     /** Leave the foreground, then hand the hang-up of [callId] to the page, which ends the call. */
     data class ForwardHangUp(val callId: String) : CallServiceEffect()
     /**
+     * Hand the mute toggle of [callId] to the page, which owns the microphone. The service stays in
+     * the foreground; the page's next `update` carries the new `muted`, which redraws the action - so
+     * the notification shows the state the CALL is in, never the one a press assumed.
+     */
+    data class ForwardMute(val callId: String) : CallServiceEffect()
+    /**
      * Nothing to do, and the reason says why. Every case reaching it is EXPECTED - a page command in
      * flight when the service had already left (the user hung up from the notification, the start was
      * refused, the page has not received that event yet) - so it is logged at INFO with that cause.
@@ -104,7 +133,8 @@ sealed class CallServiceEffect {
  *   an earlier call's, landing late.
  * - A STOP of the running call, or one naming no call (from the app itself), leaves; any other stop is
  *   an earlier call's.
- * - A HANG-UP with no call has nothing to act on: a notification press that raced the call's end.
+ * - A HANG-UP or a MUTE with no call has nothing to act on: a notification press that raced the
+ *   call's end.
  */
 fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = when (command) {
     is CallServiceCommand.Start -> when (current) {
@@ -129,6 +159,9 @@ fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = w
     CallServiceCommand.HangUp ->
         if (current != null) CallServiceEffect.ForwardHangUp(current)
         else CallServiceEffect.Ignore("hang-up pressed as the call ended - nothing in the foreground")
+    CallServiceCommand.ToggleMute ->
+        if (current != null) CallServiceEffect.ForwardMute(current)
+        else CallServiceEffect.Ignore("mute pressed as the call ended - nothing in the foreground")
 }
 
 /** Why a start was refused, as the page reads it (`NativeCallRefusal` in `androidCallService.ts`). */
@@ -208,7 +241,10 @@ enum class CallOutput { SPEAKER, EARPIECE, WIRED_HEADSET, USB_HEADSET, BLUETOOTH
 /**
  * Which output carries the voice, from what the system offers (`availableCommunicationDevices`).
  *
- * - [speaker] true: the loudspeaker, if the device has one.
+ * - [speaker] true and [speakerChosen] (the user tapped it): the loudspeaker, if the device has one.
+ * - [speaker] true as a DEFAULT only (a video call starts on the loudspeaker): a connected HEADSET
+ *   first (hearing aid, Bluetooth, wired, USB - never the earpiece), else the loudspeaker. Someone
+ *   wearing a headset when a video call starts means the headset; a default must not override it.
  * - [speaker] false: the most PERSONAL output present - a hearing aid, then a Bluetooth headset (LE
  *   then classic SCO), then a wired or USB headset, then the earpiece. Someone who put a headset on
  *   during a call means it, which is why a device change re-runs this choice
@@ -217,16 +253,33 @@ enum class CallOutput { SPEAKER, EARPIECE, WIRED_HEADSET, USB_HEADSET, BLUETOOTH
  * Null when nothing fits (a tablet with no earpiece asked for the earpiece): the service then
  * clears its choice and the platform's own routing decides, and it says so in the log.
  */
-fun pickCallOutput(available: List<CallOutput>, speaker: Boolean): CallOutput? {
-    if (speaker) return CallOutput.SPEAKER.takeIf { it in available }
+fun pickCallOutput(available: List<CallOutput>, speaker: Boolean, speakerChosen: Boolean = true): CallOutput? {
+    if (speaker) {
+        if (!speakerChosen) HEADSETS.firstOrNull { it in available }?.let { return it }
+        return CallOutput.SPEAKER.takeIf { it in available }
+    }
     return PERSONAL_OUTPUTS.firstOrNull { it in available }
 }
 
-private val PERSONAL_OUTPUTS = listOf(
+/**
+ * Whether the screen goes dark against the cheek: true only while the voice is on the EARPIECE, the
+ * one output held to the face, AND the app is on screen. On the loudspeaker or a headset the phone is
+ * looked at or pocketed, and a screen that turned off when a hand passed over the sensor would hide
+ * the call's own controls. Off screen (the user is in another app during the call) the screen is that
+ * other app's, which the call must not darken. Null (the platform routes) holds nothing: what it chose
+ * is not known here.
+ */
+fun holdsProximityScreenOff(output: CallOutput?, appOnScreen: Boolean): Boolean =
+    appOnScreen && output == CallOutput.EARPIECE
+
+/** The personal outputs that are not the phone itself: what a speaker DEFAULT yields to. */
+private val HEADSETS = listOf(
     CallOutput.HEARING_AID,
     CallOutput.BLE_HEADSET,
     CallOutput.BLUETOOTH_SCO,
     CallOutput.WIRED_HEADSET,
     CallOutput.USB_HEADSET,
-    CallOutput.EARPIECE,
 )
+
+/** Most personal first: what a call asked off the loudspeaker uses. */
+private val PERSONAL_OUTPUTS = HEADSETS + CallOutput.EARPIECE

@@ -85,16 +85,16 @@ function charsOn(lines: { text: string; top: number; startLeft?: number }[]): Me
 
 describe('groupCharsIntoLines - the browser decides where a line breaks', () => {
   // The defect this pipeline exists to prevent: jsPDF re-wrapped in its own metrics and split
-  // "Lounes BRIAND--RAVIDAT" as "BRIAND--R / AVIDAT", mid-word, while the preview showed it whole.
+  // "Lilian VERNAY--MAZOYER" as "VERNAY--M / AZOYER", mid-word, while the preview showed it whole.
   it('keeps each line exactly as it was laid out, breaking no word', () => {
     const lines = groupCharsIntoLines(
       charsOn([
-        { text: 'Lounes', top: 0 },
-        { text: 'BRIAND--RAVIDAT', top: 20 },
+        { text: 'Lilian', top: 0 },
+        { text: 'VERNAY--MAZOYER', top: 20 },
       ])
     );
 
-    expect(lines.map((l) => l.text)).toEqual(['Lounes', 'BRIAND--RAVIDAT']);
+    expect(lines.map((l) => l.text)).toEqual(['Lilian', 'VERNAY--MAZOYER']);
   });
 
   it('starts a new line only on a real vertical step, not on a glyph jitter', () => {
@@ -114,10 +114,10 @@ describe('groupCharsIntoLines - the browser decides where a line breaks', () => 
     const chars: MeasuredChar[] = [
       ...charsOn([{ text: 'Jeanne', top: 0 }]),
       { ch: ' ', rect: null },
-      ...charsOn([{ text: 'BOUSSONNIERE', top: 20 }]),
+      ...charsOn([{ text: 'VALCOURNIERE', top: 20 }]),
     ];
 
-    expect(groupCharsIntoLines(chars).map((l) => l.text)).toEqual(['Jeanne', 'BOUSSONNIERE']);
+    expect(groupCharsIntoLines(chars).map((l) => l.text)).toEqual(['Jeanne', 'VALCOURNIERE']);
   });
 
   // A centred line is anchored on its midpoint, so a trailing space that hangs past the edge would
@@ -327,13 +327,13 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
   }
 
   // The defect the pipeline exists to prevent, end to end: jsPDF re-wrapped in its own metrics and
-  // printed "BRIAND--R / AVIDAT". Each line must be drawn exactly as the browser broke it.
+  // printed "VERNAY--M / AZOYER". Each line must be drawn exactly as the browser broke it.
   it('draws each line the browser produced, and breaks no word itself', async () => {
     const root = document.createElement('div');
     Object.defineProperty(root, 'getBoundingClientRect', {
       value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
     });
-    const { node, restore } = withBrowserLayout(['Lounes BRIAND--', 'RAVIDAT']);
+    const { node, restore } = withBrowserLayout(['Lilian VERNAY--', 'MAZOYER']);
     root.appendChild(node);
     document.body.appendChild(root);
 
@@ -349,10 +349,10 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
       restore();
     }
 
-    expect(textCalls).toContain('Lounes BRIAND--');
-    expect(textCalls).toContain('RAVIDAT');
+    expect(textCalls).toContain('Lilian VERNAY--');
+    expect(textCalls).toContain('MAZOYER');
     // The whole string drawn as one run would mean jsPDF was left to break it again.
-    expect(textCalls).not.toContain('Lounes BRIAND--RAVIDAT');
+    expect(textCalls).not.toContain('Lilian VERNAY--MAZOYER');
     root.remove();
   });
 
@@ -363,7 +363,7 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
     Object.defineProperty(root, 'getBoundingClientRect', {
       value: () => ({ left: 0, top: 0, width: 1000, height: 1000 }),
     });
-    const { node, restore } = withBrowserLayout(['jeanne', 'boussonniere']);
+    const { node, restore } = withBrowserLayout(['jeanne', 'valcourniere']);
     node.style.textTransform = 'uppercase';
     root.appendChild(node);
     document.body.appendChild(root);
@@ -380,8 +380,8 @@ describe('exportSearchablePdf - emoji nodes are rasterized, not vector-drawn', (
       restore();
     }
 
-    expect(textCalls).toContain('BOUSSONNIERE');
-    expect(textCalls).not.toContain('boussonniere');
+    expect(textCalls).toContain('VALCOURNIERE');
+    expect(textCalls).not.toContain('valcourniere');
     root.remove();
   });
 

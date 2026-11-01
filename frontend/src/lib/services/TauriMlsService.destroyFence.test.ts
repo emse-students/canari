@@ -10,7 +10,11 @@
  * before the fence (`BaseMlsService.destroy`).
  */
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// Every socket open and close reports to the native ring, which asks the document generation:
+// answered as the Rust side answers it (`src/test/mocks/pageRingInvoke.ts`).
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('../../test/mocks/pageRingInvoke')).answerPageRing),
+}));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 

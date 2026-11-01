@@ -11,6 +11,8 @@ import {
   Headers,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
+  GoneException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -25,20 +27,31 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { activeRevocationWhere } from '../utils/revocation';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { Throttle } from '@nestjs/throttler';
 import {
+  canonicalUserId,
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
+  parseLeafIdentity,
   assertCallerOwnsUserId,
+  type LeafIdentity,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { bumpSeatGeneration, recordSeatEviction, withSeatLock } from '../utils/seat-eviction';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
-  ensureGroupMember,
+  bumpSeatGeneration,
+  readSeatGeneration,
+  recordSeatEviction,
+  withSeatLock,
+} from '../utils/seat-eviction';
+import {
   endDeviceMemberships,
   endGroupMembership,
   exclusionWindows,
@@ -46,9 +59,12 @@ import {
   stretchStart,
   partingKey,
   withdrawAwaitingSeat,
+  writePendingSeats,
+  assertCallerActsOnGroup,
   callerSeatStanding,
   refuseAwaitingSeat,
   withheldWindows,
+  withholdsArrivalSpan,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
@@ -67,14 +83,40 @@ import { RefusalCode, refusalBody } from '../utils/refusal-codes';
  */
 export const GROUP_ROSTERS_MAX_GROUPS = 200;
 
+/**
+ * The most leaf identities `POST /api/mls/groups/:groupId/revoked-leaves` answers in one request -
+ * a whole key group's tree in one read. MIRRORED BY `REVOKED_LEAVES_MAX_IDENTITIES` in
+ * `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, which chunks by it.
+ */
+export const REVOKED_LEAVES_MAX_IDENTITIES = 1000;
+
+/**
+ * Revoked-leaf questions one user may ask per minute. The client asks at most once per key group a
+ * device holds per roster pass, and again only when that group's leaves changed
+ * (`rosterReconcile.ts`): a session start asks once per held key group - one per community and one
+ * per private salon held. Sized for an account in hundreds of them, since a refused question removes
+ * no revoked device that pass (it is not recorded, and the next pass asks again); a loop asking
+ * about arbitrary pairs is still bounded to a few per second.
+ */
+export const REVOKED_LEAVES_LIMIT_PER_MINUTE = 600;
+
 /** One device's seat in one group, with the facts that say which kind of `pending` it is. */
 interface DeviceSeatFacts {
   status: 'pending' | 'active';
   welcomeQueued: boolean;
-  addInFlight: boolean;
+  /** Unknown (`undefined`) when the add locks could not be read - never a `false` it cannot prove. */
+  addInFlight: boolean | undefined;
   admitted: boolean;
   /** The user's seat awaits a member's admission (an invitation link's - migration 038). */
   awaitingAdmission: boolean;
+}
+
+/** One row of `GET mls/groups/:groupId/user-members`. */
+export interface UserMemberRow {
+  userId: string;
+  displayName: string | null;
+  awaitingAdmission: boolean;
+  askId: string | null;
 }
 
 /** Group membership management: add/remove members, list members, list user groups. */
@@ -98,6 +140,8 @@ export class MembersController {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(RevokedDeviceGroup)
+    private revokedDeviceGroupRepo: Repository<RevokedDeviceGroup>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -153,12 +197,11 @@ export class MembersController {
     }
 
     // Group-creation bootstrap: the creator adds its own userId while the group is still empty.
-    if (allowCreationBootstrap && caller === targetUserId) {
-      const memberCount = await this.groupMemberRepo.count({
-        where: { groupId: safeGroupId },
-      });
-      if (memberCount === 0) return;
-    }
+    if (
+      allowCreationBootstrap &&
+      (await this.isCreationBootstrap(safeGroupId, caller, targetUserId))
+    )
+      return;
 
     throw new ForbiddenException(
       refusalBody(
@@ -166,6 +209,38 @@ export class MembersController {
         'Caller is not authorized to modify this group membership'
       )
     );
+  }
+
+  /**
+   * The group-creation bootstrap: the group's CREATOR (`Group.createdBy`, the authenticated caller of
+   * `POST mls/groups`) registers ITSELF into a group whose roster is still empty, before anyone else
+   * exists. The one enrolment the member-add route still writes.
+   *
+   * The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody else; a
+   * group with no recorded creator is bootstrapped by nobody (migration 042). Compared in canonical
+   * form ({@link canonicalUserId}).
+   *
+   * UNLOCKED, SO IT ONLY ROUTES. What decides is the re-read under the seat lock taken exclusive
+   * (`writePendingSeats(..., 'creator')`), which checks the creator and the empty roster again.
+   */
+  private async isCreationBootstrap(
+    safeGroupId: string,
+    caller: string | undefined,
+    targetUserId: string
+  ): Promise<boolean> {
+    if (!caller || caller !== targetUserId) return false;
+    if ((await this.groupMemberRepo.count({ where: { groupId: safeGroupId } })) > 0) return false;
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+      select: { id: true, createdBy: true },
+    });
+    if (group?.createdBy && group.createdBy === canonicalUserId(caller)) return true;
+    this.logger.warn(
+      `[ADD_MEMBER] bootstrap REFUSED group=${safeGroupId} caller=${cutUserId(caller)} ` +
+        `creator=${group?.createdBy ? cutUserId(group.createdBy) : 'none'} - an empty roster is ` +
+        `enrolled into by its creator alone; nothing written`
+    );
+    return false;
   }
 
   /**
@@ -349,7 +424,7 @@ export class MembersController {
       where: { userId, deviceId: safeDeviceId, groupId: In(groupIds) },
     });
     const pending = rows.filter((r) => r.status === 'pending').map((r) => r.groupId);
-    const { welcomed, locked } = await readPendingMembershipFacts(
+    const facts = await readPendingMembershipFacts(
       this.queuedMessageRepo,
       this.redis,
       safeDeviceId,
@@ -359,8 +434,8 @@ export class MembersController {
     for (const r of rows) {
       out.set(r.groupId, {
         status: r.status,
-        welcomeQueued: welcomed.has(r.groupId),
-        addInFlight: locked.has(r.groupId),
+        welcomeQueued: facts.welcomed.has(r.groupId),
+        addInFlight: addInFlightOf(facts, r.groupId),
         // A commit admitted this device at an epoch and its Welcome is owed (`admittedAtEpoch` is
         // cleared by every transition): the window between the commit and the Welcome, which the
         // add lock does not cover on every path.
@@ -373,7 +448,7 @@ export class MembersController {
       ([, v]) =>
         v.status === 'pending' &&
         !v.welcomeQueued &&
-        !v.addInFlight &&
+        v.addInFlight === false &&
         !v.admitted &&
         !v.awaitingAdmission
     ).length;
@@ -478,7 +553,11 @@ export class MembersController {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/members')
-  /** Adds a member to a group and registers their device-group membership as pending. */
+  /**
+   * Writes the pending device seats of a person ALREADY ADMITTED to the group - by the accepted
+   * commit that added them - and enrols nobody else but a new group's creator into its empty roster.
+   * A person no accepted commit admitted is answered `409 MEMBER_NOT_ADMITTED` (see the body).
+   */
   async addGroupMember(
     @Param('groupId') groupId: string,
     @Body() body: { userId: string },
@@ -535,9 +614,17 @@ export class MembersController {
       });
     }
 
+    // Nor across the review cohort's boundary (review-cohort-groups.ts), by the same reasoning.
+    await assertGroupStaysOnOneSide(
+      this.dataSource.manager,
+      safeGroupId,
+      safeUserId,
+      caller,
+      `[ADD_MEMBER][${traceId}]`
+    );
+
     this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 
-    // Atomic upsert: INSERT ... ON CONFLICT DO UPDATE avoids the findOne+save race.
     // Window aligned with retention: a still-recoverable device (last seen < 90 days)
     // must receive a pending membership even if idle for > 30 days.
     const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
@@ -545,56 +632,141 @@ export class MembersController {
       where: { userId: safeUserId, createdAt: MoreThanOrEqual(cutoff) },
     });
 
-    await this.dataSource.transaction(async (manager) => {
-      // Enrol at the user level, leaving an existing enrolment untouched - the same call the
-      // invitation-link join makes, so the two writers of this table cannot disagree about what a
-      // second call means. Until 2026-09-16 this one rewrote `joinedAt` on every call, which is why
-      // no row of a 31-member production group carried that group's own creation minute.
-      await ensureGroupMember(manager, safeGroupId, safeUserId);
-
-      // Upsert DeviceGroupMembership for each active device: no-op if already present.
-      for (const device of userDevices) {
-        await manager
-          .createQueryBuilder()
-          .insert()
-          .into(DeviceGroupMembership)
-          .values({
-            userId: safeUserId,
-            deviceId: device.deviceId,
-            groupId: safeGroupId,
-            status: 'pending',
-          })
-          .orIgnore()
-          .execute();
+    // THIS ROUTE ENROLS NOBODY BUT A GROUP'S CREATOR (ADM-3, 2026-10-25). The person a member's Add
+    // admits is enrolled by the ACCEPTED COMMIT, in the transaction that accepts it
+    // (`MessagingService.enrolAdmittedPeople`), which refuses a person whose Decline or departure
+    // came after the Add was decided. This route used to enrol whoever it was named, with no seat
+    // lock and no departure read: the adding member's client called it right after its accept, so a
+    // Decline that the gate had just honoured was undone in the same second, and the Welcome that
+    // followed found a seat. A person an accepted commit admitted is on the roster, ADMITTED, by the
+    // time any client reads the accept; anyone else - absent, or still awaiting a member - was not
+    // admitted, and the answer is the typed 409 `MEMBER_NOT_ADMITTED` with nothing written. Read
+    // under the group's seat lock (`writePendingSeats`), the lock a Decline and a removal take, so
+    // either is wholly before the read or waits for this transaction.
+    if (!(await this.isCreationBootstrap(safeGroupId, caller, safeUserId))) {
+      const outcome = await writePendingSeats(
+        this.dataSource.manager,
+        safeGroupId,
+        safeUserId,
+        userDevices.map((d) => d.deviceId),
+        false,
+        { requireAdmitted: true }
+      );
+      if (outcome === 'group_gone') {
+        this.logger.warn(`[ADD_MEMBER][${traceId}] REFUSED group_gone group=${safeGroupId}`);
+        throw new GoneException({ error: 'group_deleted', groupId: safeGroupId });
       }
-    });
+      if (outcome !== 'written') {
+        this.logger.warn(
+          `[ADD_MEMBER][${traceId}] REFUSED not_admitted group=${safeGroupId} ` +
+            `user=${cutUserId(safeUserId)} reason=${outcome === 'not_on_roster' ? 'no_seat' : 'awaiting_admission'} ` +
+            `caller=${caller ? cutUserId(caller) : 'none'} - no accepted commit admitted them; nothing written`
+        );
+        throw new ConflictException(
+          refusalBody(
+            RefusalCode.MEMBER_NOT_ADMITTED,
+            'No accepted commit admitted this person; this route enrols nobody.'
+          )
+        );
+      }
+      this.logger.log(
+        `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length} - already admitted, device seats written`
+      );
+      return { status: 'added' };
+    }
+
+    // THE CREATOR, into a group whose roster is still empty: the one enrolment written here, through
+    // the one pending-seat writer (`writePendingSeats`), so under the group's seat lock, against the
+    // group row re-read under it, and each device row only beside its key package read `FOR SHARE`
+    // there - an account being erased gets no row its erasure could no longer find. The roster row
+    // is written as `ensureGroupMember` writes it, an existing enrolment left untouched.
+    const created = await writePendingSeats(
+      this.dataSource.manager,
+      safeGroupId,
+      safeUserId,
+      userDevices.map((d) => d.deviceId),
+      'creator'
+    );
+    if (created === 'group_gone') {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] REFUSED group_gone group=${safeGroupId} - the creator's group ended before its enrolment`
+      );
+      throw new GoneException({ error: 'group_deleted', groupId: safeGroupId });
+    }
+    // The creator and "empty roster" reads above are unlocked; the ones that decide are the re-reads
+    // under the seat lock. Someone else is on the roster, or the recorded creator is not this caller
+    // (its id erased since): no accepted commit admitted them either - the same typed 409 as any
+    // other person this route enrols nobody for.
+    if (created === 'roster_taken' || created === 'not_creator') {
+      this.logger.warn(
+        `[ADD_MEMBER][${traceId}] REFUSED not_admitted group=${safeGroupId} user=${cutUserId(safeUserId)} ` +
+          `reason=${created} - the creator's enrolment found the roster taken or another creator; nothing written`
+      );
+      throw new ConflictException(
+        refusalBody(
+          RefusalCode.MEMBER_NOT_ADMITTED,
+          'No accepted commit admitted this person; this route enrols nobody.'
+        )
+      );
+    }
 
     // NB: NOT added to group:members Redis here - devices enter the routing
     // set only when their Welcome is sent (sendWelcome sets status to active).
     this.logger.log(
-      `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`
+      `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length} - the creator, enrolled`
     );
     return { status: 'added' };
   }
 
+  /**
+   * Returns user-level membership from dm_group_members (no device-status filter).
+   *
+   * WITH `?withSeatGeneration=1`, the answer is `{ seatGeneration, members }`: the same rows, and
+   * the group's seat generation (`dm_groups."seatGeneration"`, moved under the seat lock by every
+   * removal and every member's Decline) READ BEFORE THEM. A member's invitation records it with its
+   * roster baseline and its Add carries it (`ValidateCommitBody.invitationSeatGeneration`): the
+   * commit gate refuses a person whose departure was recorded at a later generation - a Decline or
+   * a removal the member had not seen when they decided. Read first, so a departure committed
+   * between the two reads is later than the number AND absent from the rows: the Add is refused,
+   * never wrongly admitted. Without the parameter the answer is the bare array every older client
+   * reads.
+   */
+  async getGroupUserMembers(
+    groupId: string,
+    headerUserId?: string,
+    headerGlobalAdmin?: string
+  ): Promise<UserMemberRow[]>;
+  async getGroupUserMembers(
+    groupId: string,
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined,
+    withSeatGeneration: '1'
+  ): Promise<{ seatGeneration: number; members: UserMemberRow[] }>;
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/user-members')
-  /** Returns user-level membership from dm_group_members (no device-status filter). */
   async getGroupUserMembers(
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
-  ) {
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Query('withSeatGeneration') withSeatGeneration?: string
+  ): Promise<UserMemberRow[] | { seatGeneration: number; members: UserMemberRow[] }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
+    const seatGeneration =
+      withSeatGeneration === '1'
+        ? await readSeatGeneration(this.dataSource.manager, safeGroupId)
+        : null;
     const rows = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
       select: { id: true, userId: true, awaitingAdmission: true },
     });
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const nameMap = await resolveUserDisplayNamesBatch(this.dataSource.manager, userIds);
-    this.logger.log(`[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`);
-    return rows.map((r) => ({
+    this.logger.log(
+      `[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}` +
+        (seatGeneration === null ? '' : ` seatGeneration=${seatGeneration}`)
+    );
+    const members = rows.map<UserMemberRow>((r) => ({
       userId: r.userId,
       displayName: nameMap.get(r.userId) ?? null,
       // An invitation link's ask no member has answered: the one roster row a member is asked about,
@@ -602,6 +774,7 @@ export class MembersController {
       awaitingAdmission: r.awaitingAdmission === true,
       askId: r.awaitingAdmission === true ? r.id : null,
     }));
+    return seatGeneration === null ? members : { seatGeneration, members };
   }
 
   /**
@@ -648,6 +821,7 @@ export class MembersController {
     rosters: Record<string, string[]>;
     refused: string[];
     revoked: Record<string, string[]>;
+    awaiting: Record<string, string[]>;
   }> {
     const requested = body?.groupIds;
     if (!Array.isArray(requested)) {
@@ -657,7 +831,7 @@ export class MembersController {
       throw new BadRequestException(`At most ${GROUP_ROSTERS_MAX_GROUPS} groups per request`);
     }
     const groupIds = [...new Set(requested.map((g) => sanitizeQueryValue(g, 'groupId')))];
-    if (groupIds.length === 0) return { rosters: {}, refused: [], revoked: {} };
+    if (groupIds.length === 0) return { rosters: {}, refused: [], revoked: {}, awaiting: {} };
 
     const rows = await this.groupMemberRepo.find({
       where: { groupId: In(groupIds) },
@@ -712,10 +886,161 @@ export class MembersController {
       revokedNamed += identities.length;
     }
 
+    // THE PEOPLE OF EACH ANSWERED ROSTER WHOSE SEAT STILL AWAITS A MEMBER'S ADMISSION. Such a person
+    // holds no leaf by right: the accepted commit that admits them lifts the flag in the transaction
+    // that accepts it, so a leaf of theirs is one no commit admitted - an Add built before a Decline
+    // (ADM-3), or a removed member's leaf that outlived the removal before they asked again. The
+    // stray sweep reads them as off the roster (`strayLeaves.ts`). A client that predates the field
+    // ignores it.
+    const awaiting: Record<string, string[]> = {};
+    for (const row of rows) {
+      if (row.awaitingAdmission !== true || !rosters[row.groupId]) continue;
+      (awaiting[row.groupId] ??= []).push(row.userId);
+    }
+
     this.logger.log(
       `[GROUP_ROSTERS] asked=${groupIds.length} answered=${groupIds.length - refused.length} refused=${refused.length} rows=${rows.length} revoked=${revokedNamed}`
     );
-    return { rosters, refused, revoked };
+    return { rosters, refused, revoked, awaiting };
+  }
+
+  /**
+   * Which of the given leaf identities (`userId:deviceId`) of `groupId`'s tree belong to a device
+   * under an ACTIVE revocation - answered for a KEY-DISTRIBUTION group as much as a conversation.
+   *
+   * **WHY IT EXISTS.** `POST mls/group-rosters` names the revoked devices of each answered roster,
+   * but a key group has no user roster here (its roster is social-service's) and is never answered
+   * there - so a revoked device of a community member kept its leaf in every community and salon key
+   * group for good, even across reloads. The client's key-group roster pass reads its TREE, asks
+   * this, and removes exactly what is named (`rosterReconcile.ts`).
+   *
+   * **AN ALLOWLIST, ASKED BY A MEMBER, ABOUT MEMBERS.** The caller must be an admitted member of the
+   * group (`assertCallerActsOnGroup`: an active device row for a key group, a seat for a
+   * conversation), AND each identity asked is answered only when it is bound to THIS group - its
+   * user holds a device row in it, of any status, or a seat in it, or that exact device is recorded
+   * as having held the key group when its revocation purged its rows (`dm_revoked_device_groups`,
+   * {@link RevokedDeviceGroup}: in a key group the device rows were the user's only binding, and the
+   * purge deletes them). Anybody else's pair is answered "not revoked" whatever the truth, so a
+   * member of one group cannot read the revocations of people outside it.
+   * The answer adds only "this one is revoked", under the one active-revocation rule
+   * (`activeRevocationWhere`), and the route is throttled per user
+   * ({@link REVOKED_LEAVES_LIMIT_PER_MINUTE}). The user half is
+   * compared without case, the device half exact - the canonical identity Rust binds - and each
+   * identity is answered AS SENT, so the client matches its own leaf string. An identity that is not
+   * a leaf identity (`libs/contracts/leaf-identity.cases.json`) is skipped and counted, never a
+   * refusal of the batch; a body that is not a list, or over the cap, is still a 400.
+   */
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: REVOKED_LEAVES_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Post('mls/groups/:groupId/revoked-leaves')
+  async getRevokedLeaves(
+    @Param('groupId') groupId: string,
+    @Body() body: { identities?: unknown } | undefined,
+    @Headers('x-user-id') headerUserId?: string
+  ): Promise<{ revoked: string[] }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const requested = body?.identities;
+    if (!Array.isArray(requested)) {
+      throw new BadRequestException('identities must be an array');
+    }
+    if (requested.length > REVOKED_LEAVES_MAX_IDENTITIES) {
+      throw new BadRequestException(
+        `At most ${REVOKED_LEAVES_MAX_IDENTITIES} identities per request`
+      );
+    }
+    const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
+    await assertCallerActsOnGroup(
+      { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
+      this.logger,
+      'REVOKED_LEAVES',
+      safeGroupId,
+      caller
+    );
+
+    // `userId:deviceId`, exactly one colon, each half under its own rule - never the generic 128
+    // bound on the whole, which every real identity exceeds ({@link parseLeafIdentity}). A MALFORMED
+    // ONE IS SKIPPED, NEVER A REFUSAL OF THE BATCH: a leaf identity is whatever a credential in the
+    // tree says, so one crafted credential would otherwise block the answer about every other leaf
+    // of the group, for every member. Counted in the line below, never printed.
+    const leaves = new Map<string, LeafIdentity>();
+    let malformed = 0;
+    for (const value of requested) {
+      const leaf = parseLeafIdentity(value);
+      if (leaf === null) malformed++;
+      else leaves.set(leaf.identity, leaf);
+    }
+    const pairs = [...leaves.values()].map(({ identity, userId, deviceId }) => ({
+      identity,
+      sentUser: userId,
+      user: userId.toLowerCase(),
+      device: deviceId,
+    }));
+    // A current client filters what this skips (`isAddressableLeafIdentity`), so a skipped one
+    // accuses a credential or an old client - said at warn, with the count alone.
+    const say = (line: string, converged: boolean): void => {
+      if (malformed > 0)
+        this.logger.warn(`${line} malformed=${malformed} - skipped, never answered`);
+      else if (converged) this.logger.debug(line);
+      else this.logger.log(line);
+    };
+    if (pairs.length === 0) {
+      if (malformed > 0) {
+        say(`[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=0`, true);
+      }
+      return { revoked: [] };
+    }
+
+    // The user half both as sent and lowercased: the column holds whichever casing was written.
+    const asked = [...new Set(pairs.flatMap((p) => [p.user, p.sentUser]))];
+    // BOUND TO THIS GROUP: only users with a device row or a seat in it are answered at all - or
+    // the exact device a revocation recorded as having held it ({@link RevokedDeviceGroup}).
+    const [deviceRows, seatRows, revokedHeldRows] = await Promise.all([
+      this.deviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true },
+      }),
+      this.groupMemberRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true },
+      }),
+      this.revokedDeviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: In(asked) },
+        select: { userId: true, deviceId: true },
+      }),
+    ]);
+    const bound = new Set([...deviceRows, ...seatRows].map((r) => r.userId.toLowerCase()));
+    const heldWhenRevoked = new Set(
+      revokedHeldRows.map((r) => `${r.userId.toLowerCase()}:${r.deviceId}`)
+    );
+    const inGroup = pairs.filter(
+      (p) => bound.has(p.user) || heldWhenRevoked.has(`${p.user}:${p.device}`)
+    );
+    if (inGroup.length === 0) {
+      // Not converged: no leaf asked about is bound to this group, so nothing here can be answered -
+      // said at log level.
+      say(
+        `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${pairs.length} revoked=0`,
+        false
+      );
+      return { revoked: [] };
+    }
+    const users = [...new Set(inGroup.flatMap((p) => [p.user, p.sentUser]))];
+    const rows = await this.revokedDeviceRepo.find({
+      where: activeRevocationWhere({ userId: In(users) }),
+      select: { userId: true, deviceId: true },
+    });
+    const banned = new Set(rows.map((r) => `${r.userId.toLowerCase()}:${r.deviceId}`));
+    const revoked = inGroup
+      .filter((p) => banned.has(`${p.user}:${p.device}`))
+      .map((p) => p.identity);
+
+    // A CONVERGED ANSWER IS DEBUG (the noise rule): every pass of every member of every key group
+    // asks, and "all bound, none revoked" is the ordinary answer. A revoked or an unbound leaf is
+    // what a reader needs, and stays at log level.
+    const outside = pairs.length - inGroup.length;
+    const line = `[REVOKED_LEAVES] group=${safeGroupId} caller=${cutUserId(caller)} asked=${pairs.length} outside=${outside} revoked=${revoked.length}`;
+    say(line, revoked.length === 0 && outside === 0);
+    return { revoked };
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -817,9 +1142,9 @@ export class MembersController {
     // writing its committer's seat after it (`utils/seat-eviction.ts`).
     //
     // THE ONE ORDER OF `utils/seat-eviction.ts`: the seat lock, the roster row, the queued
-    // Welcomes, the device rows, the eviction record. `addGroupMember` takes no seat lock - it writes
-    // the roster row first, then the device rows, so an add and a removal of the same person wait
-    // for each other on the roster row instead of deadlocking. A Welcome store re-checks the seat
+    // Welcomes, the device rows, the eviction record. `addGroupMember` writes device seats under the
+    // same lock, shared, against a re-read of an ADMITTED roster row (`writePendingSeats`), so it is
+    // wholly before this removal or finds no row. A Welcome store re-checks the seat
     // under the seat lock (`validateCommit`, `sendWelcome`), so a store racing this removal either
     // commits first and is deleted here, or finds no seat.
     const { devices, ended, generation, endedAsk } = await withSeatLock(
@@ -1123,8 +1448,7 @@ export class MembersController {
         `[EXCLUSIONS] group=${safeGroupId} has members but NO group row - answered as a 1:1`
       );
     }
-    const beforeFirstArrival =
-      group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
+    const beforeFirstArrival = withholdsArrivalSpan(group);
 
     const exclusions: Record<string, ExclusionWindow[]> = {};
     for (const userId of counted) {

@@ -1,3 +1,5 @@
+import { REVIEW_COHORT_BOUNDARY } from '../review-cohort';
+
 /**
  * THE STABLE `code` OF EVERY REFUSAL A USER CAN ACT ON, one name each.
  *
@@ -32,6 +34,11 @@ export const RefusalCode = {
   KEY_DISTRIBUTION_GROUP: 'KEY_DISTRIBUTION_GROUP',
   /** 403 - a block stands between two people. Neutral: never who blocked whom. */
   USER_BLOCKED: 'USER_BLOCKED',
+  /**
+   * 403 - an act across the review cohort's boundary (`review-cohort.ts`, which names the value and
+   * throws it as `ReviewCohortBoundaryException`, a `refusalBody`-shaped body). Neutral, like a block.
+   */
+  REVIEW_COHORT_BOUNDARY: REVIEW_COHORT_BOUNDARY,
   /** 403 - the caller is not a member of the conversation it addressed. */
   NOT_A_MEMBER: 'NOT_A_MEMBER',
   /** 403 - the caller may not change this group's roster. */
@@ -64,6 +71,13 @@ export const RefusalCode = {
    * a member is a new commit with a Welcome of its own.
    */
   WELCOME_TARGET_NOT_MEMBER: 'WELCOME_TARGET_NOT_MEMBER',
+  /**
+   * 409 - `POST mls/groups/:groupId/members` named a person no accepted commit admitted: absent from
+   * the roster, or still awaiting a member's admission. The route enrols nobody (the accepted commit
+   * is the one writer of a new person); a Decline or a departure came before the Add, or no Add
+   * landed. Terminal for that call: the person needs a new Add, and the Welcome is withheld.
+   */
+  MEMBER_NOT_ADMITTED: 'MEMBER_NOT_ADMITTED',
   /**
    * 404 - a Welcome addressed to a device no key package names: never registered, or deleted since
    * (an owner's revocation purges it) (`POST mls/welcome`). Terminal for that Welcome: the device

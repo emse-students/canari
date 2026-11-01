@@ -204,7 +204,7 @@ static void OnAppDidBecomeActive(__unused NSNotification *note) {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-void CanariKeyboardMediaStart(WKWebView *webView) {
+void CanariKeyboardMediaStart(WKWebView *_Nullable webView) {
   if (webView == nil) {
     NSLog(@"[KeyboardMediaBridge] start called with nil WebView, will try to find one later");
     // Try to find it ourselves.

@@ -30,7 +30,8 @@ import org.json.JSONObject
  * Up: every outcome reaches the page as ONE DOM event, `canari:call-native`, whose `detail` names the
  * call it is about (`callId`) and whose `kind` is `started`, `failed` (with a `code`, [StartRefusal]),
  * `stopped` (the service left on its own, unexpectedly), `hangup` (the notification's button - the
- * service has ALREADY left the foreground, the page ends the call) or `foreground` (the activity
+ * service has ALREADY left the foreground, the page ends the call), `mute` (the notification's mute
+ * action - the page toggles its microphone and its next `update` redraws the action) or `foreground` (the activity
  * resumed while a start refused for being off screen was pending: the page may ask once more). The
  * page drops an event of another call.
  *
@@ -100,9 +101,10 @@ object CallBridge {
      * Sends one event about [callId] to the page. `detail` is built with [JSONObject], whose
      * `toString()` is valid JavaScript, so no field is spliced into the script as text. A null
      * [callId] (a description that could not be read at all) is sent without one, and the page logs
-     * the event as unreadable - loud on both sides, as such a defect should be.
+     * the event as unreadable - loud on both sides, as such a defect should be. [speaker] is the
+     * `output` event's applied route: absent when the platform routes and nothing is known.
      */
-    fun emit(kind: String, callId: String?, reason: String? = null, code: String? = null) {
+    fun emit(kind: String, callId: String?, reason: String? = null, code: String? = null, speaker: Boolean? = null) {
         val view = webView
         if (view == null) {
             Log.i(TAG, "event $kind (${reason ?: "-"}) not delivered: no page is attached")
@@ -112,6 +114,7 @@ object CallBridge {
         if (callId != null) detail.put("callId", callId)
         if (reason != null) detail.put("reason", reason)
         if (code != null) detail.put("code", code)
+        if (speaker != null) detail.put("speaker", speaker)
         val script = "window.dispatchEvent(new CustomEvent('$EVENT',{detail:$detail}))"
         view.post { view.evaluateJavascript(script, null) }
     }
@@ -221,6 +224,9 @@ object CallBridge {
                         text = if (o.has("text")) o.getString("text") else null,
                         connectedAtMs = if (o.isNull("connectedAtMs")) null else o.getLong("connectedAtMs"),
                         speaker = if (o.has("speaker")) o.getBoolean("speaker") else null,
+                        peerUserId = if (o.isNull("peerUserId")) null else o.getString("peerUserId"),
+                        muted = if (o.has("muted")) o.getBoolean("muted") else null,
+                        speakerChosen = if (o.has("speakerChosen")) o.getBoolean("speakerChosen") else null,
                     )
                 }
             } catch (e: JSONException) {

@@ -10,20 +10,22 @@
  *   - does every reference inside the set point at a row the set contains;
  *   - does the SQL name only tables and columns the ENTITIES declare, give every column an INSERT
  *     cannot omit, and use only the values a closed type allows - derived by parsing the entity
- *     files, so a renamed column fails here and not on dev.
+ *     files, so a renamed column fails here and not on dev;
+ *   - does every row satisfy every CHECK the entities and the migrations put on its table.
  *
  * Run by `make test-ci-scripts`: `bun test ./tools/dev-seed/`.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { entityFiles, parseEntityFile, readSchema } from './entities';
+import { entityFiles, normalizeCheck, parseEntityFile, readChecks, readSchema } from './entities';
 import {
   REPO_ROOT,
   SEED_EMAIL_DOMAIN,
   SEED_MARKER,
   SEED_SQL_PATH,
   type SeedRows,
+  type SqlValue,
   buildSeed,
   renderSql,
   userId,
@@ -191,7 +193,90 @@ describe('references inside the set resolve', () => {
   });
 });
 
+/** A seeded value that is present and not NULL; an expression (`now() - ...`) is never NULL. */
+const given = (v: SqlValue | undefined) => v !== null && v !== undefined;
+const oneOf =
+  (column: string, values: string[], nullable = false) =>
+  (row: Record<string, SqlValue>) =>
+    nullable && !given(row[column]) ? true : values.includes(row[column] as string);
+const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+const CAMPUSES = ['saint-etienne', 'gardanne'];
+
+/**
+ * EVERY CHECK ON A SEEDED TABLE, RESTATED AS WHAT IT REQUIRES OF A ROW. `readChecks` finds them
+ * in the entities and the migrations; one with no entry here fails, so a new constraint is met on
+ * the pull request that adds it and never by the dev reset rolling back on the box. A column the
+ * seed leaves out takes its column default, written next to the predicate that reads it.
+ *
+ * Each entry also carries the expression it was written against (`sql`, compared through
+ * `normalizeCheck`): a migration that drops a constraint and adds it back under the SAME name with
+ * a different meaning fails here too, rather than passing on a predicate that restates the old one.
+ */
+type CheckPredicate = { sql: string; holds: (row: Record<string, SqlValue>) => boolean };
+const CHECK_PREDICATES: Record<string, CheckPredicate> = {
+  CHK_association_audiences_campus: {
+    sql: "campus IS NULL OR campus IN ('saint-etienne', 'gardanne')",
+    holds: oneOf('campus', CAMPUSES, true),
+  },
+  CHK_association_audiences_formation: {
+    sql: "formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    holds: oneOf('formation', FORMATIONS, true),
+  },
+  CHK_associations_type: {
+    sql: "type IN ('association', 'list', 'institution')",
+    holds: oneOf('type', ['association', 'list', 'institution']),
+  },
+  CHK_platform_config_calls_mode: {
+    sql: "calls_mode IN ('off', 'audio', 'audio_video')",
+    holds: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
+  },
+  CHK_platform_config_lives_mode: {
+    sql: "lives_mode IN ('off', 'on')",
+    holds: oneOf('lives_mode', ['off', 'on']),
+  },
+  CHK_spaces_campus: {
+    sql: "campus IN ('saint-etienne', 'gardanne')",
+    holds: oneOf('campus', CAMPUSES),
+  },
+  CHK_spaces_formation: {
+    sql: "formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    holds: oneOf('formation', FORMATIONS),
+  },
+  // `status` defaults to 'pending' since migration 114.
+  CHK_user_follows_status: {
+    sql: "status IN ('pending', 'accepted')",
+    holds: (r) => ['pending', 'accepted'].includes((r.status ?? 'pending') as string),
+  },
+  CHK_user_follows_accepted_at: {
+    sql: `status <> 'accepted' OR "acceptedAt" IS NOT NULL`,
+    holds: (r) => (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
+  },
+  // `kind` defaults to 'post'.
+  posts_kind_shape: {
+    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)
+       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL)`,
+    holds: (r) => {
+      const kind = r.kind ?? 'post';
+      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
+      return (
+        kind === 'reel' &&
+        typeof r.durationMs === 'number' &&
+        r.durationMs > 0 &&
+        given(r.expiresAt)
+      );
+    },
+  },
+};
+const checks = readChecks(REPO_ROOT);
+
 describe('the SQL fits the schema the entities declare', () => {
+  test('the check reader finds both kinds of declaration, so an empty list cannot pass', () => {
+    const names = new Set(checks.map((c) => c.name));
+    // An entity `@Check` and a migration-only constraint.
+    expect(names.has('CHK_user_follows_accepted_at')).toBe(true);
+    expect(names.has('posts_kind_shape')).toBe(true);
+  });
+
   test('the parser reads every entity file it is given, so an empty schema cannot pass', () => {
     const files = entityFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(50);
@@ -224,6 +309,25 @@ describe('the SQL fits the schema the entities declare', () => {
         const given = new Set(Object.keys(list[0] ?? {}));
         for (const c of declared?.columns.values() ?? []) {
           if (!c.optional) expect(given.has(c.name), `${table}.${c.name} is required`).toBe(true);
+        }
+      });
+
+      test('satisfies every CHECK the schema puts on it', () => {
+        for (const check of checks.filter((c) => c.table === table)) {
+          const predicate = CHECK_PREDICATES[check.name];
+          expect(
+            predicate,
+            `${table}: ${check.name} (${check.file}) has no predicate in CHECK_PREDICATES - state what it requires of a seeded row`
+          ).toBeDefined();
+          expect(
+            check.sql,
+            `${table}: ${check.name} (${check.file}) no longer reads as its predicate was written - restate it`
+          ).toBe(normalizeCheck(predicate?.sql ?? ''));
+          for (const row of list) {
+            expect(predicate?.holds(row), `${table}.${String(row.id)} breaks ${check.name}`).toBe(
+              true
+            );
+          }
         }
       });
 

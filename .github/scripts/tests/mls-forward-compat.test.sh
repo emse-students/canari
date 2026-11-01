@@ -54,7 +54,7 @@ fi
 
 # `ci-passed` is the ONE check the branch ruleset requires, so a job it does not need cannot block
 # anything - it would go red beside a green merge.
-if sed -n '/^  ci-passed:/,/^  [a-z]/p' "$ci" | grep -q 'mls-forward-compat'; then
+if sed -n '/^  ci-passed:/,/^  [a-z]/p' "$ci" | grep 'mls-forward-compat' >/dev/null; then
   ok "ci-passed needs it, so a failure blocks the merge"
 else
   bad "ci-passed does not need mls-forward-compat - the gate cannot block anything"
@@ -114,7 +114,7 @@ else
   bad "the gate hardcodes an old version - it can now disagree with the frozen fixtures"
 fi
 
-if sed -n 's/^pub const FIXTURE_VERSION: &str = "\(.*\)";$/\1/p' "$params" | grep -q .; then
+if sed -n 's/^pub const FIXTURE_VERSION: &str = "\(.*\)";$/\1/p' "$params" | grep . >/dev/null; then
   ok "params.rs declares a FIXTURE_VERSION for it to read"
 else
   bad "params.rs no longer declares FIXTURE_VERSION, so the gate cannot pick a tag"

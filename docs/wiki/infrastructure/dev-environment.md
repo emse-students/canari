@@ -70,7 +70,7 @@ the two mechanisms above claim: **dev cannot corrupt production's data, and dev 
 production down - but the host can take both down in one gesture, and no compose-level property
 prevents that.** Anything that reasons "the dev estate is isolated, so operating on it is safe"
 must exclude host-level operations from that sentence. The consequence for scheduling unattended
-host upgrades is in [backlog](../backlog.md#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03).
+host upgrades is in [backlog](../infrastructure/host-updates.md#the-owners-three-old-vms-are-ignored-on-purpose-2026-10-24).
 
 ### The two host ports that differ, and why only two
 
@@ -157,7 +157,7 @@ needs no toolchain to load it (`bun tools/dev-seed/seed.ts --write` after an edi
 | --- | --- |
 | 10 people, last name `Fictif`, across formations, promotions and both campuses | communities, salons, DMs - anything under MLS. A community inserted as rows has no key-distribution group and no device holding its state, so nobody could ever read it. Testers create them through the product |
 | the ten spaces, three categories, six associations (`BDE Fictif` as the ICM x Saint-Etienne BDE, three clubs, a list, `Ecole Fictive` addressing everyone), their audiences and memberships (each president holds every flag) | media: a row naming an object the dev bucket does not hold renders as a 404 |
-| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (1.2.7, to follow the production floor: a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
+| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (`1.2.7` today; production's floor is `1.2.9` since 2026-10-29, so the seed must follow, owed in [backlog](../backlog.md): a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
 
 **Fake, checkably.** Last names are the marker, association names say `Fictif`/`Fictive`, every
 address is on `example.invalid` - the TLD RFC 2606 reserves so it can never resolve. User ids are 64
@@ -168,7 +168,13 @@ asserts determinism, that the committed SQL is the generator's output, the fake 
 reference inside the set, and - by PARSING the entity files
 ([`entities.ts`](../../../tools/dev-seed/entities.ts)) - that every table and column the SQL names is
 declared and insertable, that every column an INSERT cannot omit is given, and that a closed type's
-value is one it allows. A renamed column fails the pull request, not the reset.
+value is one it allows. A renamed column fails the pull request, not the reset. It also reads every
+named CHECK on a seeded table - from an entity's `@Check` and from the migrations, where several
+exist only - and demands a predicate for each that every row satisfies: migration 114's
+`CHK_user_follows_accepted_at` met seeded `accepted` follows with no `acceptedAt` (2026-10-27), and
+without this the first reset after the deploy would have rolled back on the box. Each predicate
+also names the expression it restates, so a constraint dropped and added back under the SAME name
+with another meaning fails too, instead of passing on the old predicate.
 
 **How a tester gets in.** Authentik is one shared instance and the dev OIDC client signs real
 accounts in; the app creates the tester's own row at the first sign-in (`findOrCreateFromOidc`) -
@@ -433,7 +439,7 @@ Run by `make test-ci-scripts`, which is a CI job:
 |---|---|
 | [`compose-wiring.test.sh`](../../../.github/scripts/tests/compose-wiring.test.sh) | the service list and its listening ports from the compose files; the NestJS app list from `apps/*/package.json` declaring `@nestjs/core`, each of which must set `NODE_ENV` |
 | [`dev-reset-guards.test.sh`](../../../.github/scripts/tests/dev-reset-guards.test.sh) | the truncate's table list from `pg_tables` and the ledger's name from `migrations.sh`; drives the real reset against a stub `docker`, and fails if the production copy returns |
-| [`seed.test.ts`](../../../tools/dev-seed/seed.test.ts) | every table and column the seed names, and every one it must give, from the entity declarations |
+| [`seed.test.ts`](../../../tools/dev-seed/seed.test.ts) | every table and column the seed names, every one it must give, and every CHECK on its tables, from the entity declarations and the migrations |
 | [`dev-gap.test.sh`](../../../.github/scripts/tests/dev-gap.test.sh) | the row set from production's compose file's named stateful images |
 | [`ceiling.test.sh`](../../../.github/scripts/tests/ceiling.test.sh) | the stateful image names from `docker-compose.prod.yml` |
 | [`deploy-env.test.sh`](../../../.github/scripts/tests/deploy-env.test.sh) | the expected `.env` key set from `deploy.yml`'s own `upsert_env_var` calls, and the dev secret list from the manifest - it also asserts that `deploy-dev` references no production secret by its bare name |

@@ -46,12 +46,33 @@
 # file, read off the branch Dependabot pushed (`ceiling_compose_from_ref`).
 : "${CEILING_AUTHENTIK_COMPOSE:=$(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/authentik/compose.yml}"
 
+# EVERY COMPOSE FILE THAT RUNS A THIRD-PARTY IMAGE, space-separated: the population an image's
+# statefulness is read from (`ceiling_image_may_cross_major`). Overridable for the self-tests. A file
+# named here and absent from the tree makes every image's statefulness UNKNOWN, which is refused.
+: "${CEILING_WATCHED_COMPOSES:=$CEILING_PROD_COMPOSE $(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/docker-compose.dev.yml $(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/local/docker-compose.yml $CEILING_AUTHENTIK_COMPOSE}"
+
 # An image reference reduced to the name Dependabot and production both mean. The identity
 # provider's file spells `docker.io/library/postgres`, production's `postgres`; a table matched on
 # one spelling walks past the other, so both sides of every comparison go through this.
-ceiling_image_name() { # <image name>
-  local n="${1:-}"
-  n="${n#docker.io/}"
+#
+# ANY REGISTRY PREFIX GOES, not only `docker.io/`: `mirror.gcr.io/library/postgres` and
+# `index.docker.io/library/postgres` are postgres, and a name list matched on the short spelling
+# walked past both (review of #2779). A first segment is a registry when it carries a `.` or a `:`,
+# or is `localhost` - Docker's own rule. A digest and a tag are not part of the name either.
+ceiling_image_name() { # <image name or reference>
+  local n="${1:-}" first last
+  # A digest and a tag live in the LAST segment; `@nestjs/common` starts with `@` and is a name.
+  last="${n##*/}"
+  case "$last" in *@*) n="${n%@*}"; last="${n##*/}" ;; esac
+  case "$last" in *:*) n="${n%:*}" ;; esac
+  case "$n" in
+    */*)
+      first="${n%%/*}"
+      case "$first" in
+        *.* | *:* | localhost) n="${n#*/}" ;;
+      esac
+      ;;
+  esac
   n="${n#library/}"
   printf '%s' "$n"
 }
@@ -63,9 +84,15 @@ prod_image_major() {
   awk -v want="$(ceiling_image_name "$1")" '
     $1 == "image:" {
       ref = $2
-      name = ref; sub(/:.*$/, "", name); sub(/^docker\.io\//, "", name); sub(/^library\//, "", name)
+      gsub(/^["\047]|["\047]$/, "", ref)
+      # The same reduction as `ceiling_image_name`: digest, tag, any registry, then `library/`.
+      name = ref; sub(/@.*$/, "", name)
+      last = name; sub(/^.*\//, "", last)
+      if (index(last, ":")) sub(/:[^:\/]*$/, "", name)
+      if (match(name, /^[^\/]*[.:][^\/]*\//) || match(name, /^localhost\//)) name = substr(name, RLENGTH + 1)
+      sub(/^library\//, "", name)
       if (name != want) next
-      tag = ref; sub(/^[^:]*:/, "", tag); sub(/@.*$/, "", tag); sub(/^v/, "", tag)
+      tag = ref; sub(/@.*$/, "", tag); sub(/^.*\//, "", tag); sub(/^[^:]*:?/, "", tag); sub(/^v/, "", tag)
       if (match(tag, /^[0-9]+/)) { print substr(tag, 1, RLENGTH); exit }
     }
   ' "${2:-$CEILING_PROD_COMPOSE}" 2>/dev/null
@@ -85,21 +112,30 @@ ceiling_compose_from_ref() { # <head ref>
 
 # A TREE NO PULL-REQUEST JOB BUILDS, named by the branch an update arrives on. Prints the missing
 # gate, or nothing. It is about the DIRECTORY, not the dependency, which is why it is apart from
-# `gate_for_dependency`: every name a Gradle update to the Android app carries is equally unseen.
+# `gate_for_dependency`: every name a Gradle update to a tree no job builds carries is equally unseen.
 #
-# `frontend/src-tauri/gen/android` is the Android app, and nothing on a pull request configures its
-# `:app` module: it applies `tauri.settings.gradle` (generated, git-ignored) and wants the
-# `google-services.json` secret, so it is compiled by `android.yml` at RELEASE time only. A green
-# suite on a Gradle bump there says nothing about the APK. `frontend/src-tauri/android-tests` is the
-# opposite case - a plain JVM project `test-android` builds and runs on every pull request that
-# touches it - so it is the ONE Gradle directory let through. An ALLOWLIST, so a Gradle directory
-# added to `dependabot.yml` later is refused until somebody shows a gate builds it.
+# TWO DIRECTORIES ARE LET THROUGH, and each because a pull-request job builds it - an ALLOWLIST, so a
+# Gradle directory added to `dependabot.yml` later is refused until somebody shows a gate builds it:
+#   - `frontend/src-tauri/android-tests`, a plain JVM project `test-android` builds and runs.
+#   - `frontend/src-tauri/gen/android`, the Android app. Until 2026-10-30 nothing on a pull request
+#     configured its `:app` module (it needs the generated, git-ignored `tauri.settings.gradle` and
+#     a `google-services.json`), so four bumps - the wrapper, AndroidX, Firebase - sat refused.
+#     `compile-android-app` in `ci.yml` now generates the first the way `tauri android build` does
+#     and uses a committed stub for the second, then compiles `:app`
+#     (`.github/scripts/android-app-compile.sh`). `ceiling.test.sh` asserts that job, its trigger and its
+#     wiring into `ci-passed` still exist, so a pull request that removes or disables the gate
+#     FAILS `test-ci-scripts` instead of silently leaving an allowance with nothing behind it.
 ceiling_gate_for_ref() { # <head ref>
+  local missing
+  missing="a pull-request job that compiles the Gradle tree this update is in. Only \`frontend/src-tauri/android-tests\` (\`test-android\`) and \`frontend/src-tauri/gen/android\` (\`compile-android-app\`) are built on a pull request; a Gradle directory added to dependabot.yml needs its own job, then an arm in \`ceiling_gate_for_ref\` - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
   case "${1:-}" in
+    # DEPENDABOT'S DIRECT SHAPE ONLY: `gen/android/<dependency>-<version>`. A branch one directory
+    # deeper is not a shape Dependabot writes for this block, so it is not the update this job was
+    # written to judge, and it is refused rather than trusted by prefix.
+    dependabot/gradle/frontend/src-tauri/gen/android/*/*) echo "$missing" ;;
     dependabot/gradle/frontend/src-tauri/android-tests/*) ;;
-    dependabot/gradle/*)
-      echo "a pull-request job that configures and compiles the Android \`:app\` module (\`frontend/src-tauri/gen/android\`). Today only \`android.yml\` builds it, at RELEASE time, because configuring it needs the generated \`tauri.settings.gradle\` and the \`google-services.json\` secret (see \`frontend/src-tauri/android-tests/settings.gradle.kts\`); \`test-android\` compiles the JVM project \`android-tests\` and nothing else. So no gate here would see this Gradle update break the APK before a release did - see docs/wiki/cicd.md, 'Native and identity-provider manifests'"
-      ;;
+    dependabot/gradle/frontend/src-tauri/gen/android/*) ;;
+    dependabot/gradle/*) echo "$missing" ;;
     *) ;;
   esac
 }
@@ -140,6 +176,105 @@ third_party_stateful_images() {
   done <<EOF
 $(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
 EOF
+}
+
+# EVERY SERVICE OF A COMPOSE FILE THAT NAMES AN IMAGE, as `<data-mount count> <image reference>`,
+# for `ceiling_image_may_cross_major`. It is apart from `compose_stateful_images`, which answers a
+# narrower question (NAMED volumes, for the coverage and dev-gap tests), because this one must FAIL
+# CLOSED, and the first draft did not (review of #2779):
+#   - the indentation is read off the file, so a file indented four spaces per level parses too;
+#   - a mount is DATA unless it is a bind mount marked read-only: a named volume (hyphenated or
+#     not), an anonymous one (`- /var/lib/mysql`), a writable bind (`- ./pgdata:/var/...`), quoted
+#     or not. In the long syntax only `type: bind` with `read_only: true` is exempt, and an inline
+#     list (`volumes: [...]`) that is not empty counts as data because nothing here parses it.
+#   - `volumes_from` is data, whatever it names: it mounts another service's volumes.
+#   - `extends` and a top-level `include` pull services from elsewhere, which nothing here reads, so
+#     a file using either makes the awk exit 3 and the caller refuses (re-review of #2779).
+#   - `tmpfs` is not a mount here: it is empty at every start, so there is no old data to refuse.
+ceiling_compose_image_data() { # <compose file>
+  awk '
+    function indent(l) { match(l, /^ */); return RLENGTH }
+    function unq(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v); return v }
+    function flush_item(   v, n, part, bind, ro) {
+      if (!initem) return
+      v = unq(item)
+      if (v ~ /^[a-z_]+:([ \t]|$)/) {
+        if (!(v ~ /(^|[ \t])type:[ \t]*["\047]?bind/ && v ~ /read_only:[ \t]*true/)) data++
+      } else {
+        n = split(v, part, ":")
+        bind = (n >= 2 && part[1] ~ /^(\.|\/|~|\$)/)
+        ro = (n >= 3 && part[n] ~ /(^|,)ro(,|$)/)
+        if (!(bind && ro)) data++
+      }
+      initem = 0; item = ""
+    }
+    function flush_service() {
+      flush_item()
+      # The count FIRST: an image reference may hold spaces (`${TAG:?TAG is required}`).
+      if (image != "") print data, image
+      image = ""; data = 0; invol = 0; keyind = -1
+    }
+    BEGIN { svc = -1; keyind = -1 }
+    /^[ \t]*(#|$)/ { next }
+    { ind = indent($0); line = substr($0, ind + 1); sub(/[ \t]+#.*$/, "", line) }
+    ind == 0 && line ~ /^include:/ { foreign = 1 }
+    ind == 0 { flush_service(); inservices = (line ~ /^services:[ \t]*$/); svc = -1; next }
+    !inservices { next }
+    svc < 0 { svc = ind }
+    ind <= svc { flush_service(); next }
+    keyind < 0 { keyind = ind }
+    invol {
+      if (line ~ /^-/ && ind >= volind && (itemind < 0 || ind == itemind)) {
+        flush_item(); itemind = ind; initem = 1; item = line; sub(/^-[ \t]*/, "", item); next
+      }
+      if (initem && ind > itemind) { item = item " " line; next }
+      flush_item(); invol = 0
+    }
+    ind != keyind { next }
+    line ~ /^image:/ { v = line; sub(/^image:[ \t]*/, "", v); image = unq(v); next }
+    line ~ /^volumes:[ \t]*$/ { invol = 1; volind = ind; itemind = -1; next }
+    line ~ /^volumes:[ \t]*\[/ { if (line !~ /\[[ \t]*\]/) data++; next }
+    line ~ /^volumes_from:/ { data++; next }
+    line ~ /^extends:/ { foreign = 1; next }
+    END { flush_service(); if (foreign) exit 3 }
+  ' "$1"
+}
+
+# MAY A CONTAINER IMAGE MOVE ACROSS A MAJOR WITH NO PERSON IN THE LOOP? Exit 0 only when it is
+# PROVEN stateless; every other answer, unknown included, is no.
+#
+# AN ALLOWLIST, NOT A DENYLIST OF DATASTORE NAMES (2026-10-31). The arm in `gate_for_dependency`
+# matched `postgres | redis | garage` by name, and `ceiling.test.sh` kept that list honest only for
+# the two compose files it read. A stateful image added to the dev or local stack, or a new
+# datastore under a name nobody typed, crossed a major as a "stateless" image. So the question is
+# turned round: an image may cross a major only when it is not a known datastore AND every watched
+# compose file (`CEILING_WATCHED_COMPOSES`) could be read AND parsed to at least one image AND none
+# of them mounts data for it (`ceiling_compose_image_data`). A Dockerfile base (`node`, `rust`) is in
+# no compose file and holds no data directory, so it passes; `adminer` and `nginx` mount read-only
+# configuration and pass. A missing file, one that parses to no image at all, or one that takes
+# services from elsewhere (`extends`, `include`) fails closed.
+ceiling_image_may_cross_major() { # <image name>
+  local want f ref vols rows
+  want="$(ceiling_image_name "${1:-}")"
+  case "$want" in
+    '' | postgres | redis | garage | dxflrs/garage) return 1 ;;
+  esac
+  for f in $CEILING_WATCHED_COMPOSES; do
+    [ -r "$f" ] || return 1
+    # Exit 3 is a file that takes services from elsewhere (`extends`, `include`): not provable here.
+    rows="$(ceiling_compose_image_data "$f")" || return 1
+    # A readable file that yields no image is a parse that failed, not a file with nothing in it.
+    [ -n "$rows" ] || return 1
+    while read -r vols ref; do
+      [ -z "$ref" ] && continue
+      if [ "$(ceiling_image_name "$ref")" = "$want" ] && [ "${vols:-0}" -gt 0 ]; then
+        return 1
+      fi
+    done <<EOF
+$rows
+EOF
+  done
+  return 0
 }
 
 # THE ECOSYSTEM DEPENDABOT IS UPDATING, READ OFF THE BRANCH IT PUSHED.
@@ -263,78 +398,94 @@ dev_proven_major() {
   ' "$CEILING_VERSION_GAP" 2>/dev/null
 }
 
+# THE NAME THE TABLE MATCHES, for dependency "$1" of ecosystem "$2". An image name is reduced
+# (`ceiling_image_name`) ONLY for an image - the docker ecosystems, or an unknown one, which fails
+# closed as everywhere here. That reduction drops what follows the last `:`, which is a tag for a
+# container and the ARTIFACT for a Gradle coordinate: `com.google.firebase:firebase-messaging-ktx`
+# became `com.google.firebase` (re-review of #2779). Every other ecosystem keeps its name whole.
+ceiling_dependency_subject() { # <name> <ecosystem>
+  case "${2:-}" in
+    '' | docker | docker_compose) ceiling_image_name "${1:-}" ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
 # Prints the gate this repository lacks for "$1", or nothing at all when the check suite is already
 # evidence about it. The name is matched AFTER quote-stripping by the caller, and with
 # `docker.io/library/` removed (`ceiling_image_name`). "$4" is the compose file the update is in
 # (`ceiling_compose_from_ref`), production's when absent.
 gate_for_dependency() {
   local __ceiling_compose="${4:-$CEILING_PROD_COMPOSE}"
-  case "$(ceiling_image_name "$1")" in
-    # ---------------------------------------------------------------------------------------------
-    # STATEFUL DATASTORES: THE ONE FAILURE MODE CI STRUCTURALLY CANNOT SEE
-    # ---------------------------------------------------------------------------------------------
-    # A library bump either compiles or it does not. A DATASTORE MAJOR is refused by the DATA THAT
-    # IS ALREADY ON DISK, and every gate in this repository starts from an empty volume - `make
-    # run-ci`, `boot-nest-apps` and the compose stacks all create their database from nothing, so
-    # they exercise the ONE case that always works. Green here says "18 can initialise a fresh
-    # cluster"; it says nothing whatsoever about the cluster production actually has.
-    #
-    # Measured, not inferred, on 2026-09-01: postgres 18 exits on startup with `database files are
-    # incompatible with server` / `Counter to that, there appears to be PostgreSQL data in:
-    # /var/lib/postgresql/data`, because 18+ images changed the mount layout to
-    # major-version-specific subdirectories on top of needing `pg_upgrade`. Eight services depend on
-    # `auth_db`, the only database, so the whole estate went with it.
-    #
-    # The gate is the same shape for all three, which is why they share an arm.
-    #
-    # IT REFUSES A MAJOR CROSSING AND NOTHING ELSE, and that limit is as load-bearing as the arm.
-    # Refusing the whole NAME was the first draft of this repair, and it was wrong for a reason this
-    # repository has already written down: `dependabot.yml` exists over the compose files precisely
-    # because "a digest nothing updates is a FREEZE, not a pin - it converts silently moving into
-    # silently ageing, and the second failure mode is the one nobody notices for a year". Two open
-    # pull requests would have been caught by that draft (#306, #308: `redis 8.8-alpine ->
-    # 8.10-alpine`) and neither can meet the failure mode - an on-disk format is stable WITHIN a
-    # major, which is the entire content of the major-version contract. So the discriminator is the
-    # major production is running, read from the compose file rather than assumed.
-    #
-    # IT FAILS CLOSED. If either major cannot be read - an unparseable tag, an image the compose file
-    # does not name, an empty `dependency-version` - the update is refused. The cost of a false
-    # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
-    postgres | redis | garage | dxflrs/garage)
-      # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
-      # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
-      # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
-      # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
-      #
-      # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
-      # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
-      # releases the arm, which is the safe direction of this change.
-      case "${3:-}" in
-        '' | docker | docker_compose) ;;
-        *) return 0 ;;
-      esac
-      __ceiling_current=$(prod_image_major "$1" "$__ceiling_compose")
-      __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
-      if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
-        [ "$__ceiling_current" = "$__ceiling_proposed" ]; then
-        # Same major: the on-disk format the stack already has is the one this image reads.
+  # ---------------------------------------------------------------------------------------------
+  # STATEFUL DATASTORES: THE ONE FAILURE MODE CI STRUCTURALLY CANNOT SEE
+  # ---------------------------------------------------------------------------------------------
+  # A library bump either compiles or it does not. A DATASTORE MAJOR is refused by the DATA THAT
+  # IS ALREADY ON DISK, and every gate in this repository starts from an empty volume - `make
+  # run-ci`, `boot-nest-apps` and the compose stacks all create their database from nothing, so
+  # they exercise the ONE case that always works. Green here says "18 can initialise a fresh
+  # cluster"; it says nothing whatsoever about the cluster production actually has.
+  #
+  # Measured, not inferred, on 2026-09-01: postgres 18 exits on startup with `database files are
+  # incompatible with server` / `Counter to that, there appears to be PostgreSQL data in:
+  # /var/lib/postgresql/data`, because 18+ images changed the mount layout to
+  # major-version-specific subdirectories on top of needing `pg_upgrade`. Eight services depend on
+  # `auth_db`, the only database, so the whole estate went with it.
+  #
+  # The gate is the same shape for every image that holds data, which is why they share one arm.
+  #
+  # IT REFUSES A MAJOR CROSSING AND NOTHING ELSE, and that limit is as load-bearing as the arm.
+  # Refusing the whole NAME was the first draft of this repair, and it was wrong for a reason this
+  # repository has already written down: `dependabot.yml` exists over the compose files precisely
+  # because "a digest nothing updates is a FREEZE, not a pin - it converts silently moving into
+  # silently ageing, and the second failure mode is the one nobody notices for a year". Two open
+  # pull requests would have been caught by that draft (#306, #308: `redis 8.8-alpine ->
+  # 8.10-alpine`) and neither can meet the failure mode - an on-disk format is stable WITHIN a
+  # major, which is the entire content of the major-version contract. So the discriminator is the
+  # major production is running, read from the compose file rather than assumed.
+  #
+  # IT FAILS CLOSED. If either major cannot be read - an unparseable tag, an image the compose file
+  # does not name, an empty `dependency-version` - the update is refused. The cost of a false
+  # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
+  #
+  # WHICH IMAGES IT APPLIES TO IS AN ALLOWLIST (2026-10-31): every container image EXCEPT those
+  # `ceiling_image_may_cross_major` proves stateless - a named datastore, an image any watched
+  # compose file gives a named volume, and any image at all while a watched file is unreadable.
+  case "${3:-}" in
+    '' | docker | docker_compose)
+      if ! ceiling_image_may_cross_major "$1"; then
+        # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
+        # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
+        # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
+        # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
+        #
+        # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
+        # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
+        # releases the arm, which is the safe direction of this change.
+        __ceiling_current=$(prod_image_major "$1" "$__ceiling_compose")
+        __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
+        if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
+          [ "$__ceiling_current" = "$__ceiling_proposed" ]; then
+          # Same major: the on-disk format the stack already has is the one this image reads.
+          return 0
+        fi
+        # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
+        # else - not the next major, not a sibling image that happens to sit in the same arm, and not
+        # another stack's database: `version-gap.yml` records rehearsals of PRODUCTION's data
+        # directory, so it says nothing about the identity provider's.
+        __ceiling_proven=''
+        if [ "$__ceiling_compose" = "$CEILING_PROD_COMPOSE" ]; then
+          __ceiling_proven=$(dev_proven_major "$(ceiling_image_name "$1")")
+        fi
+        if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
+          [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
+          return 0
+        fi
+        echo "a migration plan, because a MAJOR bump of an image that holds data cannot be judged by any gate here: a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major \`${__ceiling_compose##*/infrastructure/}\` runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
         return 0
       fi
-      # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
-      # else - not the next major, not a sibling image that happens to sit in the same arm, and not
-      # another stack's database: `version-gap.yml` records rehearsals of PRODUCTION's data
-      # directory, so it says nothing about the identity provider's.
-      __ceiling_proven=''
-      if [ "$__ceiling_compose" = "$CEILING_PROD_COMPOSE" ]; then
-        __ceiling_proven=$(dev_proven_major "$(ceiling_image_name "$1")")
-      fi
-      if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
-        [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
-        return 0
-      fi
-      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major \`${__ceiling_compose##*/infrastructure/}\` runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
       ;;
-
+  esac
+  case "$(ceiling_dependency_subject "$1" "${3:-}")" in
     # ---------------------------------------------------------------------------------------------
     # WIRE FORMATS: A FROZEN FIXTURE CAN ONLY EVER SEE ONE DIRECTION
     # ---------------------------------------------------------------------------------------------

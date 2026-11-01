@@ -377,7 +377,6 @@
   externalError={changePinError}
   isLoading={changePinLoading}
   loadingProgress={changePinProgress}
-  account={session.userId}
 />
 
 {#if session.isLoggedIn}

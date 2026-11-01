@@ -75,6 +75,16 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
     expect(got).toMatchObject({ groupId: 'g-1', activeEpoch: 284, baseEpoch: 283 });
   });
 
+  it('never returns the internal creator column, whoever holds the id', async () => {
+    groupRepo.findOne.mockResolvedValue({ ...ROW, createdBy: 'creator-id' });
+    groupInfoRepo.findOne.mockResolvedValue(null);
+
+    const got = await controller.getGroup('g-1');
+
+    expect(got).not.toHaveProperty('createdBy');
+    expect(got).toMatchObject({ groupId: 'g-1', name: 'Amis' });
+  });
+
   it('answers null - not zero - when no base has ever been published', async () => {
     // AND THE DIFFERENCE IS THE WHOLE POINT. `0` would read as "a base exists and is 284 epochs
     // behind", which is a stale base and asks for a republish; nothing has been lost here, and the

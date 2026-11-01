@@ -45,7 +45,7 @@ function makeService(rows: unknown[]) {
       ])
     ),
   };
-  // POSITIONAL, AND THIRTEEN LONG - keep these comments aligned with the constructor's parameter
+  // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the constructor's parameter
   // list in `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
@@ -60,7 +60,8 @@ function makeService(rows: unknown[]) {
     undefined as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   return { service, assoRepo };
 }

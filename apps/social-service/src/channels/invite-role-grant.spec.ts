@@ -1,6 +1,7 @@
 import { ForbiddenException, Logger } from '@nestjs/common';
 import { FindOperator, Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -90,6 +91,8 @@ describe('the role an invitation grants', () => {
       find: jest.fn().mockResolvedValue([]),
       create: jest.fn((x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve(x)),
+      // An admission re-checks under the removal lock that the community still has members.
+      count: jest.fn().mockResolvedValue(1),
     };
     const roleRepo = {
       find: jest.fn(
@@ -106,6 +109,9 @@ describe('the role an invitation grants', () => {
       ),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo, memberRepo, roleRepo })),
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

@@ -19,6 +19,31 @@ function domError(name: string): DOMException {
   return new DOMException('x', name);
 }
 
+/** The primary pointer: a finger on a phone (`coarse`), a mouse on a desktop. */
+function pointer(coarse: boolean): void {
+  vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: coarse } as MediaQueryList);
+}
+
+/**
+ * The `facingMode` the first `getUserMedia` call asked for.
+ */
+function askedFacing(gum: { mock: { calls: unknown[][] } }): unknown {
+  return ((gum.mock.calls[0]![0] as MediaStreamConstraints).video as MediaTrackConstraints)
+    .facingMode;
+}
+
+/**
+ * A `getUserMedia` that answers like a DESKTOP webcam: it reports no facing, so an EXACT facing is
+ * an `OverconstrainedError` and an IDEAL one opens the camera.
+ */
+function desktopWebcam() {
+  return vi.fn(async (c: MediaStreamConstraints) => {
+    const fm = (c.video as MediaTrackConstraints).facingMode as { exact?: string } | undefined;
+    if (fm?.exact) throw domError('OverconstrainedError');
+    return { getVideoTracks: () => [{ label: 'webcam' }] };
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -49,6 +74,7 @@ describe('classifyCameraError', () => {
 
 describe('openPhotoCamera (a chat photo never asks for the microphone)', () => {
   it('requests the lens with audio: false', async () => {
+    pointer(true);
     vi.stubGlobal('screen', { width: 393, height: 851 });
     const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'front' }] });
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
@@ -126,6 +152,7 @@ describe('postCameraOpener (a refused microphone leaves the photos)', () => {
 
 describe('openReelCamera', () => {
   it('asks for both tracks, the lens and the reel frame as the screen shows it, and hands back the stream', async () => {
+    pointer(true);
     vi.stubGlobal('screen', { width: 393, height: 851 });
     vi.stubGlobal('devicePixelRatio', 2.75);
     const stream = { getVideoTracks: () => [{ label: 'camera 0, facing back' }] };
@@ -145,7 +172,8 @@ describe('openReelCamera', () => {
     });
   });
 
-  it('asks the FRONT lens exactly, so iOS cannot answer the back one', async () => {
+  it('asks the FRONT lens exactly on a phone, so iOS cannot answer the back one', async () => {
+    pointer(true);
     vi.stubGlobal('screen', { width: 393, height: 851 });
     const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'front' }] });
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
@@ -154,6 +182,7 @@ describe('openReelCamera', () => {
   });
 
   it('logs an error, and does not switch, when the track reports another lens', async () => {
+    pointer(true);
     vi.stubGlobal('screen', { width: 393, height: 851 });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const track = { label: 'x', getSettings: () => ({ facingMode: 'environment' }) };
@@ -162,6 +191,38 @@ describe('openReelCamera', () => {
     await openReelCamera('user');
     expect(error).toHaveBeenCalled();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('DESKTOP: the first capture asks the lens IDEAL, so a webcam with no facing opens', async () => {
+    pointer(false);
+    vi.stubGlobal('screen', { width: 1920, height: 1080 });
+    const getUserMedia = desktopWebcam();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await expect(openReelCamera('user')).resolves.toBeDefined();
+    expect(askedFacing(getUserMedia)).toEqual({ ideal: 'user' });
+  });
+
+  it('DESKTOP: an explicit switch is EXACT, and a lens that does not exist is a typed unavailable', async () => {
+    pointer(false);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('screen', { width: 1920, height: 1080 });
+    const getUserMedia = desktopWebcam();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    const err = await openReelCamera('environment', true, true).catch((e: unknown) => e);
+    expect(askedFacing(getUserMedia)).toEqual({ exact: 'environment' });
+    expect(err).toBeInstanceOf(CameraAccessError);
+    expect((err as CameraAccessError).fault).toBe('unavailable');
+  });
+
+  it('PHONE: a switch is exact too', async () => {
+    pointer(true);
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'back' }] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await openPhotoCamera('environment', true);
+    expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'environment' });
   });
 
   it('throws a typed refusal, never the engine error', async () => {

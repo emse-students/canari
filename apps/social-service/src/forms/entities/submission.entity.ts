@@ -45,6 +45,8 @@ export class Submission {
    * - `paid` - paid (online or cash validated)
    * - `paid_over_capacity` - an online payment that landed after its seat was released, on a full
    *   form: the money is in, no seat was given, the organiser refunds it
+   * - `refunded` - paid, then refunded IN FULL through Canari (migration 120): the seat is free
+   *   again and a late confirmation of that payment is a replay (`SETTLED_PAYMENT_STATUSES`)
    * - `cancelled` - cancelled / abandoned
    * - `expired` - cash payment window elapsed without validation, or an online `pending` past the
    *   hold (`paymentMethod` tells the two apart: `cash` or null)
@@ -77,6 +79,18 @@ export class Submission {
    */
   @Column({ type: 'varchar', length: 64, nullable: true })
   paymentSettledBy: string | null;
+
+  /**
+   * The order_ref of the CURRENT Lydia request (migration 120), written when it is issued: what a
+   * refund of this answer's payment is sent with. NULL before 120 - such a payment cannot be refunded
+   * from Canari. `select: false`: no read of a submission carries it unless it asks by name.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  lydiaOrderRef: string | null;
+
+  /** The Lydia Business the CURRENT request was issued to (migration 120), same rules. */
+  @Column({ type: 'varchar', length: 256, nullable: true, select: false })
+  lydiaVendorToken: string | null;
 
   /** When a cash payment expires if not validated (computed from form.cashPaymentExpiryDays). */
   @Column({ type: 'timestamptz', nullable: true })

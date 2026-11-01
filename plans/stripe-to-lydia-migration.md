@@ -68,7 +68,7 @@ l'existant (refactor sans changement de comportement — étape livrable et test
 
 ### Mapping confirmé Stripe -> Lydia (spec lue en entier, plus aucune supposition sur les champs)
 
-Auth : trois tokens - `vendor_token` (= `api_token`, identifie une Business, PUBLIC), `provider_token`
+Auth : trois tokens - `vendor_token` (= `api_token`, identifie une Business), `provider_token`
 (identifie Canari comme partenaire au-dessus des Business - c'est le rôle exact que joue Canari
 aujourd'hui vis-à-vis des comptes Stripe Connect de chaque association), `user_token` (un individu,
 p2p). Il existe un second token, **jamais envoyé** : le `private_token` (= `api_token_id` pour une
@@ -192,7 +192,7 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   par le webhook) - **changement de conception de l'interface, pas juste une implémentation** ; ces
   méthodes lèvent une erreur explicite pour l'instant plutôt que de mentir sur le statut. Le récepteur
   de ce webhook n'a délibérément pas été construit (2026-08-19, décision utilisateur) : il n'a aucune
-  signature documentée et `vendor_token` est PUBLIC - voir la question ajoutée au Livrable A.
+  signature documentée - voir la question ajoutée au Livrable A.
 - Reste à faire pour clore Phase 2 : `business/addcashier` + permissions (peut se faire dès maintenant,
   ne dépend d'aucune réponse Lydia), le `payerRecipient` ci-dessus, et la lacune du statut en direct.
 - **Décision utilisateur actée sur le débit "carte enregistrée"** : plutôt qu'un plafond partagé
@@ -264,9 +264,8 @@ ci-dessus. **2026-09-18 : cinq des huit points ci-dessous sont désormais répon
   le `private_token` du PROVIDER (Canari)**, jamais celui de la Business ciblée. L'hypothèse prise en
   implémentant Phase 2 était donc correcte ; plus rien à vérifier avant la prod sur ce point.
 - **Le webhook `business/create` (`{vendor_token, event: BUSINESS_VALIDATED|BUSINESS_UNVALIDATED}`)**
-  : **confirmé sans schéma de signature**, comme observé dans la doc. `vendor_token` étant PUBLIC, un
-  récepteur non signé serait forgeable par quiconque connaît le `vendor_token` d'une autre
-  association - la décision de ne pas construire ce récepteur (2026-08-19) reste donc la bonne, avec
+  : **confirmé sans schéma de signature**, comme observé dans la doc. Un récepteur non signé
+  serait forgeable - la décision de ne pas construire ce récepteur (2026-08-19) reste donc la bonne, avec
   certitude plutôt qu'avec une lacune de documentation.
 
 **Encore ouvert :**

@@ -242,12 +242,13 @@ for c_case in "dependabot/docker_compose/infrastructure/authentik/postgres-18-al
   fi
 done
 
-# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries: the Android app module is compiled
-# only at release time. The JVM test project beside it is built by `test-android`, and is the one
-# Gradle directory let through - an allowlist, so a Gradle directory added later starts refused.
+# A TREE NO PULL-REQUEST JOB BUILDS refuses whatever it carries. The JVM test project is built by
+# `test-android` and the Android app module by `compile-android-app` (2026-10-30); those are the two
+# Gradle directories let through - an allowlist, so a Gradle directory added later starts refused.
 echo "a Gradle update is refused unless a pull-request job builds its tree:"
-for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|refused" \
-  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-dependencies-1a2b3c|refused" \
+for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.firebase-firebase-messaging-ktx-25.0.0|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android/gradle-wrapper-9.7.1|allowed" \
+  "dependabot/gradle/frontend/src-tauri/gen/android-extra/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/sub/directory/junit-junit-4.13.3|refused"   "dependabot/gradle/frontend/src-tauri/gen/android/production-dependencies-25cde2b0f9|allowed" \
   "dependabot/gradle/some/new/directory/junit-junit-4.13.3|refused" \
   "dependabot/gradle/frontend/src-tauri/android-tests/junit-junit-4.13.3|allowed" \
   "dependabot/cargo/apps/chat-gateway/serde-1.0.5|allowed" \
@@ -260,6 +261,217 @@ for t_case in "dependabot/gradle/frontend/src-tauri/gen/android/com.google.fireb
     echo "  FAIL $ref -> $got, expected $want"
     failures=$((failures + 1))
   fi
+done
+
+# THE ALLOWANCE FOR `gen/android` IS ONLY AS GOOD AS THE JOB BEHIND IT. If `compile-android-app` is
+# removed, disabled (`if: false`), narrowed so it no longer sees `gen/android`, or dropped from
+# `ci-passed`, the arm above would let a Gradle bump merge on a suite that never compiles `:app` -
+# the exact hole it was written to close. A pull request that does any of that FAILS HERE, in
+# `test-ci-scripts`; the guard makes the removal visible, it cannot restore the gate.
+echo "the gen/android allowance has a gate behind it:"
+tests_dir="$(dirname "${BASH_SOURCE[0]}")"
+ci_yml="$tests_dir/../../workflows/ci.yml"
+check_that() { # <description> <command...>: ok when the command succeeds
+  local description="$1"; shift
+  if "$@"; then echo "  ok   $description"; else echo "  FAIL $description"; failures=$((failures + 1)); fi
+}
+check_not() { # <description> <command...>: ok when the command FAILS
+  local description="$1"; shift
+  if "$@"; then echo "  FAIL $description"; failures=$((failures + 1)); else echo "  ok   $description"; fi
+}
+# The job's own text: from its key to the next job key at the same indentation.
+job_block="$(awk '/^  compile-android-app:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
+job_has() { grep -qE "$1" <<<"$job_block"; }
+check_that "ci.yml carries a compile-android-app job" test -n "$job_block"
+check_that "the job runs when the android_app filter says so, and not under some other condition" \
+  job_has '^    if: \$\{\{ needs\.changes\.outputs\.run-android-app == .true. \}\}$'
+check_that "the job runs android-app-compile.sh" job_has '^        run: bash \.github/scripts/android-app-compile\.sh$'
+check_that "android-app-compile.sh is executable" test -x "$tests_dir/../android-app-compile.sh"
+# The filter itself is EVALUATED, not grepped: the `if has ...` of the `android_app` block is run
+# against a real path of the tree this job exists to watch, and against one it must not fire on.
+filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c=1} c{print} c && /; then$/{exit}' "$ci_yml")"
+# shellcheck disable=SC2317,SC2329  # `has` is called by the `if has ...` text evaluated below
+filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
+  (
+    CHANGED="$1"
+    has() { echo "$CHANGED" | grep -qE "$1"; }
+    eval "$filter_if
+      exit 0
+    else
+      exit 1
+    fi"
+  )
+}
+check_that "the filter fires for a change to gen/android" filter_fires "frontend/src-tauri/gen/android/app/build.gradle.kts"
+check_that "the filter fires for the Gradle wrapper (the #2564 case)" filter_fires "frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
+check_that "the filter fires for the app crate's Rust, the only Android-target compile on a pull request" filter_fires "frontend/src-tauri/src/lib.rs"
+check_not "the filter stays quiet for an unrelated change" filter_fires "apps/core-service/src/main.ts"
+# ...and it must be in the aggregate the ruleset requires, or its failure would block nothing.
+ci_passed_needs() { sed -n '/^  ci-passed:/,$p' "$ci_yml" | sed -n '/needs:/,/\]/p' | grep 'compile-android-app' >/dev/null; }
+check_that "ci-passed needs compile-android-app" ci_passed_needs
+
+# -------------------------------------------------------------------------------------------------
+# WHICH IMAGES MAY CROSS A MAJOR IS AN ALLOWLIST: PROVEN STATELESS, OR REFUSED (2026-10-31)
+# -------------------------------------------------------------------------------------------------
+# #2742 proposed `library/postgres 16-alpine -> 18-alpine` for the identity provider's stack. These
+# run off FIXTURES spelling that stack's numbers, so they keep asserting the incident's shape after
+# the real pins move. The watched set is overridden, so "stateful" is read from the fixtures alone.
+#
+# THROUGH THE REAL PATH: `expect_on_ref` derives the ecosystem and the compose file from the branch,
+# exactly as `dependency-ceiling.sh` does. Handing `gate_for_dependency` a file by hand asserted a
+# wiring the driver never has (review of #2779).
+expect_on_ref() { # <allowed|refused> <name> <version> <branch> [why]
+  local want="$1" name="$2" version="$3" ref="$4" why="${5:-}" gate got
+  gate=$(gate_for_dependency "$name" "$version" "$(ceiling_ecosystem_from_ref "$ref")" "$(ceiling_compose_from_ref "$ref")")
+  if [ -n "$gate" ]; then got=refused; else got=allowed; fi
+  if [ "$got" = "$want" ]; then
+    echo "  ok   $name $version on ${ref#dependabot/} is $got"
+  else
+    echo "  FAIL $name $version on ${ref#dependabot/} is $got, expected $want${why:+: $why}"
+    failures=$((failures + 1))
+  fi
+}
+# Statefulness alone, for the mount shapes: is this image PROVEN stateless?
+expect_stateless() { # <yes|no> <image> <why>
+  local got=no
+  if ceiling_image_may_cross_major "$2"; then got=yes; fi
+  if [ "$got" = "$1" ]; then
+    echo "  ok   $2 may cross a major: $got"
+  else
+    echo "  FAIL $2 may cross a major: $got, expected $1 - $3"
+    failures=$((failures + 1))
+  fi
+}
+echo "an image may cross a major only when no watched compose file mounts data for it:"
+allow_work=$(mktemp -d)
+printf 'services:\n  postgresql:\n    image: docker.io/library/postgres:16-alpine\n    volumes:\n      - database:/var/lib/postgresql/data\n' > "$allow_work/authentik.yml"
+printf 'services:\n  garage:\n    image: dxflrs/garage:v2.4.1\n    volumes:\n      - meta:/var/lib/garage/meta\n  edge:\n    image: nginx:1.31.8-alpine\n    volumes:\n      - ./nginx.conf:/etc/nginx/nginx.conf:ro\n  admin:\n    image: adminer@sha256:251295c1\n' > "$allow_work/prod.yml"
+# EVERY MOUNT SHAPE THE FIRST PARSER READ AS STATELESS (review of #2779), one image each, in no name
+# list - so only the parse can make them stateful.
+cat > "$allow_work/local.yml" <<'YAML'
+services:
+  hyphenated:
+    image: bitnami/postgresql:16
+    volumes:
+      - auth-db-data:/bitnami/postgresql
+  quoted:
+    image: valkey/valkey:8.1-alpine
+    volumes:
+      - "vk:/data"
+  anonymous:
+    image: mariadb:11.4
+    volumes:
+      - /var/lib/mysql
+  writable-bind:
+    image: mongo:7
+    volumes:
+      - ./pgdata:/data/db
+  long-syntax:
+    image: mysql:8.4
+    volumes:
+      - type: volume
+        source: mysql
+        target: /var/lib/mysql
+  read-only-bind:
+    image: traefik:3.1
+    volumes:
+      - type: bind
+        source: ./traefik.yml
+        target: /etc/traefik/traefik.yml
+        read_only: true
+volumes:
+  auth-db-data:
+YAML
+# FOUR SPACES PER LEVEL: the first parser yielded no row at all for it.
+printf 'services:\n    store:\n        image: minio/minio:RELEASE.2026-01-01T00-00-00Z\n        volumes:\n            - objects:/data\n' > "$allow_work/four.yml"
+# The real files are restored after this block: the assertions below it read them.
+saved_composes=("$CEILING_PROD_COMPOSE" "$CEILING_AUTHENTIK_COMPOSE" "$CEILING_WATCHED_COMPOSES" "$CEILING_VERSION_GAP")
+CEILING_PROD_COMPOSE="$allow_work/prod.yml"
+CEILING_AUTHENTIK_COMPOSE="$allow_work/authentik.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/local.yml $allow_work/four.yml $allow_work/authentik.yml"
+CEILING_VERSION_GAP="$allow_work/no-gap.yml"
+auth_ref=dependabot/docker_compose/infrastructure/authentik/library/postgres-18-alpine
+prod_ref=dependabot/docker_compose/infrastructure/dxflrs/garage-v2.5.0
+local_ref=dependabot/docker_compose/infrastructure/local/image-x
+# THE #2742 TRAILER, verbatim: `library/postgres`, `18-alpine`, on its own branch.
+expect_on_ref refused "library/postgres" "18-alpine" "$auth_ref" "#2742: a postgres major on the identity provider's 16 cluster"
+expect_on_ref allowed "library/postgres" "16.5-alpine" "$auth_ref"   # 16.4 -> 16.5
+expect_on_ref allowed "dxflrs/garage" "v2.5.0" "$prod_ref"           # #2741, a minor
+expect_on_ref refused "dxflrs/garage" "v3.0.0" "$prod_ref" "garage mounts a named volume"
+# A stateless image's major is the suite's business, and so is a Dockerfile base in no compose file.
+expect_on_ref allowed nginx "2.0.0-alpine" "$prod_ref"   # a read-only bind of configuration is not state
+expect_on_ref allowed adminer "6.0.0" "$prod_ref"
+expect_on_ref allowed node "27-alpine" dependabot/docker/frontend/node-27-alpine
+# The mount shapes, one by one.
+expect_stateless no bitnami/postgresql "a hyphenated named volume is a named volume"
+expect_stateless no valkey/valkey "a quoted entry is still a volume"
+expect_stateless no mariadb "an anonymous volume persists across a recreate"
+expect_stateless no mongo "a writable bind mount of a data directory is data"
+expect_stateless no mysql "a long-syntax volume is a volume"
+expect_stateless yes traefik "a long-syntax bind marked read_only is configuration"
+expect_stateless no minio/minio "a file indented four spaces per level parses too"
+# A REGISTRY SPELLING IS STILL THE NAME: the name list matched only the short form.
+expect_stateless no mirror.gcr.io/library/postgres "a mirror's spelling of postgres is postgres"
+expect_stateless no index.docker.io/library/postgres "Docker Hub's long spelling of postgres is postgres"
+mirror_major=$(prod_image_major postgres <(printf 'services:\n  db:\n    image: "mirror.gcr.io/library/postgres:16-alpine"\n'))
+check_that "the running major is read through a mirror's spelling and quotes (got '${mirror_major}')" test "$mirror_major" = 16
+# THE REAL WIRING ON A LOCAL-STACK BRANCH: `ceiling_compose_from_ref` compares it with PRODUCTION's
+# file, which does not run valkey, so the major "running" is unreadable and even a minor is refused.
+# Fail-closed, and the cost is real: a data store only the local stack runs never moves unattended.
+expect_on_ref refused "valkey/valkey" "9.0-alpine" "$local_ref" "valkey mounts data, though no list names it"
+expect_on_ref refused "valkey/valkey" "8.2-alpine" "$local_ref" "production runs no valkey, so no major can be read to compare with"
+# FAILING CLOSED: a watched file that cannot be read, or that parses to no image, is not a proof.
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/absent.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched compose file is unreadable, so nginx is not PROVEN stateless"
+printf 'services: {edge: {image: "nginx:1.31"}}\n' > "$allow_work/flow.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/flow.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched compose file parses to no image row"
+# `volumes_from` MOUNTS ANOTHER SERVICE'S DATA, and `extends` / `include` take services from a file
+# nothing here reads (re-review of #2779).
+printf 'services:\n  db:\n    image: nginx:1.31\n  metrics:\n    image: influxdb:2.7\n    volumes_from: [db]\n' > "$allow_work/from.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/from.yml"
+expect_stateless no influxdb "volumes_from mounts another service's volumes"
+printf 'services:\n  web:\n    image: caddy:2.8\n    extends:\n      file: base.yml\n      service: web\n' > "$allow_work/extends.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/extends.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched file extends a service from a file nothing here reads"
+printf 'include:\n  - other.yml\nservices:\n  web:\n    image: caddy:2.8\n' > "$allow_work/include.yml"
+CEILING_WATCHED_COMPOSES="$allow_work/prod.yml $allow_work/include.yml"
+expect_on_ref refused nginx "2.0.0-alpine" "$prod_ref" "a watched file includes services from a file nothing here reads"
+# ...and none of that reaches a crate: the arm is about images.
+expect_on_ref allowed serde "2.0.0" dependabot/cargo/apps/chat-gateway/serde-2.0.0
+# A GRADLE COORDINATE KEEPS ITS ARTIFACT: the image reduction drops what follows the last `:`.
+for s_case in "com.google.firebase:firebase-messaging-ktx|gradle|com.google.firebase:firebase-messaging-ktx" \
+  "docker.io/library/postgres|docker_compose|postgres" "mirror.gcr.io/library/postgres|docker|postgres" \
+  "@nestjs/common|bun|@nestjs/common" "library/postgres||postgres"; do
+  IFS='|' read -r s_name s_eco s_want <<<"$s_case"
+  s_got="$(ceiling_dependency_subject "$s_name" "$s_eco")"
+  check_that "$s_name (${s_eco:-unknown}) is matched as '$s_want' (got '$s_got')" test "$s_got" = "$s_want"
+done
+CEILING_PROD_COMPOSE="${saved_composes[0]}"
+CEILING_AUTHENTIK_COMPOSE="${saved_composes[1]}"
+CEILING_WATCHED_COMPOSES="${saved_composes[2]}"
+CEILING_VERSION_GAP="${saved_composes[3]}"
+rm -rf "$allow_work"
+
+# THE MAJOR "RUNNING" IS THE BASE BRANCH'S, so the job must check out the base. A `pull_request`
+# checkout is the merge ref, which already carries Dependabot's new pin: #2742 read 18 out of its own
+# bumped file and would have passed as same-major. And every watched compose file must be in the
+# sparse checkout, or `ceiling_image_may_cross_major` reads an absent file and refuses every major.
+echo "the dependency-ceiling job reads the base branch, and every file the table reads:"
+ceiling_job="$(awk '/^  dependency-ceiling:/{f=1; print; next} f && /^  [a-zA-Z0-9_-]+:/{exit} f{print}' "$ci_yml")"
+ceiling_job_has() { grep -qF -- "$1" <<<"$ceiling_job"; }
+# shellcheck disable=SC2016  # the workflow expression is matched literally, never expanded
+check_that "the checkout is the pull request's BASE commit" ceiling_job_has 'ref: ${{ github.event.pull_request.base.sha }}'
+for sparse_path in .github/scripts .github/workflows/ci.yml infrastructure/docker-compose.prod.yml \
+  infrastructure/docker-compose.dev.yml infrastructure/local/docker-compose.yml \
+  infrastructure/dev/version-gap.yml infrastructure/authentik/compose.yml; do
+  check_that "the sparse checkout carries $sparse_path" ceiling_job_has "            $sparse_path"
+done
+# The watched set and the sparse list must name the same files, or one of them drifts silently.
+for watched in $CEILING_WATCHED_COMPOSES; do
+  rel="infrastructure/${watched##*/infrastructure/}"
+  check_that "the watched compose file $rel is in the sparse checkout" ceiling_job_has "            $rel"
+  check_that "the watched compose file $rel exists" test -r "$watched"
 done
 
 # -------------------------------------------------------------------------------------------------

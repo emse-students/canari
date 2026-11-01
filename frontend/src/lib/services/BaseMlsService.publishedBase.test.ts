@@ -121,6 +121,9 @@ function makeCtx(moveEpochDuringExport: boolean) {
     // `BaseMlsService.distributionGroup.test.ts`'s subject, not this file's.
     persistDistributionGroup: vi.fn(),
     collectFramesLeftForKeyGroup: vi.fn(),
+    // Classifying the group for the admission rule is `BaseMlsService.distributionGroup.test.ts`'s
+    // subject, not this file's.
+    openAdmissionOfKeyGroup: vi.fn(),
     // The create path's lost-race branch joins the winner's base instead; not this file's subject.
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
   };

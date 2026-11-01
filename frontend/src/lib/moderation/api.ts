@@ -90,12 +90,40 @@ export interface ReportedLive {
   broadcasterStanding: LiveStanding | null;
 }
 
+/**
+ * The server's verdict on a kept chat line's text (social-service `live-report-signature.ts`).
+ * `key-rotated` and `unverifiable` mean the PROOF is absent, and are weighed as `altered` is: the
+ * queue's preview carries the text only when it is `verified`.
+ */
+export type ReportedLineVerdict = 'verified' | 'altered' | 'key-rotated' | 'unverifiable';
+
+/**
+ * The reported live chat LINE a `contentType: 'live_chat'` report is about, while the server still
+ * keeps it (until the report is handled, 90 days at most). Null once erased.
+ */
+export interface ReportedLiveChatLine {
+  liveId: string;
+  messageId: string;
+  seq: number;
+  authorId: string;
+  authorName: string | null;
+  /** The plaintext as the reporter handed it over. */
+  text: string;
+  messageCreatedAt: string;
+  keptAt: string;
+  keptUntil: string;
+  integrity: { content: ReportedLineVerdict; author: string; reporter: string };
+}
+
 /** A content report filed by a user. */
 export interface ContentReport {
   id: string;
   reporterId: string;
-  /** `user` reports a person; `contentId` is then the reported account's id. */
-  contentType: 'post' | 'comment' | 'user' | 'live';
+  /**
+   * `user` reports a person; `contentId` is then the reported account's id. `live_chat` reports one
+   * line of a live's chat; `contentId` is the message's id and {@link ContentReport.liveChat} the line.
+   */
+  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
   contentId: string;
   reason: string;
   details: string | null;
@@ -110,6 +138,8 @@ export interface ContentReport {
   postId: string | null;
   /** For live reports: the live's state. Absent on every other type. */
   live?: ReportedLive | null;
+  /** For live chat line reports: the kept line, null once erased. Absent on every other type. */
+  liveChat?: ReportedLiveChatLine | null;
 }
 
 /** A muted user record. */

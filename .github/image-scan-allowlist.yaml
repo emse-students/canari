@@ -150,6 +150,21 @@ vulnerabilities:
       - "usr/local/lib/node_modules/npm/**"
     statement: "undici 6.28.0 bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy."
 
+  # Two more advisories on the same npm-bundled undici 6.28.0 (2026-10-28), fixed in 6.29.1: re-read
+  # that day, node:24-alpine (24.22.1, npm 11.19.1, built 2026-10-21) still carries 6.28.0, so there
+  # is no patched tag to move to. Scoped by purl to that one version, so a newer npm is not covered
+  # and the rescan retires each entry the day the image moves. Verified: the file is under npm's own
+  # node_modules and frontend-ssr's final stage runs `node index.js` only; not verified: that nothing
+  # else in the image shells out to npm.
+  - id: CVE-2026-109383
+    purls:
+      - "pkg:npm/undici@6.28.0"
+    statement: "undici 6.28.0 (certificate validation bypass) bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy. No patched node:24-alpine yet; remove when the tag ships npm with undici >= 6.29.1."
+  - id: CVE-2026-87018
+    purls:
+      - "pkg:npm/undici@6.28.0"
+    statement: "undici 6.28.0 (denial of service via TLS renegotiation) bundled with the npm CLI in node:24-alpine; frontend-ssr runs node index.js and never invokes npm, and node's own fetch is built into the binary, not this copy. No patched node:24-alpine yet; remove when the tag ships npm with undici >= 6.29.1."
+
   # --- brotli-libs 1.2.0-r1, in the Alpine 3.24 images (decided 2026-10-24) ---------------------
   # Reported in adminer, nginx:1.31.8-alpine (the edge), nginx:stable-alpine (the frontend base) and
   # postgres:18-alpine. Every one of those pins was already the newest upstream build: Alpine shipped
@@ -173,6 +188,71 @@ vulnerabilities:
     purls:
       - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
     statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
+
+  # Three Python libraries in the same authentik image (2026-10-27), each HIGH with a published fix
+  # and none in a release: 2026.8.5 (2026-10-21) is the newest. Read from authentik's own lockfile
+  # at that tag (not from running the image): dnspython arrives only through `email-validator`;
+  # msgpack through `django-channels-postgres` (its own workspace package) and `autobahn`; oauthlib
+  # through `requests-oauthlib`, authentik's client side of an external OAuth source. Scoped by
+  # purl, so a different build of any of them is not covered, and the retirement check reads each
+  # entry as `id package version`. A second msgpack copy (1.1.2, outside the lockfile read
+  # here, so its origin is unverified; fixed in 1.2.3 too) is covered by a second purl on the
+  # same entry. NOT verified for any of the three: which authentik process imports it at runtime, and whether input an outsider controls
+  # reaches the vulnerable call; the advisories name denial of service (dnspython, msgpack), and
+  # oauthlib's text was not read in full.
+  - id: CVE-2026-114605
+    purls:
+      - "pkg:pypi/dnspython@2.8.0"
+    statement: "dnspython 2.8.0 (denial of service on a crafted DNS compression pointer chain) in authentik 2026.8.5: required only by email-validator, which resolves a domain when it checks an address; whether that check runs with deliverability on, and on whose input, was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-114613
+    purls:
+      - "pkg:pypi/msgpack@1.2.1"
+      - "pkg:pypi/msgpack@1.1.2"
+    statement: "msgpack 1.2.1 and 1.1.2 (memory leak while deserializing a map) in authentik 2026.8.5: required by django-channels-postgres and autobahn, so it decodes authentik's own internal messages; whether any of that input comes from outside the deployment was not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-49272
+    purls:
+      - "pkg:pypi/oauthlib@3.3.1"
+    statement: "oauthlib 3.3.1 in authentik 2026.8.5: required by requests-oauthlib, the client side of authentik's external OAuth sources, which the blueprints may use for a sign-in source (not checked whether it is an OAuth one); whether the advisory's conditions can arise there, and the full advisory text, were not verified. still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+
+  # Two more in the same image (2026-10-31, accepted by the owner the same day), same footing:
+  # HIGH, fixed upstream, in no authentik release (2026.8.5 is still the newest). A second oauthlib
+  # advisory on the same 3.3.1 (fixed in 4.0.0), and four pyasn1 0.6.4 advisories (fixed in
+  # 0.6.5) - pyasn1 arrives, per authentik's lockfile at that tag, through ldap3, pyasn1-modules
+  # and webauthn. NOT verified: which process imports them, and whether outside input reaches the
+  # vulnerable call.
+  - id: CVE-2026-118669
+    purls:
+      - "pkg:pypi/oauthlib@3.3.1"
+    statement: "oauthlib 3.3.1 (privilege escalation via client identity) in authentik 2026.8.5, through requests-oauthlib (the client side of external OAuth sources); whether the advisory's conditions arise there was not verified. No authentik release ships 4.0.0 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119194
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119195
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119196
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+  - id: CVE-2026-119197
+    purls:
+      - "pkg:pypi/pyasn1@0.6.4"
+    statement: "pyasn1 0.6.4 (denial of service) in authentik 2026.8.5, through ldap3, pyasn1-modules and webauthn; whether outside input reaches the decoder was not verified. No authentik release ships 0.6.5 yet. Upstream image, not rebuildable here; remove when a release ships the fixed library."
+
+  # --- curl 8.22.0-r0, in the same four Alpine 3.24 images (2026-10-26) -------------------------
+  # CVE-2026-92392 (HTTP/2 upload use-after-free), fixed by Alpine in 8.23.0-r0. Reported as `curl`
+  # in adminer, nginx:1.31.8-alpine and nginx:stable-alpine, and as `libcurl` in postgres:18-alpine.
+  # Measured with Trivy 0.75.0 on 2026-10-26: adminer:latest and nginx:1.31.8-alpine are still the
+  # pinned digests, nginx:stable-alpine and postgres:18-alpine (a newer digest than the pin) were
+  # rescanned and carry the same 8.22.0-r0, so there was no patched digest to move to. Scoped by purl,
+  # so a later curl build is NOT covered and the rescan retires each half the day its pin moves.
+  - id: CVE-2026-92392
+    purls:
+      - "pkg:apk/alpine/curl@8.22.0-r0"
+      - "pkg:apk/alpine/libcurl@8.22.0-r0"
+    statement: "curl 8.22.0-r0 (adminer, nginx:1.31.8-alpine, nginx:stable-alpine) and libcurl 8.22.0-r0 (postgres:18-alpine): HTTP/2 upload use-after-free in a client library none of these servers uses to send uploads - nginx and postgres do not call curl on request data, and adminer's curl is a PHP build dependency; which processes load it was not verified. No patched upstream image yet (Alpine ships 8.23.0-r0); remove when the pins are rebuilt."
 
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`

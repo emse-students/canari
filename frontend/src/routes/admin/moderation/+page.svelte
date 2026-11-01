@@ -19,6 +19,7 @@
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
+  import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
   import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
   import { createLatestOnly } from '$lib/utils/latestOnly';
@@ -41,7 +42,7 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { ensureContentModerator } from '$lib/associations/api';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -57,7 +58,7 @@
   const TABS = ['reports', 'hidden', 'muted'] as const;
   type Tab = (typeof TABS)[number];
 
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'reports'));
   let reports = $state<ContentReport[]>([]);
   let mutedUsers = $state<MutedUser[]>([]);
@@ -178,7 +179,11 @@
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
-    replaceState(resolve(internalPath(tabUrl(page.url, t, 'reports'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, t, 'reports'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
   }
@@ -362,6 +367,7 @@
     comment: m.moderation_comment(),
     user: m.moderation_user(),
     live: m.moderation_type_live(),
+    live_chat: m.moderation_type_live_chat(),
   });
 
   const liveStateLabel = $derived(liveStateLabels());
@@ -535,6 +541,11 @@
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
               />
+            {/if}
+
+            <!-- The reported chat line: its integrity, and the live it was written in -->
+            {#if report.contentType === 'live_chat'}
+              <ModerationChatLineBlock line={report.liveChat ?? null} />
             {/if}
 
             <!-- Content preview -->

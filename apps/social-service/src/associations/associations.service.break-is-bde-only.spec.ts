@@ -46,7 +46,7 @@ function makeService(event?: Overrides) {
     }),
   };
 
-  // POSITIONAL, AND THIRTEEN LONG - keep these comments aligned with the parameter list in
+  // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
     undefined as never, // assoRepo
@@ -61,7 +61,8 @@ function makeService(event?: Overrides) {
     undefined as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
 
   const row: Overrides = {

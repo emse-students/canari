@@ -29,10 +29,34 @@ function anchorDownload(url: string, fileName: string): void {
   anchor.click();
 }
 
+/**
+ * The extension of a file name, without its dot, or `null` when it has none: `a.mp3` -> `mp3`,
+ * `a.tar.gz` -> `gz`, and `Makefile`, `.bashrc` (a dotfile) and `name.` (trailing dot) -> `null`.
+ */
+export function fileExtension(fileName: string): string | null {
+  const dot = fileName.lastIndexOf('.');
+  if (dot <= 0 || dot === fileName.length - 1) return null;
+  return fileName.slice(dot + 1);
+}
+
+/**
+ * The save dialog's filters for a file name. WHY: Android's `ACTION_CREATE_DOCUMENT` carries a
+ * MIME type, and the documents provider only treats the name's extension as an extension when
+ * that MIME type matches it. With no filter the dialog asks for the wildcard type, the provider
+ * reads `X.mp3` as a bare name, and the second save of it becomes `X.mp3 (1)` - extension lost -
+ * instead of `X (1).mp3`. The extension as a filter makes the plugin send the matching type.
+ */
+export function saveDialogFilters(fileName: string): { name: string; extensions: string[] }[] {
+  const extension = fileExtension(fileName);
+  return extension ? [{ name: extension, extensions: [extension] }] : [];
+}
+
 /** The Tauri path: pick a destination, write the bytes there. */
 async function writeThroughSaveDialog(bytes: Uint8Array, fileName: string): Promise<boolean> {
   const { save } = await import('@tauri-apps/plugin-dialog');
-  const target = await save({ defaultPath: fileName });
+  const filters = saveDialogFilters(fileName);
+  console.debug(`[download] save dialog for "${fileName}", filters=${JSON.stringify(filters)}`);
+  const target = await save({ defaultPath: fileName, filters });
   if (!target) {
     console.debug('[download] save dialog cancelled');
     return false;

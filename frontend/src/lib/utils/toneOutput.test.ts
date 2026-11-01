@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { playTone, resetToneOutputForTest, type ToneScore } from '$lib/utils/toneOutput';
+import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 class FakeOscillator extends EventTarget {
   disconnect = vi.fn();
@@ -116,6 +117,32 @@ it('closes the output when Android says the app left the foreground (its visibil
   Reflect.set(window, '__canariForeground', false);
   window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: false } }));
   expect(contexts[0].close).toHaveBeenCalledTimes(1);
+});
+
+it("a call holds the app's sound: an app tone opens no output, the call's own ring still plays", () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  reportCallSoundPhase('call-service-test', 'calling');
+  try {
+    const voices: FakeOscillator[] = [];
+    playTone('message', tone(1, voices));
+    playTone('read', tone(1, voices));
+    expect(contexts, 'no output opened for a silenced tone').toHaveLength(0);
+    expect(voices).toHaveLength(0);
+
+    playTone('incoming-call ring', tone(2, voices), 'call');
+    expect(contexts).toHaveLength(1);
+    expect(voices).toHaveLength(2);
+    // The ring is the call's own and is not counted; the two app tones are.
+    reportCallSoundPhase('call-service-test', 'ended');
+    expect(info.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+      '2 tone(s) silenced during the call'
+    );
+  } finally {
+    info.mockRestore();
+    resetCallSoundGateForTest();
+  }
+  playTone('message', tone(1, []));
+  expect(contexts, 'released at the end of the call').toHaveLength(1);
 });
 
 it('a tone that fails to schedule leaves no output running', () => {

@@ -6,6 +6,7 @@ import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/c
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { toBase64 } from '$lib/utils/hex';
+import { DecisionLog } from '$lib/utils/decisionLog';
 import {
   announceGraineRepair,
   cacheGraineSession,
@@ -315,28 +316,78 @@ function seedOutsideScope(
 }
 
 /**
+ * What this device last SAID about a withheld answer, per line, per asking device and key group,
+ * keyed to the facts it was decided on.
+ *
+ * ONCE PER DECISION, NOT ONCE PER ASK (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`/`alpha.8`, 2026-10-29): a
+ * minted device asked for its community's history three times in 27 s, and each ask printed the same
+ * "withholding" and "not answering" pair against the same roster. The decision is still TAKEN on every
+ * ask - the answer is unchanged - only a repeat of the same decision is not said again. The value is
+ * the decision's own facts (the withheld sessions and why, the counts behind a refusal), so a salon
+ * registered meanwhile, a seed arriving or a roster change re-decides and re-logs; nothing is frozen,
+ * and no clock is involved. A REPEAT IS STILL COUNTED, and said at its 1st, 10th, 100th...
+ * occurrence ({@link DecisionLog}): an asker that keeps asking against the same state is evidence.
+ * One slot per asking device and key group per line, bounded.
+ */
+const answerDecisionsSaid = new DecisionLog(2000);
+
+/**
+ * Runs `say` when `decision` is new for its slot ({@link answerDecisionsSaid}), and says the count of
+ * a repeat of the same decision at its 1st, 10th, 100th... occurrence.
+ */
+function sayAnswerDecisionOnce(
+  frame: DistributionFrame,
+  line: string,
+  decision: string,
+  say: () => void
+): void {
+  const asker = `${frame.sender}:${frame.senderDeviceId ?? '-'}`;
+  const noted = answerDecisionsSaid.note(`${line}|${asker}|${frame.groupId}`, decision);
+  if (noted?.say === 'decision') say();
+  else if (noted?.say === 'repeat') {
+    console.info(
+      `[GRAINE] ${frame.groupId.slice(0, 8)}... the same ${line} decision for ${frame.sender.slice(0, 8)}'s device, repeat ${noted.nth} (said at 1, 10, 100...)`
+    );
+  }
+}
+
+/** Forgets what was said about withheld answers (sign-out, tests): the next decision is said again. */
+export function resetAnswerDecisionsSaid(): void {
+  answerDecisionsSaid.reset();
+}
+
+/**
  * The held sessions that may answer a request on the key group of `frame`, and ONE line naming
- * how many were withheld and why - counts and the scope only, never a session's material.
+ * how many were withheld and why - counts and the scope only, never a session's material. The line
+ * is said once per decision ({@link sayAnswerDecisionOnce}), keyed on WHICH sessions were withheld
+ * and why.
  */
 function withinFrameScope(
   frame: DistributionFrame,
   held: StoredGraineSession[]
 ): StoredGraineSession[] {
   const kept: StoredGraineSession[] = [];
+  const withheld: string[] = [];
   let otherRoster = 0;
   let notListed = 0;
   for (const session of held) {
     const outside = seedOutsideScope(session.channelId, frame.scope);
-    if (outside === null) kept.push(session);
-    else if (outside === 'other-salon-group' || outside === 'private-salon') otherRoster++;
+    if (outside === null) {
+      kept.push(session);
+      continue;
+    }
+    withheld.push(`${session.sessionId}:${outside}`);
+    if (outside === 'other-salon-group' || outside === 'private-salon') otherRoster++;
     else notListed++;
   }
   if (otherRoster + notListed > 0) {
     // A decision, so at info like the history rule's refusals: an answer carries only the seeds of
     // the salons the asker's key group may read.
-    console.info(
-      `[GRAINE] withholding ${otherRoster + notListed} seed(s) from ${frame.sender} on ${scopeLabel(frame.scope)}: ` +
-        `${otherRoster} of a salon riding another key group, ${notListed} not listed on this device`
+    sayAnswerDecisionOnce(frame, 'scope', withheld.sort().join(','), () =>
+      console.info(
+        `[GRAINE] withholding ${otherRoster + notListed} seed(s) from ${frame.sender} on ${scopeLabel(frame.scope)}: ` +
+          `${otherRoster} of a salon riding another key group, ${notListed} not listed on this device`
+      )
     );
   }
   return kept;
@@ -817,9 +868,13 @@ async function seedsTheAskerMayRead(
 
   const { kept, withheld } = applyHistoryFloors(held, floors);
   if (withheld.length > 0) {
-    console.info(
-      `[GRAINE] withholding ${withheld.length} of ${held.length} seed(s) from ${frame.sender}: community ` +
-        `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
+    // Once per decision: the same sessions withheld by the same floor are not said again.
+    const decision = `${[...withheld].sort().join(',')}/${held.length}`;
+    sayAnswerDecisionOnce(frame, 'floor', decision, () =>
+      console.info(
+        `[GRAINE] withholding ${withheld.length} of ${held.length} seed(s) from ${frame.sender}: community ` +
+          `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
+      )
     );
   }
   return {
@@ -899,9 +954,13 @@ async function gatherCommunityHistory(
         outOfScope > 0 ? `${outOfScope} seed(s) withheld for their salon's roster` : null,
         truncated ? `more than ${GRAINE_HISTORY_BUNDLE_MAX_SEEDS} seed(s) in scope` : null,
       ].filter((reason): reason is string => reason !== null);
-      console.info(
-        `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
-          `${why.join(', ')} - not "I hold nothing"`
+      // Once per decision: a re-ask meeting the same roster and the same store is answered the same
+      // way, silently (the "withholding" line above names which sessions).
+      sayAnswerDecisionOnce(frame, 'history-refusal', `${held.length}|${why.join(', ')}`, () =>
+        console.info(
+          `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
+            `${why.join(', ')} - not "I hold nothing"`
+        )
       );
     }
   }
@@ -1152,14 +1211,21 @@ async function absorbSeedBundle(
   //
   // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
   // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
-  console.debug(
-    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
-      (absorbed > 0
-        ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
-        : '') +
-      `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
-      page
-  );
+  //
+  // NOTHING CARRIED, NOTHING SAID (2026-10-29). A bundle with no seed - an "I hold nothing" answer
+  // or a decline - reaches EVERY member of the key group, and `absorbed 0/0 ... salon(s) none` was
+  // one line per member per answer to somebody else's ask: a read, not a decision. What such a
+  // bundle decides is said where it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
+  if (carried.length > 0) {
+    console.debug(
+      `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) (${alreadyHeld} already held` +
+        (absorbed > 0
+          ? `; endorsements verified: ${absorbed - endorsedByServer} from the tree, ${endorsedByServer} from the server's published keys`
+          : '') +
+        `) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}` +
+        page
+    );
+  }
 
   // A HISTORY ASK ANSWERED WITH A SEED THIS DEVICE DID NOT HOLD settles a widened ask
   // (`historyClosedSeen.ts`). Only a STORED one: a bundle of seeds already held, or of seeds all

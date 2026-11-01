@@ -24,6 +24,8 @@
     reactions: { label: m.settings_notif_reactions_label, desc: m.settings_notif_reactions_desc },
     events: { label: m.settings_notif_events_label, desc: m.settings_notif_events_desc },
     forms: { label: m.settings_notif_forms_label, desc: m.settings_notif_forms_desc },
+    follows: { label: m.settings_notif_follows_label, desc: m.settings_notif_follows_desc },
+    bookings: { label: m.settings_notif_bookings_label, desc: m.settings_notif_bookings_desc },
   };
 
   let loadError = $state(false);

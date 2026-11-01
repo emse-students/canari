@@ -126,7 +126,7 @@ describe('from sign-in to sign-out', () => {
     expect(cmd).toBe('plugin:customtabs|open_custom_tab');
     const url = new URL((args as { url: string }).url);
     expect(url.searchParams.get('id_token_hint')).toBe(token);
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
   });
 
   it('uses the id_token once: a second sign-out has nothing to send and says so', async () => {
@@ -139,7 +139,7 @@ describe('from sign-in to sign-out', () => {
 
     expect(invokeMock).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('MiConnect session NOT ended'));
-    expect(gotoMock).toHaveBeenLastCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenLastCalledWith('/login', { replace: true });
     warn.mockRestore();
   });
 
@@ -161,7 +161,7 @@ describe('from sign-in to sign-out', () => {
     await leaveSignedOut();
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('its session is NOT ended'));
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
     warn.mockRestore();
   });
 
@@ -194,7 +194,7 @@ describe('from sign-in to sign-out', () => {
     expect(ending).toHaveLength(1);
     const url = new URL((ending[0]![1] as { url: string }).url);
     expect(url.searchParams.get('id_token_hint')).toBe(token);
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
     vi.unstubAllGlobals();
   });
 

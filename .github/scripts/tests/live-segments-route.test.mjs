@@ -41,8 +41,8 @@
  * the share itself, honest viewers are not throttled, and the per-address bound is coarse.
  * A refusal logs at `warn`, never `error`.
  *
- * And the CONNECTION BUDGET: the host proxy in front of us is the DSI's (~1 500 concurrent
- * connections across every site on it, realtime-media-feasibility.md section 5), and this file must
+ * And the CONNECTION BUDGET: the host proxy in front of us is the DSI's (one host-wide connection
+ * budget shared by every site on it, realtime-media-feasibility.md section 5), and this file must
  * not raise a worker limit to make room. A seated viewer holds at most FOUR of them (its app
  * connection, its WebSocket and that socket's upstream leg, one segment fetch in flight), so the
  * viewer cap may use at most a quarter of the budget.

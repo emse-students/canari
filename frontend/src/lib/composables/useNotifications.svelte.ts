@@ -5,10 +5,10 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
-import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
+import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
@@ -218,13 +218,12 @@ export function useNotifications() {
           console.warn(`[NOTIF] Tap on notification ${id}, which this session did not post.`);
           return;
         }
+        // PUBLISHING THE TARGET IS ALL A TAP DOES: the landing effect in `ChatBackgroundService`
+        // routes and selects. A `goto` here, on a layout where the conversation is an overlay (a
+        // phone, or a narrow window), drained the overlay the landing had just opened
+        // (`shareLanding.ts`, 2026-10-27).
+        console.log(`[NOTIF] Tap on ${target}: landing published`);
         notifNav.navigate(target);
-        try {
-          const { goto } = await import('$app/navigation');
-          await goto(chatDeepLinkRoute(target));
-        } catch (e) {
-          console.warn(`[NOTIF] Tap on ${target} could not route: ${String(e)}`);
-        }
       });
     } catch (e) {
       // Registration itself threw - a plugin version whose `onAction` rejects the shape above. The
@@ -289,22 +288,26 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
 
-    playTone('incoming-call ring', (ctx, startAt) =>
-      [
-        [440, 0],
-        [480, 0.25],
-      ].map(([freq, offset]) =>
-        sweepVoice(ctx, startAt + offset, {
-          type: 'sine',
-          from: freq,
-          to: freq,
-          glideEnd: 0,
-          peak: 0.12,
-          attackEnd: 0.03,
-          decayEnd: 0.22,
-          stopAt: 0.24,
-        })
-      )
+    // `call`: the call's own ring is exempt from the gate that silences the app while a call rings.
+    playTone(
+      'incoming-call ring',
+      (ctx, startAt) =>
+        [
+          [440, 0],
+          [480, 0.25],
+        ].map(([freq, offset]) =>
+          sweepVoice(ctx, startAt + offset, {
+            type: 'sine',
+            from: freq,
+            to: freq,
+            glideEnd: 0,
+            peak: 0.12,
+            attackEnd: 0.03,
+            decayEnd: 0.22,
+            stopAt: 0.24,
+          })
+        ),
+      'call'
     );
   }
 
@@ -473,14 +476,9 @@ export function useNotifications() {
       : m.notif_call_body_unknown();
     const notifId = stableNotifId(`call:${groupId}`);
 
-    const onTap = async () => {
+    // Publishing the target is all a tap does - the landing effect routes (see the tap listener).
+    const onTap = () => {
       notifNav.navigate(groupId);
-      try {
-        const { goto } = await import('$app/navigation');
-        await goto('/chat');
-      } catch {
-        /* ignore */
-      }
       try {
         window.focus();
       } catch {
@@ -519,7 +517,7 @@ export function useNotifications() {
         // answered or ends (requireInteraction keeps it on screen otherwise).
         incomingCallNotification = n;
         n.onclick = () => {
-          void onTap();
+          onTap();
           n.close();
           incomingCallNotification = null;
         };
@@ -796,25 +794,24 @@ export function useNotifications() {
       announcedBrowserPermission = 'granted';
 
       try {
+        // A call holds the sound (`callSoundGate`): the banner is still raised, only without its
+        // sound - the message arrives, the call is not interrupted by it.
+        const silent = callHoldsAppSound();
+        if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
         const n = new Notification(title, {
           body,
           tag: `canari-${conversationId ?? 'message'}`,
+          silent,
         });
-        n.onclick = async () => {
+        n.onclick = () => {
           try {
             window.focus();
           } catch {
             /* ignore */
           }
-          if (conversationId) {
-            notifNav.navigate(conversationId);
-            try {
-              const { goto } = await import('$app/navigation');
-              await goto(chatDeepLinkRoute(conversationId));
-            } catch {
-              /* ignore */
-            }
-          }
+          // Publishing the target is all a click does - the landing effect routes (see the tap
+          // listener).
+          if (conversationId) notifNav.navigate(conversationId);
           n.close();
         };
         console.log(`[NOTIF] Raised for ${convKey}.`);

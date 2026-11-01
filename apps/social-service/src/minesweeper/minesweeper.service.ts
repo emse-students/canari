@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
+import { inReviewCohortSql, isInReviewCohort, sameSideOfReviewCohort } from '../review-cohort';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
@@ -57,6 +58,17 @@ function resolveScoredDurationMs(
 }
 
 /** Ranked Minesweeper: issue seeds, verify solves by replay, store best times. */
+/**
+ * A SQL boolean on the player id `column`: the player stands on the same side of the review cohort's
+ * boundary as `userId` (`review-cohort.ts`) - so a review account ranks among the cohort only, and a
+ * member never sees a review account on the board. `true` with no cohort configured, or no user.
+ */
+function sameSideAsSql(userId: string | undefined, column: string): string {
+  const inCohort = inReviewCohortSql(column);
+  if (inCohort === 'false' || userId === undefined) return 'true';
+  return isInReviewCohort(userId) ? inCohort : `NOT ${inCohort}`;
+}
+
 @Injectable()
 export class MinesweeperService {
   private readonly logger = new Logger(MinesweeperService.name);
@@ -231,7 +243,7 @@ export class MinesweeperService {
   }
 
   /** Top verified clears (best time per user). Display names from shared `users` table. */
-  async leaderboard(limit = LEADERBOARD_LIMIT) {
+  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string) {
     const capped = Math.min(Math.max(limit, 1), 50);
     const rows: Array<{
       scoreId: string;
@@ -249,6 +261,7 @@ export class MinesweeperService {
         s."verifiedAt" AS "verifiedAt"
       FROM minesweeper_scores s
       WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+        AND ${sameSideAsSql(viewerId, 's."userId"')}
       ORDER BY s."userId", s."durationMs" ASC, s."verifiedAt" ASC
       `
     );
@@ -294,13 +307,14 @@ export class MinesweeperService {
    * Rank among distinct players: 1 + count of users with a strictly better (lower) PB.
    * Equal times share the same rank band (tied players all get the same number).
    */
-  async rankForDurationMs(durationMs: number): Promise<number> {
+  async rankForDurationMs(durationMs: number, playerId?: string): Promise<number> {
     const rows: Array<{ cnt: string | number }> = await this.scores.query(
       `
       WITH bests AS (
         SELECT MIN(s."durationMs") AS best
         FROM minesweeper_scores s
         WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+          AND ${sameSideAsSql(playerId, 's."userId"')}
         GROUP BY s."userId"
       )
       SELECT COUNT(*)::int AS cnt FROM bests WHERE best < $1
@@ -310,13 +324,18 @@ export class MinesweeperService {
     return Number(rows[0]?.cnt ?? 0) + 1;
   }
 
-  /** Standing for a user who has at least one verified score; null otherwise. */
-  async userStanding(userId: string) {
+  /**
+   * Standing for a user who has at least one verified score; null otherwise - and null to a viewer
+   * on the other side of the review cohort's boundary (`review-cohort.ts`), as for a non-player.
+   * The rank is among the players on the user's own side.
+   */
+  async userStanding(userId: string, viewerId?: string) {
+    if (viewerId !== undefined && !sameSideOfReviewCohort(viewerId, userId)) return null;
     // A banned player has no standing: a profile badge must not show a rank they were removed from.
     if (await this.isBanned(userId)) return null;
     const best = await this.getPersonalBest(userId);
     if (!best) return null;
-    const rank = await this.rankForDurationMs(best.durationMs);
+    const rank = await this.rankForDurationMs(best.durationMs, userId);
     return {
       personalBestMs: best.durationMs,
       moveCount: best.moveCount,

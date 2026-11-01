@@ -19,7 +19,13 @@ import time
 
 from phones import Android, IOS, frame_gaps_ms, settled_after
 
-RUNS = os.environ.get("BENCH_RUNS", r"F:\Programmation\canari-harness\ios-bench\runs")
+# The rig's state dir, beside the repository's parent (the harness convention); BENCH_RUNS overrides.
+RUNS = os.environ.get(
+    "BENCH_RUNS",
+    os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "canari-harness", "ios-bench", "runs")
+    ),
+)
 TABS = ["Feed", "Communaut", "Discussions", "Tableau de bord"]  # prefixes: the accent is encoding-fragile
 
 

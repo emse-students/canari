@@ -7,7 +7,7 @@
  *
  *   bun archive/big-selftest.mjs
  */
-import { BIG_ROWS, BIG_SEATS, bulkAddOwn, burstOwn, checkpointMs, communityEntitlement, inSendOrder, seedPerEventOwn, sessionsByPhase } from '../bigrows.mjs';
+import { BIG_ROWS, BIG_SEATS, bulkAddOwn, playedRow, burstOwn, checkpointMs, communityEntitlement, inSendOrder, seedPerEventOwn, sessionsByPhase } from '../bigrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -19,7 +19,11 @@ const failing = (as) => as.filter((a) => !a.ok).length;
 
 // ── the table ───────────────────────────────────────────────────────────────────────────────────
 ok('every seat of the rig is in play, the two phones included', BIG_SEATS.length === 10 && BIG_SEATS.includes('A1') && BIG_SEATS.includes('I1'));
-ok('every row uses every seat', Object.values(BIG_ROWS).every((r) => r.devices === BIG_SEATS));
+ok('every full row uses every seat', Object.values(BIG_ROWS).filter((r) => !r.variantOf).every((r) => r.devices === BIG_SEATS));
+const variants = Object.entries(BIG_ROWS).filter(([, r]) => r.variantOf);
+ok('each row has a variant without I1, and only that seat is gone', variants.length === 3 && variants.every(([k, r]) => k === `${r.variantOf}-noI1` && !r.devices.includes('I1') && r.devices.length === BIG_SEATS.length - 1 && !(r.phones ?? []).includes('I1')));
+ok('a variant plays its row; a row plays itself', playedRow('BIG-1-noI1') === 'BIG-1' && playedRow('BIG-3') === 'BIG-3');
+ok('a variant keeps every parameter of its row', variants.every(([, r]) => ['senders', 'perSender', 'commitsBefore', 'removed', 'newcomer'].every((f) => r[f] === BIG_ROWS[r.variantOf][f])));
 ok('BIG-2: three senders, thirty messages, two commits inside the burst', BIG_ROWS['BIG-2'].senders.length === 3 && BIG_ROWS['BIG-2'].perSender * 3 === 30 && BIG_ROWS['BIG-2'].commitsBefore.every((i) => i > 0 && i < BIG_ROWS['BIG-2'].perSender));
 ok('BIG-3: the removed and the newcomer are different seats, neither a sender', BIG_ROWS['BIG-3'].removed !== BIG_ROWS['BIG-3'].newcomer && !BIG_ROWS['BIG-3'].senders.includes(BIG_ROWS['BIG-3'].removed));
 

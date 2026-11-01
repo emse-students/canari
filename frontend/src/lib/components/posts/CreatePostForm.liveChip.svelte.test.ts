@@ -52,10 +52,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const onGoLive = vi.fn();
+
 async function open() {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(CreatePostForm, { target, props: { onPostCreated: vi.fn() } }));
+  mounted.push(mount(CreatePostForm, { target, props: { onPostCreated: vi.fn(), onGoLive } }));
   flushSync();
   await tick();
   return target;
@@ -66,6 +68,14 @@ describe('CreatePostForm - the Live chip and the lives kill switch', () => {
     lives.mode = 'on';
     const target = await open();
     expect(target.querySelector('[data-post-live]')).not.toBeNull();
+  });
+
+  it('hands over to the parent instead of stacking the live on the composer', async () => {
+    lives.mode = 'on';
+    onGoLive.mockClear();
+    const target = await open();
+    target.querySelector<HTMLButtonElement>('[data-post-live]')!.click();
+    expect(onGoLive).toHaveBeenCalledWith({ associationId: null, associationName: null });
   });
 
   it('hides the chip while the server says off', async () => {

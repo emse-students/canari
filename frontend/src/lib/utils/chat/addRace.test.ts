@@ -18,8 +18,13 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 }));
 
 import { inviteMembersToGroup } from './groupCreation';
+
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+
+/** The gate refusing a commit whole for the people it would admit, as the commit transaction types it. */
+const admitRefused = (userIds: string[]) =>
+  new CommitRefusedError('admit_refused', 2, 2, null, userIds);
 import { decodeAppMessage } from '$lib/proto/codec';
 
 /**
@@ -79,6 +84,10 @@ function inviteHarness() {
   const mlsService = {
     ...confirmable(state),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [...roster].map((userId) => ({ userId })),
+      seatGeneration: 0,
+    })),
     getEpoch: vi.fn(() => state.epoch),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
     registerMember: vi.fn(async () => {}),
@@ -86,6 +95,7 @@ function inviteHarness() {
       { deviceId: `${u}-dev`, keyPackage: new Uint8Array([4]) },
     ]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(
       async (_g: string, devices: Array<{ userId: string; deviceId: string }>) => {
@@ -201,6 +211,39 @@ describe('inviteMembersToGroup - a lost commit race', () => {
     expect(h.deps.addMessageToChat).not.toHaveBeenCalled();
   });
 
+  it('a person the gate refuses to admit is left out of the rebuilt Add; their departure stops nothing else', async () => {
+    const h = inviteHarness();
+    // w4 was on the roster when the invitation began; a departure the gate recorded refuses them.
+    h.roster.add('w4');
+    h.mlsService.addMembersBulk.mockImplementationOnce(async () => {
+      h.roster.delete('w4');
+      throw admitRefused(['w4']);
+    });
+
+    const outcome = await inviteMembersToGroup(['w4', 'w5'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'added', addedUsers: ['w5'] });
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(2);
+    expect(h.state.tree).toContain('w5:w5-dev');
+    expect(h.state.tree).not.toContain('w4:w4-dev');
+    expect(h.mlsService.registerMember).not.toHaveBeenCalledWith(G, 'w4');
+    expect(h.mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refusal about the inviter's own seat is never reported as the invitee's removal, nor rebuilt", async () => {
+    const h = inviteHarness();
+    h.mlsService.addMembersBulk.mockRejectedValue(
+      new CommitRefusedError('committer_not_on_roster', 2, 2)
+    );
+
+    const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
+
+    expect(outcome).not.toEqual({ kind: 'not-added', reason: 'removed-meanwhile' });
+    expect(outcome.kind).toBe('not-added');
+    expect(h.mlsService.addMembersBulk).toHaveBeenCalledTimes(1);
+    expect(h.state.tree).not.toContain('w4:w4-dev');
+  });
+
   it('B3: a device a STALE tree still shows is not filtered - the tree is caught up, and the Add is made', async () => {
     const h = inviteHarness();
     // This device never applied the Remove that took w4's device out: its tree still shows it.
@@ -228,7 +271,7 @@ describe('inviteMembersToGroup - a lost commit race', () => {
 
   it('a busy add lock is answered as its own reason, never as an Add', async () => {
     const h = inviteHarness();
-    h.mlsService.acquireAddLock.mockResolvedValue(false);
+    h.mlsService.acquireAddLockAnswer.mockResolvedValue('held');
 
     const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
 
@@ -253,6 +296,7 @@ function sweepHarness() {
       .fn()
       .mockResolvedValue([{ userId: 'w4', deviceId: 'w4-new', groupId: G, status: 'pending' }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     getGroupMembers: vi.fn(async () => []),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
@@ -318,6 +362,19 @@ describe('processPendingInvitations - a lost commit race', () => {
     expect(h.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
     // Read as the race it is: the sweep asks whether the invitation was fulfilled meanwhile.
     expect(h.mlsService.getDeviceMemberships).toHaveBeenCalledWith('w4', 'w4-new');
+  });
+
+  it('a pending Add the gate refuses to admit is not rebuilt: nothing registered or Welcomed, the row stays', async () => {
+    const h = sweepHarness();
+    h.mlsService.addMember.mockRejectedValue(admitRefused(['w4']));
+
+    await h.run();
+
+    expect(h.mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(h.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(h.mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(h.mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(h.mlsService.updateInvitationStatus).not.toHaveBeenCalled();
   });
 
   it('B1: the commit that won REMOVED the person - the rebuild stops, nothing staged or registered', async () => {

@@ -18,6 +18,8 @@
 
 import {
   CameraAccessError,
+  countVideoInputs,
+  facingModeSupported,
   openPhotoCamera,
   openReelCamera,
   releaseCamera,
@@ -34,12 +36,13 @@ import {
   type ZoomMode,
   type ZoomRange,
 } from './cameraZoom';
+import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 
 /** Where the preview stands. */
 export type CameraPhase = 'starting' | 'live' | 'error' | 'stopped';
 
 /** The opener, injectable so the session's ordering can be tested without a camera. */
-export type CameraOpener = (facing: CameraFacing) => Promise<MediaStream>;
+export type CameraOpener = (facing: CameraFacing, switching?: boolean) => Promise<MediaStream>;
 
 export class CameraSession {
   phase = $state<CameraPhase>('stopped');
@@ -86,17 +89,91 @@ export class CameraSession {
    * awaited, and a stream it brings back is given back at once, since nothing is on screen to use it.
    */
   #suspended = false;
-  readonly #open: CameraOpener;
+  #open: CameraOpener;
   /** Opens a LENS ALONE, no microphone: a flip during a take keeps the take's microphone. */
   readonly #openLens: CameraOpener;
 
-  constructor(open: CameraOpener = openReelCamera, openLens: CameraOpener = openPhotoCamera) {
+  /**
+   * How many cameras the device has, read once a camera is OPEN and again on `devicechange`;
+   * `null` until a read succeeds (and again after a read that failed).
+   */
+  cameraCount = $state<number | null>(null);
+  /**
+   * Whether the switch button and the double-tap are offered. **FAILS OPEN**: they are hidden ONLY
+   * on a MEASURED count of exactly 1 (owner, 2026-10-31: one lens has nothing to switch to). An
+   * unknown count (the list is unreadable, or a browser listed none before it trusted the page)
+   * keeps them, as does a phone - a touch device with `facingMode` is the very case where a
+   * wrongly hidden button would take the front/back flip away for good. The count that WAS read is
+   * logged as `[CAMERA_COUNT]` so it can be read on the real devices.
+   */
+  canSwitch = $derived(this.cameraCount !== 1);
+  /** Aborts the `devicechange` listener; set while the session watches the device list. */
+  #deviceWatch: AbortController | null = null;
+  /** Bumped by {@link stop}: a count read that started before it lands on a session that left. */
+  #watchEpoch = 0;
+  /** The last count written to the log this session: `[CAMERA_COUNT]` speaks only when it changes. */
+  #loggedCount: number | null = null;
+  readonly #countCameras: () => Promise<number>;
+
+  constructor(
+    open: CameraOpener = openReelCamera,
+    openLens: CameraOpener = openPhotoCamera,
+    countCameras: () => Promise<number> = countVideoInputs
+  ) {
     this.#open = open;
     this.#openLens = openLens;
+    this.#countCameras = countCameras;
+  }
+
+  /** Reads the camera count now; a list that cannot be read is logged and leaves the switch offered. */
+  async #refreshCameraCount(): Promise<void> {
+    const epoch = this.#watchEpoch;
+    try {
+      const count = await this.#countCameras();
+      // A read that lands after `stop()` (or a newer start) writes nothing.
+      if (epoch !== this.#watchEpoch) return;
+      // A 0 with a camera open is a list that told nothing, not a device with no camera.
+      const measured = count > 0 ? count : null;
+      if (count !== this.#loggedCount) {
+        this.#loggedCount = count;
+        console.info(
+          `[CAMERA_COUNT] videoinput=${count} coarsePointer=${isCoarsePointerDevice()} facingMode=${facingModeSupported()} -> switch ${measured === 1 ? 'hidden' : 'offered'}`
+        );
+      }
+      this.cameraCount = measured;
+    } catch (err) {
+      if (epoch !== this.#watchEpoch) return;
+      console.warn(
+        '[CAMERA_COUNT] the camera list could not be read - the switch stays offered',
+        err
+      );
+      this.cameraCount = null;
+    }
+  }
+
+  /** Counts the cameras now and on every `devicechange` until {@link stop}; one listener at most. */
+  #watchCameras(): void {
+    void this.#refreshCameraCount();
+    if (this.#deviceWatch || typeof navigator === 'undefined' || !navigator.mediaDevices) return;
+    const watch = new AbortController();
+    this.#deviceWatch = watch;
+    navigator.mediaDevices.addEventListener('devicechange', () => void this.#refreshCameraCount(), {
+      signal: watch.signal,
+    });
+  }
+
+  /**
+   * Replaces what the next {@link start} opens - a live that broadcasts its screen instead of the
+   * camera - and returns the opener it replaces. It opens nothing itself.
+   */
+  swapOpener(open: CameraOpener): CameraOpener {
+    const previous = this.#open;
+    this.#open = open;
+    return previous;
   }
 
   /** Opens `facing` (the current lens by default), releasing whatever was open first. */
-  async start(facing: CameraFacing = this.facing): Promise<void> {
+  async start(facing: CameraFacing = this.facing, switching = false): Promise<void> {
     const generation = ++this.#generation;
     console.debug(`[camera-session] start ${facing} (#${generation})`);
     this.#releaseCurrent();
@@ -105,7 +182,7 @@ export class CameraSession {
     this.phase = 'starting';
     this.fault = null;
     try {
-      const stream = await this.#open(facing);
+      const stream = await this.#open(facing, switching);
       if (generation !== this.#generation) {
         console.debug(
           `[camera-session] #${generation} came back after the session moved on - releasing it`
@@ -125,6 +202,7 @@ export class CameraSession {
       this.stream = stream;
       this.#install(stream, generation);
       this.phase = 'live';
+      this.#watchCameras();
     } catch (err) {
       if (generation !== this.#generation) return;
       const away = this.#suspended;
@@ -153,7 +231,7 @@ export class CameraSession {
   switchFacing(): Promise<void> {
     const next = otherFacing(this.facing);
     console.debug(`[camera-session] switch to ${next}`);
-    return this.start(next);
+    return this.start(next, true);
   }
 
   /**
@@ -192,7 +270,7 @@ export class CameraSession {
     this.torchOn = false;
     this.torchAvailable = false;
     try {
-      const lens = await this.#openLens(next);
+      const lens = await this.#openLens(next, true);
       if (generation !== this.#generation) {
         console.debug(`[camera-session] #${generation} lens came back after the session moved on`);
         releaseCamera(lens);
@@ -400,6 +478,11 @@ export class CameraSession {
     ++this.#generation;
     this.#suspended = false;
     console.debug('[camera-session] stop');
+    ++this.#watchEpoch;
+    this.#deviceWatch?.abort();
+    this.#deviceWatch = null;
+    this.cameraCount = null;
+    this.#loggedCount = null;
     this.#releaseCurrent();
     this.phase = 'stopped';
   }

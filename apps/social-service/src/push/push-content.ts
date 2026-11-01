@@ -33,12 +33,21 @@ export type PushContentKey =
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_follow_request'
+  | 'social_follow_accepted'
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
+  | 'social_booking_cancelled'
+  | 'social_booking_withdrawn'
+  | 'social_booking_added'
+  | 'social_booking_reminder'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
+  | 'lydia_payments_active'
+  | 'lydia_payments_paused'
+  | 'lydia_refund_issued'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
@@ -119,7 +128,13 @@ export type PushContent = {
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
+   * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
+   * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
+   *   several), or for `social_booking_cancelled` the organiser's own word when one was sent (Q-R3);
+   *   for `social_booking_reminder` the place followed by the start time on the space's clock.
+   *   EMPTY on a space reached by its link only (Q-R5): a lock screen never names such a space, and
+   *   the device then shows the key's fixed sentence
    */
   arg: string;
   legacyTitle: string;
@@ -377,6 +392,48 @@ export function formPaidOverCapacityContent(formTitle: string): PushContent {
   };
 }
 
+/**
+ * An association's Lydia payments became ACTIVE, told to its `MANAGE_PAYOUT_ACCOUNT` holders.
+ * The association's name is the only data and there is no actor: the system answered.
+ */
+export function lydiaPaymentsActiveContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_payments_active',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Paiements Lydia actifs',
+    legacyBody: `Les paiements Lydia de ${associationName} sont actifs.`,
+  };
+}
+
+/**
+ * An association's Lydia payments were PAUSED: Lydia refused a payment request (the Business is
+ * not validated or is blocked). Same recipients, same single datum as the active notice.
+ */
+export function lydiaPaymentsPausedContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_payments_paused',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Paiements Lydia suspendus',
+    legacyBody: `Les paiements Lydia de ${associationName} sont suspendus : Lydia a refusé une demande de paiement.`,
+  };
+}
+
+/**
+ * A payer was REFUNDED through Canari (lot 4): the association's name is the one datum, the amount
+ * stays in the app (the payer opens the notifications list).
+ */
+export function lydiaRefundIssuedContent(associationName: string): PushContent {
+  return {
+    key: 'lydia_refund_issued',
+    actorName: '',
+    arg: associationName,
+    legacyTitle: 'Remboursement',
+    legacyBody: `${associationName} vous a remboursé un paiement.`,
+  };
+}
+
 /** The structured half of the FCM data payload, merged into whatever the caller already sends. */
 export function pushContentData(content: PushContent): Record<string, string> {
   return {
@@ -590,6 +647,37 @@ export function coorganiseProposedContent(
 }
 
 /**
+ * A person asks to follow the recipient (WP-F2: every personal account is private). `actorName`
+ * is the ASKER; `arg` is always empty, the body is the fixed sentence. The tap opens the request
+ * inbox (`FOLLOW_REQUESTS_TARGET`, WP-F4), where the answer is given.
+ */
+export function followRequestContent(askerName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_follow_request',
+    icon,
+    actorName: askerName,
+    arg: '',
+    legacyTitle: `${askerName} demande à vous suivre`,
+    legacyBody: 'Appuyez pour répondre',
+  };
+}
+
+/**
+ * The person the recipient asked to follow ACCEPTED (WP-F2). `actorName` is that person; `arg` is
+ * always empty. A refusal has no counterpart: it tells nobody.
+ */
+export function followAcceptedContent(accepterName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_follow_accepted',
+    icon,
+    actorName: accepterName,
+    arg: '',
+    legacyTitle: `${accepterName} a accepté votre demande`,
+    legacyBody: 'Votre demande a été acceptée',
+  };
+}
+
+/**
  * A member or an association the recipient follows started a live (WP-L7, decision L10). `actorName`
  * is the BROADCASTER - the association's name for a live broadcast as one, the member's otherwise;
  * `arg` is always empty: a live has no text to quote, so the body is the fixed sentence.
@@ -646,5 +734,63 @@ export function liveWithdrawnContent(): PushContent {
     arg: '',
     legacyTitle: 'Droit de lancer un live retiré',
     legacyBody: 'La modération vous a retiré le droit de lancer un live.',
+  };
+}
+
+/**
+ * THE BOOKINGS' FOUR NOTICES (WP-N, D53, Q-R2..Q-R5). Each is the actor-titled shape of a follow
+ * notice: who acted names the title, and the body is `arg` (the place, see {@link PushContent}) or,
+ * when it is empty - a space reached by its link only (Q-R5) - the key's fixed sentence.
+ *
+ * A booking was CANCELLED by someone else than the recipient: its organiser (D53), its holder
+ * (Q-R2, told to the participants), or the space was deleted with it (Q-R4). `actorName` is who
+ * did it - the association for an organiser of an association space.
+ */
+export function bookingCancelledContent(actorName: string, line: string): PushContent {
+  return {
+    key: 'social_booking_cancelled',
+    actorName,
+    arg: line,
+    legacyTitle: `${actorName} a annulé une réservation`,
+    legacyBody: line || "Elle n'aura pas lieu",
+  };
+}
+
+/** A participant LEFT the recipient's booking (Q-R2). `actorName` is that participant. */
+export function bookingWithdrawnContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_withdrawn',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} a quitté votre réservation`,
+    legacyBody: place || 'Votre réservation est maintenue',
+  };
+}
+
+/**
+ * The recipient is IN a booking someone else made (D53): added as a participant, or the holder of a
+ * booking made on their behalf (D20). `actorName` is who booked - the association for an organiser.
+ */
+export function bookingAddedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_added',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} vous a inscrit à une réservation`,
+    legacyBody: place || 'Retrouvez-la dans Réservations',
+  };
+}
+
+/**
+ * The REMINDER before a slot (D53, Q-R1). Nobody acted: no actor, a fixed title. `arg` is the place
+ * and the start time, or the time alone on a link-only space (Q-R5).
+ */
+export function bookingReminderContent(line: string): PushContent {
+  return {
+    key: 'social_booking_reminder',
+    actorName: '',
+    arg: line,
+    legacyTitle: 'Rappel de réservation',
+    legacyBody: line || 'Votre réservation commence bientôt',
   };
 }

@@ -78,6 +78,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       .noteOwnLeafReplaced,
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
+    // The door read off the served tree; asked only by a join passing `asAFurtherDevice: 'ask'`.
+    isFurtherDeviceIn: vi.fn().mockResolvedValue(false),
     ...keyPackageWaitFields(),
     ...overrides,
   };
@@ -311,6 +313,80 @@ describe('BaseMlsService.externalJoin', () => {
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
     expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledTimes(2);
     expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Whose door it is, read off the tree the commit would be built on ---
+  //
+  // A further device of a member is admitted by a member's Add, never by its own join. The fact is
+  // read from the ratchet tree of the SAME GroupInfo the commit would be built on - not from server
+  // rows, which can be empty while the tree still holds the user's leaves - and read again on every
+  // attempt, because a retry builds on a fresh GroupInfo.
+
+  const askOpts = { asAFurtherDevice: 'ask' as const };
+  const joinAsking = (ctx: unknown, groupId: string): Promise<ExternalJoinOutcome> =>
+    (
+      BaseMlsService.prototype.externalJoin as unknown as (
+        g: string,
+        o: typeof askOpts
+      ) => Promise<ExternalJoinOutcome>
+    ).call(ctx, groupId, askOpts);
+
+  it('asks a member instead of joining when the served tree holds another device of the user', async () => {
+    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockResolvedValue(true) });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+
+    expect(await joinAsking(ctx, 'g')).toEqual({ joined: false, reason: 'further_device' });
+    expect(ctx.isFurtherDeviceIn).toHaveBeenCalledWith(new Uint8Array([0]));
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+  });
+
+  it('decides the door again on a retry, against the fresh GroupInfo', async () => {
+    const isFurtherDeviceIn = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const ctx = makeCtx({ isFurtherDeviceIn });
+    ctx.delivery.fetchGroupInfo
+      .mockResolvedValueOnce({ groupInfo: 'AA==', baseEpoch: 5, activeEpoch: 5 })
+      .mockResolvedValueOnce({ groupInfo: 'AQ==', baseEpoch: 6, activeEpoch: 6 });
+    ctx.delivery.submitCommit.mockResolvedValueOnce({
+      accepted: false,
+      reason: 'epoch_mismatch',
+      currentEpoch: 6,
+    });
+
+    expect(await joinAsking(ctx, 'g')).toEqual({ joined: false, reason: 'further_device' });
+    expect(isFurtherDeviceIn).toHaveBeenNthCalledWith(2, new Uint8Array([1]));
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a build failure, without joining, when the served tree cannot be read', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockRejectedValue(new Error('no tree')) });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+
+    expect(await joinAsking(ctx, 'g')).toEqual({ joined: false, reason: 'build_failed' });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('does not read the door for a join that did not ask (a key group)', async () => {
+    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockResolvedValue(true) });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.isFurtherDeviceIn).not.toHaveBeenCalled();
   });
 
   it('reports a build failure separately from an absent base', async () => {
@@ -610,5 +686,122 @@ describe('BaseMlsService.externalJoin', () => {
       serverReason: 'seat_claim_overtaken',
     });
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * ONE DOOR AT A TIME, ASKED OF THE BASE IN HAND (channel-encryption section 20). A key group's join
+ * judges its door by this device's seat as the server serves it WITH the base it would build on,
+ * read there AFTER that base: an admitter's Add stores the base and writes the seat in one
+ * transaction, and holds the add lock until its Welcomes are queued. The caller's own earlier read
+ * could predate the Add - 11 of 11 kept rig consoles, 2026-10-25..29, where the device joined over
+ * the Add and took the admitter's Welcome for a redelivery.
+ */
+describe('BaseMlsService.externalJoin - an owed Welcome, served with the base', () => {
+  const owedOpts = { welcomeOwed: 'ask' as const };
+  const joinChecking = (ctx: unknown, groupId: string): Promise<ExternalJoinOutcome> =>
+    (
+      BaseMlsService.prototype.externalJoin as unknown as (
+        g: string,
+        o: typeof owedOpts
+      ) => Promise<ExternalJoinOutcome>
+    ).call(ctx, groupId, owedOpts);
+
+  /**
+   * A key group whose transport serves each base WITH this device's seat, as chat-delivery does: one
+   * answer per attempt, so the seat can never be older than the base it is judged against.
+   */
+  const keyGroup = (...answers: Array<{ baseEpoch: number; seat?: Record<string, unknown> }>) => {
+    const fetch = vi.fn();
+    for (const a of answers) {
+      fetch.mockResolvedValueOnce({
+        groupInfo: 'AA==',
+        baseEpoch: a.baseEpoch,
+        activeEpoch: a.baseEpoch,
+        ...(a.seat ? { seat: a.seat } : {}),
+      });
+    }
+    const ctx = makeCtx({
+      distributionScopeByGroup: new Map([['g', { kind: 'workspace', workspaceId: 'w' }]]),
+      distributionGroupInfo: { fetch, publish: vi.fn().mockResolvedValue({ stored: true }) },
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+    return { ctx, fetch };
+  };
+
+  it.each([
+    ['welcome-queued', { status: 'pending', welcomeQueued: true, addInFlight: false }],
+    ['add-in-flight', { status: 'pending', welcomeQueued: false, addInFlight: true }],
+    // A queued Welcome is a fact on its own; an unread lock cannot take it away.
+    ['welcome-queued', { status: 'pending', welcomeQueued: true }],
+  ])('stands down on a seat served %s with the base, building nothing', async (reading, seat) => {
+    const { ctx, fetch } = keyGroup({ baseEpoch: 5, seat });
+
+    expect(await joinChecking(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'welcome_owed',
+      reading,
+    });
+    // ONE read carries both: the device's own id names the seat, and no second request is made (the
+    // harness has no `getDeviceMemberships` at all, so a separate seat read would throw).
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith({ kind: 'workspace', workspaceId: 'w' }, 'd');
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no seat served', undefined, 'none served'],
+    [
+      'an add lock the server could not read',
+      { status: 'pending', welcomeQueued: false },
+      'add lock unread',
+    ],
+  ])('answers seat_unreadable, not welcome_owed, on %s', async (_label, seat, said) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx } = keyGroup({ baseEpoch: 5, seat });
+
+    expect(await joinChecking(ctx, 'g')).toEqual({ joined: false, reason: 'seat_unreadable' });
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain(`came without a readable seat (${said})`);
+    warn.mockRestore();
+  });
+
+  it.each([
+    ['no seat at all', { status: 'none' }],
+    ['a seat nothing follows', { status: 'pending', welcomeQueued: false, addInFlight: false }],
+    ['an active seat', { status: 'active' }],
+  ])('serves itself on %s', async (_label, seat) => {
+    const { ctx } = keyGroup({ baseEpoch: 5, seat });
+
+    expect(await joinChecking(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the seat with the fresher base after an epoch race, and stands down on it', async () => {
+    // THE RACE THIS CLOSES, AS A RETRY. The first attempt's base carries no Add and the seat says so;
+    // its commit loses to an Add, which stored base 6 and this device's seat with it. The retry's
+    // ONE read brings both, so the device stands down on base 6 instead of joining over the Add.
+    const { ctx, fetch } = keyGroup(
+      { baseEpoch: 5, seat: { status: 'none' } },
+      { baseEpoch: 6, seat: { status: 'pending', welcomeQueued: true, addInFlight: false } }
+    );
+    ctx.delivery.submitCommit.mockReset();
+    ctx.delivery.submitCommit.mockResolvedValueOnce({ accepted: false, reason: 'epoch_mismatch' });
+
+    expect(await joinChecking(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'welcome_owed',
+      reading: 'welcome-queued',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('judges no seat for a join that did not ask', async () => {
+    const { ctx } = keyGroup({ baseEpoch: 5 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
   });
 });

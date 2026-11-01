@@ -22,6 +22,8 @@
    * hold, no 90 s cap to read.
    */
   import { onDestroy, onMount } from 'svelte';
+  import { afterNavigate, beforeNavigate } from '$app/navigation';
+  import { navigating } from '$app/state';
   import { Images, RefreshCcw } from '@lucide/svelte';
   import CameraScreen from './CameraScreen.svelte';
   import ReelShutter from './ReelShutter.svelte';
@@ -57,6 +59,7 @@
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
   import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
+  import { fileInputAnswersEveryClose } from '$lib/utils/fileInputCancel';
   import {
     abandonHistoryOverlay,
     pushHistoryOverlay,
@@ -130,6 +133,22 @@
   let destroyed = false;
   /** The "photos only" notice was given for this session's microphone refusal. */
   let toldNoMicrophone = false;
+  /**
+   * THE SCREEN IS BEING LEFT (a navigation drained the take's entry, or the take went to a composer
+   * that closes the camera). The take is dropped back to `ready`, and `ready` would open the camera:
+   * after a publish it did, for 0.3-0.7 s on the destination page (Mi 9T, 2026-10-28). So the camera
+   * is held off from here, and cleared only by a fact proving the screen is still the current one:
+   * a navigation that ended with it MOUNTED (`afterNavigate`), a navigation that did not happen
+   * (its `complete` refused with none other under way), or the page restored from the back-forward
+   * cache (`pageshow` with `persisted`). Never by a clock.
+   */
+  let leaving = $state(false);
+  /**
+   * The gallery picker is open: its answer decides whether the camera is needed again (a pick goes
+   * to the review, which needs none; a cancel or a refused pick returns to the preview). Until then
+   * a stopped camera stays stopped (`CameraScreen.deferOpen`).
+   */
+  let picking = $state(false);
 
   // A destination that films, on a camera live WITHOUT a microphone: said once, so a hold that takes
   // a photo is not a mystery.
@@ -171,6 +190,20 @@
   const ios = isIosTauriRuntime();
   /** The gallery is the native library (the iOS app), never a file input. */
   const nativeGallery = opensNatively(currentAttachRuntime(false), 'library');
+  /**
+   * WHETHER THE GALLERY'S ANSWER IS CERTAIN. A file input on an engine that fires `cancel` answers
+   * every close, so a deferred open always ends by itself and "Rouvrir la camera" is never needed -
+   * offering it would only flash it in the ~200 ms between the page coming back and a pick's
+   * `change` (Mi 9T, 2026-10-28). The native library and an older engine may never answer: there the
+   * member's tap is the way back.
+   */
+  const galleryAlwaysAnswers =
+    !nativeGallery &&
+    typeof navigator !== 'undefined' &&
+    fileInputAnswersEveryClose(navigator.userAgent);
+  console.debug(
+    `[reel-capture] the gallery ${galleryAlwaysAnswers ? 'answers every close' : 'may never answer: a reopen tap is offered'}`
+  );
 
   async function loadLimits() {
     limitsFault = null;
@@ -183,9 +216,51 @@
     }
   }
 
+  // A navigation that completed with this screen still mounted did not leave it: the camera is
+  // wanted again. A navigation that left it unmounted this callback with the screen.
+  afterNavigate(() => {
+    if (!leaving) return;
+    console.debug('[reel-capture] a navigation ended on this screen: the camera may open again');
+    leaving = false;
+  });
+
+  // A navigation that drained the take may still not happen: a `beforeNavigate` cancels it (an
+  // unsaved-changes guard), or a newer one aborts it. Its `complete` is refused either way; only when
+  // NO navigation is under way is this screen still the one shown. An abort leaves the newer one in
+  // `navigating`, and that one ends in `afterNavigate` or in the teardown.
+  beforeNavigate(({ complete }) => {
+    complete.catch(() => {
+      if (destroyed || !leaving) return;
+      if (navigating.to) {
+        console.debug('[reel-capture] a navigation was refused, another is under way: it decides');
+        return;
+      }
+      console.debug('[reel-capture] a navigation did not happen: the camera may open again');
+      leaving = false;
+    });
+  });
+
+  /**
+   * The page came back from the back-forward cache with this screen on it: whatever was leaving it
+   * (a navigation out of the app) is over, and the screen is the current one.
+   */
+  function onPageShow(event: PageTransitionEvent) {
+    if (!event.persisted || !leaving) return;
+    console.debug('[reel-capture] restored from the back-forward cache: the camera may open again');
+    leaving = false;
+  }
+
+  /** From here the camera stays closed: the take is dropped because the screen is going. */
+  function markLeaving(why: string) {
+    console.debug(`[reel-capture] leaving (${why}) in ${capture.kind}: the camera stays closed`);
+    leaving = true;
+  }
+
   onMount(() => {
     console.debug(`[reel-capture] opened for ${destination}`);
     if (needsLimits) void loadLimits();
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
   });
 
   /** A short buzz where the member's finger meets a decision, when they have vibrations on. */
@@ -250,6 +325,7 @@
         console.debug(
           '[reel-capture] the screen is being left: the take is dropped, nothing asked'
         );
+        markLeaving('navigation');
         editorOpen = false;
         dismissTake();
         return;
@@ -300,6 +376,7 @@
    * on top and abandoned the same way.
    */
   function leaveWithTake() {
+    markLeaving('the take left with the composer');
     editorOpen = false;
     const entry = takeEntry;
     takeEntry = null;
@@ -473,10 +550,31 @@
     input.value = '';
     if (!file) {
       console.debug('[reel-capture] the gallery answered with no file');
+      endPicking('no file');
       return;
     }
     console.debug(`[reel-capture] gallery picked ${file.type || 'typeless'} (${file.size} bytes)`);
-    await takePickedVideo(file);
+    try {
+      await takePickedVideo(file);
+    } finally {
+      endPicking('a file');
+    }
+  }
+
+  /** The picker was closed with nothing picked: the preview comes back. */
+  function onPickCancelled() {
+    console.debug('[reel-capture] the gallery was closed with nothing picked');
+    endPicking('cancelled');
+  }
+
+  /**
+   * The picker has answered and the answer has been taken (a review) or refused: a stopped camera
+   * may open again, unless the review now holds it off (`paused`).
+   */
+  function endPicking(answer: string) {
+    if (!picking) return;
+    console.debug(`[reel-capture] the gallery answered (${answer}), now in ${capture.kind}`);
+    picking = false;
   }
 
   /**
@@ -486,20 +584,24 @@
    * checked as the pick of an input would be.
    */
   function openGallery() {
+    // The picker may background the app (Android): its return must not reopen the camera before
+    // the answer is known (`CameraScreen.deferOpen`).
+    picking = true;
     if (!nativeGallery) {
       picker?.click();
       return;
     }
     console.debug('[reel-capture] gallery: the native library');
     pickNatively('library', { single: true })
-      .then((files) => {
+      .then(async (files) => {
         console.debug(`[reel-capture] the native library handed ${files.length} file(s)`);
-        if (files[0]) void takePickedVideo(files[0]);
+        if (files[0]) await takePickedVideo(files[0]);
       })
       .catch((error: unknown) => {
         console.error(`[reel-capture] the native library picker failed: ${String(error)}`);
         showToast(m.chat_attach_picker_failed(), 'error');
-      });
+      })
+      .finally(() => endPicking('native library'));
   }
 
   async function takePickedVideo(file: File) {
@@ -582,7 +684,11 @@
     bind:capture={camera}
     {recording}
     flipAllowed={lensFlipAllowed(capture)}
-    paused={capture.kind === 'review'}
+    paused={capture.kind === 'review' || leaving}
+    deferOpen={picking}
+    onreopen={galleryAlwaysAnswers
+      ? undefined
+      : () => endPicking('none, the member reopened the camera')}
     {onBeforeRelease}
     {onclose}
     microphoneAsked={rules.microphone === 'with-lens'}
@@ -669,6 +775,7 @@
       class="hidden"
       data-reel-gallery-input
       onchange={onPicked}
+      oncancel={onPickCancelled}
     />
   {/if}
 

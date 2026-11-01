@@ -38,6 +38,7 @@ import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { parseVoipTokenField } from '../utils/voip-token';
 import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload';
 import { parseSessionId } from '../utils/session-id';
+import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
@@ -58,7 +59,8 @@ const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
  * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
  *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
  *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed),
- *   `welcome_target_unknown` / `welcome_target_not_member` (the Welcome's target is refused) -
+ *   `awaiting_admission` (the target's seat is an invitation link's ask, answered only by a
+ *   member's own Accept), `welcome_target_unknown` / `welcome_target_not_member` (the Welcome's target is refused) -
  *   and the caller discards what it staged.
  */
 export type BackgroundWelcomeAnswer =
@@ -812,9 +814,10 @@ export class PushController {
     );
 
     // Membership guard (security): refuse to re-add a target absent from dm_group_members (a
-    // removed user). This is the single chokepoint for the background (push) re-add path - its
-    // foreground counterpart enforces the same check client-side in handleWelcomeRequest. The
-    // source of truth is dm_group_members (user-level): a removed user has no row, whereas a
+    // removed user) - the cheap FIRST refusal of the background (push) re-add path, before the
+    // gate's own (`validateCommit` re-reads the roster under the seat lock and refuses a person it
+    // may not enrol). Its foreground counterpart is the check client-side in handleWelcomeRequest.
+    // The source of truth is dm_group_members (user-level): a removed user has no row, whereas a
     // legitimate invited/pending user has one created before any welcome_request. Without this,
     // an online device honoring a welcome_request via FCM would re-add a kicked user.
     const targetMembership = await this.groupMemberRepo.findOne({
@@ -825,6 +828,20 @@ export class PushController {
         `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );
       throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'not_a_member' });
+    }
+    // AN INVITATION LINK'S ASK IS ANSWERED BY A MEMBER'S OWN ACCEPT, NEVER BY A PUSH (2026-10-31).
+    // The gate would read this commit as that Accept and lift the ask (`liftAwaitingAdmission`).
+    // The phone's verdict (`user_holds_leaf`, `background.rs`) cannot see the seat's flag, and a
+    // removed member's leaf can outlive the removal until it is collected - so a shut phone would
+    // re-admit someone who rejoined by link with nobody asked. The foreground refuses the same seat
+    // (`admissionOfSeat`, `actions.ts`). THIS IS THE CHEAP FIRST REFUSAL, NOT THE GUARANTEE: a link
+    // ask written after this read is refused by the gate itself, under the seat lock
+    // (`mayAnswerAsk: false` below), with the same token.
+    if (targetMembership.awaitingAdmission === true) {
+      this.logger.warn(
+        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} seat awaits a member's admission - a push never answers a link's ask`
+      );
+      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'awaiting_admission' });
     }
 
     // The background commit advances the real epoch: validate it first (same as foreground path)
@@ -865,7 +882,10 @@ export class PushController {
             : {}),
         },
       },
-      userId
+      userId,
+      // A PUSH IS NO MEMBER'S GESTURE: the gate refuses, under the seat lock, a target whose seat
+      // still awaits a member's admission - the guarantee the early check above only anticipates.
+      { mayAnswerAsk: false }
     );
     if (!validation.accepted) {
       this.logger.warn(
@@ -1006,6 +1026,17 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     if (typeof body.proto !== 'string' || !body.proto) {
       throw new BadRequestException('proto required');
+    }
+    // The same rule as `POST /mls/send` (`clientSendRefusal`): the send routes relay only private
+    // (application) frames; a public handshake frame goes through the commit route.
+    if (isPublicMlsFrame(body.proto)) {
+      this.logger.error(
+        `[BG_SEND] REJECT public_frame_refused group=${groupId} sender=${userId}:${deviceId}`
+      );
+      throw new BadRequestException({
+        error: 'public_frame_refused',
+        message: 'this send is not accepted',
+      });
     }
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;

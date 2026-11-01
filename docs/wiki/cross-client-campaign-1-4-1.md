@@ -52,7 +52,7 @@ evidence only for the assertions that produced it.
 
 | Document | State | Disposition |
 | --- | --- | --- |
-| [cross-client-testing](cross-client-testing.md) (the board) | Its header says "Target is the LOCAL estate"; its `Standing` table is a seven-week-old snapshot; 24 cells disagree with the ledger; dozens of cells carry paragraphs although its own first rule says a `PASS` cell says nothing else | **ARCHIVE it as it stands** (a second archive beside [the LITHIUM one](cross-client-testing-archive.md), same status: where to look first when a re-run disagrees, worth nothing as a gate), and start a NEW board whose rows are the matrix of section 4, state only. Reconciling 24 cells of a board about another estate and another version is work that buys nothing |
+| [cross-client-testing](cross-client-testing.md) (the board) | Its header says "Target is the LOCAL estate"; its `Standing` table is a seven-week-old snapshot; 24 cells disagree with the ledger; dozens of cells carry paragraphs although its own first rule says a `PASS` cell says nothing else | **ARCHIVE it as it stands** (a second archive beside [the previous machine's one](cross-client-testing-archive.md), same status: where to look first when a re-run disagrees, worth nothing as a gate), and start a NEW board whose rows are the matrix of section 4, state only. Reconciling 24 cells of a board about another estate and another version is work that buys nothing |
 | [cross-client-campaign](cross-client-campaign.md) (the design) | 1554 lines. The core is sound and is kept: how a check is written, the ladder's tiers, the delegation contract, the standing rules. Stale: "TARGET IS THE LOCAL ESTATE"; **the transports table**, which still says a community channel is readable by the server through a `masterSecret` column - dropped by migration `041` under Graine ([channel-encryption](protocols/channel-encryption.md)); and delegation point 6, which retires the mutual exclusion because "the target is LOCAL" - on dev a pre-release deploy replaces the estate under a run, so **the exclusion comes back** (R4 below). About 900 lines (from "Measurements the board deliberately no longer carries" to the end of the HEAL stories) are history, not design | **REWRITE** the head (target, transports, point 6) and **MOVE** the history sections to the archive page. Not a deletion: the HEAL stories are what a re-run of those rows reads first |
 | [cross-client-campaign-resume](cross-client-campaign-resume.md) | Entirely about the 2026-09-03 restart onto `localhost:8081`: its bring-up says `node -e` and `npx vite build` (bun is the rule), its section 7 is done or tracked elsewhere, and "the dev estate" in its index line is something it never describes | **DELETE.** Section 3 of this page replaces it. `CLAUDE.md` links it from WHERE THINGS LIVE, so the deletion goes with the lead's `CLAUDE.md` update, not in this pull request (the link test would fail on a dangling row) |
 | [testing-methodology](testing-methodology.md) | Rules, not state. Still true; rule 5b (another origin is another device) is exactly what moving to dev costs | **KEEP.** Nothing in it is stale for this campaign |
@@ -152,6 +152,11 @@ verdict. The old board holds 52 draws on one build; a race measured once is a co
 | `B` | **bench**: needs A1 or I1 on the bench and plugged in, driven by the lead over `adb` / WDA - **no owner needed**. Typing the Canari encryption PIN on a new device or a relocked app is part of this: the rig types it from `test-accounts.json` (`pin.mjs`) |
 | `O` | **owner at a device**: a physical gesture no tool here performs - a reboot left unopened, the lock screen, Face ID, an iPhone passcode the bench cannot type (Q4) |
 | `PIN` | the row CHANGES, resets or re-enters a PIN as its subject, or mints a device that must be enrolled with one. Not an owner gesture, but it can strand a device: a PIN reset on one device leaves the others' stores sealed under the old PIN ([cross-client-harness-findings](cross-client-harness-findings.md)). These rows run LAST in their session |
+
+**Owner decisions, 2026-10-24.** Both bench phones (A1, I1) are the lead's and available at any
+time; the iPhone is driven remotely, so a `B` row never waits for someone to be at the bench. An
+admin action the rig needs on dev is done with a **rig account** granted that right on dev, never with
+a person's account.
 
 ### 4.2 MLS core - THIS BLOCKS THE `1.4.1` STABLE
 
@@ -281,7 +286,7 @@ from panels read at the same revision answer one 200 and one 409.
 | DEV-4 | Two fresh devices enrol at the same instant (old HEAL-NEW-10) | both admitted, one tree, no add-lock deadlock | W1 W2 + W3 W6 new | U, PIN | 30 min |
 | DEV-5 | The same device id presents a NEW signature key (a copied profile re-keyed) | `DeviceTrustRefusedError` before staging; nothing added; the owner is told | W1 + W3 copy | U | attached to CORRUPT-8 (lead, 2026-10-25), not on this build |
 | DEV-6 | A revoked device does not erase its owner's arrival (#2254) | after revoking one device, a new device of the same owner gets the history floor of the ORIGINAL arrival | W1 W3 W6 | U, PIN | 30 min |
-| DEV-7 | **The background Welcome reading owed on the Mi 9T**, its three variants: cold process, app opened inside the round trip, phone stale | exactly the lines [backlog](backlog.md#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22) names for each variant, and none of the forbidden ones. The trigger needs the newcomer's external join to FAIL for a reason other than not being a member: on dev, the R3 `status 503` fault on the newcomer's `group-info` read, not a database delete | +A1 killed, W1 W3 | B | 90 min |
+| DEV-7 | **The background Welcome reading owed on the Mi 9T**, its three variants: cold process, app opened inside the round trip, phone stale | exactly the lines [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md) names for each variant, and none of the forbidden ones. The trigger needs the newcomer's external join to FAIL for a reason other than not being a member: on dev, the R3 `status 503` fault on the newcomer's `group-info` read, not a database delete | +A1 killed, W1 W3 | B | 90 min |
 
 #### BIG - a large group
 
@@ -334,7 +339,7 @@ assumes what the one before proved.
 | --- | --- | --- | --- |
 | 0 | R1, R2, R3, R4, R6, R8 - code and selftests, one pull request each (`make test-harness` green) | lead, desk | ~1.5 days |
 | 1 | `main` clean, R7: cut the pre-release, wait for dev green, install it on A1 (R2 debug, same commit) and I1 | lead | ~1.5 h |
-| 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun identity.mjs` (now safe: R1) | lead | ~1 h |
+| 2 | R5 fixtures on dev; `bun rows.mjs`, `bun cleanup.mjs`, `bun stale-devices.mjs` (the browser devices DEV rows minted and left - read, then `--purge --expect N`; alpha.5 found seven, each a `[PENDING] ... vouching` line in every ADM row), `bun identity.mjs` (now safe: R1) | lead | ~1 h |
 | 3 | FLOOR | lead | 40 min |
 | 4 | CC, DUP, OFF, GAP-1..3, RM-1..8, TOK-1..2, NET - the `U` rows, unattended | rig | ~10 h, one night |
 | 5 | KILL-3/4, OFF-5, ADM-5..7 (old APK installed, then R2's new one back), DEV-7, BIG | lead + bench | ~6 h |
@@ -344,7 +349,9 @@ assumes what the one before proved.
 
 **A product FAIL in a blocking row is fixed in the same campaign** (delegation point 8 - fix the
 product, never weaken the row), then a NEW pre-release, then the whole of step 3 and the affected
-group again: a verdict about one build does not carry to the next.
+group again: a verdict about one build does not carry to the next. **What the campaign finds on the
+way (owner, 2026-10-24):** a P1 is fixed in the SAME session, with an adversarial review and a new
+alpha; a P2 or P3 goes to [backlog](backlog.md) and does not stop the session.
 
 ---
 

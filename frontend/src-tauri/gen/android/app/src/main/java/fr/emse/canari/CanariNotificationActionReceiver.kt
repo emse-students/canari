@@ -48,7 +48,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     CanariFirebaseMessagingService.ACTION_MARK_READ ->
                         handleMarkRead(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
-                        handleCallDecline(appContext, intent)
+                        handleCallDecline(appContext, intent, groupId)
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
@@ -217,13 +217,48 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Declines an incoming-call ring (WP-XP-5): stops the local ring only. No MLS hangup is sent -
-     * in a group call "decline" means "stop ringing me", not "end the call for everyone"; the
-     * caller side stops on its own timeout, on ring-end, or when someone answers.
+     * Declines an incoming-call ring (WP-XP-5) from the native ring - the notification's Decline and
+     * [IncomingCallActivity]'s, which fires this same intent.
+     *
+     * THE DECLINE REACHES THE CALLER. The ring stops here first (the half the user sees), then the
+     * hangup the in-app Decline sends - `CallMsg { hangup, end_reason = DECLINED }` - goes to the
+     * conversation, so the caller's ring ends at once and its record reads "declined". Before, this
+     * sent nothing and the caller rang out its whole minute (1.5.2-alpha.1). Calls are 1:1 (calls.md,
+     * lot 1), so "decline" and "end the ring for the caller" are the same act.
+     *
+     * Sent ONCE and not queued ([CanariFirebaseMessagingService.sendTransportFrameNow]): a hangup
+     * replayed after the call ended means nothing. A failure is logged; the caller rings out.
      */
-    private fun handleCallDecline(context: Context, intent: Intent) {
+    private fun handleCallDecline(context: Context, intent: Intent, groupId: String) {
         val callId = intent.getStringExtra(CanariFirebaseMessagingService.EXTRA_CALL_ID) ?: ""
-        Log.d(TAG, "handleCallDecline: call=$callId")
+        Log.d(TAG, "handleCallDecline: call=$callId group=${groupId.take(8)}")
         CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
+        if (callId.isEmpty()) {
+            Log.e(TAG, "handleCallDecline: no callId on the intent -> the caller is not told")
+            return
+        }
+        val pushCtx = MlsContextLoader.loadPushContext(context)
+        if (pushCtx == null) {
+            Log.e(TAG, "handleCallDecline: push_context.json absent -> the caller is not told")
+            return
+        }
+        val service = CanariFirebaseMessagingService()
+        val messageId = UUID.randomUUID().toString()
+        val protoB64 = service.nativeBuildCallHangupProto(
+            messageId, System.currentTimeMillis(), callId, pushCtx.deviceId,
+            CanariFirebaseMessagingService.CALL_END_REASON_DECLINED,
+        )
+        if (protoB64.isEmpty()) {
+            Log.e(TAG, "handleCallDecline: nativeBuildCallHangupProto failed -> the caller is not told")
+            return
+        }
+        val sent = CanariFirebaseMessagingService.sendTransportFrameNow(
+            context, service, pushCtx, groupId, messageId, protoB64
+        )
+        if (sent) {
+            Log.d(TAG, "handleCallDecline: the decline reached the server call=$callId")
+        } else {
+            Log.w(TAG, "handleCallDecline: the decline was not sent call=$callId - the caller rings out its window")
+        }
     }
 }

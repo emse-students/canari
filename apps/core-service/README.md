@@ -70,6 +70,7 @@ Online payments run on Lydia ("Paiement Canari"); Stripe left on 2026-10-07 ([ar
 - **Session verification**: `POST /api/payments/verify-session` - verify a completed checkout and mark the form submission as paid.
 - **Cancel session**: `POST /api/payments/cancel-session` - cancel an unpaid checkout.
 - **Callback**: `POST /api/payments/lydia-request-callback` - Lydia's signed confirmation.
+- **Business webhook**: `POST /api/payments/lydia-business-webhook` - Lydia's UNSIGNED validation event; logged, writes nothing.
 
 ### Health
 

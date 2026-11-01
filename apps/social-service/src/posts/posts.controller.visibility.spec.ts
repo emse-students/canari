@@ -26,7 +26,6 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       interactions as never,
       {} as never,
       associations as never,
-      {} as never,
       { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
     );
     return { controller, assertVisible, assertMayVote, interactions, associations };

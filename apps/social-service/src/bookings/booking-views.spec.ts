@@ -71,6 +71,23 @@ describe('bookingView', () => {
     expect(view).not.toHaveProperty('answers');
   });
 
+  it.each([
+    ['other', 'occupied', false],
+    ['other', 'names', true],
+    ['people', 'occupied', true],
+    ['people', 'names', true],
+    ['manager', 'occupied', true],
+    ['manager', 'names', true],
+  ] as const)(
+    'sends holderId and holderName together: %s on an %s space -> %s',
+    (relation, visibility, shown) => {
+      const view = bookingView(booking, people, relation, visibility, STRANGER);
+      expect('holderName' in view).toBe(shown);
+      expect('holderId' in view).toBe(shown);
+      expect((view as { holderId?: string }).holderId).toBe(shown ? HOLDER : undefined);
+    }
+  );
+
   it('shows the organiser the answers', () => {
     expect(bookingView(booking, people, 'manager', 'occupied', STRANGER).answers).toEqual({
       q: 'secret',

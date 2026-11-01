@@ -111,7 +111,24 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // Every member device is online, so a welcome_request is forwarded rather than stored.
     exists: async (_key: string) => 1,
     publish: async (_channel: string, _payload: string) => 1,
+    // The group's history stream (`history:{gid}`), read in id order like XRANGE: an exclusive
+    // `(id` start, an inclusive end, a COUNT.
+    xrange: async (_key: string, start: string, end: string, _count: string, count: number) => {
+      const seq = (id: string) => Number(id.replace('(', '').split('-')[0]);
+      const lo = start === '-' ? -1 : seq(start);
+      const hi = end === '+' ? Infinity : seq(end);
+      return stream.filter(([id]) => seq(id) > lo && seq(id) <= hi).slice(0, count);
+    },
+    xrevrange: async () => stream.slice(-1),
   };
+  /** The rows of `history:{GROUP}`, as `[id, [field, value, ...]]`. */
+  let stream: Array<[string, string[]]> = [];
+  /** Appends a row the server received at `at`, as the send path writes it. */
+  const putHistory = (n: number, at: Date) =>
+    stream.push([
+      `${n}-0`,
+      ['sender_id', MEMBER.userId, 'content', `c${n}`, 'timestamp', at.toISOString()],
+    ]);
 
   const invitations = () =>
     new InvitationsController(
@@ -139,7 +156,11 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     );
     return Number(row.activeEpoch);
   };
-  const memberCommit = (epoch: number, admits?: { userId: string; deviceId: string }[]) =>
+  const memberCommit = (
+    epoch: number,
+    admits?: { userId: string; deviceId: string }[],
+    invitationSeatGeneration?: number
+  ) =>
     service.validateCommit(
       {
         groupId: GROUP,
@@ -148,6 +169,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
         proto: memberCommitFrame(GROUP, BigInt(epoch)),
         senderId: MEMBER.userId,
         ...(admits ? { admits } : {}),
+        ...(invitationSeatGeneration === undefined ? {} : { invitationSeatGeneration }),
       },
       MEMBER.userId
     );
@@ -173,6 +195,8 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds.getRepository(MlsGroupInfo),
       ds.getRepository(QueuedMessage),
       ds.getRepository(RevokedDevice),
+      // The revoked-device bindings are read by the revoked-leaves question alone, not on this path.
+      null as unknown as never,
       redis as unknown as Redis,
       ds
     );
@@ -259,6 +283,11 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // as a no-op on a table that has it.
     await q(MIGRATION_038);
     await q(MIGRATION_039);
+    // core-service's table, as its migration shapes it: an awaiting seat a commit admits is asked
+    // for a block like any newcomer (`enrolAdmittedPeople`).
+    await q(
+      `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
+    );
     service = new MessagingService(
       ds.getRepository(QueuedMessage),
       ds.getRepository(GroupMember),
@@ -286,6 +315,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     // An announcement a previous case started reads rows this one is about to delete.
     await joinAskAnnouncementsSettled();
     for (const set of routes.values()) set.clear();
+    stream = [];
     await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [GROUP]);
     await q(`DELETE FROM mls_commit_log`);
     await q(`DELETE FROM dm_device_group_memberships`);
@@ -381,6 +411,33 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(await awaiting(JOINER)).toBe(true);
   });
 
+  it("a push's Add never answers the ask: refused awaiting_admission under the seat lock, nothing advanced", async () => {
+    // The background Welcome a member's shut phone answers (`push/send-welcome-and-commit`) is no
+    // member's gesture, whatever the phone's tree says (a removed member's leaf can outlive them).
+    await acceptLink();
+
+    await expect(
+      service.validateCommit(
+        {
+          groupId: GROUP,
+          deviceId: MEMBER.deviceId,
+          baseEpoch: 3,
+          proto: memberCommitFrame(GROUP, 3n),
+          senderId: MEMBER.userId,
+          admits: [JOINER],
+        },
+        MEMBER.userId,
+        { mayAnswerAsk: false }
+      )
+    ).resolves.toMatchObject({ accepted: false, reason: 'awaiting_admission' });
+
+    expect(await epochOf()).toBe(3);
+    expect(await awaiting(JOINER)).toBe(true);
+    // And the same Add from a member's own gesture still answers it.
+    await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+    expect(await awaiting(JOINER)).toBe(false);
+  });
+
   it("a member's Add admits the joiner: the ask is lifted with the advance, and the joiner may rejoin by themselves", async () => {
     await acceptLink();
 
@@ -393,6 +450,114 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     await expect(refusalOf(service.getGroupInfo(GROUP, JOINER.userId))).resolves.toBeNull();
     await expect(joinerExternalCommit(4)).resolves.toMatchObject({ accepted: true });
     expect(await epochOf()).toBe(5);
+  });
+
+  /**
+   * A NEWCOMER READS NOTHING FROM BEFORE THEIR ARRIVAL, AND THE ARRIVAL IS THE ADD (user, 2026-10-21:
+   * "added = arrived"). The link writes the seat - interval and device rows - when the person ASKS,
+   * possibly days before a member answers, and both are what the arrival is read from. Dated at the
+   * ask, every history answer (`withheld`, the exclusions route) and the server's own stream handed
+   * the person what was sent while they waited outside.
+   */
+  /**
+   * The group was created a month ago: an arrival within a second of the creation IS the creation
+   * and is withheld nothing (`CREATION_ARRIVAL_BOUND_MS`), which a fast run would otherwise meet.
+   */
+  const groupCreatedLongAgo = () =>
+    q(`UPDATE dm_groups SET "createdAt" = $2 WHERE id = $1`, [
+      GROUP,
+      new Date(Date.now() - 30 * 86_400_000),
+    ]);
+
+  it("a member's Add dates the joiner's arrival at the Add, and the stream serves them nothing from before it", async () => {
+    await groupCreatedLongAgo();
+    await acceptLink();
+    // The joiner waited three days for a member.
+    const asked = new Date(Date.now() - 3 * 86_400_000);
+    await q(
+      `UPDATE dm_group_membership_intervals SET "joinedAt" = $3 WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, JOINER.userId, asked]
+    );
+    await q(
+      `UPDATE dm_device_group_memberships SET "createdAt" = $3 WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, JOINER.userId, asked]
+    );
+    // The group's past, then a message sent while the joiner waited outside.
+    putHistory(1, new Date(asked.getTime() - 86_400_000));
+    putHistory(2, new Date(asked.getTime() + 86_400_000));
+
+    const before = Date.now();
+    await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({ accepted: true });
+    putHistory(3, new Date(Date.now() + 1000));
+
+    const { withheld } = await members().getGroupExclusions(GROUP, JOINER.userId);
+    expect(withheld[JOINER.userId]).toHaveLength(1);
+    expect(withheld[JOINER.userId][0].from).toBe(0);
+    // Two clocks (this process's, the database's), on one host here: a few seconds of slack.
+    expect(withheld[JOINER.userId][0].until).toBeGreaterThanOrEqual(before - 5000);
+    const [interval]: { admittedAt: Date | null }[] = await q(
+      `SELECT "admittedAt" FROM dm_group_membership_intervals WHERE "groupId" = $1 AND "userId" = $2`,
+      [GROUP, JOINER.userId]
+    );
+    expect(interval.admittedAt).toBeNull();
+
+    // The stream serves the joiner the message sent after their Add and nothing before it, on the
+    // single read and in a batch - whatever their client would have done with the rest.
+    const page = await service.getHistory(GROUP, undefined, JOINER.userId, undefined);
+    expect(page.rows.map((r) => r['id'])).toEqual(['3-0']);
+    const batch = await service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId, undefined);
+    expect(batch.histories[GROUP].map((r) => r['id'])).toEqual(['3-0']);
+  });
+
+  it("a member's new device is served the whole past its person was a member for", async () => {
+    // The member arrived ten days ago and never left. Their only device row is today's - a new
+    // device - and the stream still serves everything since the PERSON's arrival.
+    await groupCreatedLongAgo();
+    const arrived = new Date(Date.now() - 10 * 86_400_000);
+    await q(
+      `INSERT INTO dm_group_membership_intervals ("groupId", "userId", "joinedAt") VALUES ($1, $2, $3)`,
+      [GROUP, MEMBER.userId, arrived]
+    );
+    putHistory(1, new Date(arrived.getTime() + 1000));
+    putHistory(2, new Date());
+
+    const page = await service.getHistory(GROUP, undefined, MEMBER.userId, undefined);
+
+    expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0']);
+  });
+
+  /** The 2026-10-14 rule and the 2026-10-21 one together: a Remove holds, and so does the wait. */
+  it('a former member who comes back through a link reads their first stretch, and neither the gap nor the wait', async () => {
+    await groupCreatedLongAgo();
+    const day = 86_400_000;
+    const now = Date.now();
+    await q(
+      `INSERT INTO dm_group_membership_intervals ("groupId", "userId", "joinedAt", "leftAt")
+       VALUES ($1, $2, $3, $4)`,
+      [GROUP, JOINER.userId, new Date(now - 10 * day), new Date(now - 6 * day)]
+    );
+    await acceptLink();
+    await q(
+      `UPDATE dm_group_membership_intervals SET "joinedAt" = $3
+       WHERE "groupId" = $1 AND "userId" = $2 AND "leftAt" IS NULL`,
+      [GROUP, JOINER.userId, new Date(now - 3 * day)]
+    );
+    putHistory(1, new Date(now - 8 * day)); // their first stretch
+    putHistory(2, new Date(now - 5 * day)); // after their removal
+    putHistory(3, new Date(now - 2 * day)); // while they waited for a member
+    // A person who ever departed is admitted only by an Add that says when it was decided (ADM-3).
+    const [{ seatGeneration }]: { seatGeneration: number }[] = await q(
+      `SELECT "seatGeneration" FROM dm_groups WHERE id = $1`,
+      [GROUP]
+    );
+
+    await expect(memberCommit(3, [JOINER], Number(seatGeneration))).resolves.toMatchObject({
+      accepted: true,
+    });
+    putHistory(4, new Date(Date.now() + 1000));
+
+    const page = await service.getHistory(GROUP, undefined, JOINER.userId, undefined);
+    expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '4-0']);
   });
 
   it('a declined joiner holds no seat at all, and the base answers the 403 of a non-member', async () => {
@@ -448,11 +613,12 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
   });
 
   /**
-   * (2) A MEMBER WHOSE CLIENT PREDATES `admits` STILL ADMITS: it Adds from the `pending` row with a
-   * commit that declares nobody, then sends the Welcome apart. The Welcome it stores lifts the ask, so
-   * the joiner's device turns active under no flag and commits like any member.
+   * (2) A WELCOME SENT APART ADMITS NOBODY (ADM-3). Only the accepted commit admits a new person, by
+   * the `admits` it declares - which every client at the version floor sends - so a commit that
+   * declares nobody, followed by a Welcome, leaves the ask standing: the Welcome is refused, nothing
+   * is stored, and the joiner can neither report itself active nor commit.
    */
-  it("an old client's Add - a commit with no admits, then a separate Welcome - admits the joiner", async () => {
+  it('a commit with no admits, then a separate Welcome, does NOT admit the joiner', async () => {
     await acceptLink();
     // Before any Welcome, the joiner may not report itself active: a 409, never a 403.
     await expect(
@@ -464,34 +630,28 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
     expect(await awaiting(JOINER)).toBe(true);
     await expect(
-      service.sendWelcome(MEMBER.userId, {
-        groupId: GROUP,
-        targetUserId: JOINER.userId,
-        targetDeviceId: JOINER.deviceId,
-        senderUserId: MEMBER.userId,
-        welcomePayload: 'V0VMQ09NRQ==',
-      })
-    ).resolves.toEqual({ status: 'queued' });
+      refusalOf(
+        service.sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+      )
+    ).resolves.toMatchObject({ status: 403 });
 
-    expect(await awaiting(JOINER)).toBe(false);
+    expect(await awaiting(JOINER)).toBe(true);
+    const [queued]: { n: string }[] = await q(
+      `SELECT COUNT(*) AS n FROM queued_message WHERE "groupId" = $1 AND "recipientId" = $2`,
+      [GROUP, JOINER.userId]
+    );
+    expect(Number(queued.n)).toBe(0);
     await expect(
       service.activateDeviceMembership(JOINER.userId, JOINER.deviceId, GROUP, {
         authority: 'report',
       })
-    ).resolves.toMatchObject({ ok: true });
-    // A member now: a commit of theirs is accepted.
-    await expect(
-      service.validateCommit(
-        {
-          groupId: GROUP,
-          deviceId: JOINER.deviceId,
-          baseEpoch: 4,
-          proto: memberCommitFrame(GROUP, 4n),
-          senderId: JOINER.userId,
-        },
-        JOINER.userId
-      )
-    ).resolves.toMatchObject({ accepted: true });
+    ).resolves.toMatchObject({ ok: false, reason: 'awaiting_admission' });
   });
 
   it('a person still awaiting a member may not Welcome a device of their own to lift their ask', async () => {
@@ -1047,23 +1207,21 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       );
     });
 
-    it('settles an admission through the Welcome door (an old client: a bare commit, then a Welcome)', async () => {
+    it('settles nothing through a Welcome sent apart: that door admits nobody (ADM-3)', async () => {
       await acceptLink();
-      const askId = await joinerSeatId();
       await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
+
+      await service
+        .sendWelcome(MEMBER.userId, {
+          groupId: GROUP,
+          targetUserId: JOINER.userId,
+          targetDeviceId: JOINER.deviceId,
+          senderUserId: MEMBER.userId,
+          welcomePayload: 'V0VMQ09NRQ==',
+        })
+        .catch(() => undefined);
+
       expect(await framesOf('group.join_ask.settled')).toEqual([]);
-
-      await service.sendWelcome(MEMBER.userId, {
-        groupId: GROUP,
-        targetUserId: JOINER.userId,
-        targetDeviceId: JOINER.deviceId,
-        senderUserId: MEMBER.userId,
-        welcomePayload: 'V0VMQ09NRQ==',
-      });
-
-      expect(await framesOf('group.join_ask.settled')).toEqual(
-        toMembers({ groupId: GROUP, askId, userId: JOINER.userId, outcome: 'admitted' })
-      );
     });
 
     it('never tells the asker about their own ask, even with an active device once admitted', async () => {

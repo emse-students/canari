@@ -14,8 +14,8 @@ import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
  * bound), and with no consumer they are left in place rather than taken and dropped.
  */
 type Proto = {
-  setDeviceEventConsumer: (c: ((e: DeviceEvent[]) => Promise<void>) | null) => void;
-  handOverDeviceEvents: (why: string) => Promise<void>;
+  setDeviceEventConsumer: (c: ((e: DeviceEvent[]) => Promise<boolean>) | null) => void;
+  handOverDeviceEvents: (why: string) => Promise<boolean>;
 };
 const proto = BaseMlsService.prototype as unknown as Proto;
 
@@ -31,8 +31,8 @@ const event: DeviceEvent = {
 
 function makeCtx(pending: DeviceEvent[]) {
   const ctx = {
-    deviceEventConsumer: null as ((e: DeviceEvent[]) => Promise<void>) | null,
-    deviceEventHandOver: Promise.resolve(),
+    deviceEventConsumer: null as ((e: DeviceEvent[]) => Promise<boolean>) | null,
+    deviceEventHandOver: Promise.resolve() as Promise<unknown>,
     takeDeviceEventsNative: vi.fn(async () => pending.splice(0)),
     handOverDeviceEvents: proto.handOverDeviceEvents,
     setDeviceEventConsumer: proto.setDeviceEventConsumer,
@@ -47,7 +47,7 @@ describe('BaseMlsService device events - handed to the notices', () => {
     await proto.handOverDeviceEvents.call(ctx, 'drain end');
     expect(ctx.takeDeviceEventsNative).not.toHaveBeenCalled();
 
-    const consumer = vi.fn(async () => {});
+    const consumer = vi.fn(async () => true);
     ctx.setDeviceEventConsumer(consumer);
     await ctx.deviceEventHandOver;
     expect(consumer).toHaveBeenCalledWith([event]);
@@ -58,7 +58,7 @@ describe('BaseMlsService device events - handed to the notices', () => {
     const pending = [event];
     const ctx = makeCtx(pending);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const consumer = vi.fn(async () => {
+    const consumer = vi.fn(async (): Promise<boolean> => {
       throw new Error('boom');
     });
     ctx.setDeviceEventConsumer(consumer);
@@ -76,11 +76,49 @@ describe('BaseMlsService device events - handed to the notices', () => {
   // each reconnect and resume), each own Add - is the durable moment it is retried.
   it('hands an empty take over too, so the consumer retries what it parked', async () => {
     const ctx = makeCtx([]);
-    const consumer = vi.fn(async () => {});
+    const consumer = vi.fn(async () => true);
     ctx.setDeviceEventConsumer(consumer);
     await ctx.deviceEventHandOver;
     expect(consumer).toHaveBeenCalledWith([]);
     await ctx.handOverDeviceEvents('drain end');
     expect(consumer).toHaveBeenCalledTimes(2);
+  });
+
+  // The verdict an answer leg reads before deciding who is withheld: anything short of a consumer
+  // that decided every event is NOT settled, and the answer refuses.
+  describe('the settle verdict', () => {
+    it('is false with no consumer registered', async () => {
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const ctx = makeCtx([event]);
+      expect(await proto.handOverDeviceEvents.call(ctx, 'history answer')).toBe(false);
+      debug.mockRestore();
+    });
+
+    it('is false when the take fails', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const ctx = makeCtx([]);
+      ctx.deviceEventConsumer = vi.fn(async () => true);
+      ctx.takeDeviceEventsNative.mockRejectedValueOnce(new Error('locked'));
+      expect(await proto.handOverDeviceEvents.call(ctx, 'history answer')).toBe(false);
+      error.mockRestore();
+    });
+
+    it('is false when the consumer throws', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const ctx = makeCtx([event]);
+      ctx.deviceEventConsumer = vi.fn(async (): Promise<boolean> => {
+        throw new Error('boom');
+      });
+      expect(await proto.handOverDeviceEvents.call(ctx, 'history answer')).toBe(false);
+      error.mockRestore();
+    });
+
+    it("is the consumer's own answer otherwise", async () => {
+      const ctx = makeCtx([event]);
+      ctx.deviceEventConsumer = vi.fn(async () => false);
+      expect(await proto.handOverDeviceEvents.call(ctx, 'history answer')).toBe(false);
+      ctx.deviceEventConsumer = vi.fn(async () => true);
+      expect(await proto.handOverDeviceEvents.call(ctx, 'history answer')).toBe(true);
+    });
   });
 });

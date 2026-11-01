@@ -1,10 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { X } from '@lucide/svelte';
+  import { CalendarClock, Minus, Plus, X } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import {
     book,
@@ -23,6 +22,8 @@
     visibleItems,
   } from '$lib/forms/fillAnswers';
   import { m } from '$lib/paraglide/messages';
+  import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
+  import { reminderFromValue, reminderOptions, reminderValue } from '$lib/bookings/reminder';
   import { showToast } from '$lib/stores/toast.svelte';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
@@ -47,13 +48,10 @@
     initialCount?: number;
     /** Offered to whoever may mark the range unavailable instead. */
     onBlockInstead?: () => void;
-    /**
-     * The DEVICE's clock puts the start outside the booking window. Said, never enforced: the
-     * device may be wrong, and the server answers the request on its own clock.
-     */
-    windowNote: boolean;
     /** Re-reads the grid and the reader's bookings, the sheet staying open. */
     onReread: () => Promise<void>;
+    /** The server refused the START as over or too near (`started`, `notice`). */
+    onStartRefused?: (startMs: number) => void;
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
     onClose: (changed: boolean) => void;
   }
@@ -64,8 +62,8 @@
     run,
     initialCount = 1,
     onBlockInstead,
-    windowNote,
     onReread,
+    onStartRefused,
     onClose,
   }: Props = $props();
 
@@ -76,6 +74,8 @@
   let participants = $state<Person[]>([]);
   let onBehalf = $state(false);
   let holder = $state<Person | null>(null);
+  /** The booker's own reminder (Q-R1), the space's default until they pick another. */
+  let reminder = $state(untrack(() => reminderValue(space.reminderMinutes ?? null)));
   // The sheet is mounted per opening, so the questions it starts from are its first ones.
   let selections = $state(initialSelections(untrack(() => space.items)));
   let submitting = $state(false);
@@ -128,6 +128,11 @@
         ...(participants.length ? { participantIds: participants.map((p) => p.id) } : {}),
         ...(items.length ? { answers: visibleAnswers(shown, selections) } : {}),
         ...(onBehalf && holder ? { holderId: holder.id } : {}),
+        // The booker's own delay: never for an account booked on behalf of (the server ignores
+        // it there too), and only while notices are live - off, nothing would send it.
+        ...(BOOKING_NOTIFICATIONS_LIVE && !onBehalf
+          ? { reminderMinutes: reminderFromValue(reminder) }
+          : {}),
       });
       Log.i('BOOKINGS', `booked from the sheet id=${id.slice(0, 8)} onBehalf=${onBehalf}`);
       showToast(m.bookings_sheet_done(), 'info');
@@ -144,8 +149,17 @@
         return;
       }
       error = describeBookingRefusal(e, m.bookings_sheet_submit());
-      // The range was taken or closed meanwhile, or the questions changed: the grid is stale.
-      if (code === 'slot-taken' || code === 'blocked' || code === 'space-changed') {
+      // The start is over or too near on the server's clock: never offered again by this view.
+      if (code === 'started' || code === 'notice') onStartRefused?.(first.startMs);
+      // The range was taken or closed meanwhile, the questions changed, or the start is no longer
+      // bookable: the grid is stale.
+      if (
+        code === 'slot-taken' ||
+        code === 'blocked' ||
+        code === 'space-changed' ||
+        code === 'started' ||
+        code === 'notice'
+      ) {
         Log.i('BOOKINGS', `the sheet's range went stale: ${code}`);
         showToast(error, 'error');
         onClose(true);
@@ -157,29 +171,50 @@
 </script>
 
 <Modal open title={m.bookings_sheet_title()} topAnchored footerEdge onClose={() => onClose(false)}>
-  <div class="space-y-5">
-    <div>
-      <p class="text-text-main text-base font-bold">{resource.name}</p>
-      <p class="text-text-muted text-sm first-letter:uppercase">
-        {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
-      </p>
+  <div class="space-y-4">
+    <div class="border-cn-border bg-cn-bg flex items-start gap-3 rounded-2xl border p-3">
+      <CalendarClock size={18} class="text-text-muted mt-0.5 shrink-0" aria-hidden="true" />
+      <div class="min-w-0">
+        <p class="text-text-main text-sm font-bold first-letter:uppercase">
+          {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
+        </p>
+        <p class="text-text-muted truncate text-xs">
+          {resource.name === space.name ? space.name : `${space.name} · ${resource.name}`}
+        </p>
+      </div>
     </div>
 
-    {#if windowNote}
-      <p
-        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-3 py-2 text-xs"
-      >
-        {m.bookings_sheet_window_note()}
-      </p>
-    {/if}
-
     {#if run.length > 1}
-      <Select
-        label={m.bookings_sheet_length_label()}
-        value={String(count)}
-        options={lengthOptions}
-        onValueChange={(v) => (count = Number(v))}
-      />
+      <div class="space-y-1.5">
+        <p class="text-text-main text-sm font-semibold">{m.bookings_sheet_length_label()}</p>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border aria-disabled:opacity-40"
+            aria-label={m.bookings_sheet_length_less()}
+            aria-disabled={count <= 1}
+            onclick={() => count > 1 && (count -= 1)}
+          >
+            <Minus size={16} />
+          </button>
+          <span
+            class="text-text-main grow text-center text-sm font-bold tabular-nums"
+            role="status"
+            aria-live="polite"
+          >
+            {lengthOptions[count - 1]?.label}
+          </span>
+          <button
+            type="button"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border aria-disabled:opacity-40"
+            aria-label={m.bookings_sheet_length_more()}
+            aria-disabled={count >= run.length}
+            onclick={() => count < run.length && (count += 1)}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      </div>
     {/if}
 
     {#if space.canManage}
@@ -261,7 +296,42 @@
             {m.bookings_sheet_people_full({ max: space.maxPeople ?? 0 })}
           </p>
         {/if}
-        <p class="text-text-muted text-xs">{m.bookings_sheet_people_note()}</p>
+        <p class="text-text-muted text-xs">
+          {BOOKING_NOTIFICATIONS_LIVE
+            ? m.bookings_sheet_people_note_notified()
+            : m.bookings_sheet_people_note()}
+        </p>
+      </div>
+    {/if}
+
+    {#if BOOKING_NOTIFICATIONS_LIVE && !onBehalf}
+      <div class="space-y-1.5">
+        <p id="booking-reminder-label" class="text-text-main text-sm font-semibold">
+          {m.bookings_reminder_label()}
+        </p>
+        <div
+          class="flex flex-wrap gap-2"
+          role="radiogroup"
+          aria-labelledby="booking-reminder-label"
+        >
+          {#each reminderOptions(reminderFromValue(reminder)) as option (option.value)}
+            <label
+              class="has-[:focus-visible]:ring-cn-yellow cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors has-[:focus-visible]:ring-2 {reminder ===
+              option.value
+                ? 'bg-cn-yellow text-cn-ink border-cn-yellow'
+                : 'border-cn-border text-text-main hover:bg-cn-border/30'}"
+            >
+              <input
+                type="radio"
+                class="sr-only"
+                name="booking-reminder"
+                value={option.value}
+                bind:group={reminder}
+              />
+              {option.label}
+            </label>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -284,12 +354,12 @@
       </div>
     {/if}
 
-    <ul class="text-text-muted list-disc space-y-1 pl-5 text-xs">
-      <li>{m.bookings_sheet_no_edit_note()}</li>
+    <div class="text-text-muted text-2xs space-y-1">
+      <p>{m.bookings_sheet_no_edit_note()}</p>
       {#if space.associationId === null}
-        <li>{m.bookings_sheet_personal_note()}</li>
+        <p>{m.bookings_sheet_personal_note()}</p>
       {/if}
-    </ul>
+    </div>
 
     {#if error}
       <p

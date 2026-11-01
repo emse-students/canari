@@ -20,10 +20,10 @@
  * - a defect that would leave a poll of three options reporting four votes from two people, and
  * which no screen would obviously contradict.
  *
- * CLOSING IS DRIVEN THROUGH THE NATIVE CONFIRMATION, not around it. `ChannelPoll` calls
- * `window.confirm`, the only confirmation in the product that is not the styled dialog - so
- * `answeringDialogs` answers the real one and the check asserts the app ASKED, with the app's own
- * words. Overriding `window.confirm` from the page would have measured a client nobody ships.
+ * CLOSING IS DRIVEN THROUGH THE APP'S CONFIRMATION, not around it. `ChannelPoll` asks in the
+ * app's own `showConfirm` dialog since #1798 (a `window.confirm` before it), and `closePollCard`
+ * waits for that dialog to carry the app's own question before it answers - so the check asserts
+ * the app ASKED, with its own words.
  *
  * IT BUILDS ITS OWN VENUE and deletes it: an auto-pinned poll left in the shared community would sit
  * at the top of a salon for every later check to read.

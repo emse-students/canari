@@ -14,23 +14,19 @@
  * scan holds every mention to the one shape that is meant, line 1 exactly, and keeps the pragma the
  * countable record of which files pay for a DOM (`grep -l` gives the next measurement its population).
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from './sourceTree';
 
 const TOKEN = '@vitest' + '-environment';
 const PRAGMA = `// ${TOKEN} happy-dom`;
 const ANY_TOKEN = new RegExp('@(vitest|jest)' + '-environment');
-const SRC = join(import.meta.dirname, '..');
 
-/** Every test file under `src/`, as a `/`-separated path relative to it. */
-function testFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(path);
-    return /\.(test|spec)\.ts$/.test(entry.name) ? [relative(SRC, path).replaceAll('\\', '/')] : [];
-  });
-}
+/**
+ * Every test file under `src/`, from the run's shared snapshot: walking and reading ~1,200 files
+ * inside the test timed out at 5 s under load (2026-10-30), the cost `sourceTreeSetup.ts` pays
+ * once per run for every other scan.
+ */
+const testFiles = () => sourceFiles({ under: 'src', extensions: ['ts'], tests: 'only' });
 
 describe('the default test environment', () => {
   it('builds no window, so a DOM call in a file without the pragma throws', () => {
@@ -40,19 +36,17 @@ describe('the default test environment', () => {
   });
 
   it('is left only by the exact pragma on line 1', () => {
-    const files = testFiles(SRC);
+    const files = testFiles();
     // Reading the tree it thinks it is: the suite has hundreds of test files, and some declare.
     expect(files.length).toBeGreaterThan(500);
-    const declaring = files.filter((file) =>
-      readFileSync(join(SRC, file), 'utf8').startsWith(PRAGMA)
-    );
+    const declaring = files.filter((file) => file.text.startsWith(PRAGMA));
     expect(declaring.length).toBeGreaterThan(100);
     const misplaced = files.filter((file) => {
-      const lines = readFileSync(join(SRC, file), 'utf8').split('\n');
+      const lines = file.text.split('\n');
       return lines.some((line, index) =>
         index === 0 ? ANY_TOKEN.test(line) && line.trimEnd() !== PRAGMA : ANY_TOKEN.test(line)
       );
     });
-    expect(misplaced).toEqual([]);
+    expect(misplaced.map((file) => file.path)).toEqual([]);
   });
 });

@@ -13,10 +13,18 @@ import { m } from '$lib/paraglide/messages';
  * {@link describeRefusalCode}; a code this table does not know answers `null`, which leaves the
  * caller's own generic line in place rather than inventing a reason.
  */
+/**
+ * The code of an act across the review cohort's boundary (the store reviewers' accounts and the
+ * members never meet): worded neutrally, like a block, and typed like one where a flow answers it
+ * (`ReviewCohortBoundaryError`, `describeCallFailure`).
+ */
+export const REVIEW_COHORT_BOUNDARY_CODE = 'REVIEW_COHORT_BOUNDARY';
+
 const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
   NOT_A_MEMBER: m.refusal_not_a_member,
   MEMBERSHIP_NOT_ALLOWED: m.refusal_membership_not_allowed,
   USER_BLOCKED: m.refusal_user_blocked,
+  [REVIEW_COHORT_BOUNDARY_CODE]: m.refusal_review_cohort_boundary,
   INVITE_INVALID: m.invite_not_found,
   INVITE_NOT_A_GROUP: m.refusal_invite_not_a_group,
   NO_ACTIVE_DEVICE: m.refusal_no_active_device,
@@ -86,6 +94,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A Welcome whose target the roster does not name is a typed `WelcomeTargetNotMemberError`, and
   // the settlement that sent it stops owing it; no screen words it.
   'WELCOME_TARGET_NOT_MEMBER',
+  // A member-add call naming a person no accepted commit admitted is a typed
+  // `MemberNotAdmittedError`: the invite withholds the Welcome and reports the person not added.
+  'MEMBER_NOT_ADMITTED',
   // A Welcome to a device no key package names (revoked, or never registered) is terminal for that
   // Welcome; the sender's own commit answer already said the device was not admitted.
   'WELCOME_TARGET_UNKNOWN',

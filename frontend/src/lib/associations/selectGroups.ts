@@ -2,16 +2,27 @@ import type { Association } from './api';
 import type { PickerOption } from '$lib/components/ui/picker';
 import { m } from '$lib/paraglide/messages';
 
+/**
+ * The part of an association a kind grouping reads, so a membership row (which carries a kind, a
+ * name and a promo but no more) is grouped by the SAME classifier as a catalogue entry.
+ */
+export interface Groupable {
+  name: string;
+  type?: Association['type'];
+  promo?: number | null;
+  archived?: boolean;
+}
+
 /** Associations, institutions, lists and archived rows split for grouped rendering in selects. */
-export interface GroupedAssociations {
+export interface GroupedAssociations<T extends Groupable = Association> {
   /** Institutions (the School, a ME, the Alumni...), alphabetical. */
-  institutions: Association[];
+  institutions: T[];
   /** Regular associations, alphabetical. */
-  assos: Association[];
+  assos: T[];
   /** Promo lists, most recent promo first (nulls last), then by name. */
-  lists: Association[];
+  lists: T[];
   /** Every ARCHIVED row whatever its kind, alphabetical - kept selectable, drawn last and muted. */
-  archived: Association[];
+  archived: T[];
 }
 
 /** One heading of a grouped association select and the entries under it, in display order. */
@@ -22,7 +33,7 @@ export interface AssociationSelectGroup {
   muted: boolean;
 }
 
-const byName = (a: Association, b: Association) => a.name.localeCompare(b.name, 'fr');
+const byName = (a: Groupable, b: Groupable) => a.name.localeCompare(b.name, 'fr');
 
 /**
  * Splits a mixed array into the four groups used by every association picker, so the sort order is
@@ -37,7 +48,9 @@ const byName = (a: Association, b: Association) => a.name.localeCompare(b.name, 
  * offered - the server accepts a post, an event or a parent naming one - but no longer interleaved
  * with the live ones the member is looking for (16 of prod's 47 associations are archived).
  */
-export function groupAssociationsForSelect(associations: Association[]): GroupedAssociations {
+export function groupAssociationsForSelect<T extends Groupable>(
+  associations: T[]
+): GroupedAssociations<T> {
   const live = associations.filter((a) => !a.archived);
   const institutions = live.filter((a) => a.type === 'institution').sort(byName);
   const assos = live.filter((a) => a.type !== 'list' && a.type !== 'institution').sort(byName);

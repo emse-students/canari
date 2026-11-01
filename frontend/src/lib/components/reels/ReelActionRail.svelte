@@ -12,6 +12,7 @@
    * the column out of the double tap that likes the reel (PR #2113): a tap here acts at once.
    */
   import { tick, type Snippet } from 'svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { Heart, MessageCircle, Send, Volume2, VolumeX } from '@lucide/svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { longPress } from '$lib/actions/longPress';
@@ -52,6 +53,12 @@
     tools?: Snippet;
     /** Draws the sound button, the app's one answer (`videoSound`), under `tools`. */
     sound?: boolean;
+    /**
+     * Whether the reaction drawer is open. BINDABLE because the tap-outside layer is the SLIDE's
+     * (`ReelSlide`): drawn here it would be `fixed` inside the viewer's transformed track, so it
+     * covered slide 0's place and not the reel on screen.
+     */
+    drawerOpen?: boolean;
   }
 
   let {
@@ -64,6 +71,7 @@
     onSend,
     tools,
     sound = false,
+    drawerOpen = $bindable(false),
   }: Props = $props();
 
   const social = $derived(!!onHeart && !!onComments && !!onSend);
@@ -74,7 +82,6 @@
    * heart. A short tap is still the heart's toggle (`onHeart`); `longPress` swallows the click that
    * ends a hold, so opening the drawer never also toggles.
    */
-  let drawerOpen = $state(false);
   let drawerEl = $state<HTMLElement | null>(null);
   let heartEl = $state<HTMLElement | null>(null);
 
@@ -84,6 +91,12 @@
     await tick();
     drawerEl?.querySelector<HTMLElement>('[aria-checked="true"], button')?.focus();
   }
+
+  /** Back closes the drawer before the viewer: the history stack's newest entry is closed first. */
+  const overlay = bindHistoryOverlay(
+    () => drawerOpen,
+    () => closeDrawer(false)
+  );
 
   function closeDrawer(refocus: boolean) {
     if (!drawerOpen) return;
@@ -98,13 +111,26 @@
     onReact?.(type);
   }
 
-  /** Arrow keys walk the drawer, Escape closes it before the viewer reads the key. */
+  /**
+   * Escape closes the drawer WHEREVER the focus is, in the capture phase so the viewer's own
+   * Escape (which closes the whole viewer) never sees the key.
+   */
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !drawerOpen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    overlay.dismissFromUi();
+    heartEl?.focus();
+  }
+
+  $effect(() => {
+    if (!drawerOpen) return;
+    window.addEventListener('keydown', onWindowKeydown, true);
+    return () => window.removeEventListener('keydown', onWindowKeydown, true);
+  });
+
+  /** Arrow keys walk the drawer. */
   function onDrawerKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeDrawer(true);
-      return;
-    }
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     e.preventDefault();
     const items = [...(drawerEl?.querySelectorAll<HTMLElement>('button') ?? [])];
@@ -161,15 +187,6 @@
   {#if social}
     <div class="relative flex flex-col items-center">
       {#if drawerOpen}
-        <!-- A tap outside closes it: a button, so the viewer's swipe leaves it alone too. -->
-        <button
-          type="button"
-          class="pointer-events-auto fixed inset-0 z-(--z-popover-scrim) cursor-default"
-          tabindex="-1"
-          aria-hidden="true"
-          onclick={() => closeDrawer(false)}
-          data-reel-rail-drawer-dismiss
-        ></button>
         <div
           class="pointer-events-none absolute inset-x-0 bottom-full z-(--z-popover) mb-2 flex justify-center"
         >

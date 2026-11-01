@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * ONE PROBE PUBLISHES EVERY BDE-DERIVED FLAG, INCLUDING ON THE FAILURE PATH.
@@ -44,6 +44,18 @@ async function freshApi() {
   vi.resetModules();
   return import('./api');
 }
+
+/**
+ * THE FIRST `import('./api')` TRANSFORMS THE WHOLE `api.ts` GRAPH, and it used to happen INSIDE the
+ * first case: ~0.8 s alone, over the 5 s case timeout when the whole folder runs in parallel and the
+ * workers fight for the CPU (measured 2026-10-26; the mocks answer at once, nothing waits on I/O).
+ * The case that timed out kept running, so its late flag pushes landed in the NEXT case's arrays -
+ * which is why a third, unrelated assertion failed with it. The transform is paid here, once, under
+ * a timeout that names it; every case then re-EVALUATES from the transform cache in tens of ms.
+ */
+beforeAll(async () => {
+  await import('./api');
+}, 60_000);
 
 beforeEach(() => {
   request.mockReset();

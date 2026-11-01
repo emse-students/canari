@@ -1,0 +1,3 @@
+### Added - Lydia enrolment lot 3: Tresorier and Vendeur cashiers, removing a cashier, changing the Responsable's number
+
+Payout managers list an association's Lydia cashiers and remove one, every Lydia read-back failing closed and every removal verified by Lydia's own re-read; adding a Tresorier or a Vendeur, and changing the Responsable's number (the Responsable or a global admin only), ship switched off until one removal is observed in production. Erasure asks Lydia to remove the account's numbers first. Migration 119 ([payments](docs/wiki/frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).

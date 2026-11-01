@@ -18,6 +18,8 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
 /**
@@ -239,6 +241,8 @@ describe('MessagingService - a tombstone is not a destination', () => {
       GroupInvite,
       GroupMembershipInterval,
       SeatEviction,
+      JoinAskPush,
+      RevokedDeviceGroup,
       UserDismissedGroup,
     ]);
     expect(warnings.some((w) => w.includes('absent from dm_groups'))).toBe(true);

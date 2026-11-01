@@ -13,8 +13,13 @@ describe('.chat-sticky-date-indicator', () => {
   const rule = css.match(/\.chat-sticky-date-indicator \{([^}]*)\}/)?.[1] ?? '';
 
   it('blurs the thread under it, with the -webkit- spelling WKWebView needs', () => {
-    expect(rule).toMatch(/-webkit-backdrop-filter:\s*blur\(/);
-    expect(rule).toMatch(/[^-]backdrop-filter:\s*blur\(/);
+    expect(rule).toMatch(/-webkit-backdrop-filter:\s*(?:var\(--glass-chrome-blur\)|blur\()/);
+    expect(rule).toMatch(/[^-]backdrop-filter:\s*(?:var\(--glass-chrome-blur\)|blur\()/);
+  });
+
+  it('takes the blur from the one token, which resolves to a real blur in :root', () => {
+    expect(rule).toContain('var(--glass-chrome-blur)');
+    expect(css).toMatch(/--glass-chrome-blur:\s*blur\(/);
   });
 
   it('uses the glass tokens, not an opaque surface', () => {

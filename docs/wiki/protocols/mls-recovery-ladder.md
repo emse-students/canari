@@ -239,6 +239,39 @@ already acked, on an adder that predates `admits`: the repair then costs one sel
 join, which heals, never a corruption. Pinned by `welcomeOwed.test.ts` and
 `initializeConnection.sync.test.ts`.
 
+### A further device's request is answered by an automatic Add
+
+A further device of a member (the join answers `further_device`) does not let itself in, so the seam
+sends it a `welcome_request`, and a member's device ADDS it: since 2026-10-31 nobody is asked about a
+member's device ([mls-protocol](mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+On DEVREVOKE-KEYGROUP (`1.5.1-alpha.8`, 2026-10-29) a minted device sent one for each of its six
+conversations, then all six again 20 s later: only `resetReAddCooldowns` clears every group's
+throttle, and its one caller is the session setup (`setupMessageHandler`). The requester's console
+was not kept, so this cause is read from the code and is not proven.
+
+**The requester asks on its cadence, about once a minute per group, and records nothing.**
+`sendWelcomeRequest` returns what the server did (`WelcomeRequestAnswer`) and `askAMemberToReAddUs`
+logs it, but no answer makes the request durable:
+
+- `forwarded` reaches one online member's device, which adds it.
+- `stored` (`no_peer_online`) is kept for every member's next connection (`pending_welcome`,
+  `pending_welcome_notify`, 24 h), then drained to a member's device.
+- A record of "already asked against this epoch pair" was tried in review and REMOVED: in a quiet
+  group the pair never moves, and the presence edge does not watch group members, so the device
+  would wait for a reload.
+
+**What it costs.** A device with a `pending` seat is also added by every member's own
+pending-invitation sweep from that durable row (`processPendingInvitations`). **A device with NO seat
+and no member's device online** depends on its own cadence. The durable fix is on the
+[backlog](../backlog.md): store a further device's request as a server row, as a link's ask is, and
+let the requester stop asking once the row exists.
+
+**The history answerer says its withholding once and counts repeats.** `utils/graine/frameHandler.ts` says
+`withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group
+(`sayAnswerDecisionOnce`, `DecisionLog` in `utils/decisionLog.ts`, the client twin of the server's `RepeatCounter`), with repeats counted at 1, 10 and 100. Each line is
+keyed on what it was decided on: which sessions were withheld and why. Pinned by `recovery.test.ts`,
+`decisionLog.test.ts`, `actions.admission.test.ts` and `frameHandler.test.ts`.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |

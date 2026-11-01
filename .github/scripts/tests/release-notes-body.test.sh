@@ -121,7 +121,7 @@ printf '   \n\n\t\n' > "$TMP/blank"
 out="$(compose "$TMP/blank")"
 case "$out" in
   "$BEGIN"*) pass 'a whitespace-only body counts as empty' ;;
-  *) fail "a whitespace-only body was kept as content: $(printf '%s' "$out" | head -3)" ;;
+  *) fail "a whitespace-only body was kept as content: $(printf '%s' "$out" | sed -n 1,3p)" ;;
 esac
 
 printf '\nunreadable arguments are refused rather than guessed\n'

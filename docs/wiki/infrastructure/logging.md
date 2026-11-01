@@ -75,6 +75,13 @@ before.
   (hand-run on the host, [authentik](authentik.md)), so it is bounded when that stack is next
   recreated, and its logs are not archived by the deploy.
 
+### No unattended container recreation for log retention (owner, 2026-10-24)
+
+A log bound (`max-size`, a driver change) reaches a container at its next ORDINARY recreation - a
+deploy, or a human's operation on the hand-run Authentik stack. No job, cron or agent recreates a
+container for that alone: a recreation is a short outage of a service on a host this project does not
+own, and a log setting is never worth one.
+
 ## The 90-day ceiling (2026-10-16)
 
 **The promise**, `frontend/src/routes/legal/privacy/+page.svelte`: *"Logs techniques (IP,

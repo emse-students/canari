@@ -7,6 +7,7 @@ mod concurrency;
 mod happy_eyeballs;
 mod keystore_bridge;
 mod native_cache;
+mod page_ring;
 mod state;
 
 // `test` is in the gate so the shared background logic - the outbox batch drain in particular -
@@ -42,20 +43,23 @@ use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, cle_feuille,
     cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
-    contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes, epoques_departs,
-    exporter_group_info, exporter_ratchet_tree, exporter_secret, feuille_portant_cle,
-    generer_key_packages_et_persister, graine_member_signature_key, graine_run,
-    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, graine_verify_signatures, groupe_actif, groupes_commit_en_attente,
-    initialiser_mls, key_package_a_clef_privee, lire_ledgers_mls, lister_groupes,
-    lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
+    contexte_correspond_base, creer_groupe, date_feuille, definir_politique_admission,
+    envoyer_message_bytes, epoques_departs, exporter_group_info, exporter_ratchet_tree,
+    exporter_secret, feuille_portant_cle, generer_key_packages_et_persister,
+    graine_member_signature_key, graine_run, graine_session_keypair,
+    graine_sign_with_device_credential, graine_sign_with_session_key, graine_verify_signature,
+    graine_verify_signatures, groupe_actif, groupes_commit_en_attente, initialiser_mls,
+    key_package_a_clef_privee, lire_ledgers_mls, lister_groupes, lister_identites_membres,
+    mls_external_join_is_a_further_device, obtenir_epoch, oublier_groupe, oublier_key_packages,
     prendre_constats_fork, prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
     recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
     rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    soumission_en_attente, trailer_welcome, verifier_key_package, welcome_remis, welcomes_dus,
+    soumission_en_attente, terminer_session_mls, trailer_welcome, verifier_key_package,
+    welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
@@ -70,10 +74,10 @@ use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
 };
 use crate::commands::storage::{
-    clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
-    get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
-    mls_state_absent, mls_state_owner, mls_state_size, pause_mls_foreground,
-    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
+    clear_app_data, delete_user_database, get_installer_package, get_local_storage_usage,
+    get_native_flags, load_mls_state, mls_foreground_heartbeat, mls_state_absent, mls_state_owner,
+    mls_state_size, pause_mls_foreground, recharger_mls_au_resume, remove_native_flag,
+    save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -328,6 +332,23 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
         log::error!("[FCM_CACHE] sealed line not returned: {e}");
         null()
     })
+}
+
+/// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
+/// ring of a `call_ring` push stands back only when this is true AND the app is in front.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativePageRingsInApp<
+    'a,
+>(
+    _env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+) -> jni::sys::jboolean {
+    if page_ring::page_rings_in_app() {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
 }
 
 /// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
@@ -1211,6 +1232,54 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("").unwrap())
 }
 
+/// Builds the call hangup a callee sends when it refuses a ring, for the Decline of the NATIVE
+/// ring (notification action and call screen), which runs with no webview: the same frame the
+/// in-app Decline sends, so the caller's ring ends at once
+/// ([`mobile::proto_fields::build_call_hangup_app_message`]). Empty on a marshalling failure,
+/// logged; the Kotlin caller then sends nothing and says so.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildCallHangupProto<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    message_id: jni::objects::JString<'a>,
+    sent_at: jni::sys::jlong,
+    call_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    end_reason: jni::sys::jint,
+) -> jni::objects::JString<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let result = (|| -> Result<String, String> {
+        let message_id_str: String = env
+            .get_string(&message_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let call_id_str: String = env.get_string(&call_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let bytes = mobile::proto_fields::build_call_hangup_app_message(
+            &message_id_str,
+            sent_at,
+            &call_id_str,
+            &device_id_str,
+            end_reason.max(0) as u32,
+        );
+        Ok(STANDARD.encode(&bytes))
+    })();
+
+    let out = result.unwrap_or_else(|e| {
+        log::error!("[CALL_DECLINE] nativeBuildCallHangupProto failed: {e}");
+        String::new()
+    });
+    env.new_string(&out)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessagesBackground<
@@ -1339,6 +1408,18 @@ pub fn run() {
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_system_components::init());
+
+    // A WKWebView whose web content process died has lost its page, and with it every socket that
+    // page held: the ring facts are cleared BEFORE the reload (Tauri's own default, kept), so no ring
+    // arriving in between is left to a dead page (`page_ring`).
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    let builder = builder.on_web_content_process_terminate(|webview| {
+        log::warn!("[CALL_RING] the web content process terminated - reloading the page");
+        page_ring::forget_on_web_content_terminated();
+        if let Err(e) = webview.reload() {
+            log::error!("[CALL_RING] the page could not be reloaded after its process died: {e}");
+        }
+    });
 
     builder
         .manage(AppState {
@@ -1541,6 +1622,13 @@ pub fn run() {
 
             Ok(())
         })
+        // A new document holds no gateway socket: whatever the previous page said about ringing a
+        // call itself is void from here (`page_ring`).
+        .on_page_load(|_webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                page_ring::forget_on_page_load();
+            }
+        })
         .on_window_event(|window, event| {
             #[cfg(mobile)]
             let _ = (window, event);
@@ -1557,6 +1645,7 @@ pub fn run() {
             graine_verify_signature,
             graine_verify_signatures,
             graine_sign_with_device_credential,
+            mls_external_join_is_a_further_device,
             graine_member_signature_key,
             graine_run,
             recuperer_cle_session_mls,
@@ -1585,6 +1674,7 @@ pub fn run() {
             epoques_departs,
             prendre_evenements_appareils,
             lister_identites_membres,
+            definir_politique_admission,
             retirer_membres,
             retirer_membres_par_appareil,
             rafraichir_feuille,
@@ -1618,8 +1708,11 @@ pub fn run() {
             save_mls_state,
             recharger_mls_au_resume,
             mls_foreground_heartbeat,
+            page_ring::page_ring_document,
+            page_ring::set_page_gateway_socket,
+            page_ring::set_page_ringing_call,
             pause_mls_foreground,
-            delete_mls_state,
+            terminer_session_mls,
             load_mls_state,
             mls_state_size,
             mls_state_absent,
@@ -1640,6 +1733,7 @@ pub fn run() {
             ack_fcm_cache,
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
+            take_nse_outcomes,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,

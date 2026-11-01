@@ -20,10 +20,21 @@ import { PostsModule } from '../posts/posts.module';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { ProductCheckout } from '../associations/entities/product-checkout.entity';
+import { LydiaReconciliationService } from './lydia-reconciliation.service';
+import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Form, Submission, FormReminder, FormRespondent, FormFile]),
+    TypeOrmModule.forFeature([
+      Form,
+      Submission,
+      FormReminder,
+      FormRespondent,
+      FormFile,
+      // The boutique attempts the Lydia reconciliation reads (`lydia-reconciliation.service.ts`).
+      ProductCheckout,
+    ]),
     HttpModule.register({ timeout: 30_000, maxRedirects: 0 }),
     ConfigModule,
     AssociationsModule,
@@ -39,6 +50,8 @@ import { PricingModule } from '../pricing/pricing.module';
     FormFilesService,
     FormReminderScheduler,
     FormFileRetentionScheduler,
+    LydiaReconciliationService,
+    LydiaReconciliationScheduler,
     PushService,
   ],
   // FormFilesService: the store and the purge of the `form-file` class, which a booking's file

@@ -8,6 +8,9 @@ import {
   conversationRecency,
   toConversationMeta,
 } from './conversations';
+import { advanceLastMessageAt } from './messageOrder';
+import { deviceAddedLineId } from './listPreview';
+import { mkCallStartedEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 function msg(id: string, at: number): ChatMessage {
@@ -47,6 +50,83 @@ describe('conversationRecency', () => {
   it('persists the same key, never the local clock', () => {
     expect(toConversationMeta('c', convo('c', []), 'me').updatedAt).toBe(0);
     expect(toConversationMeta('c', convo('c', [msg('1', 7)], 3), 'me').updatedAt).toBe(7);
+  });
+});
+
+function notice(id: string, at: number, flagOnly = false): ChatMessage {
+  return flagOnly ? { ...msg(id, at), isSystem: true } : { ...msg(id, at), senderId: 'system' };
+}
+
+describe('a system notice is not activity', () => {
+  it('skips a newer notice (flagged or by sender) and reads the newest real message', () => {
+    const c = convo('c', [msg('1', 100), notice('2', 900), notice('3', 950, true)]);
+    expect(conversationRecency(c)).toBe(100);
+  });
+
+  it('keeps an only-notices conversation at its seed, then its creation, never the notice time', () => {
+    expect(conversationRecency(convo('c', [notice('1', 900)], 40))).toBe(40);
+    expect(conversationRecency({ ...convo('c', [notice('1', 900)]), startedAt: 10 })).toBe(10);
+    expect(conversationRecency(convo('c', [notice('1', 900)]))).toBe(0);
+  });
+
+  it('does not let a notice move a conversation above a quieter one', () => {
+    const a = convo('a', [msg('1', 100), notice('2', 900)]);
+    const b = convo('b', [msg('1', 500)]);
+    expect([a, b].sort(compareConversationRecency).map((x) => x.id)).toEqual(['b', 'a']);
+  });
+
+  it('advanceLastMessageAt moves the seed on real messages only', () => {
+    expect(advanceLastMessageAt(50, [notice('1', 900)])).toBe(50);
+    expect(advanceLastMessageAt(undefined, [notice('1', 900)])).toBeUndefined();
+    expect(advanceLastMessageAt(50, [notice('1', 900), msg('2', 70)])).toBe(70);
+  });
+});
+
+describe('a call record is activity, a notice is not', () => {
+  const call = (id: string, at: number): ChatMessage => ({
+    ...msg(id, at),
+    senderId: 'system',
+    isSystem: true,
+    content: serializeEnvelope(mkCallStartedEnvelope('Camille', 'c1', 'camille', at)),
+  });
+
+  it('ranks by the call record even when a notice is newer', () => {
+    expect(conversationRecency(convo('c', [msg('1', 100), call('2', 400), notice('3', 900)]))).toBe(
+      400
+    );
+  });
+
+  it('advanceLastMessageAt moves on a call record', () => {
+    expect(advanceLastMessageAt(50, [call('1', 600)])).toBe(600);
+  });
+});
+
+describe('a freshly created conversation holding only its creation notice', () => {
+  it('ranks by its creation seed, above an older quieter conversation', () => {
+    const fresh = convo('fresh', [notice('1', 5000)], 4000);
+    const old = convo('old', [msg('1', 1000)]);
+    expect([old, fresh].sort(compareConversationRecency).map((x) => x.id)).toEqual([
+      'fresh',
+      'old',
+    ]);
+  });
+});
+
+describe('the "X added a device" line (owner, 2026-10-31: never moves its conversation)', () => {
+  /** The line as `deviceNotices.svelte.ts` writes it: sent by `system`, flagged, its own id. */
+  const deviceLine = (at: number): ChatMessage => ({
+    ...msg(deviceAddedLineId('a', 'bob:phone-2|00ff'), at),
+    senderId: 'system',
+    isSystem: true,
+    content: 'Bob added a device',
+  });
+
+  it('leaves the conversation where its last real message put it', () => {
+    const a = convo('a', [msg('1', 100), deviceLine(900)], 100);
+    const b = convo('b', [msg('1', 500)]);
+    expect(conversationRecency(a)).toBe(100);
+    expect([a, b].sort(compareConversationRecency).map((x) => x.id)).toEqual(['b', 'a']);
+    expect(advanceLastMessageAt(100, [deviceLine(900)])).toBe(100);
   });
 });
 

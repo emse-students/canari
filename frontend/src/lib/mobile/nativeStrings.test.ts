@@ -237,13 +237,22 @@ describe('iOS string resources', () => {
  */
 describe('Server-composed push keys reach every native table', () => {
   const PUSH_CONTENT = resolve(here, '../../../../apps/social-service/src/push/push-content.ts');
+  const PUSH_CATEGORY = resolve(
+    here,
+    '../../../../apps/chat-delivery-service/src/services/push-category.ts'
+  );
 
   /** The `PushContentKey` union, read out of the source. */
   const serverKeys = (() => {
     const source = readFileSync(PUSH_CONTENT, 'utf8');
     const union = source.match(/export type PushContentKey =([\s\S]*?);/);
     if (!union) throw new Error('PushContentKey union not found in push-content.ts');
-    return [...union[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    const social = [...union[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    // chat-delivery composes one of its own (`chat_join_ask`) through the same native tables: its
+    // keys are the `chat_` ones of its category map, so a key added there cannot skip them either.
+    const categories = readFileSync(PUSH_CATEGORY, 'utf8');
+    const chat = [...categories.matchAll(/^\s*(chat_[a-z_]+):/gm)].map((m) => m[1]);
+    return [...social, ...chat];
   })();
 
   /** Keys whose title names the actor take an extra `%s`; the rest are fixed sentences. */
@@ -251,6 +260,7 @@ describe('Server-composed push keys reach every native table', () => {
   const iosNames = (key: string) => {
     const dotted = key
       .replace(/^social_/, 'social.')
+      .replace(/^chat_/, 'social.')
       .replace(/^form_/, 'form.')
       .replace(/^event_/, 'event.');
     return [`notif.${dotted}.title`, `notif.${dotted}.body`];
@@ -259,6 +269,18 @@ describe('Server-composed push keys reach every native table', () => {
   it('finds the server key set at all', () => {
     expect(serverKeys.length).toBeGreaterThan(3);
     expect(serverKeys).toContain('social_comment');
+    expect(serverKeys).toContain('chat_join_ask');
+  });
+
+  it('says "someone" in every table when an ask names nobody - an id never reaches a lock screen', () => {
+    expect(fr.has('notif_chat_join_ask_anon_title')).toBe(true);
+    expect(en.has('notif_chat_join_ask_anon_title')).toBe(true);
+    for (const bundle of BUNDLES) {
+      for (const lang of ['fr', 'en']) {
+        const table = parseLproj(bundle, lang, 'Localizable.strings');
+        expect(table.has('notif.social.join_ask_anon.title'), `${bundle}/${lang}`).toBe(true);
+      }
+    }
   });
 
   it.each(serverKeys)('%s is spelled in both Android tables', (key) => {

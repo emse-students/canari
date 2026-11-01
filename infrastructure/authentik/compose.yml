@@ -33,7 +33,15 @@ x-logging: &logging
 services:
   postgresql:
     logging: *logging
-    image: docker.io/library/postgres:16-alpine
+    # PostgreSQL 18 since 2026-10-31, reached by a logical dump and restore onto a NEW volume, never
+    # by retagging this line: an 18 image refuses a cluster written by 16, and refuses a mount at the
+    # old `/var/lib/postgresql/data` even when it is empty (why Dependabot's #2742 never became
+    # healthy). So the tag, the mount and the volume name move in ONE commit, and the old volume
+    # `database` is left behind untouched as the rollback. Procedure, rehearsal and numbers:
+    # docs/wiki/infrastructure/authentik.md. Pinned to the SAME digest as Canari's own
+    # docker-compose.prod.yml, so the host already holds the image. The next major is the same
+    # operation again: `postgres` stays refused by name in .github/scripts/lib/ceiling.sh.
+    image: docker.io/library/postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
     restart: unless-stopped
     env_file:
       - .env
@@ -48,7 +56,8 @@ services:
       retries: 5
       start_period: 20s
     volumes:
-      - database:/var/lib/postgresql/data
+      # 18+ keeps its cluster under PGDATA=/var/lib/postgresql/18/docker, below this mount.
+      - database_18:/var/lib/postgresql
 
   server:
     logging: *logging
@@ -130,5 +139,5 @@ services:
       - ./custom-templates:/templates
 
 volumes:
-  database:
+  database_18:
     driver: local

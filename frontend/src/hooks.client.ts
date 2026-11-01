@@ -7,7 +7,10 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
-import { version } from '$app/environment';
+import type { HandleClientError } from '@sveltejs/kit/hooks';
+import { version } from '$app/env';
+import { resolve } from '$app/paths';
+import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -27,6 +30,7 @@ import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import { shopReturnPath } from '$lib/shop/checkoutReturn';
+import { handleClientError } from '$lib/navigation/handleClientError';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -52,12 +56,24 @@ installAppLogFlushTriggers();
 installBootBenchDevTools();
 markBoot('app-first-line');
 
-/** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
-export function handleError({ error }: { error: unknown }): void {
-  console.error('[App] Client error:', error);
-}
+/**
+ * Called on every client-side error SvelteKit catches, a page that throws while it renders included
+ * (Kit 3's own boundary around every route node routes it here). `handleClientError` is the one
+ * owner of that report; it lives apart so it can be tested without this file's side effects.
+ */
+export const handleError: HandleClientError = handleClientError;
 
-/** Optional init hook - called once before the app starts. No setup needed here. */
+/**
+ * Optional init hook - called once before the app starts. No setup needed here.
+ *
+ * IT STAYS SYNCHRONOUS, AND A COLD-START DEEP LINK RESTS ON THAT. Kit's `_start` sets `app`, awaits
+ * this hook, and only THEN builds the route table that `match` and `goto` read (`client.js`,
+ * `app = _app` -> `await hooks.init()` -> `routes = parse_routes()`); a `match` before it throws. The
+ * launch URL below reaches `gotoAppPath` only after a Tauri IPC reply, which arrives as a task, while
+ * everything from this module's evaluation to the route table is microtasks - as long as this hook
+ * does no I/O. An `async` init that awaited anything real would open that window and lose the link
+ * to a rejection. `coldStartOrder.test.ts` holds this hook to its synchronous signature.
+ */
 export function init(): void {}
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -172,21 +188,13 @@ if (isTauriRuntime()) {
             // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
             if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
-              // WP-XP-5: the user answered an incoming call from a system surface (Android
-              // CallStyle notification / iOS CallKit). Record the intent; CallService
-              // auto-accepts once the MLS invite arrives over WS (post-unlock).
-              const acceptCallId = u.searchParams.get('acceptCall');
-              if (groupId && acceptCallId) {
-                import('$lib/stores/pendingCallAccept')
-                  .then(({ setPendingCallAccept }) =>
-                    setPendingCallAccept({
-                      groupId,
-                      callId: acceptCallId,
-                      hasVideo: u.searchParams.get('video') === '1',
-                      acceptedAt: Date.now(),
-                    })
-                  )
-                  .catch(() => {});
+              // A LINK NAVIGATES, IT NEVER ANSWERS A CALL. The native answer is carried by a
+              // private intent (`pending_call_accept.json`, `$lib/stores/pendingCallAccept`); a
+              // parameter of this URL is never read as one, whoever opened it.
+              if (u.searchParams.has('acceptCall')) {
+                console.warn(
+                  '[hooks] a chat link carried acceptCall - ignored, links never answer'
+                );
               }
               if (groupId) {
                 Promise.all([
@@ -285,7 +293,7 @@ if (isTauriRuntime()) {
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
 
-              const navigate = (target: string) => {
+              const navigate = (target: AppPath) => {
                 import('$app/navigation')
                   .then(({ goto }) => goto(target))
                   .catch(() => {
@@ -342,7 +350,7 @@ if (isTauriRuntime()) {
                 `[hooks] unknown deep-link host, opening notifications: ${describeDeepLink(url)}`
               );
               import('$app/navigation')
-                .then(({ goto }) => goto('/notifications'))
+                .then(({ goto }) => goto(resolve('/notifications')))
                 .catch((err) => console.error('[hooks] Notifications navigation failed', err));
               continue;
             }

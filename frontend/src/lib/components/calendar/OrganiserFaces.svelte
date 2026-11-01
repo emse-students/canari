@@ -35,7 +35,13 @@
 <span class="inline-flex shrink-0 items-center" role="img" aria-label={fullList} title={fullList}>
   {#each faces.shown as owner, i (owner.associationId)}
     <span class="ring-cn-surface rounded-full ring-2 {i > 0 ? '-ml-2' : ''}">
-      <AssociationAvatar name={owner.name} logoUrl={owner.logoUrl} {size} shape="circle" />
+      <AssociationAvatar
+        id={owner.associationId}
+        name={owner.name}
+        logoUrl={owner.logoUrl}
+        {size}
+        shape="circle"
+      />
     </span>
   {/each}
   {#if faces.hidden.length > 0}

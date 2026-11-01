@@ -6,10 +6,12 @@ import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
+import { canonicalUserId } from './sanitize';
 import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
   heldKeyPackages,
+  takeSeatLock,
   takeSharedSeatLock,
   withSeatLock,
 } from './seat-eviction';
@@ -49,7 +51,10 @@ const logger = new Logger('GroupMembership');
  * the clock `sendMessage` stamps `queued_message.createdAt` with - the server time a window is
  * compared against. The database's `now()` is a different clock; the two agree only by accident.
  * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
- * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
+ * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation. It
+ * is ASSERTED at every boot, at ERROR, by `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`):
+ * this function, which compares a `new Date()` against a `now()`-dated device row, is the other
+ * instance it guards.
  *
  * **AND IT RECORDS AN ADMISSION THAT PRECEDED IT** (review of #2226). When a device row of this
  * person in this group is older than the enrolment - a commit admitted an invitee who came online
@@ -134,8 +139,20 @@ export async function ensureGroupMember(
   }
 }
 
-/** What {@link writePendingSeats} did: the seats written, or why none was. */
-export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
+/**
+ * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
+ * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
+ * admission. `roster_taken` and `not_creator` only for a `'creator'` enrolment, and nothing was
+ * written: someone else is already on the roster, or the group's recorded creator (`Group.createdBy`)
+ * is not this person - none recorded included.
+ */
+export type PendingSeatsOutcome =
+  | 'written'
+  | 'group_gone'
+  | 'not_on_roster'
+  | 'not_admitted'
+  | 'roster_taken'
+  | 'not_creator';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -148,10 +165,22 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster';
  * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
  * read finds no row - or waits, then deletes what this wrote.
  *
- * @param enrol true for an invite acceptance, which writes the roster row itself in the same
- *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
- *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
- *   which writes seats only where its owner is ALREADY on the roster.
+ * @param enrol how the roster row is written, in the same transaction ({@link ensureGroupMember}):
+ *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
+ *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
+ *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
+ *   admitted - and ONLY for the group's recorded creator (`Group.createdBy`, else `not_creator`) while
+ *   the roster is empty, both re-read here under the seat lock taken EXCLUSIVE:
+ *   the route's own "empty roster" read is unlocked, so two callers who both read it empty were both
+ *   enrolled admitted (review of #2585). Exclusive, two creators run one after the other, and the
+ *   second finds the first's committed row and gets `roster_taken`. The caller's own row does not
+ *   count: a creator's retry stays the no-op it was; false for a device registration, which writes seats only where its owner is ALREADY
+ *   on the roster.
+ * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
+ *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
+ *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
+ *   the same lock and row lock as the roster row, so a Decline (which takes the seat lock exclusive)
+ *   is wholly before this read or waits for this transaction.
  * @param manager a NON-transactional manager - this opens the transaction itself.
  */
 export async function writePendingSeats(
@@ -159,24 +188,54 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean
+  enrol: false | 'awaiting_admission' | 'creator',
+  opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
-    await takeSharedSeatLock(m, groupId);
+    // A creator decides who the group's first member is: exclusive, so no second creator reads the
+    // roster empty beside it. Every other writer only adds seats beside an existing one: shared.
+    if (enrol === 'creator') await takeSeatLock(m, groupId);
+    else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
-      select: { id: true, deletedAt: true },
+      select: { id: true, deletedAt: true, createdBy: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
+    if (enrol === 'creator') {
+      // THE CREATOR ALONE, read here under the lock as the roster is. The creation bootstrap enrols
+      // the group's recorded creator (`createdBy`) and nobody else; a group with no recorded creator
+      // is bootstrapped by nobody. Compared in canonical form ({@link canonicalUserId}).
+      if (!group.createdBy || group.createdBy !== canonicalUserId(userId)) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED not_creator group=${groupId} user=${cutUserId(userId)} ` +
+            `creator=${group.createdBy ? cutUserId(group.createdBy) : 'none'} - nothing written`
+        );
+        return 'not_creator';
+      }
+      const other = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId: Not(userId) },
+        select: { id: true, userId: true },
+      });
+      if (other) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED roster_taken group=${groupId} user=${cutUserId(userId)} ` +
+            `- enrolling as the creator, but ${cutUserId(other.userId)} is already on the roster; nothing written`
+        );
+        return 'roster_taken';
+      }
+    }
     if (enrol) {
-      await ensureGroupMember(m, groupId, userId, { awaitingAdmission: true });
+      await ensureGroupMember(m, groupId, userId, {
+        awaitingAdmission: enrol === 'awaiting_admission',
+      });
     } else {
       const seat = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId },
         lock: { mode: 'pessimistic_read' },
       });
       if (!seat) return 'not_on_roster';
+      if (opts.requireAdmitted === true && seat.awaitingAdmission === true) return 'not_admitted';
     }
     // Each row only beside its device's key package, read `FOR SHARE` under the lock
     // ({@link heldKeyPackages}): a device of an account being erased gets none.
@@ -564,6 +623,78 @@ export function isKeyDistributionGroup(
   return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
 }
 
+/**
+ * Whether `group` withholds what precedes a person's arrival ({@link withheldWindows}): a GROUP
+ * conversation does, a 1:1 does not, and a key-distribution group is read as a 1:1 (its roster is
+ * social-service's, and Graine decides what its past goes to). A missing row is read as a 1:1 - the
+ * caller says so, since that answer withholds nothing before an arrival.
+ *
+ * ONE predicate for the two readers of a person's arrival: the exclusions route a history answer is
+ * filtered on, and the server's own filter of the history stream (`MessagingService.getHistory`), so
+ * the two can never disagree on which conversations the span applies to.
+ */
+export function withholdsArrivalSpan(
+  group: Pick<Group, 'isGroup' | 'distributionWorkspaceId' | 'distributionChannelId'> | null
+): boolean {
+  return group?.isGroup === true && !isKeyDistributionGroup(group);
+}
+
+/**
+ * DATES A LINK JOINER'S ARRIVAL AT THE MEMBER'S ADD THAT ADMITS THEM, in the transaction `m` of the
+ * accepted commit that lifts their `awaitingAdmission` (`MessagingService.liftAwaitingAdmission`, the
+ * one door that lifts it).
+ *
+ * **WHY.** A newcomer reads nothing from before their arrival, and the arrival is the ADD (user,
+ * 2026-10-21: "added = arrived", as on WhatsApp). The invitation link writes the seat - the roster
+ * row, its open interval and `pending` device rows - when the person ASKS (`acceptGroupInvite`),
+ * which can be days before a member answers. {@link withheldWindows} reads the arrival from exactly
+ * those: the interval's `joinedAt` and the earliest device row. Left as written, every history answer
+ * and the history stream handed the person what was sent while they were waiting outside - the
+ * person was never a member then (a Decline DELETES that interval for the same reason,
+ * {@link withdrawAwaitingSeat}). So the lift moves both to the admission:
+ *
+ * - the open interval's `joinedAt` becomes this instant, and its `admittedAt` is cleared - the
+ *   device rows it was copied from predate the admission too;
+ * - the person's device rows in the group are dated the SAME instant, which is what
+ *   {@link withheldWindows} reads them as: "a device row is written when a commit admits the device".
+ *
+ * **ONE VALUE FOR BOTH COLUMNS, NEVER `now()` FOR ONE OF THEM.** Both are `timestamp WITHOUT time
+ * zone`: a JavaScript `Date` is stored as this process's local wall time, `now()` as the database
+ * session's, and both are read back as this process's. Two sources made the arrival - the earlier of
+ * the two - wrong by the offset between the two zones whenever they differ: measured an hour early
+ * under `TZ=Europe/Paris` against a UTC database, an hour of the group's past handed to the newcomer
+ * (review of #2800). One value also removes the transaction-start skew `now()` carried. The other
+ * writer that still mixes the two clocks is {@link ensureGroupMember}; the boot check
+ * `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`) accuses any estate where they disagree.
+ *
+ * A former member asking again through a link keeps their closed intervals: the gap since their
+ * departure now runs to this admission, so the time they spent waiting is withheld with it - the
+ * 2026-10-14 rule.
+ *
+ * @param m the commit's transactional manager - the lift, this and the advance commit together.
+ * @param userIds the people whose ask this commit answered (their flag was just lifted).
+ * @returns how many intervals and device rows were re-dated, for the caller's log line.
+ */
+export async function dateArrivalAtAdmission(
+  m: EntityManager,
+  groupId: string,
+  userIds: readonly string[]
+): Promise<{ intervals: number; devices: number }> {
+  if (userIds.length === 0) return { intervals: 0, devices: 0 };
+  const people = [...userIds];
+  const at = new Date();
+  const intervals = await m
+    .getRepository(GroupMembershipInterval)
+    .update({ groupId, userId: In(people), leftAt: IsNull() }, { joinedAt: at, admittedAt: null });
+  const devices = await m
+    .createQueryBuilder()
+    .update(DeviceGroupMembership)
+    .set({ createdAt: at })
+    .where('"groupId" = :groupId AND "userId" IN (:...people)', { groupId, people })
+    .execute();
+  return { intervals: intervals.affected ?? 0, devices: devices.affected ?? 0 };
+}
+
 /** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
 const notAMemberRepeats = new RepeatCounter();
 
@@ -748,8 +879,8 @@ export type ExclusionWindow = { from: number; until: number | null };
  * A window is the stretch between the END of one interval and the START of the next - and, when the
  * latest interval is closed, from its end onwards. **The time before the FIRST interval is never a
  * window HERE**: that span is a group-conversation rule, added by {@link withheldWindows}, and this
- * function also feeds the server's own stream filter and the legacy `exclusions` field, whose
- * readers take a union. A person with one open interval has no window at all, and that
+ * function also feeds the legacy `exclusions` field, whose readers take a union, and the server's own
+ * stream filter in a 1:1 or a key group. A person with one open interval has no window at all, and that
  * is also what a brand-new device of a continuous member sees - intervals are per USER, never per
  * device, so a wipe or a new phone opens nothing.
  *
@@ -877,7 +1008,10 @@ export function insideExclusion(at: number, windows: readonly ExclusionWindow[])
  * leaf, and every frame sent while they were out is sealed at an epoch their old state can still
  * open. Live delivery and the queue never reach them (their device rows are gone), so the one road
  * back is this stream, walked after a re-add. The server knows both the window and the row's time,
- * so it withholds the ciphertext itself - a control that holds whatever the reader's build.
+ * so it withholds the ciphertext itself - a control that holds whatever the reader's build. In a
+ * group conversation the windows also hold the span before the reader's arrival
+ * ({@link withheldWindows}): a newcomer is served no ciphertext of the group's past, so its absence
+ * rests on this server and not on the newcomer's restraint.
  *
  * **DROPPED, NEVER MARKED.** A marked row (`{ id, withheld }`, the first shape) stalled every store
  * build shipped before it for good: the old walk decodes `content` unconditionally, the decode

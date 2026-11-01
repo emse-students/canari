@@ -4,7 +4,8 @@
  * the three refusals with its own sentence and a retry, and the live preview with its lens controls.
  * The session's opener is injected, so the order of events is the test's, never a clock's.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubCameraCount } from '../../../test/cameraDevices';
 import { flushSync, mount, unmount } from 'svelte';
 import CameraScreen from './CameraScreen.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
@@ -34,7 +35,13 @@ vi.mock('$lib/reels/gallery', () => ({
 
 const mounted: Record<string, unknown>[] = [];
 
+let unstubCameras = () => {};
+beforeEach(() => {
+  unstubCameras = stubCameraCount(2);
+});
+
 afterEach(() => {
+  unstubCameras();
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   nativeApp = false;
@@ -74,7 +81,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/dashboard'), {
-      replaceState: true,
+      replace: true,
     });
   });
 
@@ -86,7 +93,7 @@ describe('CameraScreen close', () => {
     (target.querySelector(`[aria-label="${m.reels_camera_close()}"]`) as HTMLElement).click();
 
     expect(nav.goto).toHaveBeenCalledWith(expect.stringContaining('/posts'), {
-      replaceState: true,
+      replace: true,
     });
   });
 });
@@ -165,6 +172,15 @@ describe('CameraScreen', () => {
     expect(dark.target.querySelector(`[aria-label="${m.reels_camera_torch_on()}"]`)).toBeNull();
   });
 
+  it('offers no switch on a device with one camera (owner, 2026-10-31)', async () => {
+    unstubCameras();
+    unstubCameras = stubCameraCount(1);
+    const one = await render(() => Promise.resolve(stream(false)));
+    await vi.waitFor(() => expect(one.session.cameraCount).toBe(1));
+    flushSync();
+    expect(one.target.querySelector(`[aria-label="${m.reels_camera_switch()}"]`)).toBeNull();
+  });
+
   describe('between the track and the first frame', () => {
     const preview = (t: HTMLElement) => t.querySelector('video')!;
     const standIn = (t: HTMLElement) => t.querySelector<HTMLElement>('[data-camera-standin]')!;
@@ -212,7 +228,7 @@ describe('CameraScreen', () => {
     const flip = () =>
       target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_camera_switch()}"]`)!;
 
-    expect(open).toHaveBeenCalledWith('user');
+    expect(open).toHaveBeenCalledWith('user', false);
     expect(session.facing).toBe('user');
     expect(target.querySelector('video')!.className).toContain('-scale-x-100');
     expect(torch()).toBeNull();
@@ -221,7 +237,7 @@ describe('CameraScreen', () => {
     await Promise.resolve();
     await Promise.resolve();
     flushSync();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(target.querySelector('video')!.className).not.toContain('-scale-x-100');
     expect(torch()).not.toBeNull();
 
@@ -293,6 +309,93 @@ describe('CameraScreen', () => {
     const { target } = await render(() => Promise.resolve(stream(false)));
     const video = target.querySelector('video')!;
     expect(video.muted).toBe(true);
+  });
+});
+
+describe('CameraScreen - deferOpen (the gallery picker, Mi 9T 2026-10-28)', () => {
+  async function renderWith(props: { paused: boolean; deferOpen: boolean; onreopen?: () => void }) {
+    const open = vi.fn(() => Promise.resolve(stream(false)));
+    const session = new CameraSession(open);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(CameraScreen, { target, props: Object.assign(props, { session }) }));
+    const settle = async () => {
+      flushSync();
+      await Promise.resolve();
+      await Promise.resolve();
+      flushSync();
+    };
+    await settle();
+    return { target, open, settle };
+  }
+
+  it('a pause lifted while the open is deferred opens nothing; the deferral lifted opens it', async () => {
+    const props = $state({ paused: true, deferOpen: true });
+    const { target, open, settle } = await renderWith(props);
+    expect(open).not.toHaveBeenCalled();
+
+    props.paused = false;
+    await settle();
+    expect(open).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-camera-phase="stopped"]')).not.toBeNull();
+
+    props.deferOpen = false;
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+  });
+
+  it('a deferral nothing ends offers the member a tap that asks for the camera, only on screen', async () => {
+    // A picker that never answers (no `cancel` event, a native dismissal never settled) leaves the
+    // deferral set: the stand-in must not say "opening" for ever.
+    const onreopen = vi.fn();
+    const props = $state({ paused: false, deferOpen: true, onreopen });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    const { target, open, settle } = await renderWith(props);
+    expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    const reopen = target.querySelector<HTMLButtonElement>('[data-camera-reopen]')!;
+    expect(reopen.textContent?.trim()).toBe(m.reels_camera_reopen());
+    expect(target.textContent).not.toContain(m.reels_camera_starting());
+    expect(open).not.toHaveBeenCalled();
+
+    reopen.click();
+    expect(onreopen).toHaveBeenCalledTimes(1);
+    props.deferOpen = false;
+    await settle();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-reopen]')).toBeNull();
+  });
+
+  it('no reopen is offered over a LIVE camera, a pause, or with no owner to lift the deferral', async () => {
+    const live = $state({ paused: false, deferOpen: false, onreopen: vi.fn() });
+    const first = await renderWith(live);
+    live.deferOpen = true;
+    await first.settle();
+    expect(first.target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    const pausedProps = $state({ paused: true, deferOpen: true, onreopen: vi.fn() });
+    const second = await renderWith(pausedProps);
+    expect(second.target.querySelector('[data-camera-reopen]')).toBeNull();
+
+    const ownerless = $state({ paused: false, deferOpen: true });
+    const third = await renderWith(ownerless);
+    expect(third.target.querySelector('[data-camera-reopen]')).toBeNull();
+  });
+
+  it('a deferral never closes a LIVE camera (a picker that does not hide the page)', async () => {
+    const props = $state({ paused: false, deferOpen: false });
+    const { target, open, settle } = await renderWith(props);
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+
+    props.deferOpen = true;
+    await settle();
+    expect(target.querySelector('[data-camera-phase="live"]')).not.toBeNull();
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -403,8 +506,31 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     const target = await mountLive({}, session);
     doubleTap(target);
     for (let i = 0; i < 4; i++) await Promise.resolve();
-    expect(open).toHaveBeenLastCalledWith('environment');
+    expect(open).toHaveBeenLastCalledWith('environment', true);
     expect(session.facing).toBe('environment');
+  });
+
+  it('a MEASURED single camera stands the double tap down; an unknown count keeps it (fails open)', async () => {
+    const one = lensWithMic();
+    const openOne = vi.fn((_facing: CameraFacing) => Promise.resolve(one.stream));
+    const single = new CameraSession(openOne, openOne, async () => 1);
+    const oneTarget = await mountLive({}, single);
+    await vi.waitFor(() => expect(single.cameraCount).toBe(1));
+    doubleTap(oneTarget);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openOne).toHaveBeenCalledTimes(1);
+
+    const unknown = lensWithMic();
+    const openUnknown = vi.fn((_facing: CameraFacing) => Promise.resolve(unknown.stream));
+    const session = new CameraSession(openUnknown, openUnknown, async () => {
+      throw new Error('no list');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unknownTarget = await mountLive({}, session);
+    expect(session.cameraCount).toBeNull();
+    doubleTap(unknownTarget, 3);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(openUnknown).toHaveBeenLastCalledWith('environment', true);
   });
 
   it('DURING A TAKE a double tap flips only the lens: the microphone runs on, the zoom is back at 1x', async () => {
@@ -421,7 +547,7 @@ describe('CameraScreen - zoom and the double tap (user, 2026-10-22)', () => {
     for (let i = 0; i < 4; i++) await Promise.resolve();
     flushSync();
 
-    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(openLens).toHaveBeenCalledWith('environment', true);
     expect(first.lens.stop).toHaveBeenCalled();
     expect(first.mic.stop).not.toHaveBeenCalled();
     expect(session.stream!.getAudioTracks()).toEqual([first.mic]);

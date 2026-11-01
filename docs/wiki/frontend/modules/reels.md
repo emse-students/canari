@@ -95,7 +95,13 @@ What that decided:
   the hardware), `unavailable` (`NotFoundError`, `OverconstrainedError`, or no `getUserMedia` at all).
   An unknown name is logged with the name and read as `unavailable`. Each has its own sentence and a
   retry on the camera screen.
-- **The lens is asked EXACTLY** (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
+- **The lens is asked EXACTLY ON A PHONE AND ON A SWITCH, IDEAL ON A DESKTOP'S FIRST CAPTURE** (one
+  builder, `utils/cameraFacing.ts`, shared by calls, reels, post and live; a phone is a coarse primary
+  pointer, `lensIsExact`). A desktop webcam reports no facing, so an exact one is an
+  `OverconstrainedError` and the camera never opened (found on dev by the rig, the live composer; the
+  reel camera had the same request). `CameraSession` passes `switching` to its opener on a flip, so a
+  lens the device lacks is still a typed `unavailable`. The rest of this item is the phone case
+  (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
   WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
   camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
   persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
@@ -465,6 +471,11 @@ and the editor still hand back; "Garder comme post" hands the video back with it
 
 ## Publishing (R3, on C2 and C3)
 
+**Decided 2026-10-30, designed, not built:** on the TAB, "Suivant" becomes "Envoyer à...", a list whose
+first row publishes as below and whose other rows send the same take - the same stored file - to
+several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+The composer's camera keeps "Publier".
+
 **The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):
 "Next" has a bar of its own, and a take whose sound the member removed (`clip.soundRemoved`) is
 published with NO audio track (`prepareVideoForUpload`'s `removeAudio`).
@@ -561,12 +572,49 @@ brings its bar, its loop and the app's ONE sound answer: a reel plays with sound
 has turned sound on anywhere, and muted until then. A neighbour draws the poster instead, because a
 mounted player claims playback (`followVideoSound`) and would pause the reel being watched.
 
-**The next reel PRELOADS** (`reels/reelPreload.ts`): its video is fetched and decrypted into the
-media cache while the current one plays, so when the swipe lands its player takes the WARM path and
-the first frame is there. A reel is never fetched twice: if it becomes current before its preload
+**The next reel PRELOADS** (`reels/reelPreload.ts`), but only once the reel on screen has SETTLED
+(`ReelSlide`'s `onReady`: its whole file is in AND it is playing - a photo page: its picture is in).
+Its video is then fetched and decrypted into the media cache, so when the swipe lands its player
+takes the WARM path and the first frame is there. Before 2026-10-31 the preload started at the
+mount, beside the current reel's own download: on a weak link the two shared it and the reel being
+watched paid. A DECIDED FAILURE settles it too (`onPlaybackBlocked`: an autoplay refused or failed, bytes the engine refuses, a download that failed), or nothing would ever be preloaded behind it. Every step CLEARS the settle, so a reel returned to must settle again before its neighbour is fetched. A reel is never fetched twice: if it becomes current before its preload
 has finished, the preload is ABORTED and the player fetches (or streams) it alone. One cost is
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
+
+### A loading reel shows its first frame, never a play glyph (owner, 2026-10-31)
+
+**Reported:** *while a CanaReel loads, a yellow play button shows on a neutral background.* That was
+`VideoPoster` - drawn by the neighbour slides and by the reel player until `loadeddata` - so the
+screen promised a tap where there was only a download. **What a reel shows before its first frame is
+decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUrl`):
+
+1. **The sharp first frame this device decoded** (`reels/reelPosters.svelte.ts`): decoded by
+   mediabunny from a reel already in the decrypted pool (`reels/reelFirstFrame.ts`, 720 px JPEG,
+   eight kept per session, oldest revoked) - the next reel when its preload is in, and the reel on
+   screen once it LEAVES the screen with its file whole (so a swipe BACK lands on it) - never while
+   it plays, since a frame decode is a second WebCodecs decoder beside its player. mediabunny, not a detached
+   `<video>`: iOS fires no `loadeddata` without a `play()`, and a mounted element claims playback.
+2. **The publisher's ThumbHash of it** (`MediaRef.placeholder`, ~25 bytes): made at publish from
+   the PREPARED file's first frame (`publishReel`'s `placeholder` step) and stored in the post's
+   media entry - `PostMediaDto.placeholder`, declared so the `whitelist` pipe keeps it. It paints
+   from the very first paint, before a byte of the video, including the first reel opened. The
+   server still makes nothing: a feed reel's blob is AES-GCM ciphertext there (C3).
+3. **Nothing - the frame's black**, for a reel published before 2026-10-31 that this device has not
+   decoded yet. It gets its sharp frame the first time it is preloaded or watched.
+
+**The play button answers a REFUSAL, never a load.** The minimal reel player asks `play()` itself at
+`canplay` (the `autoplay` attribute fails silently) and draws its amber button only on a
+`NotAllowedError` (iOS with sound on, a browser policy) or any other failure, with a warning. An
+`AbortError` is an interruption by a new load: it is asked ONCE more at that load's next
+`loadeddata` / `canplay`, and a second one draws the button. Pinned by `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
+`ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`.
+
+**Owed on the bench phones** (none of this was read on a device): see
+[device-verification](../../device-verification.md) and the PR's reading list - per phone, the
+`[reel-frame]` / `[reel-poster]` lines (a frame decoded, its bytes and milliseconds), a swipe forward
+and back with no glyph and no black flash, a fresh reel's ThumbHash on its first open, and on the
+iPhone with sound on, the button appearing only with the `autoplay refused` warning.
 
 **The overlay is the post card's, bottom-left, as on Instagram** (user, 2026-10-16;
 `ReelSlide.svelte`). Over a scrim: the publisher's picture and name - `PostAuthorAvatar`,
@@ -951,6 +999,28 @@ Mi 9T: "Discard this capture?" reappeared over the posts feed after publishing o
 
 Fix at the source: `historyOverlayStack` passes a reason to close handlers (`'back'` from popstate, `'navigation'` from the drain). The take's handler asks only for `'back'`; for `'navigation'` it clears the editor and publish step, aborts a recording and drops the take, with no question and no re-armed entry. Tests: `ReelCapture.svelte.test.ts` (review, publish step, editor, recording, discard) and `historyOverlayStack.test.ts`. Other handlers ignore the reason and are unchanged.
 
+## The camera does not open again once the member has left it (Mi 9T, 2026-10-28)
+
+The system's own records (`dumpsys media.camera`, `dumpsys audio`) showed the app's front camera and a CAMCORDER recording open for 0.3-0.7 s in two places the member had already left: after a Publish, with the feed on screen, and on the gallery picker's return, before the picked video reached its review. Nothing was held: the session's generation guard released the late stream (`#N came back after the session moved on`). The defect was the START, and a release that heals it is still a defect.
+
+Two causes, both in `CameraScreen`'s hold-off contract. (1) Dropping the take to `ready` - the navigation drain of the section above, and a composer hand-back (`leaveWithTake`) - lifted `paused`, whose effect opened the camera on a screen that was being unmounted. (2) The gallery picker backgrounds the app on Android; its return ran `CameraSession.resume()` while the state was still `ready`, and the picked file landed in a review only after the open was asked.
+
+Fix: `ReelCapture` holds the camera off while the screen is LEAVING (`paused` includes it; only a navigation that ends with the screen still mounted clears it, `afterNavigate`), and while the gallery picker is open (`CameraScreen.deferOpen`: a STOPPED camera stays stopped until the picker answers - a pick, a refused pick, or the input's `cancel` - while a LIVE camera is never closed by it, so a desktop picker keeps its preview). Every decline is a `[camera]` / `[reel-capture]` debug line naming what declined it. `CameraSession` is unchanged. Pinned by `ReelCapture.svelte.test.ts` (opens counted through the injected opener) and `CameraScreen.svelte.test.ts` (the `deferOpen` contract). The live broadcaster (`LiveBroadcaster`) shares `CameraSession` but not `CameraScreen`: it has no review, no gallery and no drop back to a preview, and resumes only in `preview`/`starting`.
+
+### Its three loose ends, closed (follow-up to #2647)
+
+**A picker that never answers has a way back, and it is a gesture.** `deferOpen` is lifted by the picker's answer, and two kinds of picker never give one: an engine with no `cancel` event on a file input (Chromium < 113, so Android System WebView < 113; Safari and WKWebView < 16.4, so iOS < 16.4) and a native dismissal its plugin never settles. The deferral then stayed set and the stand-in said "Ouverture de la camera" for ever, with no controls (they render only while `live`). Now, while the camera is `stopped`, the open deferred, nothing pauses it and the page is on screen, `CameraScreen` replaces the stand-in's "opening" with a real button, "Rouvrir la camera" (`data-camera-reopen`, `onreopen`): the member's tap makes the owner lift the deferral (`endPicking`) and the camera opens. Not a timer: no clock can tell a slow picker from a dead one, and only the member knows they are back. A pick that still lands after the tap goes to its review as before.
+
+**`leaving` is cleared only by a fact proving the screen is still the current one**, and each of the three is pinned by a test that fails when its body is deleted:
+
+- a navigation that ENDED with the screen mounted - `afterNavigate` (the test captures the registered callback and plays it after a drain);
+- a navigation that drained the take and then did NOT happen - `beforeNavigate`'s `navigation.complete` is refused when a `beforeNavigate` cancels it (`guardUnsavedChanges` does) or a newer navigation aborts it. The refusal carries no type, and the error message is not read; the discriminator is `$app/state`'s `navigating.to`: null means no navigation is under way, so this screen is the one shown and the camera may open; non-null is the newer navigation, which ends in `afterNavigate` or in the teardown;
+- the page restored from the back-forward cache - `pageshow` with `persisted` (a navigation out of the app drains with `type: 'leave'`, and the JS heap comes back with `leaving` still set).
+
+One case the refusal cannot separate: a `leave` navigation (the tab closing) cancelled by a guard rejects `complete` AT ONCE, before the browser's unload dialog is answered, so `leaving` is cleared even if the member then confirms and the page unloads. The camera open that follows is asked of a page being torn down; nothing in the page can tell the two answers apart, since the dialog's answer is never reported to it. It needs a guard active on the reel screen AND a tab close, so it is left as stated.
+
+**The reopen is offered only where the picker's answer is not certain** (Mi 9T, 2026-10-28). On a pick, Android brings the page back BEFORE the file input's `change`: "Rouvrir la camera" was in the DOM for 219 ms and 201 ms on two picks, a visible flash, where the stand-in used to say "opening". A cancel never showed it, since its `cancel` lands before `visible`. So `ReelCapture` hands `onreopen` to `CameraScreen` only when the gallery may never answer: the native library, or a file input on an engine that does not fire `cancel` (`fileInputAnswersEveryClose`: Chromium >= 113, Firefox >= 91, WebKit >= 17 because the agent's major cannot tell 16.0 from 16.4, and any unknown engine counts as silent). Where the answer is certain, the return says "opening" until it lands; where it is not, one tap still brings the camera back. It is a fact about the engine, read once at mount, not a clock. What the tests cannot see: the real WebView's event order and the real user agent. `ReelCapture.svelte.test.ts` plays both engines with a stubbed agent, and the phone reading is what proves the order.
+
 
 ## Audit of 2026-10-11 - are CanaReels functional and optimised? (code read at `origin/main` `1a9b4b91d`, Mi 9T measured)
 
@@ -1036,8 +1106,9 @@ feed of ten full-size reels. Static-scene takes are not evidence for any of them
 recorded at ~3 Mb/s, then re-encoded at 2.5 Mb/s or less. A documented trade-off (the preview's crop
 IS the file); the heat of a 90 s take is unmeasured.
 
-**P3 - the viewer preloads only the NEXT reel** (`ReelViewer.svelte:295`, `preload={i === index + 1}`), so
-a swipe down meets the poster first unless the 5-minute pool still holds the video.
+**P3 - the viewer preloads only the NEXT reel's VIDEO** (`preload={i === index + 1 && currentSettled}`).
+A swipe BACK lands on the previous reel's decoded first frame (`reelPosters`), and its player then
+fetches again unless the 5-minute pool still holds the video.
 
 **P3 - the board contradicts this page.** `cross-client-testing.md` still lists REEL-2 `pending`
 while this page records it `PASS` on 2026-10-02, and no harness row covers the feed card's autoplay,

@@ -39,17 +39,25 @@ export function claimChannelReadSignal(channelId: string, readUpTo: number): boo
   return true;
 }
 
-/** The newest message in `messages` that `userId` did not write, as a timestamp, or 0 if there is none. */
+/**
+ * The newest message in `messages` that `userId` did not write and that is no later than `upTo`, as a
+ * timestamp, or 0 if there is none.
+ */
 export function newestForeignMessageAt(
   messages: readonly { senderId: string; timestamp: Date }[],
-  userId: string
+  userId: string,
+  upTo = Number.POSITIVE_INFINITY
 ): number {
   const mine = userId.toLowerCase();
   // Backwards: the newest foreign message is near the end of an ordered list, and on a long salon
   // scanning the whole history to find it would be work every selection pays.
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.senderId.toLowerCase() !== mine) return m.timestamp.getTime();
+    const at = m.timestamp.getTime();
+    // `upTo` is the mark actually read: a message that landed after the reading was decided (in the
+    // flush that ended it, say) was never seen, so it must not be signalled read.
+    if (at > upTo) continue;
+    if (m.senderId.toLowerCase() !== mine) return at;
   }
   return 0;
 }

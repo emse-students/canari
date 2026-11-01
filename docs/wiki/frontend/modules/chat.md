@@ -62,10 +62,37 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 `ChatComposer`.
 
 - **The header is three pieces of glass** (`ChatHeader`, `.chat-header-phone`): back, the
-  conversation in a CENTRE PILL (avatar, name - tap opens its settings), and `GlassMenuButton`
+  conversation in a CENTRE PILL (avatar, name - tap opens its settings, **or the peer's profile in a
+  direct conversation**, see below), and `GlassMenuButton`
   ("Plus d'actions") growing into the SAME actions as the classic row, under the same conditions -
   calls when their handlers are given, a channel's members first, media, search, settings.
   `ChatHeader.phoneMenu.svelte.test.ts` holds that parity, and that the website draws none of it.
+### A person in a conversation opens their profile (2026-11-01)
+
+Owner: *"it would be nice to reach the profile page of someone you click on in a conversation, in the
+participants list, or in the header if it's a 1:1"*. Three entry points, all real `<a>` (or a labelled
+button for the glass pill), all built by `profileHref` (`utils/users/profileHref.ts`) and drawn through
+`shared/ProfileLink.svelte` for avatars:
+
+- **A message**: the sender's avatar (received messages, last of a run) and the name above it in a group
+  (`data-profile-link`, `data-sender-profile-link`). Both stop the click, so the bubble's own tap, its
+  long-press and the reactions are untouched. Your own messages carry no avatar and no name, so no link.
+- **Members lists** (`ChatGroupPanel`, `ChannelMembersList`): the avatar joins the name, which already
+  linked. The remove-member control stays. A salon list builds hrefs from ids alone - no profile is
+  fetched for a link.
+- **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
+  centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
+  entry there, so nothing became unreachable). A group or salon pill still opens its settings.
+- **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
+  `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
+  link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
+  page itself owns visibility (blocks, review cohort), so a link is only a navigation.
+- **Scroll on return is NOT preserved**: the chat route unmounts on navigation and reopens at its entry
+  window; no per-conversation scroll memory exists. Open item, with the mechanism it needs:
+[backlog](../../backlog.d/p3-conversation-scroll-kept-when-returning-from-a-profile.md).
+
+Held by `ChatProfileEntryPoints.svelte.test.ts`.
+
 - **It floats over the thread.** `ChatArea` puts header, search, polls and pinned into one layer,
   `.chat-chrome-slot`, and publishes its height as `--chat-header-height`, the way the composer
   publishes `--chat-composer-height`. In the apps (`.chat-glass-chrome` on the panel) the layer is
@@ -740,7 +767,10 @@ deleted); it now only ANNOUNCES the edit.
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
   from one edit to another keeps the FIRST draft. `confirm` saves only a text that is non-empty and
   changed (`onEdit`, the unchanged `handleEditMessage` path and its ordering rules below). `reset`
-  runs when the conversation changes: the text went with it, the draft belonged to the one left.
+  runs when the conversation changes, and **an edit's text never stays as a draft** (2026-10-27):
+  `begin` binds a writer to the draft of the conversation it starts in (`bindDraftWriter`), and
+  `reset` gives the saved draft back through it - to the conversation the edit began in, never to
+  the one now open ([each conversation keeps its own draft](#each-conversation-keeps-its-own-draft-2026-10-27)).
   **It must run on a change of conversation ID, never of the conversation OBJECT** (2026-10-07): the parent
   replaces that object on every incoming message, and an effect reading `conversation?.id` depends on the object, so
   each arrival dropped the banner. `ChatArea` reads the id through a `$derived`, compared by value.
@@ -1231,7 +1261,7 @@ backoff timer, and `enqueue`. **THREE are external moments nothing inside the mo
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
-| `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
@@ -1247,9 +1277,94 @@ flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it 
 goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
 flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
 
-`outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
-for each that the same gate refuses it shut and drains it open, and a source check pins the three
-external sites so a fourth has to be argued for rather than added.
+`outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
+`resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
+open, and a source check pins the three external sites so a fourth has to be argued for rather than
+added.
+
+### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
+
+Four defects of one seam, found by a read-only review and fixed together:
+
+- **A message sent during this device's own re-admission was failed for good (P2).** A
+  re-admission is a Remove then an Add, about 3 s apart. After the Remove the group is held, its
+  epoch gap cleared (`isGroupHealthy` yes) and `isGroupActive` false; `retireIfEvicted` has
+  already read `reAddInFlight` and written the row `pending` (`markAwaitingReAdmission`). The send
+  gate then took `failPermanently(..., 'evicted')`, and `recordEviction` retired the row, posted
+  the removal notice and deleted the entry - three seconds before the Welcome re-admitted the
+  device. Now **the Remove half DROPS the evicted state** (`retireIfEvicted`'s `reAddInFlight`
+  branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
+  `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
+  a group this device does not hold. A send in the window meets an unsendable group and is HELD
+  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
+  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+- **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
+  fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
+  `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
+  re-admission whose Welcome never came was waited on for ever behind a `pending` bubble. With the
+  state dropped, every pass reaches the server: a Welcome owed is waited for, a seat with none is
+  joined, and NO seat retires the row (`stopRecovering` on the roster's 403). The outbox reads the row
+  AFTER its `requestReAdd` and fails a held entry on a `removed` row (`failPermanently(...,
+  'removed')`: the row's banner tells the member, the bubble goes `error`, nothing is re-recorded).
+  The guard and its three readers (`recordEviction`, `verifyCurrentUserMembership`, the outbox) are
+  deleted. **What the drop costs:** nothing the user sees - past messages are stored decrypted, and
+  the Welcome installs on nothing as a fresh join does, keeping the row and its messages; a frame of
+  an epoch before the Remove that arrives AFTER it is undecryptable locally, which server order makes
+  rare and the inviter's history push covers.
+- **A kill can leave any pair of (row, state), and the restore is what is total over them (review
+  of #2808).** The merged Remove reaches disk through checkpoints the commit path does not order -
+  its own `persistNow`, a flush on backgrounding, another group's structural checkpoint, one already
+  running - because a checkpoint takes no lock against the commit path; the row lives in another
+  store. No write order on that path can therefore guarantee anything, and an `active` row over the
+  evicted state survives some kills, with `reAddIsInFlight` (memory only) gone. It was read as
+  `active` and the next send retired the conversation. `reconcileRestoredLifecycles`
+  (`admissionState.ts`) now reads membership for EVERY row over a held group (together, one local
+  read each): `true` promotes a `pending` row; `false`, on an `active` or a `pending` row, DROPS the
+  evicted state and leaves the row `pending`, so the recovery asks the server, whose answer is right
+  for both readings of the Remove (a Welcome owed is waited for, a seat is joined, no seat retires
+  the row); `null` changes nothing. The reads run at most eight at once (one IPC call each on
+  native); the drops share ONE awaited checkpoint, since each is a full encrypted save (~1.7 s on a
+  phone) and this runs before the connection opens; and `applyRestoredLifecycles` writes every row it
+  changed, so the verdict is durable. The row is still marked before the drop at run time, only so
+  no in-memory reader sees `active` over no state.
+
+  **A DELIBERATE TRADE:** a row whose eviction a kill left unrecorded now waits for the server's
+  answer instead of retiring locally - offline included, where it stays `pending` until a connection
+  answers. Nothing local separates a real eviction from the first half of this device's own
+  re-admission once `reAddIsInFlight` is gone, and retiring the second is the defect this fixes.
+- **The boot restore undid that row.** It promoted any `pending` row whose group
+  `getLocalGroups()` listed, and an evicted group stays listed: the promotion now reads membership,
+  as above.
+- **The Welcome did not flush a held entry (P3).** `onGroupReady` called `flushOutbox()`, and a
+  flush skips an entry whose `nextAttemptAt` is in the future unless it is RESUMED - so delivery
+  after a Welcome waited for the backoff, up to 60 s, while the docblock claimed the opposite.
+  Every hold for the group writes the entry into `repairHeld` (in memory, like `transportHeld`);
+  `resumeGroup(conversationId)` moves that group's ids, and only those, into `resuming` and drains.
+  A group that becomes ready INSIDE the attempt that holds it (an external join landing within the
+  `requestReAdd` that attempt awaited) is caught by a per-group count of ready announcements read at
+  the gate and again after the hold: when it moved, the hold resumes itself and the lane re-runs. A
+  count of events, not a clock.
+- **A successful external join raised nothing (P3).** It set the row `active` and called
+  `notifyConversationAvailable`, and never the group-ready seam. `RecoveryDeps.onGroupReady` is now
+  REQUIRED and raised on every landed join; `sessionAuth`'s `announceGroupReady` is the ONE
+  implementation both a Welcome and an external join reach (resume, statuses, deferred welcome
+  requests, the debounced invitation sweep).
+- **And it announces only into the session that started the work (review of #2808).** Every step of
+  `announceGroupReady` reaches module-level state, so a Welcome or a join landing after a sign-out
+  and the next sign-in acted on the NEXT session. The function is no longer exported: the session
+  registers it in `groupReadyAnnouncer.ts` with the outbox, and EVERY `onGroupReady` - the message
+  pipeline's, the in-session `makeRecoveryDeps`, `verifyCurrentUserMembership`'s and
+  `startNewConversation`'s repairs - is `captureGroupReadyAnnouncer()`, taken when its deps are
+  built. That one check forwards only while the registration it captured is still live. A session
+  ended since is an ordinary sign-out (`info`); work built with no session live is a `warn`. A
+  source test pins that no `onGroupReady` goes around it.
+
+Pinned by `outbox.test.ts` (held then sent on `resumeGroup`; held then failed `removed` once the
+recovery retires the row), `recovery.test.ts` (the Remove half drops the state and a server with no
+seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.test.ts`,
+`admissionState.test.ts` (an `active` row over a group this device is out of waits on the server),
+`groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
+(`onGroupReady` on both Welcome paths).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 
@@ -2360,6 +2475,30 @@ This is independent of [the notice-identity fix](#a-visible-system-notice-needs-
 which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
 arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
 
+#### A system notice is not conversation activity (user, 2026-10-27)
+
+"X added a device" moved its conversation to the top of the list. The sidebar key is
+`conversationRecency` (`utils/chat/conversations.ts`, also read by the share targets, the mini panel
+and the persisted `updatedAt`) and it read the newest row of `messages`, notices included. It now
+skips every row for which `isSystemRow` (`messageOrder.ts`) is true - `isSystem` OR the `system`
+sender, the same fact in its two forms - and every writer of the `lastMessageAt` seed goes through
+`advanceLastMessageAt`, which ignores notices too (`addMessageToChat`, `batchAddMessages`, the FCM
+cache merge, the channel join notice). A conversation holding notices only keeps its seed, then
+`startedAt` (the server's creation instant), then 0: never the arrival time of a notice.
+
+**A CALL RECORD IS ACTIVITY (decided 2026-10-27)**: a system row carrying a `callEvent` envelope (missed,
+ended, declined) still moves the conversation, as on Messenger and WhatsApp; `isNoticeRow` is the
+predicate every consumer uses (notice = system row that is not a call record). Tab-sync events omit
+`lastMessageAt` when there is no seed (`tabSeed`) instead of writing 0. A conversation created on
+this device is seeded with its creation moment (`lastMessageAt`, group / DM / channel creation and
+the channel join), NOT `startedAt`, which stays the server's write-once fact that the sweep
+backfills. The boot stub seeded from an old `meta.updatedAt` (written while notices counted) is
+transient: the first load of messages replaces it, no migration.
+
+**The preview line is unchanged** and still shows the newest row, notice included: it is a text, not
+a position, and hiding it would show a stale sentence. Read receipts and unread counts already
+ignored notices. Not changed: native notification previews (they raise only for inbound messages).
+
 ### What ended the wait, and why there is no wait left
 
 Kept because the shape recurs, not because the code is still there. The exchange used to be gated by
@@ -3195,14 +3334,78 @@ every run. The request ordering is the proof and needs no inference: the console
 `GET /api/channels/workspaces/user/me` issued at line 196, `POST /api/channels/workspaces` (the
 creation) at 398, and `[WORKSPACE-LOAD] communities/channels loaded` at 497.
 
-The repair is a **creation tick**, not a timestamp: `creationEpoch` counts what this device has
-created, ever. It is read BEFORE the listing request goes out, stamped onto the sidebar entry the
-moment a community exists locally (`createdEpoch`) and onto `locallyCreatedChannels` for a salon, and
-both prunes spare anything stamped later than the request. The question is not "how old is this" but
-"did this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
-wrong about and nothing to tune. A community that really was deleted elsewhere is still removed, and
-both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
-can attribute.
+The repair is a **tick**, not a timestamp. It is read BEFORE the listing request goes out, and both
+prunes spare anything dated later than the request. The question is not "how old is this" but "did
+this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
+wrong about and nothing to tune. A community that really was deleted elsewhere is still removed.
+
+### A live fact heard during a listing is newer than its answer (2026-10-26)
+
+The 2026-08-20 repair dated only what this device CREATED. **Measured on dev by the cross-client rig
+(Mi 9T)**: a community joined in-session logged `[WORKSPACE-LOAD] community joined in-session -
+loading its salons` at T, its listing went out at T+0.2 s, the server created a salon at T+2.6 s and
+the phone logged `Joined channel <id>` (`onChannelMemberJoined`), the listing answered at T+6.4 s - and
+its prune deleted the salon's conversation and row, without a line. The member did not see the salon
+until a later listing. Same code on the web: only the width of the in-flight window differs.
+
+The mirror image was open too: a salon or community DELETED, LEFT or taken from this member during a
+listing was still in its answer, and the listing drew it back.
+
+**One record, `listingLedger.ts`**, holds the LAST thing learned live about each id - `present`
+(created here, or heard of on the socket) or `gone` (deleted, left, removed) - with the tick it was
+learned at. Salons are keyed by conversation id, communities by `community:<slug>`. Every live
+write goes through one of four places, and the listing's own writes go through none of them:
+
+| Live fact | Where it is dated |
+| --- | --- |
+| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`) |
+| community heard of on an event, or created here | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName` |
+| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
+| community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
+
+`leaveCurrentChannel` and `deleteCurrentChannel` record the removal as soon as the server answers,
+before they await the store delete: a listing answered during that await used to set the
+conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
+guard in the same test file.
+
+A listing then:
+
+1. **Does not draw back** a community or salon learned `gone` after its request
+   (`[WORKSPACE-LOAD] <kind> <id> not restored: ...`). This is asked again at each point
+   `loadCommunitySalons` would write next, because the purge can land while that community's salons
+   or key group are still on their way. A community removed in that window gets no conversation, no
+   channel map, no key-group join and no entry.
+2. **Gathers every store that holds a salon the answer does not name** - its conversation, its row
+   (in the communities the answer covers) and its stored page (F4) - and **decides once per salon**,
+   reading the ledger first:
+   - learned `present`: kept (`kept salon <id> (<stores>): ...`);
+   - learned `gone`, with the purge still running: finished quietly
+     (`salon <id> (<stores>) removed on this device after the listing was asked - its removal is
+     finished here`), never blamed as unheard;
+   - nothing learned: pruned, with **one `warn` per salon** -
+     `pruned salon <id> (conversation, row, stored page): not listed by the server, and neither
+     created nor heard of on this device after the listing was asked (tick N)`. This is the visible
+     end of a removal this device did not hear live, usually one made while the app was shut: one
+     line, not one per store.
+
+   Communities get the same three outcomes.
+
+The keep, decline and finish lines go to the session log (`ctx.log`), so they reach a phone's
+in-app log: `appLog.ts` does not keep `debug`. Each attempt of a retried listing reads the tick
+again, so a salon heard during the back-off is judged by the retry's answer.
+
+A community first drawn from an event under a slug the server does not use (`workspace-<id>` when
+the event named none) is folded into the listed entry by id, under the server's slug. It used to
+appear twice.
+
+The ledger keeps only the last fact, so a salon removed and then heard of again in the same window
+is drawn. All of this is pinned by an explicit order in `useChannelWorkspaces.svelte.test.ts` ("a
+live fact heard while a listing is in flight"), and the not-heard control is still pruned.
+
+**What the ledger does NOT cover** (the same race, on fields rather than existence): a rename or a
+`viewerCanWrite` change heard during a listing (`onChannelUpdated`) is overwritten by the listing's
+older row, and a role change (`workspace.role.changed`) or a cover/history change
+(`workspace.updated`) by `upsertWorkspaceFromDto`'s older DTO, until the next listing.
 
 ### The communities are loaded side by side, not one after another (2026-10-12)
 
@@ -3492,7 +3695,8 @@ scroll handler, which nothing could test and nothing could explain.
 
 That last row is the one that makes a single mechanism correct rather than convenient: **composer
 growth and content growth are literally the same number**, so all three observers call one `follow()`
-closure, which asks `shouldFollowThreadBottom` about one `scrollHeight`. Three copies of this
+closure, which asks one predicate about one number (`threadGrowthResponse` and the reach since
+2026-10-30, below). Three copies of this
 judgement could disagree about where the bottom is; one cannot.
 
 Every trigger is the change itself. There is no timer, nothing to tune, and nothing that fires when
@@ -3520,6 +3724,65 @@ growing above, and the typing bubble sliding in, were already followed (0 px) an
 **iOS WebKit was not run.** The viewport numbers feeding the box (visual vs layout viewport, the iOS
 safe-area) are `keyboardViewport.svelte.ts`'s, corrected in PR #1667; this change reads only the
 resulting box, so the two combine without overlap.
+
+### A field that stays focused with the keyboard down: the rise that covered the thread, and the "+" that raised the keyboard (2026-10-29)
+
+Reported by the owner on 1.5.0 (Android, Gboard): the keyboard covered the conversation instead of
+lifting it, and once the keyboard had been opened, "+" opened the keyboard again instead of its menu.
+**One fact causes both: an Android WebView keeps the text field FOCUSED when the keyboard is put
+away** (Back, Gboard's down arrow). Read on the Mi 9T (`1.5.1-alpha.7`, LatinIME, over CDP):
+`document.activeElement` is still the composer's editor after Back, with `innerHeight` back at 945.
+
+- **The rise.** Focusing the composer goes to the end of the thread, from any distance (`ChatArea`'s
+  `_composerFocused` effect). A tap on a field that is ALREADY focused raises the keyboard with no
+  focus event, and the keyboard effect followed only a reader within the 120 px slack
+  (`isPinnedToBottom`). A reader 138 px up kept their `scrollTop` (2772 before and after) and the
+  distance to the bottom went from 138 to 483 px: the last messages stood behind the keyboard and the
+  scroll-down arrow appeared. `keyboardChangeResponse` (`threadAnchor.ts`) now answers a keyboard
+  rising for the focused composer like the focus itself, wherever the reader was; a keyboard FALLING
+  still moves only a reader at the bottom.
+- **The "+".** `keepsFocus` (#1345, first stable `1.0.1`) cancels the press's `mousedown` so the
+  keyboard stays up under the menu. With the keyboard already DOWN it left the field focused, and
+  Chromium raises the keyboard on any tap while an editable element holds focus; the rising keyboard
+  then closed the menu (`keyboardOpened`). Measured: no menu and the keyboard up; with the field
+  blurred first (`activeElement.blur()` over CDP, the control), the five entries and no keyboard. The
+  composer now asks for `keepsFocus` only while the keyboard is up (`menuPressKeepsFocus`,
+  `composerSurface.ts`): with it down the press takes focus, the field blurs, and the menu opens.
+
+**What was not a regression.** Nothing in this area changed between `1.5.0` and `1.5.1`; the "+" half
+dates from #1345 (2026-10-02) and the rise half from the keyboard effect of 2026-05 combined with the
+120 px slack of 2026-09-22. The native IME padding (`MainActivity.applyKeyboardInsets`) worked on the
+Mi 9T (Android 16, edge-to-edge enforced): `IME inset: 885 -> content padding`, `innerHeight`
+945 -> 588. Both fixes were read on the Mi 9T by reproducing the change over CDP on the installed
+build (a capture-phase `mousedown` that skips the hold while the keyboard is down: the menu, no
+keyboard; the hold kept with the keyboard up: the menu over the keyboard, focus kept); the built
+change itself is owed one reading ([check W](../../device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
+
+### A reader at the bottom is anchored to the bottom, in both directions (2026-10-30)
+
+Reported on production 1.5.1 by the owner (Pixel 6a) and a friend: in a DM whose tail holds a photo,
+opening the keyboard showed OLDER messages, the photo cut by the composer and the scroll-down arrow
+up; a text-only DM rose correctly. The friend read it as "it anchors on the end as it was when the
+app opened". **That reading, and the hypothesis of a stale `isNearBottom` snapshot, were refuted on
+the Mi 9T** (`1.5.1`, CDP, the real observer): late growth and new messages were followed every time
+and the flag was right.
+
+**The mover was the row anchor.** On Android the WebView itself resizes for the keyboard
+(`MainActivity.applyKeyboardInsets`), so every `svh` length shrinks with it, and a chat photo sits
+under `--media-max-height: 60svh`. Measured, a 567 px block (60svh) above the last rows, keyboard
+357 px: frame 1, the box shrinks, the reach grows, `follow()` pins (distance 0); frame 2, the WebView
+resize shrinks the block by 214 px (0.6 x 357), the reach SHRINKS, and `shouldFollowThreadBottom`
+followed growth only - so `anchorShift` kept the row at the top of the viewport in place by moving
+`scrollTop` 3527 -> 3313: distance 214, arrow up. The 214 px is the photo's loss, not the keyboard's.
+
+`threadGrowthResponse` (`threadAnchor.ts`) replaces the predicate with three answers: a reader at the
+bottom FOLLOWS any change of reach, growth or shrink (`follow-bottom`), holds when nothing moved
+(`hold-bottom`), and is never anchor-compensated; the row anchor (`keep-row`) is for a reader in
+history, while entering and while older messages are prepended, exactly as before.
+`threadGrowthObserver.test.ts` drives the observer through late growth, the keyboard box and the
+`svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
+in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
+portrait photo near its end.**
 
 ### The typing indicator is a row of the thread, not a band over it (2026-09-22)
 
@@ -3817,7 +4080,7 @@ Test: `useMessaging.replyScope.svelte.test.ts`.
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 
-A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - only if the same conversation is still selected, and it logs either way. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
+A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), and the composer is emptied synchronously on click, so a refused send (offline, 5xx) used to destroy the text. `handleSendChat` now answers `false` on a refusal (`true` once the server took it) and puts the reply target back in `replyByConversation`; `MainChatPage.handleSendChat` then restores the text with `restoreFailedDraft` (`utils/chat/draftRestore.ts`: an empty composer gets it back, a composer the member typed in meanwhile gets it in front, never overwritten) - into the draft of the conversation the text was written in, whichever one is open by then (each conversation keeps its own draft since 2026-10-27, [below](#each-conversation-keeps-its-own-draft-2026-10-27)), and it logs. The error banner stays. Tests: `draftRestore.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`. Status of the rest: [offline-and-weak-network](../offline-and-weak-network.md).
 
 ### A salon message is shown at once and settled by the server (WP-OFF-2, 2026-10-09)
 
@@ -3970,3 +4233,35 @@ bracket the unknown stretch between the conversation map and the pane DOM:
 (the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
 rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
 means `selectedContact` and the pane disagree.
+
+## Each conversation keeps its own draft (2026-10-27)
+
+The composer's text was ONE field of `MainChatPage` (`messageText`), cleared only when the route
+switched between `/chat` and `/communities`. A draft left in one conversation - or a share staged
+there - sat in the next conversation's composer, and that conversation's Send posted it there: read
+on the Mi 9T, where two shared links followed the reader into two other conversations. The text now
+follows the rule the staged files and the armed reply already followed:
+`useMessaging.draftByConversation`, keyed by conversation id, read through `draftFor` and written
+through `setDraft`; the page's `messageText` is a `$derived` of the open conversation's entry.
+`forgetAccount` clears it with the other two at sign-out, since the next account may open the same
+DM or salon. A refused send (`restoreFailedDraft`), a taken-back send and a share all write into
+the draft of THEIR conversation. Test: `useMessaging.draft.svelte.test.ts`.
+
+Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
+
+- **Text that comes back LATER is written through `lateDraftWriter`**, which captures
+  `signOutGeneration()` when it is made and drops the text (logged, without the content) once a
+  sign-out has begun: an edit's saved draft, a refused send and a resumed salon text. A sign-out
+  clears the drafts (`forgetAccount`) while the composer is still mounted, and the edit's reset or
+  the refused send's answer came after the clear - the next account to open the same DM or salon
+  saw, and could send, the leaving account's text. Test: `useMessaging.draft.svelte.test.ts`.
+- **The composer resets an open edit when it UNMOUNTS** (`ChatArea`'s `onDestroy`), not only when
+  the conversation id changes: the page remounts on any route change, so an edit left open there
+  left the edited message's text as the draft, with no banner, for Send to post twice. Test:
+  `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
+  derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
+  (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
+  under an open conversation (a name resolved late, a rename) strands the draft under the old key:
+  invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
+  "vanishes" from a DM.

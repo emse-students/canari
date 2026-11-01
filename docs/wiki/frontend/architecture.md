@@ -1,6 +1,6 @@
 # Frontend architecture
 
-**Stack**: SvelteKit 2.9 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
+**Stack**: SvelteKit 3 / Svelte 5 (runes) / TailwindCSS 4 / Tauri 2  
 **Source**: `frontend/`
 
 ## Overview
@@ -9,7 +9,7 @@ The frontend is a SvelteKit application that never renders a component on the se
 
 ### One SPA, two adapters
 
-`svelte.config.js` picks its adapter from `process.env.BUILD_WEB`:
+`kit.config.js` picks its adapter from `process.env.BUILD_WEB`:
 
 | Build | Adapter | Output | Who sets it |
 |---|---|---|---|
@@ -90,7 +90,7 @@ Cloudflare HIT.
 
 The predicate is therefore `type === 'js'`, and it lives in
 [`$lib/server/preload`](../../../frontend/src/lib/server/preload.ts) rather than in
-`hooks.server.ts`, so a test can import it without dragging `$env/dynamic/private` in through the SEO
+`hooks.server.ts`, so a test can import it without dragging `$app/env/private` in through the SEO
 chain - the same split as `$lib/server/handleError`.
 
 **It is written as `=== 'js'`, never as `!== 'css'`.** SvelteKit's default is
@@ -276,6 +276,68 @@ value changing and the getter running is imperceptible, while on Android WebView
 more aggressive GC - it is wide enough to hit regularly. A race that "cannot happen" on the machine
 it was written on is a race that happens to users.
 
+### A teardown sees the values its effect saw, and a derived read there keeps them (2026-10-27)
+
+Svelte runs every teardown - an `$effect`'s return, an `onMount` return, an `onDestroy` - with the
+values the effect last saw, and that is deliberate (a teardown releases what its run acquired). Two
+different failures follow from it, and only the second is silent.
+
+**1. A `$state` read in a teardown is STALE.** It returns the value from before the current flush.
+Code that ASKS "has the selection moved?" from a teardown is always told "no". `MainChatPage`'s
+receipt effect detected leaving a conversation with `if (convs.selectedContact !== currentContact)`
+in its teardown, so the leave branch never ran. Nothing was flushed or cancelled when the reader
+left inside the 2 s window, and the next conversation's note joined the OLD window: `max(A, B)`,
+delivered by A's callback (for a salon, `claimChannelReadSignal` for A). The leave is now detected
+by the effect's FIRST statement, `readMarks.follow(selected)` (`readMarkDebounce.ts`). The window
+now knows the conversation that opened it, and on a leave it is DELIVERED through that
+conversation's own callback, for a salon as for a DM. A first draft dropped a salon's window on
+leave, on the grounds that its mark is owed durably anyway. But the callback is also what sends
+`markChannelRead`, the silent signal that clears the salon's banner on the account's other devices,
+so dropping it lost that signal. `readMarkDebounce.test.ts` covers the delivery, and
+`readMarkDebounce.leave.svelte.test.ts` pins both the stale read and the call's place in the effect.
+
+**2. A `$derived` read in a teardown is RE-EVALUATED WITH THE STALE VALUES AND KEEPS THAT RUN'S
+DEPENDENCIES** when it depends on something that changed in the flush. Any derived counts, read
+directly or through a prop getter. `untrack` does not help, because it only stops the CALLER from
+subscribing; the derived still rewires itself. It throws nothing. `ChatHeader`'s DM presence effect
+did `return () => unwatchUsers([contactName])`. On leaving a DM, that prop read walked `ChatArea`'s
+`conversation` prop back to `currentConvo` (`useConversations.svelte.ts`), which re-ran with the DM's
+key and kept `conversations.get(dmKey)` as its only map dependency. It ran AFTER the pane had read
+`currentConvo` for the new selection, so nothing read it again. The conversation now open could then
+receive any number of messages: the map, the sidebar and the read marks had them, and the pane stayed
+frozen until the selection changed again. Opening a group as its Welcome landed showed an empty
+transcript; a reload drew it. Parking on a group never reproduced it, because that effect only runs
+for a DM. The proof was a CDP logpoint on `currentConvo` in the dev bundle: it evaluated with the
+DM's key while the selection source held the group's, called from the header's teardown.
+
+The minimal reproduction, on Svelte 5.57.2 (red with or without the `untrack`; green when the
+teardown reads nothing):
+
+```ts
+const map = new SvelteMap([['a', 1], ['b', 1]]);
+let key = $state('a');
+const current = $derived(map.get(key));
+const seen: unknown[] = [];
+$effect.root(() => {
+  $effect(() => { seen.push(current); });          // the reader, declared first
+  $effect(() => {
+    void key;
+    return () => untrack(() => current);           // a teardown that reads the derived
+  });
+});
+flushSync();
+key = 'b'; flushSync();     // the teardown re-runs `current` with key 'a': deps -> map 'a'
+map.set('b', 2); flushSync();
+expect(seen.at(-1)).toBe(2); // fails: 1 - `current` no longer listens to 'b'
+```
+
+**A teardown reads only locals captured in the effect body - never a prop, a `$state` or a
+`$derived`** (`const watched = contactName; watchUsers([watched]); return () =>
+unwatchUsers([watched]);`). A question about the CURRENT state is asked at the start of the next run,
+not in the teardown. `ChatArea.leaveDirect.svelte.test.ts` mounts the real `ChatArea` on the real
+`currentConvo`, leaves a DM, adds a message to the group and asserts it is drawn; it is red with the
+prop read.
+
 ### An uncaught error in the reactive graph is PERMANENT until a reload, so boundaries are placed by blast radius
 
 An error thrown from a template, a `$derived` or an `$effect` cleanup corrupts that subtree's signal
@@ -285,13 +347,46 @@ therefore placed by what an error would take down with it, not by how important 
 | Where | What it wraps | Shape |
 | --- | --- | --- |
 | `src/routes/+layout.svelte` | `<ChatBackgroundService />` | invisible service - `onerror` that LOGS, no fallback UI |
-| `src/routes/+layout.svelte` | `{@render children?.()}` | every page - `{#snippet failed}` with a retry control |
+| SvelteKit's root (`kit/src/runtime/components/root.svelte`) | every route node | every page - `routes/+error.svelte`, reported by `handleClientError` ([below](#a-page-that-crashes)) |
 | `src/lib/components/MainChatPage.svelte` | the `{#key}` around `ChatArea` | component - `onerror` that logs |
 
 The rule for anything new: a global service or a layout takes a logging `onerror` with no fallback; a
-whole page or a visible feature takes a `failed` snippet with a reset; a light component inside a page
-takes NOTHING - the page's boundary already covers it, and a boundary per component only makes the
-real one harder to find.
+visible feature inside a page takes a `failed` snippet with a reset; a whole page takes NOTHING (Kit
+already wraps it); a light component inside a page takes NOTHING - the page's boundary already covers
+it, and a boundary per component only makes the real one harder to find.
+
+### A page that crashes
+
+**SvelteKit 3 owns the page boundary, so the app owns only the report and the screen.** Kit wraps
+every route node in its own `<svelte:boundary>`, armed with the root `+error.svelte` and placed
+INSIDE the layout's `children` - closer to the page than anything `+layout.svelte` can draw. Until
+#2613 the root layout held a boundary around `{@render children?.()}` that logged `[Layout] page
+crash on <route>` and drew a Retry; under Kit 3 it could never fire, and a crashed page showed Kit's
+error page with a button to `/login`. Observed on the static build (a page throwing from `$effect`,
+both on first load and on a client navigation): `page.status` 500, `page.error` `{ status: 500,
+message: 'Internal Error' }`, and the client `handleError` hook CALLED (Kit runs every boundary error
+through it as `transformError`) - so the report was not lost, only stripped of its route.
+
+So the layout boundary is gone and the two halves sit where Kit calls them:
+
+- **The report** is `handleClientError` (`$lib/navigation/handleClientError.ts`, the client hook):
+  `[App] page crash on <route id>:` at error for an `unknown` throw or a 5xx, `[App] navigation
+  error <status> on <route id>:` at warn for a 4xx. The route id, never the URL: it names the page
+  in the in-app log without carrying a member's or a post's id. **The route is `match(event.url)`,
+  never `event.route.id`**: Kit 3.1.0's `initialize` builds the event from the state BEFORE it
+  assigns the first navigation's, so every crash before the reader's first client navigation arrives
+  with `route.id === null` (read on the static build as `page crash on ?`); the `url` is right in
+  every case.
+- **The screen** is `routes/+error.svelte`: a 5xx offers Retry - `goto` to the same address with
+  `refreshAll`, because a navigation is what makes Kit reset a failed boundary (its `resetters`
+  drain after the next navigation settles) - and every status offers the home page, never `/login`.
+
+Kit's boundary is at depth 1 only when no nearer `+error.svelte` exists; a route that adds one gets
+its own, and the report still goes through the same hook. `routes/pageCrash.svelte.test.ts` mounts
+Kit's real `root.svelte` with a throwing page and the real `+error.svelte`; it cannot see Kit's
+navigation resetting the boundary on Retry, which was read on the static build: a page that threw
+once drew again. Kit leaves `page.status` at 500 and `page.error` set after that recovery (the
+same-address navigation does not count as a page change), and only `+error.svelte` reads either.
 
 ### An anchored dropdown must be portalled, never absolutely positioned
 
@@ -773,3 +868,25 @@ them - 70 % of the suite's wall-clock. So vitest alone reads a second compile of
   keys equal the app output's keys, and that every key of `messages/{fr,en}.json` is in it.
 - A test that dies with `Failed to resolve import "$lib/paraglide/..."` has not compiled it: run
   `bun run paraglide:compile:test`.
+
+## SvelteKit 3 and adapter-node 6 (2026-10-27)
+
+One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3` drops what `adapter-node@5` used. What moved, so the next reader does not rediscover it:
+
+- **Config.** `svelte.config.js` is refused. The same object lives in `frontend/kit.config.js` (still plain JS, still stamping `kit.version.name` once per process - `kitConfigStamp.test.ts`) and `vite.config.js` passes it to `sveltekit(kitConfig)`. There is no `kit:` namespace any more. `vitest.config.ts` passes `svelte({ configFile: false })`, otherwise the plugin logs "no Svelte config found".
+- **`cookie` override removed.** `overrides.cookie ^0.7` existed to lift kit 2's `cookie@0.6`; kit 3 depends on `cookie@2`, which the pin broke (`parseCookie is not a function`).
+- **adapter-node 6.** `ORIGIN` is gone and so are the three compose lines that set it (2026-10-27): the origin is derived per request: scheme `https` by default, host from `Host` (nginx `@ssr` forwards it); `PROTOCOL_HEADER` is deliberately NOT set (it would trust a client-sendable value; the edge names have no Cloudflare in front). The app has no form action or remote function for the CSRF origin check to guard; **the day one is added, verify the derived origin behind nginx first** (`$host` and the port matter; a local origin would be `https://localhost`), because that check compares it with the browser's. Static assets are served from a table recorded at build time, with content-hash ETags and `GET`/`HEAD` only. The server half of `check-bundle-consistency.mjs` now reads `const global = "__sveltekit_..."` instead of `version_hash`.
+- **Two build warnings, both about `$lib`, and why they stay for now.** (1) `config_option_deprecated_alias`: `alias: { $lib: 'src/lib' }` is deprecated. The replacement, `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`, was RUN on 2026-10-27 and REVERTED: it rewrites 1567 files (7645 imports gain a `.js` extension, comments included), which would conflict with every pull request open on the frontend. It belongs in a quiet window, as ONE mechanical commit with the repository frozen ([backlog](../backlog.md#p3---the-lib-alias-migration-waits-for-a-quiet-frontend-2026-10-27)); that commit removes the alias and this warning. (2) `tsconfig_invalid: "paths" was overwritten. Imports from "$lib" may not typecheck`: a FALSE POSITIVE on Windows. Kit compares the generated path `<root>srclib/*` with `path.resolve(base, ...)`, which on win32 normalises the slash to `srclib*`, so `$lib/*` always mismatches; our tsconfig sets no `paths` and `bun run check` (0 errors) is right. Linux (CI, the images) does not print it. Both disappear with the migration.
+- **Behaviour kept on purpose.** `version.pollInterval: 0` (the app owns stale-build recovery) - which stops Kit 3's hourly poll ONLY: Kit still fetches `/_app/version.json` on every return to visible and every window focus ([backlog](../backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md)).
+- **UNVERIFIED here:** the `ORIGIN` removal behind nginx; the web app on dev (`frontend-ssr` container, SEO head injection was smoke-tested against a local `build/index.js` only); both phones. `goto` rejecting a URL no route resolves is handled below.
+
+### A path no route matches - `AppPath` for code, `gotoAppPath` for the rest
+
+**Kit 3's `goto` REJECTS a URL that matches no route** (`navigation_route_missing`, `resolve_intent` in `client.js`); Kit 2 navigated natively and let the server answer. Every destination is one of two kinds, and each has ONE mechanism:
+
+- **Built by code** - a notification's (`notificationHref`, `resolveNotificationHref`), a push tap's (`appRouteForDeepLink`), a checkout return (`shopReturnPath`): typed `AppPath` (`$lib/utils/internalPath`), the template `$app/types` derives from `src/routes`, so a route renamed or deleted under one fails `bun run check`. These go to `goto` directly. `codeBuiltRoutes.test.ts` walks every notification type and every deep-link host through the real route table too, because a `${string}` segment would type a path with an extra `/`. So a notification can never name a route this build lacks; a TYPE this build does not know has no destination at all (`reportUnknownNotificationType`), and a push host it does not know opens `/notifications`.
+- **Of unknown origin** - a `returnTo` (sign-in, the OIDC callback, the form builder), a form's `?redirect=` (printed on posters), the target an unsaved-changes prompt replays, a Canari link in a message or an App Link: `gotoAppPath` (`$lib/navigation/gotoAppPath.ts`) asks `match` FIRST. A page of this build is routed; anything else is loaded as a document, logged at error by its shape. What answers that load depends on the platform: on the WEB (adapter-node) the server, with the current deployment's page or its 404 page; in the PHONE APPS (adapter-static, `index.html` as the fallback for every path, `kit.config.js`) the SAME embedded build - the load is a cold restart of the app, and it ends on that build's own 404 page (`+error.svelte`, its way home). The restart is the cost, paid knowingly: it is the one outcome that leaves the reader on a page saying where they are. A target is validated against the page's origin before a full-page load, and the load is given the checked value; a target on another origin loads nothing and is logged. A navigation that rejects is logged at every call site, and the OIDC callback navigates OUTSIDE its token exchange's `try`, so a navigation failure is never shown as a failed sign-in. The cold-start App Link path cannot reach `match` before Kit's route table exists while the client `init` hook stays synchronous (the reasoning is on `init` in `hooks.client.ts`; `coldStartOrder.test.ts` holds it). Before, these handed the path to `goto`: a form's Back did nothing, a successful sign-in said the exchange failed, the form builder stayed on screen with its button live after creating the form, and `appLinkNavigation` learned from the rejection what `match` says up front.
+
+The vitest stub of `$app/paths` matches against `src/routes` for the same reason: a stub matching nothing would send every caller down the document branch and test nothing.
+
+**Still a fallback, and why it stays:** the checkout return in `hooks.client.ts` (`navigate`) catches any `goto` failure and assigns `window.location.href`. Its targets are `AppPath`, so a missing route is no longer what it catches; what is left is a navigation failing for another reason on the payment return, which nothing here has observed. It is filed in [backlog](../backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md) rather than removed blind.

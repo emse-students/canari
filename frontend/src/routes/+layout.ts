@@ -48,7 +48,7 @@ export const load = async (event: LoadEvent) => {
         resolve(
           internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
         ),
-        { replaceState: true }
+        { replace: true }
       ).catch(() => {});
     }
   }
@@ -66,7 +66,7 @@ export const load = async (event: LoadEvent) => {
       resolve(
         internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
       ),
-      { replaceState: true }
+      { replace: true }
     )
   );
 };

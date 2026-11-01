@@ -580,7 +580,7 @@ tree is a claim about that tree, so all three were run again against `main`:
 those two numbers.
 
 **`D8`'s backlog row pointed at "the P1 above", and no P1 preceded it** - the section above it is the
-user's own "owed to you" table. `D8` and `R-D8` are recorded as REFUTED in `CLAUDE.md`: the send
+user's own "owed to you" table. `D8` and `R-D8` are REFUTED (recorded here since 2026-10-22, in `CLAUDE.md` before): the send
 ledger holds one invariant, and one `runFlush` holds the outbox's eight flush sites. Not to be
 re-opened.
 

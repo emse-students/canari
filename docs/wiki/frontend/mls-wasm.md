@@ -336,6 +336,13 @@ workers and names `appLinkNavigation.ts imports $app/navigation`; an added top-l
 `window.location` read in a module they share fails all three with `ReferenceError: window is not
 defined`. The call worker (`encryption.worker.ts`) is covered by the same test and loads clean.
 
+**The AudioWorklet too (2026-10-31).** The call microphone's RNNoise processor
+(`workers/rnnoise.worklet.ts`) is a `?worker&url` import, so the same inventory finds it; it loads
+in a thread shaped like an AudioWorkletGlobalScope instead - no `fetch`, no `self`, and the
+scope's `AudioWorkletProcessor`, `registerProcessor` and `sampleRate` - and must register
+`canari-rnnoise`. `audioWorklet.addModule` is allowed in ONE file, `utils/callNoiseSuppression.ts`
+([calls](modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails)).
+
 ### Why it is not committed
 
 It was, until 2026-08-18, and it went stale. Only `deploy.yml` and `cd-dev.yml` rebuilt it (the latter

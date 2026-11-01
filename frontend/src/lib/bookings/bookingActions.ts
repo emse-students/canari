@@ -5,11 +5,20 @@
  */
 import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
 import { m } from '$lib/paraglide/messages';
+import { BOOKING_NOTIFICATIONS_LIVE } from './notified';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
-import { calendarLink, cancelBooking, removeBlock, withdrawBooking } from './api';
+import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import {
+  bookingExportLabels,
+  calendarLink,
+  cancelBooking,
+  exportBookings,
+  removeBlock,
+  withdrawBooking,
+} from './api';
 import { describeBookingRefusal } from './refusals';
 
 /** Asks, then runs `act`; `true` once it is done, `false` when declined or refused (said). */
@@ -34,13 +43,17 @@ async function confirmed(
 }
 
 /**
- * The holder or the organiser cancels a coming booking (D5). `byOrganiser` says the cost D13
- * names: the holder is not told, they find out by coming back.
+ * The holder or the organiser cancels a coming booking (D5). `byOrganiser` says what its people
+ * learn: nothing while the notices are off (D13), a notification once they are live (D53).
  */
 export function cancelWithConfirm(bookingId: string, byOrganiser: boolean): Promise<boolean> {
   return confirmed(
     'cancel',
-    byOrganiser ? m.bookings_cancel_confirm_organiser() : m.bookings_cancel_confirm(),
+    byOrganiser
+      ? BOOKING_NOTIFICATIONS_LIVE
+        ? m.bookings_cancel_confirm_organiser_notified()
+        : m.bookings_cancel_confirm_organiser()
+      : m.bookings_cancel_confirm(),
     m.bookings_cancel_action(),
     () => cancelBooking(bookingId),
     m.bookings_cancel_done()
@@ -85,4 +98,15 @@ export async function bookingIcsUrl(bookingId: string): Promise<string> {
   Log.d('BOOKINGS', `calendar link asked booking=${bookingId.slice(0, 8)}`);
   const { path } = await calendarLink(bookingId);
   return `${socialUrl()}${path}`;
+}
+
+/**
+ * The space's bookings as an .xlsx (D24), its columns in this client's words, saved under the
+ * space's name. One implementation for the editor and the dashboard (WP-R5); a refusal is thrown
+ * for the caller to word.
+ */
+export async function downloadSpaceExport(space: { id: string; name: string }): Promise<void> {
+  const blob = await exportBookings(space.id, bookingExportLabels());
+  await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
+  Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
 }

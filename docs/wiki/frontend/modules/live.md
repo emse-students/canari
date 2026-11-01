@@ -1,6 +1,6 @@
-# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, the WP-L1 bench measured 2026-10-19, WP-L7's push, the WP-L5 viewer and broadcaster behind a dev-only switch and WP-L8's server half 2026-10-19; compiled into every build since the production flip of 2026-10-30)
 
-> **Turning lives on in production** - the gates, the order, the viewer-cap ladder and the HELD privacy wording: [live-production](live-production.md) (2026-10-21), the only copy.
+> **Turning lives on in production** - the flip (2026-10-30: both deploy-time locks open, `lives_mode` the runtime switch), the gates, the readings still owed, the viewer-cap ladder and the owner's points on the lives terms and privacy text: [live-production](live-production.md), the only copy.
 >
 > **Note 2026-10-19:** lives now come BEFORE the calls revival ([decisions](#decisions-of-2026-10-19)). **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
@@ -28,7 +28,7 @@ reached by API, and is unaffected.
 | L1 | Who may start a live? | **Any member.** |
 | L2 | Who may watch? | **The whole Canari network** - C9: the live's key travels in the row, as a post CEK does. **Narrowed 2026-10-19 by the lead on review (a safe default, reversible): a live RESPECTS SPACES LIKE A POST** - a member's live is watched by, and pushed to, readers sharing a space with the broadcaster; an association's live by the readers the association reaches (its members, its rules, a read grant for watching only). One predicate, `liveVisibleToUserSql` in `spaces/reader-spaces.ts`, gates the list, the key, the manifest and the push ([lives](../../services/lives.md#who-may-watch-the-rule-of-a-post)). |
 | L3 | Is a live kept afterwards? | **No replay: a live disappears when it ends.** The broadcaster may save it locally on their own device. |
-| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). |
+| L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). **NO DURATION CAP (owner, 2026-10-31):** a live lasts as long as its broadcaster sends; the 60-minute cap and the byte budget derived from it are removed (server, client, sheet), and the server TRIMS the segments behind the newest 20 while the live runs, so what a live stores is at most 20 x 4 MiB whatever its duration ([lives](../../services/lives.md#what-one-broadcaster-may-store)). "30 to 60 minutes" above is a planning figure, no longer a limit. |
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
@@ -227,7 +227,7 @@ streaming from Garage, **neither of which is production's path**.
 - **Segment: 2 s, keyframe every 2 s.** 1 s saves about a second but doubles the requests (an
   ingest at the server's one-per-second floor, a `GET` per second per viewer) and stalled twice as
   often; 4 s is worse on every column.
-- **For WP-L5's player**: hold about one segment of buffer (the bench's 1 s-behind-the-end target
+- **For WP-L5's player** (_superseded 2026-10-27 by [the buffer policy](#the-buffer-policy-l-f1-2026-10-27): a measured target, 3 s at least_): hold about one segment of buffer (the bench's 1 s-behind-the-end target
   starved at 4 s segments and drifted to 3 s behind at 2 s), and **seek to the live edge after any
   gap** (seen after both background tests: 22 s behind, then caught up by a seek). Join on the init
   plus the newest segment - it worked on every join, on both engines, because every segment starts
@@ -328,7 +328,7 @@ because the manifest is per-viewer by design (the segment names are the capabili
   lets load shape itself without a deploy.
 - **Connections, the ceiling that remains.** A seated viewer holds up to four connections, three once
   its segments come from the edge (app, WebSocket and its upstream leg). The shared host's proxy has
-  about 1 500 across ALL its sites and raising it is the school IT department's decision. **So even
+  one connection budget for ALL its sites and raising it is the school IT department's decision. **So even
   with the edge, "no cap" is an audience of several hundred, not unbounded**, until the manifest too
   stops reaching the host. That figure goes to the user as it is.
 
@@ -374,7 +374,7 @@ production.
    against its ~19 Mb/s, with dev's traffic running.
 5. **Manifest QPS and its cost**: requests a second at N, social-service CPU, Postgres pool wait and
    Redis scripts a second, before and after the gate/tail split.
-6. **Host connections held** at N viewers (`ss` on the host: the 1 500 budget, read, never raised by us).
+6. **Host connections held** at N viewers (`ss` on the host: the host-wide budget, read, never raised by us).
 7. **Latency to the live edge** with the edge in the path: does the cache add to the 5-10 s?
 8. **The admission spike**: the real size of a follower fan-out at the moment of a push.
 9. **A 1033 during a live**: what a viewer sees, and for how long the cache covers it.
@@ -409,7 +409,7 @@ user-visible string.
 | --- | --- |
 | `types.ts` | The wire shapes, read from `apps/social-service/src/lives/` (dates are ISO strings), every refusal `code`, and `LiveRefusalKind` - what a screen does with a refusal. |
 | `api.ts` | One function per route over `apiFetch` (`startLive`, `fetchLive`, `fetchLiveManifest`, `putLiveSegment`, `endLive`, `leaveLiveSeat`, `removeLiveViewer`, `listOpenLives`, `fetchLiveLimits`), the token-free segment fetch (`fetchLiveSegment`, no custom header so no CORS preflight), and `LiveSegmentUploader`, the broadcaster's one sender: in index order, the same index retried on a transport failure, a `retry-segment` code or a `429`, stopped by any other verdict (a `410` once the server ended the live). It is the ONE index counter: the caller reads `nextIndex` BEFORE sealing (the seal binds the index), then calls `enqueue(index, sealed)`, which throws a `RangeError` unless `index === nextIndex` - a segment sealed for another index would be stored and never open for any viewer, silently. |
-| `constants.ts` | The v1 capture and playback numbers from the WP-L1 bench (measured 2026-10-19, written up in draft PR #2109): 720p, 2.0 Mb/s asked, 2 s segments and keyframes, about one segment of player buffer, a 1 s manifest poll (a choice: the bench polled at 500 ms), 3.1 Mb/s per viewer for planning. Every number the SERVER enforces comes from `GET /api/lives/limits`, never from here. |
+| `constants.ts` | The v1 capture and playback numbers from the WP-L1 bench (measured 2026-10-19, written up in draft PR #2109): 720p, 2.0 Mb/s asked, 2 s segments and keyframes, the player's smallest buffer target (one segment plus one poll) and its cadence window, a 1 s manifest poll (a choice: the bench polled at 500 ms), 3.1 Mb/s per viewer for planning. Every number the SERVER enforces comes from `GET /api/lives/limits`, never from here. |
 | `liveCrypto.ts` | The segment seal: `sealLiveSegment`, `openLiveSegment`, `LiveSegmentOpenError` - [the format, v1](#the-segment-seal-format-v1). |
 
 **Every refusal is a `LiveRefusalError`** (an `ApiRefusalError`, so `refusalCode` reads it), typed at
@@ -489,9 +489,9 @@ not end-to-end encryption against the server, and no page may call it that.
 
 ## The viewer (as built, 2026-10-19)
 
-WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
-by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
-`/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
+WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on in every build
+since the production flip of 2026-10-30** (dev builds only before it, by the `deployEnvironment()`
+test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
 ### The server's kill switch hides the live surfaces (2026-10-21)
@@ -512,7 +512,8 @@ the two values together.
 
 | File | What it holds |
 | --- | --- |
-| `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
+| `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer, the monotonic clock) injected, so it is tested with fake MSE objects and a manual clock |
+| `lib/live/liveBufferPolicy.ts` | [The buffer policy](#the-buffer-policy-l-f1-2026-10-27): `classifyLiveWait` (what a `waiting` means) and `LiveBufferPolicy` (the target from the measured delivery cadence). Pure, no timer |
 | `lib/live/liveViewerState.ts` | The states, and `liveFailureOutcome`: the ONE decision from a failure to a screen |
 | `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop), on the same box-header reader as the [broadcaster's](#the-broadcaster-as-built) `Fmp4Splitter`, and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
@@ -535,10 +536,11 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    `MediaSource`; `disableRemotePlayback` set as it requires) - and `isTypeSupported` of
    `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
 2. `GET /api/lives/:id`: the key and the seat.
-3. The join on the NEWEST segment alone. Every segment is SELF-CONTAINED - the recorder's init
-   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so its
-   own init is appended, then its fragment, then a seek to `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
-   A first segment with no init is "Live indisponible" (`playback`).
+3. The join on the NEWEST `LIVE_PLAYER_JOIN_SEGMENTS` (two) segments. Every segment is SELF-CONTAINED - the recorder's init
+   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so
+   their init is appended, then their fragments, then a seek to `end - target`, the
+   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (4 s at the join: the 3 s floor wait plus a poll). Only the newest one is required;
+   a first segment with no init is "Live indisponible" (`playback`).
 4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
    is appended only when its bytes DIFFER from the last one appended** (a camera re-acquired
    mid-live, e.g. a rotation); an identical one is skipped. MSE allows a new initialization segment
@@ -547,12 +549,125 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    is not called because the recorder's type is the fixed `LIVE_RECORDER_MIME`. `mode = 'segments'`
    keeps each fragment at its own timestamps, so a re-acquire (timestamps moved FORWARD by the time
    away) opens a second buffered range: the `waiting` at the end of the first seeks across at once,
-   and a drift past `LIVE_PLAYER_MAX_BEHIND_MS` does the same - one seek, never a loop.
-   **The jump to the live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` behind the manifest's
-   `nextIndex` asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
-   takes only its newest segment; a `waiting` since the last segment seeks at the next one. Each
+   and a drift past the target plus `LIVE_PLAYER_DRIFT_SLACK_MS` does the same - one seek, never a loop.
+   **The jump to the live edge**: a backlog behind the manifest's `nextIndex` whose media would put
+   the video past the target plus its slack anyway (`LiveBufferPolicy.isBacklog`, sized by the
+   longest segment measured - four 2 s segments at the floor are played, a fifth is a backlog) asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
+   takes only its newest segment; a STARVED `waiting` since the last segment (never the wait of a
+   seek) re-anchors at the next one, at the policy's target. Each
    poll that brings media calls `play()` if something paused the video. What was played more than
    `LIVE_PLAYER_KEEP_BEHIND_MS` ago is removed.
+
+### The buffer policy (L-F1, 2026-10-27)
+
+**The cause of L-F1, read from the rig's own consoles** (LIVE-WEB-2 and -3, 2026-10-26, Mi 9T app
+broadcasting to two Chrome viewers; the dev containers were redeployed since, so the server's side
+of that run is gone). Two defects, each enough to freeze a viewer:
+
+1. **The target was smaller than the producer's cadence.** The Mi 9T's recorder handed over its
+   init alone at +2.1 s, nothing at the next 2 s tick, three fragments at the one after, then its
+   fragments sealed 4-15 ms apart at EVERY other tick: `seal index 3` and `4` at 20.320/20.328, `5` and `6` at 24.326/24.341 - a pair every
+   4.0 s, on every chunk of both readings (against 14 % of chunks in WP-L1). The viewer sat a fixed
+   `LIVE_PLAYER_TARGET_BUFFER_MS` = 2 s behind, so between pairs it ran dry for ~2 s.
+2. **The player read its own seek as a stall.** Every `seek to the live edge (...) at E` was followed
+   IN THE SAME MILLISECOND by `stalled at E - 2.00` (`at 9.99` / `stalled at 7.99`, `at 12.01` /
+   `stalled at 10.01`): the engine fires `waiting` while it completes a seek. The stall latched, the
+   next delivery seeked again (`(stall)`), whose own `waiting` latched again - **a seek at every
+   delivery for the whole live**, 3 to 5 seeks in 8 s per viewer.
+
+**The policy** (`liveBufferPolicy.ts`, applied by `livePlayer.ts`):
+
+- **A `waiting` is classified once** (`classifyLiveWait`, typed `LiveWait`): `seeking` when
+  `video.seeking` holds (logged, nothing else); `held` when the range holding the playhead has more
+  than 0.5 s of media past it; `time-gap` when media lies past a hole ahead (a re-acquired camera,
+  crossed at once); `starved` otherwise, which latches the re-anchor.
+- **A wait with media ahead is the engine's own, and is no stall** (LIVE-STALL-1, `1.5.1-alpha.8`,
+  2026-10-29). W4 logged `stalled at 55.56` at 23:23:04.085. The delivery 3.5 s earlier had left
+  52.03 -> 58.19 in ONE range (`ahead 6.17`, which is read from the range holding the playhead, so
+  no hole lay before 58.19), and the playhead had advanced at exactly 1x since. It then played on BY
+  ITSELF to 55.74 before the next delivery's line, which is printed before any seek. So nothing was
+  missing ahead: Chrome fires `waiting` when its decoder or renderer underflows too, and a rig
+  running three browsers and an emulator is where that happens. The old player latched it as
+  starvation and the next delivery seeked FORWARD to 56.18. That skipped 0.44 s of media for a wait
+  no seek shortens, and it failed the row. Now `held` logs `waiting at T with A s buffered ahead
+  [ranges] - the engine's own wait`, with no latch and no seek. The NEXT delivery settles it. The
+  wait ENDED only if the engine says it plays on: the playhead moved, `readyState` is at least
+  `HAVE_FUTURE_DATA`, and the video is not paused. A sub-frame creep (WebKit), or a recovery that
+  froze again without a second `waiting`, does not count as an end. An ended wait logs `the
+  engine's own wait at T ended by itself after W ms, now at T': held about H ms (budget B ms)`.
+  H is the wall time W minus the media played since. A wait that did not end writes the ordinary
+  `stalled at T` line, and the delivery re-anchors as for any stall. The proof is the engine's
+  state at a delivery the poll was making anyway, not a timer. A seek closes the open wait.
+- **The budget, and the decision behind it** (owner, 2026-10-29). A wait of the engine's own that
+  holds the picture for at most `LIVE_PLAYER_HELD_WAIT_BUDGET_MS` = 500 ms (`constants.ts`) is no
+  longer a stall. No policy constant measures a freeze, so half a second was chosen: about where a
+  viewer reads a pause as a hitch. **This moves the bar of LIVE-STALL-1, knowingly**: the old
+  forward seek cost the viewer media for a wait that no seek shortens. The rig's judge
+  (`liverows.mjs`) IMPORTS the same constant. It still fails a viewer on a hold over the budget,
+  and on a wait no delivery showed ended, before the first delivery gap too. Still unknown: WHY the
+  engine underflowed, which no line here can name.
+- **The longest wait is BOUNDED from the shape of the deliveries, before a gap proves it**
+  (LIVE-STALL-1, `1.5.1-alpha.7`, 2026-10-29). `longestWaitMs` is the largest of: the floor
+  `LIVE_PLAYER_MIN_TARGET_BUFFER_MS` = one segment plus one poll (3 s, where the WP-L1 Mi 9T viewer
+  played 21 min with 0 stalls); the longest wall-clock gap between two deliveries over the last
+  `LIVE_PLAYER_CADENCE_WINDOW` (30); and the GROUP BOUND - the most segments one delivery brought,
+  times the longest segment measured (the buffered end's growth, unless a hole opened), plus one
+  poll. A delivery of K segments means the producer withheld K segments of media, so its next
+  handover can come that much later, learnt up to a poll after. A pair of 2 s segments bounds the
+  wait at ~5 s AT the pair. The clock is the injected monotonic `now()`: READ to measure a gap, never
+  waited on.
+- **The anchor sits one poll past that wait** (`targetMs`): a delivery's phase against the poll
+  moves by up to one poll, so an anchor exactly at the wait would re-anchor on ordinary jitter. 4 s
+  at the floor, ~6 s behind a paired producer.
+- **A delivery that leaves less media ahead than the longest wait re-anchors at once**
+  (`reanchor` -> `short`, a seek line `(short)`), never left to stall. Before, the target grew only
+  AFTER a longer gap had drained the buffer, and was applied only at a seek: W4 held 3.99 s after a
+  delivery with its target at 4118 ms, the next gap was 4223 ms, and it stalled. A buffer that does
+  not hold the target behind its edge is left to fill (a clamped seek would replay its start at
+  every delivery). Drift seeks past target + `LIVE_PLAYER_DRIFT_SLACK_MS` (`drift`).
+- **The replay** (`liveBufferPolicy.test.ts`, "LIVE-STALL-1, replayed"): W4's twenty recorded
+  deliveries (gap, segments, media), played at the wall's pace from the state the first left (which
+  reproduces every recorded "ahead" to 0.02 s up to the stall). The rule this replaced stalls at
+  delivery 10, the rig's stall (and 10 ms short before delivery 13, where the rig's video, slowed
+  70 ms by its stall seek, did not). This policy: one re-anchor at the first pair, no stall, and
+  never under 1.3 s ahead after it.
+- **A stall latched while a delivery is awaited is re-anchored on that delivery** (LIVE-STALL-1,
+  2026-10-29). The poll reads the stall latch AFTER its segment fetches, opens and appends, never
+  before them, and only the re-anchor it asks for (`seekToEdge` answering that it seeked) clears it.
+  Before, the poll snapshotted the latch as the manifest arrived and cleared it unconditionally after
+  the appends, so a `waiting` that fired DURING the fetch was wiped with no seek and the viewer
+  stalled again seconds later (W4 on dev `1.5.1-alpha.6`: manifest 44.042, stall latched 44.471,
+  segment opened 44.768, stalled again 48.794). A stall latched during the trim that follows stays
+  latched for the next delivery. No timer is involved: the rule is the ORDER of the read.
+- **One debug line per delivery** says what it did to the buffer: `delivery of N appended of M taken
+  (a-b), gap G ms: end E0 -> E1, at T0 -> T1, ahead A0 -> A1 s, ranges [R0] -> [R1]` - `M` segments taken in `a-b`, of
+  which `N` were appended (the rest skipped: gone or unopenable); the buffered end, the playhead and the
+  media playable ahead of it, before the first fetch and after the last append (before any seek,
+  which has its own line). At most one per poll, the bound of the seek line beside it. It separates
+  a producer whose segments carry uneven media (`E1 - E0` against `N`) from a player
+  that drifts (`T1 - T0` against the gap). `R0`/`R1` are EVERY buffered range (`[a-b c-d]`,
+  `formatLiveRanges`), since 2026-10-29: a hole ahead of the playhead shows there and nowhere else.
+  The rig forgives it on a viewer seat (`liverows.mjs`).
+- **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
+  retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a
+  viewer 20 s behind.
+- **The join takes the newest two segments**, so the first frame starts with the 4 s anchor ahead.
+
+**The price**: a regular producer (iPhone) is watched 4 s behind its buffer's end (2 s more than
+the first 2 s target), an Android producer delivering in pairs ~6 s; and the first pair costs one
+backward seek of up to ~2 s (seen video replayed once) where it used to cost a stall. A paired
+producer cannot be played smoothly with less buffer than its period plus the poll.
+
+**Not changed, and unverified**: the PRODUCER. Why the Mi 9T's recorder (2 s timeslice, 2 s
+keyframes) emits on every other tick only is not known; a shorter timeslice might hand each fragment
+over as it completes, but that is a hypothesis no device has read, and installed broadcasters keep
+their cadence anyway - which is why the viewer must follow whatever cadence it receives.
+
+**Verified by tests** (`liveBufferPolicy.test.ts`; `livePlayer.test.ts`'s "the buffer policy"
+block, whose cases fail against the old player - the `short` re-anchor among them; the mid-fetch stall case holds the segment
+fetch open by hand and fails against the player that snapshotted the latch). **Owed on hardware**: L-F1's reading again on
+the pre-release that carries it - the Mi 9T broadcasting, a phone AND a browser watching, 0
+`stalled` lines past the first delivery gap and no `seek ... (stall)` loop.
 
 **Failure -> screen** (`liveFailureOutcome`, one table, tested):
 
@@ -560,7 +675,7 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
 | --- | --- |
 | `full` (`503 LIVE_FULL`) | "Live complet" with "Réessayer"; no automatic retry (never hammered); no seat to give back |
 | `seats-unavailable`, `rate-limited`, `unavailable` (a bare 5xx), `retry-segment`, a transport failure | "Reconnexion...", the same step again after 1 s doubling to 8 s - **never "complet"** |
-| `ended` (`410`), or `not-found` once the key was served | "Le live est terminé"; no timer left. Every final screen pauses the video. The broadcaster's end deletes the row at once ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a viewer polling a second later reads `404`, not `410` |
+| `ended` (`410`), or `not-found` once the key was served | "Le live est terminé"; no timer left. Every final screen pauses the video, and gives the seat back: an ordinary end's purge waits for its seated viewers ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a seated viewer reads `410` and fetches the segments its last manifest named; a viewer that joins after the purge reads `404` |
 | `not-found` before the key, `removed`, `disabled`, `refused` | the neutral "Live indisponible" |
 | An engine with no MSE or no `avc1`/`mp4a` support | "Live indisponible" (`unsupported`) |
 | The joining segment that does not open, or three segments in a row | "Live indisponible" (`undecryptable`); one segment that does not open, or one the server no longer has (`404`), is skipped |
@@ -587,21 +702,21 @@ never one line each; the key and segment bytes never.
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
 with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
-(read on the iPhone in check Y); no deep link to one live.
+(read on the iPhone in check Y); **a live now has its own page, `/lives/<id>`** (2026-10-31): the Share button of both screens shares it (`live/shareLive.ts`, through the post mechanisms: system sheet in the phone apps, a copy elsewhere; whether the Android sheet backgrounds the page, which the broadcaster would read as `away`, is owed on a device), it is claimed as an app link (`/lives/*` in `appSiteAssociation.ts`, `tauri.conf.json`, the Android manifest) and it is where `fr.emse.canari://live/<id>`, the "X est en live" push, lands. The page opens the viewer; a 404/410 (ended, or not visible to the reader - the server answers both alike) reads "Ce live est terminé", never a raw error (`live/liveRoute.ts`). **The push skips devices known to run a build below `1.5.4`** (the lives floor): social-service puts `minAppVersion` in the push data, chat-delivery's `sendPushToUser` drops tokens whose `key_package.deviceAppVersion` is below it and strips the key; a device whose build was never reported is kept (and counted in the log). **Screens, 2026-10-31 (owner):** the chat has no box and scrolls (`live/chatScroll.ts`: follow only from the bottom, else a chip); a tap on a line opens its Report / Hide; the broadcaster's End is small at the top right and asks; "En direct" in the composer closes it and the posts page hosts the live.
 
 ## The broadcaster (as built)
 
 WP-L5's broadcaster half, built 2026-10-19 on the client foundation and the seal above, **behind
-the viewer's switch, the ONE `LIVE_ENABLED`: on for dev builds only**. It turns on for production with WP-L8 (moderation, a release
-blocker since any member may broadcast, D3), the device readings, and the server's switch, in one
-release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
+the viewer's switch, the ONE `LIVE_ENABLED`: on in every build since the production flip of
+2026-10-30**, with the server's switch in the same commit ([live-production](live-production.md)).
+Chat and reactions (WP-L6) and moderation (WP-L8, WP-L8b) were built after this section was written.
 
 | File | What it holds |
 | --- | --- |
 | `lib/live/fmp4Segments.ts` | The pure fMP4 reader: `Fmp4Splitter` turns recorder chunks into one init and its fragments (a box cut across chunks is carried), reads whether each fragment's video starts on a sync sample, `composeSegment`, and `rebaseFragment` (the media-time shift below) - and the viewer's `initSegmentEnd`, on the same box-header reader. |
 | `lib/live/liveSegmentPipeline.ts` | Chunk -> fragments -> segment -> seal -> queue, ONE chunk at a time through one promise chain: the index is read from `uploader.nextIndex`, sealed for and enqueued with (no second counter). A summary line every 15 segments. |
 | `lib/live/liveRecorder.ts` | `MediaRecorder` with `LIVE_RECORDER_MIME`, 2.0 Mb/s, 2 s timeslice and keyframe interval; no second container (an engine that cannot record that exact type cannot broadcast, said before Start). |
-| `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (exact lens), the Screen Wake Lock (every request carries a ticket, so a lock answered after a release or a newer hold is given straight back: hold -> release -> hold never leaks one), the Battery API reading. |
+| `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (lens asked as the reel camera does: exact on a phone and on a switch, ideal on a desktop's first capture, `utils/cameraFacing.ts`), the Screen Wake Lock (every request carries a ticket, so a lock answered after a release or a newer hold is given straight back: hold -> release -> hold never leaks one), the Battery API reading. |
 | `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
@@ -612,8 +727,8 @@ goes out under the identity chosen in the composer: the member, or an associatio
 "anonymous" is chosen, nor while the chosen association is missing from the list read.
 
 **The pre-live screen is the rules, shown before EVERY live (L11)**: visible like a post by the same
-identity and only while on air; reportable and cuttable by moderation; at most `maxDurationMs`; the
-camera may be away at most `reconnectWindowMs` - both read from `GET /api/lives/limits`. A warning
+identity and only while on air; reportable and cuttable by moderation; with no longest duration (L4, 2026-10-31); the
+camera may be away at most `reconnectWindowMs`, read from `GET /api/lives/limits`. A warning
 under 60 % battery where the engine has the Battery API (Android; WebKit has none), charging or not
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
@@ -693,7 +808,7 @@ disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the
 while the End drains labels the end screen as the server's (or as a cut, below), never as
 the member's. On air, a `410` from the uploader ends the screen with no end call - the cause is
 `cut` when its `endReason` says so (title `live_broadcast_cut_title`, no sentence under it:
-"Votre live a été interrompu par la modération"), `server` otherwise (the hour; the sentence no
+"Votre live a été interrompu par la modération"), `server` otherwise (the sentence no
 longer mentions moderation); a cut read on return from the background (`fetchLive` answering `410`
 `cut`) and one answering the End are the same cause; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
@@ -707,7 +822,7 @@ generic sentence.
 
 ### The moderation client (WP-L8's client half, 2026-10-19)
 
-Dev builds only (`LIVE_ENABLED`). The `live_cut` bell row (type `live_cut`, `postId` = the live,
+Behind `LIVE_ENABLED` (every build since 2026-10-30). The `live_cut` bell row (type `live_cut`, `postId` = the live,
 `actorId`/`actorName` empty, `text` = the reason CODE): `NotificationRow` builds the sentence
 (`notif_live_cut_text`) and appends the `moderation_reason_*` label, draws a neutral disc instead of
 an avatar of nobody, and is NOT activatable (`notificationHref` answers `null`: the live is deleted).
@@ -751,9 +866,12 @@ over", closes), anything else (a retry, the dialog stays open). Only a report th
 "block the person who is broadcasting" through `showConfirm` (danger) and `blockUser(broadcasterId)`;
 a block leaves the live through the viewer's own dismissal. The offer says "the person", not the
 name: on an association's live the displayed name is the association's, the block lands on the member
-who broadcasts. **Not built, by the server's contract:** reporting ONE chat line - `content_reports`
-accepts `contentType: 'live'` only ([lives](../../services/lives.md#an-erased-account-and-a-single-message-reported)),
-so a viewer reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
+who broadcasts. **Reporting ONE chat line is built (WP-L8b client half, 2026-10-21):** a `Flag` button
+(`data-live-chat-report`) on every numbered line that is not the reader's own in `LiveChatPanel`, wired
+by `LiveViewer` (`report={(line) => (reportedLine = line)}`) to `LiveChatReportDialog`
+([decisions of 2026-10-21](#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half),
+[lives](../../services/lives.md#a-reported-chat-line-wp-l8b)). The viewer's TOP-BAR control still
+reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
 `LiveViewer.svelte.test.ts`.
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
@@ -849,6 +967,31 @@ a text or a ciphertext.
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
+## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
+
+Production serves `lives.mode = off`, dev `on`. A finding here **blocks the FLIP of `lives_mode` on
+production, not a stable**. Readings on dev `1.4.1-alpha.6`: the Mi 9T (build `349f092c9`) broadcast
+as a member, two browsers watched ([board](../../cross-client-testing.md)).
+
+**What held** (LIVE-WEB-2 and -3, both `PASS-DIRTY` on undeclared `[LIVE]` narration):
+
+- Rules accepted, then on air within one second.
+- Both viewers saw the feed card on their first refresh, joined, and played 720x1280.
+- The broadcaster's count showed 2.
+- After End, both viewers showed "Le live est terminé" within 1.5 s.
+- Seven segments were sent, none dropped, none off a keyframe.
+- The announcement was computed once per live: `[LIVE_ANNOUNCE] ... followers=1` with one follower.
+- Chat-delivery answered `No token` for a browser account: a web seat registers no push token, so
+  delivery to a follower's DEVICE is owed on a phone signed in as a follower.
+
+| # | Finding | Severity | Owed |
+| --- | --- | --- | --- |
+| L-F1 | **The viewer freezes about every 4 s.** The Android recorder hands over TWO 2 s fragments at once every ~4 s (paired seals 40 ms apart, on every chunk of the reading, against 14 % of chunks in WP-L1). The viewer plays at `end - LIVE_PLAYER_TARGET_BUFFER_MS`, so it runs dry before the next pair: `[LIVE] viewer ... stalled at N` then `seek to the live edge (stall)`, 4 seeks in 14 s on one viewer, 7 to 11 stall or seek lines per viewer in the next run | **P2, blocks the flip** (a visible freeze); **CAUSE PROVEN AND FIXED 2026-10-27** - the 2 s target against the 4 s pair cadence, AND the player reading its own seek's `waiting` as a stall, which re-seeked at every delivery ([the buffer policy](#the-buffer-policy-l-f1-2026-10-27)) | The same reading on the pre-release that carries the fix, with a PHONE and a browser as viewers |
+| L-F2 | Segments of ~45 kB per 2 s (~180 kb/s) against WP-L1's 600-800 kB at 2 Mb/s | observation | A reading with a lit, moving scene before it is called anything: the bench phone's front lens saw a dark, static scene |
+| L-F3 | The viewer's manifest poll after the End meets `404` (the row is deleted at the end, [above](#the-viewer-as-built-2026-10-19)), and the BROWSER logs `Failed to load resource ... 404` at error level | designed | The browser's own line cannot be demoted by the app. The rig's LIVE-WEB narration must match it EXACTLY (that live's manifest, after End only, on a viewer) |
+| L-F4 | On a phone's first live, the OS camera and microphone prompts send the app to the background in preview (`[LIVE-BROADCAST] app hidden in preview`); the preview recovers once granted | observation | Nothing |
+| L-F5 | A desktop browser cannot broadcast: `facingMode: { exact }` in `liveDevice.ts` meets a camera that reports no facing (`OverconstrainedError`, "Canari ne trouve aucune caméra utilisable"). LIVE-WEB-1 `ERROR`. The same request is in `reels/cameraAccess.ts` | **P2**, fix in flight (one shared constraint builder: ideal facing first, exact only on a switch) | LIVE-WEB-1 and a desktop reel-camera row on the pre-release that carries the fix |
+
 ## Open questions for the user, each with a recommendation
 
 Answered on 2026-10-15 and moved to the decisions table: viewer cap (L8), simultaneous lives (L9),
@@ -879,7 +1022,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
-| **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
+| **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED` (dev builds only until the production flip of 2026-10-30), [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** (**server half MERGED (#2131), client half in review (#2136), 2026-10-19 - the client is [here](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19, the viewer's report control included** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
@@ -897,7 +1040,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 
 ## Decisions of 2026-10-21: reactions, rules and the chat-line report (client half)
 
-Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)); dev builds only, behind `LIVE_ENABLED`.
+Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)); behind `LIVE_ENABLED` (every build since 2026-10-30).
 
 - **Reactions.** `LIVE_REACTION_KINDS` (`lib/live/liveChat.ts`) is `like` (heart), `laugh`, `clap` (bravo), `fire`, `canari`; `love` and `happy` are gone from the type, the bar, the layer and the tests. The emoji and names sit in one table there (`LIVE_REACTION_ART`): the three shared kinds reuse the posts' `post_reaction_name_*` labels, `clap` and `fire` have `live_reaction_name_clap` / `_fire`. Pictures are the Noto SVGs already in the set ([emoji](../emoji.md)); nothing was added. **The server's `LIVE_REACTION_KINDS` must become the same five, or a burst of `clap`/`fire` is refused `400 LIVE_REACTION_INVALID`.**
 - **First-live rules.** The sheet shows the posts' rules, i.e. section 5 of the terms of use (`/legal/cgu#regles`): illegal/hateful/privacy, sexual content, harassment, malware and fraud, the sanction line, and a link to the terms. The four live-specific clauses (`live_rules_cut`, `live_rules_responsible`, the old wording) are deleted. **`LIVE_RULES_VERSION` lives on the server only** (the client reads `rulesVersion` from `/api/lives/limits` and `/rules`), so it must be raised there for everyone to re-accept.
@@ -911,8 +1054,8 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 broadcaster - a count, never a name or a list, to anybody.** The number is **EXACT, not rounded -
 confirmed by the owner 2026-10-21**. The server side (what a viewer is, blocked accounts counted, the reasoning on
 exactness, what happens when Redis does not answer) is
-[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
-`LIVE_ENABLED`, like the rest of the live.
+[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Behind
+`LIVE_ENABLED` (every build since 2026-10-30), like the rest of the live.
 
 - **No new request.** The manifest carries `viewers` (`number | null`). The viewer's `LivePlayer`
   hands it to `onViewers` at the same two places it reads the clock (the join and each poll); the
@@ -935,3 +1078,140 @@ exactness, what happens when Redis does not answer) is
   and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
   end screen, and reset for a new live).
 - **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).
+
+## The viewer header and the rules sheet (2026-10-30, `1.5.2-alpha.1` readings)
+
+- The LIVE pill and the elapsed time sit on a second line under the broadcaster's name, so the name
+  takes the header's width and truncates only against the action buttons (`LiveViewer.svelte`).
+- The pill is not drawn once the viewer state is `ended`: the ended screen already says so.
+- The broadcaster's pre-live rules sheet is capped below the top safe-area inset and scrolls, so it
+  never draws under the iOS status bar (`LiveBroadcaster.svelte`).
+
+## Broadcasting the screen on a desktop browser (2026-10-31, owner)
+
+Built, owed a real-browser reading (every gate here is fakes: no picker can be driven unattended).
+
+- **Where**: desktop only. `screenShareAvailable()` (`liveDevice.ts`) is `getDisplayMedia` present AND a
+  mouse as the primary pointer (`isCoarsePointerDevice`); a phone or tablet keeps the camera and draws
+  no choice. The sheet's "Ce que vous montrez" (`Caméra` / `Écran`, Paraglide) is a radio group over
+  `LiveBroadcast.chooseSource`, preview only.
+- **The click is the gesture**: a browser runs `getDisplayMedia` only from one, so `chooseSource`
+  is called from the button's handler and swaps the session's opener (`CameraSession.swapOpener`) before
+  `start()`.
+- **Dismissed picker (or refused microphone)**: back to the CAMERA at once, no fault shown.
+- **Audio, settled**: the microphone is kept (a live has a voice). `getDisplayMedia({ audio: true })` only
+  ASKS: the picker offers tab or system audio where the browser has it (Chrome and Edge on a tab or the
+  system; not Firefox or Safari for the screen), and the member decides. When the share carries audio,
+  it is mixed with the microphone in an `AudioContext` into ONE track (the recorder needs one);
+  without it the microphone goes alone. Releasing the stream stops the mixed track, whose `stop` also
+  stops both sources and closes the context.
+- **Size and rate**: ideal 1280x720 at 30 fps, as the camera bench (a share is scaled down by the browser
+  when it can; a window that resizes mid-share is NOT measured). `LIVE_RECORDER_MIME` is unchanged: the
+  recorder takes the display's video track like a camera's, and the viewer's string is the same.
+- **Hidden page**: the page being hidden is the NORMAL state of a share, and `getDisplayMedia` cannot be
+  re-asked without a click, so `appHidden` / `appVisible` do nothing while the source is the screen
+  (the camera's pause and re-acquire are for the camera). Risk, unmeasured: a Chromium tab hidden for
+  minutes has its timers throttled, which may starve the uploader's retries and the chat's poll; chunks
+  and `fetch` are not throttled. OWED: a 10-minute share from a hidden tab on Chrome and Edge, read at the viewer.
+- **The share stopped from the browser's own bar while on air: THE LIVE ENDS, cleanly** (the ordinary
+  End, `screenShareStopped`), chosen over falling back to the camera: showing the member's face in place
+  of what they chose to show is a surprise nobody agreed to, and re-asking needs a click the code does not
+  have. In the preview the same event shows "Le partage d'écran s'est arrêté" with Retry (a click).
+- **Review fixes (2026-10-31)**:
+  - **Tauri is excluded explicitly** (`isTauriRuntime()` in `screenShareAvailable`): its webviews have no
+    reliable screen picker, and a desktop window has a mouse, so the pointer test alone would offer it.
+  - **The mixing `AudioContext` is made and resumed INSIDE the click** (`createMixContext`, called
+    synchronously by `chooseSource` before any await) and passed down: built after the picker and the
+    microphone prompt it would have lost its user activation (Safari), where `resume()` can stay pending
+    forever - so nothing awaits it. `mixAudio` READS its state: not `running`, the context is closed, the
+    share's audio stopped and the microphone goes on alone, with a `warn`. Closed on every exit path.
+  - **Known limit**: the mixed track's `ended` does not follow the microphone; a mic that dies
+    mid-live leaves the share's sound on air and nothing ends (documented at `mixAudio`).
+  - **A share stopped while the live is `starting`** ends it the moment the start lands (a flag read by
+    `goOnAir`, cleared at the top of `start()` and in its failure branch, so a failed start never
+    poisons the next), instead of going on air on a dead share and re-opening the picker without a click. The
+    Retry message promises "go back to the camera" only in the preview, where the source buttons are
+    enabled; on air or away it says the share stopped and nothing else.
+  - **The source buttons are locked while the picker is open** (`choosingSource`).
+  - **Privacy sentence** in the screen hint: viewers see everything shared, notifications and other
+    windows included.
+- **Testing lives locally, once #2812 lands**: the server refuses a lives request whose
+  `X-Canari-Client-Version` is below `1.5.4` (404, as `lives_mode` off). A local `bun run dev` sends the
+  package version (`frontend/package.json`, read by `vite.config.js` into `VITE_APP_VERSION`), `1.5.3-x`
+  until the bump, so it is refused. There is no override and none is to be added: set `version` in
+  `frontend/package.json` to `1.5.4` locally (never committed), or use a build cut after the bump
+  (`scripts/bump-app-version.sh`). A script names the version in the header itself.
+- **Unchanged**: the rules sheet, reports, cuts, strikes, the segment seal and every server rule. The
+  switch-camera button is hidden while the source is the screen.
+
+## Why a desktop browser cannot broadcast, and Firefox (2026-10-31)
+
+"Cet appareil ne peut pas diffuser en direct" had ONE cause in the code: `liveRecordingSupported()`
+(`liveRecorder.ts`) is `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)` and nothing else. The camera
+facing (L-F5) is fixed (ideal facing first, `cameraFacing.ts`) and a camera that cannot open has its OWN
+text (`CAMERA_FAULT_TEXT`), so neither can produce it. **The owner's browser is Firefox**, whose
+`MediaRecorder` records WebM (VP8/VP9 + Opus), never MP4/H.264.
+
+| Browser | Records `video/mp4;codecs=avc1.42E01F,mp4a.40.2` | Source |
+| --- | --- | --- |
+| Chrome 156, Windows | **yes** (also `avc1.42E01E`, bare `avc1`, `video/mp4`, WebM) | MEASURED 2026-10-31, `isTypeSupported` in the rig's Chrome |
+| Edge (Chromium) | yes from 126, same engine as Chrome | not run here; Chromium shares the recorder |
+| Chrome / Edge before 126 | **no** (no MP4 in `MediaRecorder`) | documented behaviour, not run here |
+| Firefox (any) | **no** (WebM and Ogg only) | documented behaviour and the owner's report; not run here |
+| Safari 14.1+ (macOS, iOS) | yes - the iPhone 12 bench used exactly this string | iPhone bench (WP-L1) |
+| Chromium on Linux without H.264 | depends on the build | not run here |
+
+**The format is not too strict where MP4 is recorded at all**: Chrome accepts any `avc1.*`, so a looser
+recorder string would not admit one more browser. The VIEWER is the strict side: MSE needs the codec
+string quoted in full (`avc1.42E01F,mp4a.40.2` plays, bare `avc1` and `video/mp4` do NOT, measured the
+same day), and iOS plays through `ManagedMediaSource` on the same string. So the recorder string stays.
+
+**Where the 126 comes from**: Chromium added MP4 containers to `MediaRecorder` in release 126 (Chrome
+Platform Status, "MediaRecorder: MP4 support"; the same engine in Edge). It is the one number
+`LIVE_CHROMIUM_MP4_FROM` in `liveRecorder.ts` holds, and it only chooses WHICH words the sheet shows - the
+capability itself is always `MediaRecorder.isTypeSupported(LIVE_RECORDER_MIME)`, never the user agent.
+
+The sheet now says why, by cause (`classifyRecordingGap`, a user-agent read, tested): Firefox is named,
+a Chromium before 126 is told to update, anything else gets the generic text; all three point at Chrome,
+Edge or the app.
+
+### Supporting Firefox - options, costs, recommendation (NOT BUILT)
+
+1. **A WebM recording path** (Firefox's MediaRecorder records WebM natively). Costs: the segment shape
+   (every segment self-contained: init + one fragment, "The segment seal format") is built on fMP4;
+   WebM segments cut by MediaRecorder are not independently decodable (only the first has the header,
+   later chunks are clusters), so the "join on the newest two segments" playback breaks. And iOS Safari
+   plays WebM through MSE only from 17.4 on some devices, not reliably through `ManagedMediaSource`.
+   A server-side remux means media-service touches the media path it does not touch today. **Costly and
+   risky: not recommended.**
+2. **WebCodecs in the broadcaster** (`VideoEncoder` H.264 + `AudioEncoder` AAC, then a small fMP4 muxer in
+   JS). It would give every browser the SAME container the viewers already play, and would also remove
+   the dependence on `MediaRecorder`'s chunking quirks (L-F1). Costs: a muxer to write and test, a
+   keyframe/segment cutter of our own, CPU on the main thread or a worker, and a new class of bug on a
+   path now proven on phones. **Support in Firefox is NOT verified here**: its WebCodecs shipped on desktop
+   in 130, but H.264 ENCODE depends on the platform codecs and **AAC encode is, to my knowledge, not
+   offered by Firefox** (Opus is) - which would leave Firefox with H.264 video and no AAC audio, so the
+   MP4 would need Opus-in-MP4, which iOS cannot play. Owed before any design: a probe of
+   `VideoEncoder.isConfigSupported({codec:'avc1.42E01F'})` and `AudioEncoder.isConfigSupported({codec:'mp4a.40.2'})`
+   in a real Firefox.
+3. **Do nothing for Firefox** (the shipped answer): name it, point at Chrome, Edge and the app. Desktop
+   broadcasting is a minority path; the phones (the audience of lives) are unaffected.
+
+**Recommendation: option 3 now, and run the two `isConfigSupported` probes in Firefox before spending
+anything on option 2.** If AAC encode is absent, option 2 is dead for Firefox and the answer stays 3.
+
+## The switch-camera button needs two cameras (2026-10-31)
+
+`CameraSession.canSwitch` gates the button of the live sheet and of the CanaReels camera (`CameraScreen`,
+which also stands the double-tap flip down). **It fails open (review, 2026-10-31): the button and the
+double-tap are hidden ONLY on a measured count of exactly 1.** An unknown count (list unreadable, or a
+browser that listed no camera) keeps them: a phone that wrongly lost the front/back flip would lose it for
+good, whereas a desktop with one webcam and a visible button merely does nothing on a tap. The count is
+`countVideoInputs()` (`enumerateDevices()` filtered on `videoinput`, the ONE implementation - the call
+screen's `CallService.refreshCameraCount` uses it too), read AFTER the camera is open (labels and devices
+can be hidden before the grant) and again on `devicechange`; the listener is removed on `stop()`, and a
+read that lands after `stop()` writes nothing (`#watchEpoch`).
+
+**The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
+`[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
+`videoinput=1`, the rule is wrong for that browser and the line is the evidence.

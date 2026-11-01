@@ -108,10 +108,37 @@ char *canari_native_build_text_message_proto(
 
 char *canari_native_build_read_watermark_proto(long long at);
 
+char *canari_native_build_call_hangup_proto(
+    const char *message_id,
+    long long sent_at,
+    const char *call_id,
+    const char *device_id,
+    unsigned int end_reason);
+
 int canari_native_cleanup_pending_db(const char *files_dir);
 
 void canari_ios_on_resume(void);
 void canari_ios_on_pause(void);
+
+/* Whether the page rings an incoming call itself: it holds the gateway socket the caller's invite
+   arrives on (Rust `page_ring`). An app in front at the PIN gate holds none, and is rung natively. */
+bool canari_ios_page_rings_in_app(void);
+
+/* Whether the page is ringing THIS call itself (its CallService is `incoming` on it, Rust
+   `page_ring`). The handover ends an unanswered CallKit ring only on this: a page holding the
+   socket may still have skipped that call's invite. */
+bool canari_ios_page_rings_call(const char *call_id);
+
+/* Registers the function Rust `page_ring` calls when the page STARTS ringing a call, with its id
+   (valid for the call only, on the thread of the Tauri command). Registered, never linked: the
+   Rust library is linked into the notification extension too, where that function does not exist.
+   NULL removes it. */
+void canari_ios_set_page_ringing_listener(void (*listener)(const char *call_id));
+
+/* The share manifest's name, in the app data directory and in the App Group: the native side
+   only STATS it (whether a share waits, which Data Protection allows while the device is locked),
+   never reads it. Pinned against Rust's PENDING_SHARE_FILE by iosShareExtension.test.ts. */
+#define CANARI_SHARE_PENDING_FILE "pending_share.json"
 
 /* A share INTO Canari left by the Share Extension in the App Group (commands/app_group_share.rs):
    carried into the app data and cache directories. Answers one of the codes below, which the
@@ -121,6 +148,8 @@ void canari_ios_on_pause(void);
 #define CANARI_SHARE_IMPORT_NOTHING 0
 #define CANARI_SHARE_IMPORT_BUSY 2
 #define CANARI_SHARE_IMPORT_DROPPED 3
+#define CANARI_SHARE_IMPORT_PROTECTED 4
+#define CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED 5
 #define CANARI_SHARE_IMPORT_NO_DIRS (-1)
 #define CANARI_SHARE_IMPORT_NO_GROUP (-2)
 #define CANARI_SHARE_IMPORT_FAILED (-3)
@@ -143,6 +172,9 @@ typedef struct {
 #define CANARI_SHARE_SWEEP_EPOCH_REPAIRED (1u << 6)
 #define CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED (1u << 7)
 #define CANARI_SHARE_SWEEP_LEFTOVER_FAILED (1u << 8)
+#define CANARI_SHARE_SWEEP_PROTECTED (1u << 9)
+#define CANARI_SHARE_SWEEP_CLAIM_RESTORED (1u << 10)
+#define CANARI_SHARE_SWEEP_CLAIM_LOST (1u << 11)
 CanariShareSweep canari_ios_sweep_shared_inboxes(const char *data_dir, const char *cache_dir);
 
 #ifdef __cplusplus

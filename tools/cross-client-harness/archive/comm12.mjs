@@ -90,7 +90,7 @@ import {
   workspaceIdOf,
 } from '../grainedb.mjs';
 import { PEER_NAME, PORTS } from '../names.mjs';
-import { becomeANewDevice } from '../newdevice.mjs';
+import { becomeANewDeviceAndConfirm } from '../newdevice.mjs';
 import { mark, record } from '../results.mjs';
 import {
   DELIVERY_CROSSING_NARRATION,
@@ -297,6 +297,9 @@ const linesWith = (watched, needle, from) =>
  * member first, and a peer who arrived after PAST holds nothing of it. With nobody else, the ask
  * reaches the owner's own other device (W1), which minted PAST - and W1's answer is the thing tested.
  */
+/** The minted W3 connection, closed at the end with the others. */
+let mintedCx = null;
+
 async function newDeviceArm() {
   const community = `C12 newdevice ${run}`;
   const channel = `c12-newdevice-${run.toLowerCase()}`;
@@ -323,9 +326,15 @@ async function newDeviceArm() {
 
   // W3 becomes a device the server has never seen, signed in as the owner.
   const minted = await step('[newdevice] mint a new device of the owner on W3', () =>
-    becomeANewDevice({ report: (s) => console.log(`  newdevice: ${s}`) })
+    // BOTH HALVES: a new device of this account is now asked for the account PIN ("PIN de
+    // chiffrement"), and the first half alone left that modal over every control the read below
+    // needs (COMM-12 on 1.5.0-alpha.1, 2026-10-27). `confirmEnrolment` answers it.
+    becomeANewDeviceAndConfirm({ report: (s) => console.log(`  newdevice: ${s}`) })
   );
   out.minted = !!minted?.cx && !minted.refused;
+  // Held so the script can close it: an open socket to W3 kept the process alive after the record
+  // was written, and the phase runner read that as a row hung for 20 minutes (2026-10-27).
+  mintedCx = minted?.cx ?? null;
   if (out.minted) {
     const w3 = minted.cx;
     out.read = await step('[newdevice] read the past on the new device', async () => {
@@ -512,3 +521,4 @@ for (const l of linesW2) console.log(`  ${l}`);
 
 w1.close();
 w2.close();
+mintedCx?.close();

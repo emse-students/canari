@@ -219,6 +219,29 @@ describe('the fetch a refresh is made with', () => {
 });
 
 /**
+ * ONE LINE PER REFRESH SENT, NOT ONE PER CALLER (production 1.5.1: 653 `[A] token→refresh` lines
+ * for 51 refreshes). The reason rides the request's own line; a caller that joins says nothing.
+ */
+describe('what a burst of callers without a usable token logs', () => {
+  it('logs the refresh that leaves, once, with its reason - and nothing per caller', async () => {
+    const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 30 }));
+    setToken(`h.${claims}.s`);
+    fetchMock.mockResolvedValue(answer(200));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await Promise.all([getToken(), getToken(), getToken(), getToken(), getToken()]);
+
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[A] '));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lines.filter((l) => l.includes('→refresh'))).toEqual([]);
+    const sent = lines.filter((l) => l.startsWith('[A] refresh→ '));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/\(token exp=\d+s\)$/);
+    log.mockRestore();
+  });
+});
+
+/**
  * THE TOKEN MUST NAME THE LOCAL IDENTITY (bench phone, 2026-10-10: MLS identity Alpha, token Delta,
  * every request a 403 and the outbox re-posting 23 times). The comparison is made where a token is
  * obtained, so it is tested here: refused, not published, not asked again, lifted only by sign-out.

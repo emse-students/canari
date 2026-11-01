@@ -14,6 +14,7 @@
   } from '$lib/forms/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { ClipboardList, TriangleAlert, Pencil, Trash2, Plus } from '@lucide/svelte';
+  import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -138,7 +139,7 @@
     </div>
     <a
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
-        `/associations/${asso.slug}/edit/formulaires`
+        editSectionHref(asso.slug, 'formulaires', asso.type === 'list' ? '/lists' : '/associations')
       )}"
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >

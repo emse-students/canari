@@ -1,0 +1,30 @@
+{
+  "_comment": "COMPILE-ONLY STUB. Every value is fake. `.github/scripts/android-app-compile.sh` copies it to app/google-services.json (git-ignored) so the Google Services plugin can configure `:app` on a pull request, which has no secrets. It can reach no Firebase project. The real file is the GOOGLE_SERVICES_JSON secret and is used only by android.yml.",
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "canari-compile-stub",
+    "storage_bucket": "canari-compile-stub.invalid"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "fr.emse.canari"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCOMPILE-STUB-NOT-A-REAL-KEY-00000000"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

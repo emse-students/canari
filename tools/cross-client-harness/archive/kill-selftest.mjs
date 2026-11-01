@@ -7,7 +7,7 @@
  *
  *   bun archive/kill-selftest.mjs
  */
-import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
+import { COOKIE_COMMIT_MS, KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, REFRESH_COOKIE_TTL_S, UNSENT_LABELS, chromeExpiresToUnixS, refreshCookieAtKill, WINDOWS, kill3Outcome, kill3WindowOf, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, storageLost, strayCommits, strayCommitsOwn, stageKillsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -134,6 +134,14 @@ ok('the replayed run 2: the stray fails its own assertion, by trace', !strayComm
 ok('control: a run with no stray passes it', strayCommitsOwn([], 'between run 1 and run 2').ok);
 ok('control: a REJECT or DUPLICATE is never a stray', strayCommits([{ kind: 'REJECT', trace: 't', reason: 'epoch_mismatch' }, { kind: 'DUPLICATE', trace: 'u' }], 9).length === 0);
 ok('control: two accepts past the read are still neither', runOutcome({ window: 'after-accept', seq: runCommits(RUN2, 3), fromEpoch: 3, serverEpoch: 5, caughtUpMs: 3, outShown: 1, inShown: 1 }).outcome === 'neither');
+
+// WHERE THE REFRESH COOKIE WAS WHEN THE BROWSER DIED: memory over CDP before, the file after.
+const MEM = 1_793_027_622.5;
+ok('a cookie the file holds as memory did is on disk', refreshCookieAtKill({ memoryExpiresS: MEM, diskExpiresS: MEM + 0.4 }) === 'on-disk');
+ok('a cookie memory held and the file did not is the product finding', refreshCookieAtKill({ memoryExpiresS: MEM, diskExpiresS: null }) === 'not-on-disk');
+ok('an earlier rotation on disk is the product finding too', refreshCookieAtKill({ memoryExpiresS: MEM, diskExpiresS: MEM - 300 }) === 'older-on-disk');
+ok('control: no cookie in memory before the kill is the premise unmet, whatever the file holds', refreshCookieAtKill({ memoryExpiresS: null, diskExpiresS: MEM }) === 'not-signed-in');
+ok("Chrome's 1601-epoch microseconds read as Unix seconds", Math.abs(chromeExpiresToUnixS((MEM + 11_644_473_600) * 1e6) - MEM) < 1e-3 && chromeExpiresToUnixS(null) === null);
 
 if (failures) {
   console.error(`\n${failures} kill assertion(s) failed`);

@@ -2,7 +2,7 @@
   import { resolve } from '$app/paths';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page as routePage } from '$app/state';
   import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -27,7 +27,7 @@
     'collisions',
     'all',
   ] as const satisfies readonly LegacyCotisationStatus[];
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let tab = $state<LegacyCotisationStatus>(
     parseTab(routePage.url.searchParams.get('tab'), TAB_KEYS, 'pending')
   );
@@ -78,14 +78,18 @@
   function switchTab(next: LegacyCotisationStatus) {
     if (tab === next) return;
     tab = next;
-    replaceState(resolve(internalPath(tabUrl(routePage.url, next, 'pending'))), routePage.state);
+    void goto(resolve(internalPath(tabUrl(routePage.url, next, 'pending'))), {
+      shallow: true,
+      replace: true,
+      state: routePage.state,
+    });
     void load(0, true);
   }
 
   onMount(() => {
     if (!isGlobalAdmin()) {
       console.error('[ADMIN][LEGACY] non-global-admin blocked client-side, redirecting');
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     ready = true;

@@ -349,7 +349,9 @@ describe('a revoked live device is logged out, not asked for its PIN', () => {
     expect(wipe).toBeGreaterThan(-1);
     // The order is the point: handing over before the wipe would navigate away from the device
     // being erased, and nothing would finish erasing it.
-    expect(liveRevocationTail.indexOf('cb.onSessionExpired?.();')).toBeGreaterThan(wipe);
+    expect(
+      liveRevocationTail.indexOf('cb.onSessionExpired?.({ alreadySignedOut: true });')
+    ).toBeGreaterThan(wipe);
   });
 
   it('never reopens the PIN prompt for a device that no longer has one', () => {
@@ -486,7 +488,7 @@ describe('the gateway handshake is held across the MLS state load', () => {
 
   it('opens no socket at all on an offline session', () => {
     // There is no token to carry and no server to reach; the attempt would cost a timeout and log
-    // `Gateway inaccessible` for a device that never had a gateway.
+    // `[WS] Gateway connection failed` for a device that never had a gateway.
     expect(loginImplBody).toContain('const startedHandshake = offlineSession\n      ? null');
   });
 

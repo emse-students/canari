@@ -1,0 +1,3 @@
+## CanaReels in a conversation (asked by the USER on 2026-10-09): the writer is merged behind its switch
+
+**An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model and the twelve work packages: [reels-in-chat](../frontend/modules/reels-in-chat.md). The reader (RC-1) and the server class (RC-2) shipped in `v1.2.2`, the push line (RC-7, #2112) in `v1.3.1`; the chat profile (RC-3), the writer (RC-4, #2098) and its resumable outbox (RC-5, #2117) are MERGED with `CHAT_REEL_WRITER_ENABLED` false. Owed before the switch flips: the upload-session leak below, the RC-0 device table re-run at the `chat` profile on both phones, and the readings each package names.
