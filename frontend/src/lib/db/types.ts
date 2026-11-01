@@ -59,6 +59,12 @@ export interface ConversationMeta {
   awaitingAdmission?: boolean;
 }
 
+/**
+ * Why an own attachment was retired unsent for the GROUP's sake - the conversation was deleted, or
+ * this device is no longer in it - rather than refused by the server (review of #2874, M4).
+ */
+export type UnsentReason = 'group-deleted' | 'not-a-member';
+
 /** A decrypted message as stored in and read from the local database. */
 export interface StoredMessage {
   /** Stable message UUID shared across all devices in the group. */
@@ -106,6 +112,12 @@ export interface StoredMessage {
   deleteProof?: RecordedAuthorship;
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
+  /**
+   * Why this own attachment was retired UNSENT, when the reason was the group's (see
+   * {@link UnsentReason}). Written by the outbox as it retires the entry - the entry and its bytes go,
+   * and this is what lets the bubble still say why after a reload or in another tab.
+   */
+  unsentReason?: UnsentReason;
   /**
    * Where the page read that returned this row found it on the store's order key. Set by
    * `getMessagesPage` only, never persisted (the payload projection names its fields), and carried

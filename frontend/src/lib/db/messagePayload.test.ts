@@ -103,6 +103,20 @@ describe('message payload round trip', () => {
     expect(hostile.restoredUnverified).toBeUndefined();
   });
 
+  it('keeps the reason a retired attachment was never sent, and refuses an unknown one', () => {
+    // The outbox deletes the entry it retires: this row is all a reload has left to say why.
+    expect(roundTrip({ ...BASE, unsentReason: 'group-deleted' }).unsentReason).toBe(
+      'group-deleted'
+    );
+    expect(roundTrip({ ...BASE, unsentReason: 'not-a-member' }).unsentReason).toBe('not-a-member');
+    const hostile = fromMessagePayload(KEYS, {
+      senderId: 'alice',
+      content: 'x',
+      unsentReason: 'refused',
+    });
+    expect(hostile.unsentReason).toBeUndefined();
+  });
+
   it('omits empty optionals rather than storing them', () => {
     const payload = toMessagePayload({ ...BASE, reactions: [], editedAt: 0 });
 

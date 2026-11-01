@@ -937,8 +937,6 @@
       storage: globalSession.storage,
       log: appendLog,
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        globalConvs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: globalNotifs.playNotificationTone,
       playSendTone: globalNotifs.playSendTone,
       playReceiveTone: globalNotifs.playReceiveTone,

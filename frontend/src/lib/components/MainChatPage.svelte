@@ -395,8 +395,6 @@
       storage: session.storage,
       log,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        convs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: notifs.playNotificationTone,
       playSendTone: notifs.playSendTone,
       playReceiveTone: notifs.playReceiveTone,

@@ -98,6 +98,8 @@
     upload?: UploadView | null;
     /** The upload was refused for good: says so and offers the delete (`onCancelUpload`). */
     uploadFailed?: boolean;
+    /** What a failed upload says: the group's reason, or the server's refusal (the default). */
+    uploadFailedLabel?: string;
     /** Withdraws the message and stops its transfer (the sender's delete of an unsent message). */
     onCancelUpload?: () => void;
     /** Tries the upload again now, skipping the backoff. */
@@ -123,6 +125,7 @@
     authToken = '',
     upload = null,
     uploadFailed = false,
+    uploadFailedLabel = m.upload_failed_label(),
     onCancelUpload,
     onRetryUpload,
   }: Props = $props();
@@ -253,6 +256,7 @@
         onOpen={() => (showReelViewer = true)}
         {upload}
         {uploadFailed}
+        {uploadFailedLabel}
         {orphan}
         {onCancelUpload}
         {onRetryUpload}
@@ -335,7 +339,7 @@
               role="alert"
             >
               <CircleAlert size={22} class="text-red-500" />
-              <p class="text-2xs leading-tight font-semibold">{m.upload_failed_label()}</p>
+              <p class="text-2xs leading-tight font-semibold">{uploadFailedLabel}</p>
               {#if onCancelUpload}
                 <button
                   type="button"
@@ -485,7 +489,7 @@
               </p>
             {:else if !failure && uploadFailed}
               <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
-                {m.upload_failed_label()}
+                {uploadFailedLabel}
               </p>
             {:else if !failure && orphan}
               <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
