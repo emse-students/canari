@@ -11,13 +11,15 @@
 //!   its content back (`finish`) or when iOS asks it to stop (`serviceExtensionTimeWillExpire`).
 //!   Rotated by the writer to `nse_outcomes.1.ndjson` past [`ROTATE_BYTES`], so the pair is bounded.
 //! - `nse_inflight.<pid>.<n>.json` - written when a notification starts (stamped with the boot it
-//!   ran in, `boot`), rewritten at each stage, removed when its line is appended. A marker whose
+//!   ran in, `boot` = `kern.bootsessionuuid`), rewritten at each stage, removed when its line is
+//!   written - in the log or as a done record. It NEVER carries an outcome. A marker whose
 //!   process is PROVEN gone never reached either exit: the process was KILLED (memory, a crash).
 //!   That is the one outcome the extension cannot write itself, decided here by a proof - a marker
 //!   of another boot, or `kill(pid, 0)` answering `ESRCH` - never by an age.
 //! - `nse_done.<pid>.<n>.json` - the extension NEVER WAITS for the lock on the path that hands the
-//!   content back: when the app holds it, the run's line goes into its own marker, renamed to this.
-//!   A done file is an outcome line; it is consumed here like one.
+//!   content back: when the app holds it, the run's line is written atomically under this name, and
+//!   only then is its marker removed. A done file is an outcome line; it is consumed here like one,
+//!   and a marker of the same run (`pid`, `at`) seen beside it is removed uncounted.
 //! - `nse_outcomes.lock` - `flock`ed by both sides around every edit, so a line appended while the
 //!   app takes the file is never lost between the read and the removal.
 //!
@@ -181,6 +183,10 @@ impl Marker {
     fn number(&self, key: &str) -> Option<i64> {
         self.fields.as_ref()?.get(key)?.as_i64()
     }
+
+    fn text(&self, key: &str) -> Option<&str> {
+        self.fields.as_ref()?.get(key)?.as_str()
+    }
 }
 
 /// The line a dead run's marker becomes: the marker's own fields, with `outcome: killed`.
@@ -215,20 +221,48 @@ fn take_file(dir: &Path, name: &str, lines: &mut Vec<String>) {
     }
 }
 
-fn remove(path: &Path, what: &str) {
-    if let Err(e) = std::fs::remove_file(path) {
-        log::error!("[NSE_OUTCOME] {what} NOT removed: {e}");
+/// What a removal found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Removed {
+    /// Removed by this call.
+    Done,
+    /// Already gone: the extension removed or moved it between the listing and this call, which is
+    /// its ordinary path (a run that wrote its line removes its own marker), not a failure.
+    AlreadyGone,
+    /// Still there: it will be met again.
+    Failed,
+}
+
+pub(crate) fn remove(path: &Path, what: &str) -> Removed {
+    match std::fs::remove_file(path) {
+        Ok(()) => Removed::Done,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::debug!("[NSE_OUTCOME] {what} already moved by its run");
+            Removed::AlreadyGone
+        }
+        Err(e) => {
+            log::error!("[NSE_OUTCOME] {what} NOT removed: {e}");
+            Removed::Failed
+        }
     }
 }
 
 /// Takes every outcome line, every done file and every dead run's marker out of `dir`, oldest first.
 ///
-/// A marker is dead when it was stamped in another boot than `boot` (both known), or when
-/// `is_dead(pid)` PROVES its process gone; a marker of a live (or unknowable) process stays for a
-/// later drain, at most [`MAX_MARKERS`] of them. A marker that already carries an outcome is a done
-/// record whose rename failed, and is taken as one. The caller holds the lock.
-pub(crate) fn take_locked(dir: &Path, is_dead: &dyn Fn(i32) -> bool, boot: i64) -> Vec<String> {
-    log::debug!("[NSE_OUTCOME] taking the outcome log boot={boot}");
+/// A marker whose run's line was taken (same `pid` and `at`) is finished, alive or not, and is
+/// removed uncounted. Otherwise it is dead when it was stamped in another boot session than `boot`
+/// (both known, compared for EQUALITY), or when `is_dead(pid)` PROVES its process gone; a marker of
+/// a live (or unknowable) process stays for a later drain, at most [`MAX_MARKERS`] of them. The
+/// caller holds the lock.
+pub(crate) fn take_locked(
+    dir: &Path,
+    is_dead: &dyn Fn(i32) -> bool,
+    boot: Option<&str>,
+) -> Vec<String> {
+    log::debug!(
+        "[NSE_OUTCOME] taking the outcome log boot_known={}",
+        boot.is_some()
+    );
     let mut lines = Vec::new();
     take_file(dir, ROTATED_FILE, &mut lines);
     take_file(dir, OUTCOMES_FILE, &mut lines);
@@ -248,6 +282,7 @@ pub(crate) fn take_locked(dir: &Path, is_dead: &dyn Fn(i32) -> bool, boot: i64) 
                     Some(line) => lines.push(line),
                     None => log::warn!("[NSE_OUTCOME] a done record was unreadable - dropped"),
                 },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => log::warn!("[NSE_OUTCOME] a done record could not be read: {e}"),
             }
             remove(&entry.path(), "a done record");
@@ -259,50 +294,35 @@ pub(crate) fn take_locked(dir: &Path, is_dead: &dyn Fn(i32) -> bool, boot: i64) 
         let fields = std::fs::read_to_string(entry.path())
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(t.trim()).ok());
-        let marker = Marker {
+        markers.push(Marker {
             path: entry.path(),
             pid,
             fields,
-        };
-        if marker
-            .fields
-            .as_ref()
-            .is_some_and(|f| f.get("outcome").is_some())
-        {
-            match marker
-                .fields
-                .as_ref()
-                .and_then(|f| sanitize_line(&f.to_string()))
-            {
-                Some(line) => lines.push(line),
-                None => log::warn!("[NSE_OUTCOME] a done marker was unreadable - dropped"),
-            }
-            remove(&marker.path, "a done marker");
-            continue;
-        }
-        markers.push(marker);
+        });
     }
     let taken: HashSet<(i64, i64)> = lines.iter().filter_map(|l| run_identity(l)).collect();
     let mut killed = Vec::new();
     let mut alive = Vec::new();
     for marker in markers {
-        let other_boot = boot > 0 && marker.number("boot").is_some_and(|b| b > 0 && b != boot);
+        let identity = marker.number("at").map(|at| (i64::from(marker.pid), at));
+        if identity.is_some_and(|id| taken.contains(&id)) {
+            // Its run wrote its line and was removing this marker - the done path's own order.
+            log::debug!("[NSE_OUTCOME] a marker beside its own outcome line - removed uncounted");
+            remove(&marker.path, "a finished run's marker");
+            continue;
+        }
+        let other_boot = boot
+            .zip(marker.text("boot"))
+            .is_some_and(|(now, then)| now != then);
         if !other_boot && !is_dead(marker.pid) {
             alive.push(marker);
             continue;
         }
-        let identity = marker.number("at").map(|at| (i64::from(marker.pid), at));
-        if identity.is_some_and(|id| taken.contains(&id)) {
-            log::warn!(
-                "[NSE_OUTCOME] a dead run's marker outlived its own outcome line - removed, not counted as killed"
-            );
-        } else {
-            match marker.fields.as_ref().and_then(killed_line) {
-                Some(line) => killed.push(line),
-                None => log::warn!(
-                    "[NSE_OUTCOME] a dead run's marker was unreadable - its kill is not counted"
-                ),
-            }
+        match marker.fields.as_ref().and_then(killed_line) {
+            Some(line) => killed.push(line),
+            None => log::warn!(
+                "[NSE_OUTCOME] a dead run's marker was unreadable - its kill is not counted"
+            ),
         }
         remove(&marker.path, "a dead run's marker");
     }
@@ -325,22 +345,37 @@ pub(crate) fn take_locked(dir: &Path, is_dead: &dyn Fn(i32) -> bool, boot: i64) 
     lines
 }
 
-/// This boot's `kern.boottime` in seconds - the stamp the extension writes into each marker
-/// (`NseOutcomeLog.bootTime`). -1 when the kernel does not answer, which disables the boot proof.
+/// This boot's `kern.bootsessionuuid` - the stamp the extension writes into each marker
+/// (`NseOutcomeLog.bootSession`), compared for EQUALITY. Not `kern.boottime`: Darwin recomputes it
+/// when the clock is stepped, so a live run's marker would read as another boot's and be reported
+/// `killed`. `None` when the kernel does not answer, which disables the boot proof only.
 #[cfg(any(target_os = "ios", target_os = "macos"))]
-pub(crate) fn boot_time() -> i64 {
-    let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
-    let mut tv = libc::timeval {
-        tv_sec: 0,
-        tv_usec: 0,
-    };
-    let mut size = std::mem::size_of::<libc::timeval>();
-    // SAFETY: a read-only sysctl into a stack `timeval` whose size is passed alongside it.
+pub(crate) fn boot_session() -> Option<String> {
+    let name = c"kern.bootsessionuuid";
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query - a null buffer and a valid out-pointer for the length.
     let rc = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            2,
-            (&mut tv as *mut libc::timeval).cast(),
+        libc::sysctlbyname(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || size == 0 {
+        log::warn!(
+            "[NSE_OUTCOME] kern.bootsessionuuid unreadable - a marker from a previous boot is not proven dead: {}",
+            std::io::Error::last_os_error()
+        );
+        return None;
+    }
+    let mut buffer = vec![0u8; size + 1];
+    // SAFETY: a read into a buffer of `size + 1` bytes, its length passed alongside it.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
             &mut size,
             std::ptr::null_mut(),
             0,
@@ -348,12 +383,16 @@ pub(crate) fn boot_time() -> i64 {
     };
     if rc != 0 {
         log::warn!(
-            "[NSE_OUTCOME] kern.boottime unreadable - a marker from a previous boot is not proven dead: {}",
+            "[NSE_OUTCOME] kern.bootsessionuuid unreadable - a marker from a previous boot is not proven dead: {}",
             std::io::Error::last_os_error()
         );
-        return -1;
+        return None;
     }
-    i64::from(tv.tv_sec)
+    let session = std::ffi::CStr::from_bytes_until_nul(&buffer)
+        .ok()?
+        .to_str()
+        .ok()?;
+    (!session.is_empty()).then(|| session.to_owned())
 }
 
 /// Whether `pid` is PROVEN not to exist: `kill(pid, 0)` failing with `ESRCH`. A live process, or one
@@ -417,8 +456,10 @@ pub(crate) fn take_nse_outcomes() -> Vec<String> {
                 return vec![];
             }
         };
-        let boot = boot_time();
-        match with_lock(&dir, || take_locked(&dir, &process_is_gone, boot)) {
+        let boot = boot_session();
+        match with_lock(&dir, || {
+            take_locked(&dir, &process_is_gone, boot.as_deref())
+        }) {
             Ok(lines) => {
                 log::info!("[NSE_OUTCOME] {} line(s) taken", lines.len());
                 lines
@@ -519,7 +560,7 @@ mod token_tests {
 mod tests {
     use super::*;
 
-    const BOOT: i64 = 1_000;
+    const BOOT: Option<&str> = Some("BOOT-A");
 
     fn dir(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("nse_outcomes_{tag}_{}", std::process::id()));
@@ -554,12 +595,12 @@ mod tests {
         let live = d.join("nse_inflight.222.1.json");
         std::fs::write(
             &dead,
-            r#"{"v":1,"at":5,"kind":"message","stage":"decrypt","peakMB":23,"pid":111,"boot":1000}"#,
+            r#"{"v":1,"at":5,"kind":"message","stage":"decrypt","peakMB":23,"pid":111,"boot":"BOOT-A"}"#,
         )
         .unwrap();
         std::fs::write(
             &live,
-            r#"{"v":1,"at":6,"kind":"message","stage":"load-state","pid":222,"boot":1000}"#,
+            r#"{"v":1,"at":6,"kind":"message","stage":"load-state","pid":222,"boot":"BOOT-A"}"#,
         )
         .unwrap();
         let lines = take_locked(&d, &|pid| pid == 111, BOOT);
@@ -580,7 +621,7 @@ mod tests {
         let old = d.join("nse_inflight.333.1.json");
         std::fs::write(
             &old,
-            r#"{"v":1,"at":9,"kind":"message","stage":"decrypt","pid":333,"boot":999}"#,
+            r#"{"v":1,"at":9,"kind":"message","stage":"decrypt","pid":333,"boot":"BOOT-B"}"#,
         )
         .unwrap();
         let lines = take_locked(&d, &|_| false, BOOT);
@@ -600,13 +641,85 @@ mod tests {
         let marker = d.join("nse_inflight.111.1.json");
         std::fs::write(
             &marker,
-            r#"{"v":1,"at":5,"stage":"decrypt","pid":111,"boot":1000}"#,
+            r#"{"v":1,"at":5,"stage":"decrypt","pid":111,"boot":"BOOT-A"}"#,
         )
         .unwrap();
         let lines = take_locked(&d, &|_| true, BOOT);
         assert_eq!(lines.len(), 1, "exactly one line for one run: {lines:?}");
         assert!(lines[0].contains("expired"));
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn the_boot_proof_is_an_equality_and_needs_both_sides() {
+        let d = dir("boot_eq");
+        let same = d.join("nse_inflight.1.1.json");
+        let unstamped = d.join("nse_inflight.2.1.json");
+        let legacy = d.join("nse_inflight.3.1.json");
+        std::fs::write(
+            &same,
+            r#"{"at":1,"stage":"decrypt","pid":1,"boot":"BOOT-A"}"#,
+        )
+        .unwrap();
+        std::fs::write(&unstamped, r#"{"at":2,"stage":"decrypt","pid":2}"#).unwrap();
+        // A number is not a session (a stamp of an earlier build): not proof of another boot.
+        std::fs::write(&legacy, r#"{"at":3,"stage":"decrypt","pid":3,"boot":1000}"#).unwrap();
+        assert!(take_locked(&d, &|_| false, BOOT).is_empty());
+        assert!(same.exists() && unstamped.exists() && legacy.exists());
+        // An unknown session on this side proves nothing either.
+        std::fs::write(
+            d.join("nse_inflight.4.1.json"),
+            r#"{"at":4,"stage":"decrypt","pid":4,"boot":"BOOT-B"}"#,
+        )
+        .unwrap();
+        assert!(take_locked(&d, &|_| false, None).is_empty());
+        assert!(d.join("nse_inflight.4.1.json").exists());
+    }
+
+    #[test]
+    fn a_done_record_beside_its_live_marker_is_one_line_and_the_marker_goes() {
+        // The extension writes the done record, THEN removes its marker; a drain between the two
+        // sees both while the process is still alive.
+        let d = dir("done_race");
+        std::fs::write(
+            d.join("nse_done.77.1.json"),
+            r#"{"v":1,"at":70,"outcome":"decrypted","stage":"attach","pid":77}"#,
+        )
+        .unwrap();
+        let marker = d.join("nse_inflight.77.1.json");
+        std::fs::write(
+            &marker,
+            r#"{"v":1,"at":70,"stage":"attach","pid":77,"boot":"BOOT-A"}"#,
+        )
+        .unwrap();
+        let lines = take_locked(&d, &|_| false, BOOT);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("decrypted"));
+        assert!(
+            !marker.exists(),
+            "a finished run's marker never lingers to be judged killed"
+        );
+        // ...and a later death of that pid finds nothing to call killed.
+        assert!(take_locked(&d, &|_| true, BOOT).is_empty());
+    }
+
+    #[test]
+    fn a_file_already_moved_by_its_run_is_not_a_failure() {
+        let d = dir("enoent");
+        assert_eq!(
+            remove(&d.join("nse_inflight.5.1.json"), "a marker"),
+            Removed::AlreadyGone
+        );
+        let present = d.join("nse_done.5.1.json");
+        std::fs::write(&present, "{}").unwrap();
+        assert_eq!(remove(&present, "a done record"), Removed::Done);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_boot_session_is_read_and_stable() {
+        let first = boot_session().expect("kern.bootsessionuuid answers on macOS");
+        assert_eq!(boot_session().as_deref(), Some(first.as_str()));
     }
 
     #[test]
@@ -618,18 +731,10 @@ mod tests {
             r#"{"v":1,"at":7,"outcome":"decrypted","stage":"attach","pid":444}"#,
         )
         .unwrap();
-        // A marker that kept its outcome because its rename failed is a done record too.
-        let unrenamed = d.join("nse_inflight.555.1.json");
-        std::fs::write(
-            &unrenamed,
-            r#"{"v":1,"at":8,"outcome":"fallback","cause":"no-seed","pid":555}"#,
-        )
-        .unwrap();
         let lines = take_locked(&d, &|_| false, BOOT);
-        assert_eq!(lines.len(), 2, "{lines:?}");
-        assert!(lines.iter().any(|l| l.contains("decrypted")));
-        assert!(lines.iter().any(|l| l.contains("no-seed")));
-        assert!(!done.exists() && !unrenamed.exists());
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("decrypted"));
+        assert!(!done.exists());
     }
 
     #[test]
@@ -638,7 +743,7 @@ mod tests {
         for n in 0..(MAX_MARKERS + 3) {
             std::fs::write(
                 d.join(format!("nse_inflight.9.{n}.json")),
-                format!(r#"{{"v":1,"at":{n},"stage":"start","pid":9,"boot":1000}}"#),
+                format!(r#"{{"v":1,"at":{n},"stage":"start","pid":9,"boot":"BOOT-A"}}"#),
             )
             .unwrap();
         }
