@@ -23,6 +23,7 @@ import {
   CHECKOUT_IN_PROGRESS,
   CHECKOUT_ISSUE_WINDOW_MS,
   cotisationGrantRefusal,
+  MEMBERSHIP_PRODUCT_UNGRANTABLE,
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_COTISANTS_ONLY,
@@ -193,7 +194,7 @@ export type ShopProduct = AssociationProduct & {
   viewerDueCents: number | null;
   /**
    * A membership product whose association has no cotisation mode: the checkout refuses it
-   * (`COTISATION_DISABLED`), so the listing says so rather than offer a button that cannot work.
+   * (`COTISATION_DISABLED`), so the listing says so rather than offer a button that cannot work (also a membership product with no stored tag).
    */
   cotisationDisabled: boolean;
   /**
@@ -998,14 +999,14 @@ export class ProductsService {
       ? await this.cotisantStatusFor(userId, assos)
       : new Map<string, CotisantStatus>();
     const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
-    const disabled = this.cotisationDisabledAssociations(products, assos);
+    const ungrantable = this.ungrantableMemberships(products, assos);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
       const facts = status?.facts ?? null;
       const viewerPrice = viewerPrices.get(p.id) ?? FIXED_PRICE;
       const viewerTierRelation: TierRelation =
         p.type === 'membership' ? this.relationOf(p, facts) : 'none';
-      const cotisationDisabled = p.type === 'membership' && disabled.has(p.associationId);
+      const cotisationDisabled = ungrantable.has(p.id);
       const memberPriceTierKey = this.memberPriceTierKeyOf(p, facts);
       return this.toSafeProduct({
         ...p,
@@ -1023,26 +1024,31 @@ export class ProductsService {
   }
 
   /**
-   * The associations, among those `products` sell a membership of, whose cotisations are disabled
-   * (no cotisation mode): what the checkout refuses with `COTISATION_DISABLED`
-   * (`assertMembershipGrantable`), from the associations the listing already read (`assos`).
+   * The ids of the membership `products` a checkout would refuse (`assertMembershipGrantable`: no
+   * cotisation mode on the association, or no stored tag), from the associations the listing already
+   * read (`assos`) - the SAME `cotisationGrantRefusal` decides, so the listing never offers a button
+   * the checkout then refuses. An association missing from `assos` reads as no mode.
    */
-  private cotisationDisabledAssociations(
+  private ungrantableMemberships(
     products: AssociationProduct[],
     assos: Pick<Association, 'id' | 'cotisationMode'>[]
   ): Set<string> {
-    const selling = new Set(
-      products.filter((p) => p.type === 'membership').map((p) => p.associationId)
-    );
-    const disabled = new Set(
-      assos.filter((a) => selling.has(a.id) && !a.cotisationMode).map((a) => a.id)
-    );
-    if (disabled.size > 0) {
+    const modes = new Map(assos.map((a) => [a.id, a.cotisationMode ?? null]));
+    const ungrantable = new Set<string>();
+    for (const p of products) {
+      if (p.type !== 'membership') continue;
+      const refusal = cotisationGrantRefusal(
+        { cotisationMode: modes.get(p.associationId) ?? null },
+        p.grantedTagName ?? null
+      );
+      if (refusal) ungrantable.add(p.id);
+    }
+    if (ungrantable.size > 0) {
       this.logger.debug(
-        `[SHOP] listing: membership products of ${disabled.size} association(s) with cotisations disabled - not offered`
+        `[SHOP] listing: ${ungrantable.size} membership product(s) the checkout would refuse - not offered`
       );
     }
-    return disabled;
+    return ungrantable;
   }
 
   /**
@@ -1662,6 +1668,23 @@ export class ProductsService {
       this.logger.log(
         `[COTISATION] retagged tier ${current.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
       );
+      // The forms that grant the OLD key follow the tier to its new one, in this same commit (owner,
+      // 2026-11-01): left behind they would rank the tier `unranked`, refuse every new answer and
+      // end one in flight `paid_not_granted`. Under the exclusive association lock, so a form saved
+      // meanwhile names the key it was validated against.
+      const forms: unknown[] = await manager.query(
+        `UPDATE forms SET "cotisationVariantKey" = $3
+          WHERE "associationId" = $1 AND "grantsCotisation"
+            AND "cotisationVariantKey" IS NOT DISTINCT FROM $2
+        RETURNING id`,
+        [associationId, retagging.oldVariantKey, dto.variantKey ?? null]
+      );
+      if (forms.length > 0) {
+        this.logger.log(
+          `[COTISATION] retag of tier ${current.id.slice(0, 8)}: ${forms.length} form(s) granting ` +
+            `"${retagging.oldVariantKey ?? 'base'}" now grant "${dto.variantKey ?? 'base'}"`
+        );
+      }
       return this.toSafeProduct(saved);
     });
   }
@@ -4315,7 +4338,9 @@ export class ProductsService {
     if (product.type !== 'membership') return;
     const refusal = cotisationGrantRefusal(asso, product.grantedTagName ?? null);
     if (!refusal) return;
-    this.logger.warn(
+    // A tagless product is a repair owed by a manager, hence ERROR; a disabled mode is a state.
+    const log = refusal.code === MEMBERSHIP_PRODUCT_UNGRANTABLE ? 'error' : 'warn';
+    this.logger[log](
       `[SHOP] refused (${refusal.code}): membership product=${product.id.slice(0, 8)} of ` +
         `assoc=${asso.id.slice(0, 8)}: ${refusal.message}`
     );

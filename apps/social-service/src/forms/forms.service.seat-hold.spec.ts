@@ -1142,6 +1142,22 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
+    // The settle runs BEFORE the tier pre-check: the earlier request's grant makes the tier "held",
+    // and the pre-check would refuse that person (409 FORM_TIER_ALREADY_HELD) for a payment they
+    // made. Fails when the pre-check runs first.
+    it('answers alreadyPaid, not a 409, when the paid old request made its tier held', async () => {
+      const { service, core, userTagService } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'paid';
+      userTagService.rankCotisationTier.mockResolvedValue('held');
+      await expect(retry(service)).resolves.toEqual({ submissionId: 'mine', alreadyPaid: true });
+    });
+
     // P2-a: a request that cannot be shown dead or paid refuses the retry instead of leaving two
     // payable requests. The row keeps naming its request and its seat.
     it.each([

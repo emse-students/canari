@@ -476,10 +476,12 @@ describe('FormsService - cotisation configuration and granting', () => {
 
     // Ranked like a boutique settlement: a paid form never swaps out a dearer tier by the XOR. The
     // payment is real, so it is recorded - marked paid and NOT granted, for a refund or a grant.
-    it('treats "cotisations disabled" as FINAL: paid_not_granted, no grant attempt, claim kept', async () => {
-      const { service, userTagService, purchaseRecordService } = makeService({
+    // The mode flips INSIDE the grant, under the buyer's tier lock: the grant answers a typed refusal
+    // (no unlocked pre-read to race), which is FINAL - never `failed`, whose claim release would make
+    // every replay hit the same refusal.
+    it('treats "cotisations disabled" read under the grant lock as FINAL: paid_not_granted, claim kept', async () => {
+      const { service, userTagService, purchaseRecordService, submissionRepo } = makeService({
         submission: { ...paid },
-        mode: null,
         form: {
           id: 'f1',
           title: 'Inscription',
@@ -488,13 +490,17 @@ describe('FormsService - cotisation configuration and granting', () => {
           cotisationVariantKey: 'sans-alcool',
         },
       });
+      userTagService.grantCotisantIfARise.mockResolvedValue({ refused: 'COTISATION_NOT_ENABLED' });
 
       await service.markPaid('s1', 'cs_test_1');
 
-      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
+      expect(userTagService.cotisationModeOf).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'paid_not_granted' })
       );
+      // The claim is never released: a released claim is a retry.
+      expect(submissionRepo.update).not.toHaveBeenCalled();
     });
 
     it('records a tier refused as not a rise as paid_not_granted, and does not retry it', async () => {
@@ -885,6 +891,17 @@ describe('FormsService - cotisation configuration and granting', () => {
       });
       expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
       expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    // The read of a form flags a granting form whose association cannot grant, the same decision as
+    // the submit's refusal (`cotisationGrantRefusal`) - not buyable, rather than a button that 409s.
+    it('get() marks a granting form of an association with no mode cotisationDisabled', async () => {
+      const off = makeService({ form: { ...grantingForm }, mode: null });
+      expect(await off.service.get('f1')).toMatchObject({ cotisationDisabled: true });
+      const on = makeService({ form: { ...grantingForm } });
+      expect(await on.service.get('f1')).toMatchObject({ cotisationDisabled: false });
+      const free = makeService({ form: { ...grantingForm, grantsCotisation: false }, mode: null });
+      expect(await free.service.get('f1')).toMatchObject({ cotisationDisabled: false });
     });
 
     it('does not rank a form that grants no cotisation', async () => {
