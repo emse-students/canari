@@ -38,7 +38,7 @@ import { activeRevocationWhere } from '../utils/revocation';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
-import { announceJoinAsk } from '../utils/join-ask-announce';
+import { announceJoinAsk, pushJoinAsk } from '../utils/join-ask-announce';
 import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   assertCallerActsOnGroup,
@@ -261,6 +261,15 @@ export class InvitationsController {
         group.id,
         { userId: callerId, askId: seat.id },
         deviceIds
+      );
+      // AND ONE ORDINARY PUSH PER ASK to the admitted members (`pushJoinAsk`), claimed on the seat
+      // row so a re-follow of the link or a second replica sends none. Never the joiner's own.
+      pushJoinAsk(
+        this.deviceGroupRepo.manager,
+        group.id,
+        { userId: callerId, askId: seat.id },
+        (userId, title, body, data) =>
+          this.messagingService.sendPushToUser(userId, title, body, data)
       );
     } else {
       this.logger.log(

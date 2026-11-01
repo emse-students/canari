@@ -36,12 +36,14 @@ import {
 } from './follows.service';
 import {
   FOLLOW_ACCEPTED_NOTIFICATION,
+  FOLLOW_PAGE_MAX,
   FOLLOW_REQUEST_NOTIFICATION,
   FollowRequestsService,
 } from './follow-requests.service';
 import { InternalController } from '../internal/internal.controller';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
+import { FOLLOW_CURSOR_INVALID } from './follow-cursor';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
@@ -212,7 +214,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(pushed.map((x) => x.key)).toEqual(['social_follow_request']);
     // The request still reaches its person: in the inbox, and as ONE bell row, written again
     // without a push.
-    expect((await requests.incoming('bob', 50, 0)).map((r) => r.userId)).toEqual(['ann']);
+    expect((await requests.incoming('bob', 50)).map((r) => r.userId)).toEqual(['ann']);
     expect(await bellOf('bob')).toEqual([`${FOLLOW_REQUEST_NOTIFICATION}:ann`]);
   });
 
@@ -255,13 +257,16 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await block('bob', 'eve'); // the severing call failed: the row is still there, never shown
     await requests.ask('bob', 'ann'); // bob's own outgoing ask is not in his inbox
 
-    const inbox = await requests.incoming('bob', 50, 0);
+    const inbox = await requests.incoming('bob', 50);
     expect(inbox.map((r) => r.userId)).toEqual(['cid', 'ann']);
     expect(await requests.incomingCount('bob')).toEqual({ pending: 2 });
-    expect((await requests.incoming('bob', 1, 0)).map((r) => r.userId)).toEqual(['cid']);
-    expect((await requests.incoming('bob', 1, 1)).map((r) => r.userId)).toEqual(['ann']);
-    expect(await requests.incoming('ann', 50, 0)).toEqual([
-      { userId: 'bob', createdAt: expect.any(Date) },
+    const first = await requests.incoming('bob', 1);
+    expect(first.map((r) => r.userId)).toEqual(['cid']);
+    expect((await requests.incoming('bob', 1, first[0].cursor)).map((r) => r.userId)).toEqual([
+      'ann',
+    ]);
+    expect(await requests.incoming('ann', 50)).toEqual([
+      { userId: 'bob', createdAt: expect.any(Date), cursor: expect.any(String) },
     ]);
   });
 
@@ -337,17 +342,17 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await requests.ask('bob', 'dan');
       expect((await notifications.getNotifications('bob')).length).toBeGreaterThan(0);
       process.env.SERVICE_ACCOUNT_USER_ID = 'bob';
-      expect(await requests.followers('bob', 50, 0)).toEqual([]);
-      expect(await requests.incoming('bob', 50, 0)).toEqual([]);
+      expect(await requests.followers('bob', 50)).toEqual([]);
+      expect(await requests.incoming('bob', 50)).toEqual([]);
       expect(await requests.incomingCount('bob')).toEqual({ pending: 0 });
-      expect(await requests.outgoing('bob', 50, 0)).toEqual([]);
-      expect(await requests.incoming('dan', 50, 0)).toEqual([]);
+      expect(await requests.outgoing('bob', 50)).toEqual([]);
+      expect(await requests.incoming('dan', 50)).toEqual([]);
       expect(await notifications.getNotifications('bob')).toEqual([]);
       expect(await notifications.getNotifications('dan')).toEqual([]);
       expect(await notifications.getNotifications('ann')).toEqual([]);
       // The rows are still there: lifting the cohort shows them again, nothing was deleted.
       delete process.env.SERVICE_ACCOUNT_USER_ID;
-      expect((await requests.followers('bob', 50, 0)).map((r) => r.userId)).toEqual(['ann']);
+      expect((await requests.followers('bob', 50)).map((r) => r.userId)).toEqual(['ann']);
     });
 
     it('lets two review accounts ask and accept each other', async () => {
@@ -453,9 +458,12 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await block('eve', 'bob'); // the severing never ran: the row stays, never listed
       await followerOf('bob', 'ann'); // whom bob follows is not his followers
 
-      const mine = await requests.followers('bob', 50, 0);
+      const mine = await requests.followers('bob', 50);
       expect(mine.map((r) => r.userId)).toEqual(['cid', 'ann']);
-      expect((await requests.followers('bob', 1, 1)).map((r) => r.userId)).toEqual(['ann']);
+      const firstPage = await requests.followers('bob', 1);
+      expect(
+        (await requests.followers('bob', 1, firstPage[0].cursor)).map((r) => r.userId)
+      ).toEqual(['ann']);
     });
 
     it('a follower is dated by the ACCEPTANCE, not by the ask', async () => {
@@ -469,7 +477,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         `UPDATE user_follows SET "acceptedAt" = now() - interval '1 hour' WHERE "followerUserId" = 'cid'`
       );
       await requests.accept('bob', 'ann');
-      const mine = await requests.followers('bob', 50, 0);
+      const mine = await requests.followers('bob', 50);
       expect(mine.map((r) => r.userId)).toEqual(['ann', 'cid']);
       const { rows } = await q(
         `SELECT "acceptedAt" FROM user_follows WHERE "followerUserId" = 'ann' AND "followedUserId" = 'bob'`
@@ -512,9 +520,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await followerOf('ann', 'dan'); // answered: not a request any more
       await requests.ask('eve', 'ann'); // asked OF ann: her inbox, not her sent list
 
-      expect((await requests.outgoing('ann', 50, 0)).map((r) => r.userId)).toEqual(['cid', 'bob']);
+      expect((await requests.outgoing('ann', 50)).map((r) => r.userId)).toEqual(['cid', 'bob']);
       await requests.leave('ann', 'cid');
-      expect((await requests.outgoing('ann', 50, 0)).map((r) => r.userId)).toEqual(['bob']);
+      expect((await requests.outgoing('ann', 50)).map((r) => r.userId)).toEqual(['bob']);
     });
   });
 
@@ -733,5 +741,106 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         `DROP TRIGGER block_after_accept ON user_follows; DROP FUNCTION block_after_accept()`
       );
     }
+  });
+
+  describe('the three lists page by cursor, never by offset', () => {
+    /**
+     * Writes `n` rows naming `owner` - as the person asked (`inbox`, `followers`) or the asker
+     * (`sent`). HALF share ONE instant, so the row id alone orders them; the other half are a
+     * microsecond apart, finer than a JS `Date` can carry - both are what a cursor must survive.
+     */
+    const seed = (n: number, owner: string, as: 'inbox' | 'followers' | 'sent') =>
+      q(
+        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", "createdAt", status, "acceptedAt")
+           SELECT gen_random_uuid(),
+                  CASE WHEN $3 = 'sent' THEN $2 ELSE 'fan-' || g END,
+                  CASE WHEN $3 = 'sent' THEN 'star-' || g ELSE $2 END,
+                  CASE WHEN g % 2 = 0 THEN timestamp '2026-10-01 12:00:00'
+                       ELSE timestamp '2026-10-01 12:00:00' + g * interval '1 microsecond' END,
+                  CASE WHEN $3 = 'followers' THEN 'accepted' ELSE 'pending' END,
+                  CASE WHEN $3 = 'followers'
+                       THEN timestamptz '2026-10-02 12:00:00+00' + (g % 3) * interval '1 microsecond'
+                       END
+             FROM generate_series(1, $1::int) g`,
+        [n, owner, as]
+      );
+
+    /** Reads a whole list, 100 at a time, the way the client does. */
+    const readAll = async (
+      read: (after?: string) => Promise<{ userId: string; cursor: string }[]>
+    ): Promise<{ ids: string[]; pages: number }> => {
+      const ids: string[] = [];
+      let after: string | undefined;
+      let pages = 0;
+      for (;;) {
+        const page = await read(after);
+        pages++;
+        ids.push(...page.map((r) => r.userId));
+        if (page.length < FOLLOW_PAGE_MAX) return { ids, pages };
+        after = page[page.length - 1].cursor;
+      }
+    };
+
+    it.each(['inbox', 'followers', 'sent'] as const)(
+      'a list of 250 (%s) is reachable whole: three pages, every person once, none skipped',
+      async (list) => {
+        await seed(250, 'bob', list);
+        const read =
+          list === 'inbox'
+            ? (after?: string) => requests.incoming('bob', FOLLOW_PAGE_MAX, after)
+            : list === 'followers'
+              ? (after?: string) => requests.followers('bob', FOLLOW_PAGE_MAX, after)
+              : (after?: string) => requests.outgoing('bob', FOLLOW_PAGE_MAX, after);
+        const { ids, pages } = await readAll(read);
+        expect(pages).toBe(3);
+        expect(ids).toHaveLength(250);
+        expect(new Set(ids).size).toBe(250);
+      }
+    );
+
+    it('a row removed or added while the list is read shifts nothing: no one skipped, no one twice', async () => {
+      await seed(250, 'bob', 'followers');
+      const first = await requests.followers('bob', FOLLOW_PAGE_MAX);
+      // Between two pages: bob removes someone from the page he has, and someone new is accepted.
+      await requests.removeFollower('bob', first[0].userId);
+      await q(
+        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status, "acceptedAt")
+           VALUES (gen_random_uuid(), 'newcomer', 'bob', 'accepted', now())`
+      );
+      const rest = await readAll((after) =>
+        requests.followers('bob', FOLLOW_PAGE_MAX, after ?? first[first.length - 1].cursor)
+      );
+      const seen = [...first.map((r) => r.userId), ...rest.ids];
+      // The 250 seeded, each once; the newcomer sorts BEFORE the cursor, so it is on a re-read.
+      expect(new Set(seen).size).toBe(250);
+      expect(seen).toHaveLength(250);
+    });
+
+    it('a cursor this server did not write is a 400 FOLLOW_CURSOR_INVALID, before any query', async () => {
+      for (const bad of [
+        'not-base64-json',
+        Buffer.from(JSON.stringify(['yesterday', 'x'])).toString('base64url'),
+        Buffer.from(
+          JSON.stringify(["2026-10-01 12:00:00'; --", '00000000-0000-4000-8000-000000000000'])
+        ).toString('base64url'),
+      ]) {
+        const refused = await refusalOf(requests.followers('bob', 10, bad));
+        expect(refused).toBeInstanceOf(HttpException);
+        expect((refused as HttpException).getStatus()).toBe(HttpStatus.BAD_REQUEST);
+        expect((refused as HttpException).getResponse()).toMatchObject({
+          code: FOLLOW_CURSOR_INVALID,
+        });
+      }
+    });
+  });
+
+  it('an UNFOLLOW of an accepted follow drops the cached feed pages; a withdrawn request does not', async () => {
+    await requests.ask('ann', 'bob');
+    await requests.leave('ann', 'bob');
+    expect(dropped).toEqual([]);
+    await requests.ask('ann', 'bob');
+    await requests.accept('bob', 'ann');
+    await requests.leave('ann', 'bob');
+    expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
   });
 });

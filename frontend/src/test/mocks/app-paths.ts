@@ -5,8 +5,13 @@
  * that does not is a PATHNAME, which gains its leading slash. The app is served at the root, so the
  * base is empty and both come back as an absolute path.
  */
-export function resolve(path: string): string {
-  return path.startsWith('/') ? path : `/${path}`;
+export function resolve(path: string, params?: Record<string, string>): string {
+  // A route id carries its `[param]` segments, which the real `resolve` fills from `params`.
+  const filled = path.replace(
+    /\[(?:\.\.\.)?(\w+)\]/g,
+    (whole, key: string) => params?.[key] ?? whole
+  );
+  return filled.startsWith('/') ? filled : `/${filled}`;
 }
 
 /** One page route of `src/routes`, as SvelteKit's router matches it. */

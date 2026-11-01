@@ -288,6 +288,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     ({
       id: 'asso1',
       slug: 'bde',
+      type: 'association',
       lydiaOnboardingComplete: true,
       lydiaAccountId: 'acct_1',
       cotisationEnabled: true,
@@ -362,6 +363,60 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
     const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
     expect(result.amountCents).toBe(1000);
+  });
+
+  describe('a list or an institution sells nothing (owner, 2026-10-31)', () => {
+    it.each(['list', 'institution'] as const)(
+      'refuses to create a product on a %s, typed 403',
+      async (type) => {
+        const { service, assoRepo, productRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ type }));
+
+        const attempt = service.create(
+          'asso1',
+          { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+          false
+        );
+        await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(attempt).rejects.toMatchObject({
+          response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+        });
+        expect(productRepo.save).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product());
+      await expect(
+        service.update('asso1', 'prod1', { isActive: true } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false, amountCents: 1 } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false } as any, false)
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses to provision a cotisation product for a list', async () => {
+      const { service } = makeService();
+      await expect(
+        service.provisionCotisationProduct(asso({ type: 'list', cotisationMode: 'lifetime' }))
+      ).rejects.toMatchObject({ response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' } });
+    });
+
+    it('refuses to update a product of a list, and writes nothing', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product());
+
+      await expect(
+        service.update('asso1', 'prod1', { amountCents: 100 } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(productRepo.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('a free amount outside the product bounds', () => {

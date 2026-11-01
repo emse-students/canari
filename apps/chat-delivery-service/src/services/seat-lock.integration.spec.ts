@@ -70,6 +70,11 @@ const migration = readFileSync(
   'utf8'
 );
 
+const migration043 = readFileSync(
+  join(__dirname, '..', 'migrations', '043_join_ask_pushes.sql'),
+  'utf8'
+);
+
 const GROUP = '00000000-0000-4000-8000-0000000000e1';
 /** What an eviction does to the claims of a group, as the raw holder writes it. */
 const BUMP = `UPDATE dm_groups SET "seatGeneration" = "seatGeneration" + 1 WHERE id = $1`;
@@ -277,6 +282,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     await ds.synchronize();
     // The eviction record as production gets it: the migration, not an entity.
     await q(migration);
+    // The join-ask push claim (migration 043), as production gets it.
+    await q(migration043);
     service = new MessagingService(
       ds.getRepository(QueuedMessage),
       ds.getRepository(GroupMember),

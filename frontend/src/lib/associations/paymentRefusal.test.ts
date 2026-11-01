@@ -251,6 +251,16 @@ describe('providerRefusalMessage', () => {
     expect(m.form_tier_not_sold()).not.toBe(m.shop_tier_not_rankable());
   });
 
+  it('words a sale refused for a list or an institution by its typed code, in the reader language', () => {
+    const refusal = new SocialApiError(
+      'A list does not sell or collect money',
+      'ASSOCIATION_KIND_DOES_NOT_SELL',
+      403
+    );
+    expect(providerRefusalMessage(refusal)).toBe(m.asso_kind_does_not_sell());
+    expect(providerRefusalMessage(refusal)).not.toContain('does not sell');
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();

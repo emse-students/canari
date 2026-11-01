@@ -4002,6 +4002,15 @@ export abstract class BaseMlsService implements IMlsService {
    * the holder's release sends no frame, so nothing else would say it.
    */
   async acquireAddLock(groupId: string): Promise<boolean> {
+    return (await this.acquireAddLockAnswer(groupId)) === 'taken';
+  }
+
+  /**
+   * {@link acquireAddLock} with WHY a refusal happened kept: `held` is the server's own answer that
+   * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
+   * nothing about anyone else.
+   */
+  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4018,10 +4027,10 @@ export abstract class BaseMlsService implements IMlsService {
     if (answer.acquired) {
       this.addLocksHeld.set(groupId, answer.token);
       markAddLock(this.userId, groupId, answer.token);
-      return true;
+      return 'taken';
     }
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
-    return false;
+    return answer.answered ? 'held' : 'unanswered';
   }
 
   /**
@@ -6699,15 +6708,6 @@ export abstract class BaseMlsService implements IMlsService {
     // accused it at ERROR, so the "comes back through a history request" line below would only be
     // a second, wrong, account of it.
     if (kind === 'sender-mismatch') return true;
-    // A KEY GROUP IS OPEN: a refused admission here means this group was classified closed by
-    // mistake, which would refuse every newcomer of a community. Acknowledged - the refusal repeats
-    // identically - and accused, so the misclassification is read rather than lived with.
-    if (kind === 'admission-refused') {
-      console.error(
-        `[GRAINE] a key group refused an admission - it is classified closed and must be open: ${groupId.slice(0, 8)}...`
-      );
-      return true;
-    }
     const permanent =
       kind === 'own-message' ||
       kind === 'secret-reuse' ||
@@ -7964,7 +7964,6 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
   abstract setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void>;
-  abstract getAdmissionPolicy(groupId: string): Promise<'closed' | 'open' | 'unclassified'>;
 
   /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
   abstract isGroupActive(groupId: string): Promise<boolean>;

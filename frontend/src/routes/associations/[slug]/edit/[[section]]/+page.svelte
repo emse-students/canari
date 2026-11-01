@@ -35,8 +35,10 @@
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { Crumb, HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
+    EDIT_SECTIONS_BY_KIND,
     editRights,
     editTrail,
+    kindHasSection,
     editSectionHref,
     mayOpenEditSection,
     parseEditSection,
@@ -240,17 +242,19 @@
 
   /** One hub row per section the reader may open; a count only where the roster already has it. */
   let hubRows = $derived(
-    visibleEditSections(rights).map((section): HubRow => ({
-      key: section,
-      href: editSectionHref(slug, section),
-      label: sectionLabel(section),
-      icon: SECTION_ICONS[section],
-      summary:
-        section === 'members'
-          ? m.asso_edit_hub_members_summary({ count: members.length })
-          : undefined,
-      tone: section === 'danger' ? 'danger' : 'default',
-    }))
+    visibleEditSections(rights, EDIT_SECTIONS_BY_KIND[asso?.type ?? 'association']).map(
+      (section): HubRow => ({
+        key: section,
+        href: editSectionHref(slug, section),
+        label: sectionLabel(section),
+        icon: SECTION_ICONS[section],
+        summary:
+          section === 'members'
+            ? m.asso_edit_hub_members_summary({ count: members.length })
+            : undefined,
+        tone: section === 'danger' ? 'danger' : 'default',
+      })
+    )
   );
 
   // A segment is user input: once the rights are known, a section its reader may not open is
@@ -260,7 +264,7 @@
   let mayEnterArea = $derived(isGlobalAdminUser || isSuperAdminUser || !!myMembership?.isAdmin);
   $effect(() => {
     if (loading || !asso || !editSection || !mayEnterArea) return;
-    if (!mayOpenEditSection(editSection, rights)) {
+    if (!kindHasSection(asso.type, editSection) || !mayOpenEditSection(editSection, rights)) {
       console.warn('[associations/edit] section refused, back to the hub', editSection);
       void goto(resolve(internalPath(editSectionHref(slug))), { replace: true });
     }
@@ -278,6 +282,17 @@
     error = '';
     try {
       const a = await getAssociationBySlug(slug);
+      // A list is managed from the list edit page; a link written for `/associations` (a
+      // notification, a form's return) lands on the same section there.
+      if (a.type === 'list') {
+        await goto(
+          resolve(
+            internalPath(editSectionHref(slug, parseEditSection(page.params.section), '/lists'))
+          ),
+          { replace: true }
+        );
+        return;
+      }
       asso = a;
       members = await listMembers(a.id);
       const names: Record<string, string> = {};
@@ -424,7 +439,7 @@
         <EditFormsTab
           {asso}
           {onlinePaymentsReady}
-          {canManagePayoutAccount}
+          canManagePayoutAccount={canManagePayoutAccount && kindHasSection(asso.type, 'payments')}
           onGoToPayments={() => goto(resolve(internalPath(editSectionHref(slug, 'payments'))))}
         />
       {/if}

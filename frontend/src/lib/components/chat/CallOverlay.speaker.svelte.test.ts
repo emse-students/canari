@@ -10,6 +10,10 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 import { writable } from 'svelte/store';
+import {
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
@@ -86,6 +90,9 @@ function fakeService(state: CallState, hasVideo: boolean) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
+    toggleNoiseSuppression: vi.fn(),
+    ringingOut: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),

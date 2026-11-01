@@ -49,7 +49,7 @@ use crate::commands::mls::{
     graine_member_signature_key, graine_run, graine_session_keypair,
     graine_sign_with_device_credential, graine_sign_with_session_key, graine_verify_signature,
     graine_verify_signatures, groupe_actif, groupes_commit_en_attente, initialiser_mls,
-    key_package_a_clef_privee, lire_politique_admission, lister_groupes, lister_identites_membres,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres,
     mls_external_join_is_a_further_device, obtenir_epoch, oublier_groupe, oublier_key_packages,
     prendre_constats_fork, prendre_evenements_appareils, rafraichir_feuille, recenser_key_packages,
     recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
@@ -59,6 +59,7 @@ use crate::commands::mls::{
     welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
@@ -1673,7 +1674,6 @@ pub fn run() {
             prendre_evenements_appareils,
             lister_identites_membres,
             definir_politique_admission,
-            lire_politique_admission,
             retirer_membres,
             retirer_membres_par_appareil,
             rafraichir_feuille,
@@ -1732,6 +1732,7 @@ pub fn run() {
             ack_fcm_cache,
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
+            take_nse_outcomes,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,
