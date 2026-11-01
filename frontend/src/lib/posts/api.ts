@@ -274,10 +274,11 @@ export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
 export interface ReelLimits {
   maxDurationMs: number;
   /**
-   * The longest reel sent in a conversation (60 s, D-size). ABSENT from an older server's answer:
-   * a reader must treat `undefined` as "this server has no chat cap yet", never default a number.
+   * The longest reel sent in a conversation (60 s, D-size, `CHAT_REEL_MAX_DURATION_MS`), served since
+   * 89a81ad7d5. Required: a chat reel is never filmed nor prepared without it, and never under the
+   * 90 s reel cap instead (`servedChatCapMs` checks the answer at run time).
    */
-  chatMaxDurationMs?: number;
+  chatMaxDurationMs: number;
   retentionDays: number;
   warningWindowDays: number;
 }

@@ -218,9 +218,8 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
-  OutboxPrepareRefusedError,
-  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
+import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
@@ -481,71 +480,6 @@ function releaserFor(ownerId: string): SessionReleaser {
     const { MediaService } = await import('$lib/media');
     return new MediaService().releaseResumableUpload(uploadId, token, why);
   };
-}
-
-/**
- * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget), at the CHAT
- * profile and under the server's chat cap (RC-3, `chatReelPrepareOptions`). A cap that cannot be read
- * (offline) throws an ordinary failure: the take is kept and parked, never prepared without its cap. A cancel is
- * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
- * failure of the take.
- */
-async function prepareQueuedChatReel(
-  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<PreparedOutboxMedia> {
-  const [
-    { MediaService },
-    { prepareVideoForUpload, isVideoPrepareError },
-    { UploadAbortedError },
-    { videoPrepareFailureMessage, isUnpreparableFault },
-    { getReelLimits },
-    { chatReelPrepareOptions },
-  ] = await Promise.all([
-    import('$lib/media'),
-    import('$lib/video/prepareVideoForUpload'),
-    import('$lib/utils/uploadXhr'),
-    import('$lib/video/videoPrepareMessages'),
-    import('$lib/posts/api'),
-    import('$lib/reels/chatReelWriter'),
-  ]);
-  const raw = media.fileBytes ?? new Uint8Array(0);
-  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
-    type: media.mimeType,
-  });
-  const [limits, reelLimits] = await Promise.all([
-    new MediaService().uploadLimits(),
-    getReelLimits(),
-  ]);
-  try {
-    const prepared = await prepareVideoForUpload(source, {
-      ...chatReelPrepareOptions(reelLimits, limits?.maxPlaintextBytes),
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
-    return {
-      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
-      mimeType: prepared.file.type,
-      fileName: prepared.file.name,
-      width: prepared.width,
-      height: prepared.height,
-      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
-    };
-  } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
-      throw new UploadAbortedError(opts.signal.reason);
-    }
-    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
-    // good with the composer's own sentence for it, never a retry that is refused the same way.
-    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
-      throw new OutboxPrepareRefusedError(
-        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
-        e
-      );
-    }
-    throw e;
-  }
 }
 
 /**

@@ -116,6 +116,7 @@ beforeEach(() => {
   vi.mocked(pushHistoryOverlay).mockClear();
   getReelLimits.mockResolvedValue({
     maxDurationMs: 90_000,
+    chatMaxDurationMs: 60_000,
     retentionDays: 30,
     warningWindowDays: 7,
   });
@@ -182,7 +183,12 @@ describe('ReelCapture', () => {
     getReelLimits.mockReturnValue(new Promise((r) => (answer = r)));
     const { shutter } = await render();
     expect(shutter().disabled).toBe(true);
-    answer({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 });
+    answer({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: 60_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    });
     await settle();
     expect(shutter().disabled).toBe(false);
   });
@@ -746,6 +752,50 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     );
     // A full-size photo is never encoded for it.
     expect(framed.photo).not.toHaveBeenCalled();
+  });
+
+  for (const [where, extra, capMs] of [
+    [
+      'a chat',
+      { destination: 'chat', chatFilms: true, oncapture: vi.fn(), onclose: vi.fn() },
+      60_000,
+    ],
+    ['the feed', {}, 90_000],
+  ] as const) {
+    it(`arms the take's limit at ${capMs / 1000} s in ${where} (the server's cap for it)`, async () => {
+      const { pointer } = await render(extra);
+      pointer('pointerdown', 1000);
+      vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+      await settle();
+      const recorder = Recorder.instances[0];
+      expect(recorder.state).toBe('recording');
+      vi.advanceTimersByTime(capMs - 1);
+      await settle();
+      expect(recorder.stop).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(recorder.stop).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('a chat camera that may film does NOT film when the server serves no chat cap: said, never the 90 s cap', async () => {
+    getReelLimits.mockResolvedValue({
+      maxDurationMs: 90_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { target, hold } = await render({
+      destination: 'chat',
+      chatFilms: true,
+      oncapture: vi.fn(),
+      onclose: vi.fn(),
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no chat cap'));
+    expect(target.querySelector('[data-reel-limits-fault="refused"]')).not.toBeNull();
+    await hold();
+    expect(Recorder.instances).toHaveLength(0);
+    error.mockRestore();
   });
 
   it('a film in a chat that may film is offered as "Send" - the gesture that queues it at once (RC-5)', async () => {
