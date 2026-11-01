@@ -180,6 +180,13 @@ if grep -q 'proxy_next_upstream on;' "$EDGE_NGINX" && grep -q 'proxy_connect_tim
 else
   fail "the edge has no connect failover"
 fi
+# The image that takes a retiring replica out of rotation runs on the host at every deploy: pinned by
+# digest like every third-party image, so a moved tag cannot change what it executes there.
+if grep -qE "^ROLLING_NETNS_IMAGE='[^'@]+@sha256:[0-9a-f]{64}'$" "$ROLLING"; then
+  ok "rolling.sh pins the image that takes a replica out of rotation by digest"
+else
+  fail "rolling.sh's ROLLING_NETNS_IMAGE is not pinned by digest"
+fi
 
 # ── 4. The deploy replaces nothing the old way ────────────────────────────────
 # shellcheck disable=SC2016 # the literal line of deploy-environment.sh, unexpanded on purpose

@@ -13,12 +13,13 @@
 #
 #   overlap    the new container starts BESIDE the old one (`--scale` to one more, `--no-recreate`),
 #              and the old one is retired only once the new one is HEALTHY and every nginx in front
-#              of it has had time to learn its address. Retiring sends SIGTERM, which the services
+#              of it has had time to learn its address. Retiring first takes the old one out of
+#              rotation - a new connection to it is REFUSED, and a refused connect is the one failure
+#              nginx hands to the next address without having sent a byte - and proves nothing is
+#              left queued on it (out_of_rotation, below). THEN it sends SIGTERM, which the services
 #              answer by closing their listener and finishing what is in flight (`drain-on-sigterm`
 #              in each NestJS service, axum's graceful shutdown in the gateway, nginx's own SIGQUIT,
-#              adapter-node's own handler): a new connection to the old replica is REFUSED, and a
-#              refused connect is the one failure nginx hands to the next address without having sent
-#              a byte - so it reaches the new replica instead of becoming a 502.
+#              adapter-node's own handler).
 #   exclusive  stopped, then started, as before: a gap, for a service that keeps state in its own
 #              process and would split it if two ran at once.
 #   pinned     brought up as it is; recreated only when its own definition changes (a datastore's
@@ -92,13 +93,98 @@ wait_healthy() {
 # EVERY COMMAND BELOW THAT CAN FAIL SAYS `|| return 1`: the caller runs `replace_services` under
 # `if !`, which switches `set -e` off for everything inside it, so an unchecked failure here would be
 # walked straight past.
+
+# THE IMAGE THAT TAKES A RETIRING REPLICA OUT OF ROTATION - run for a second, inside that replica's
+# network namespace and nowhere else (see out_of_rotation). The official Docker image, the one
+# official image that ships `iptables`, pinned by digest like every third-party image this repository
+# runs. Its own daemon is never started: only `iptables`, `awk` and `sh` are used.
+ROLLING_NETNS_IMAGE='docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977'
+
+# How many reads of the replica's sockets out_of_rotation makes before declaring its process unable
+# to accept. Bounds the FAILURE case only: a replica whose process is alive empties its accept queue
+# in one turn of its event loop, and the proof is believed the moment it holds.
+ROLLING_QUIESCE_READS="${ROLLING_QUIESCE_READS:-100}"
+
+# out_of_rotation <service> <container> - from now on, nothing new reaches this replica; returns once
+# that is PROVEN, i.e. once nothing that arrived before is still waiting to be accepted.
 #
-# retire <service> <container...> - drains and removes the given replicas. `docker stop` sends the
-# image's stop signal and waits ROLLING_DRAIN_SECONDS for the process to leave by itself.
+# WHY (2026-11-01, main CI run 41311303760: one POST in 346 answered 502 across a release). Closing a
+# listener RESETS every connection still in its accept queue - handshakes the kernel completed and
+# the process had not yet accepted. Each nginx in front had already written the POST into that
+# connection, so the reset reached it while reading the answer (`recv() failed (104: Connection reset
+# by peer) while reading response header from upstream`), and a POST that has been sent is the one
+# request nginx may NOT replay: 502. Closing the listener on SIGTERM while the replica is still in
+# rotation cannot avoid this, however fast it accepts: a handshake can always complete between the
+# last accept() and the close().
+#
+# So the replica leaves rotation FIRST, and only then is it told to stop. Rotation is Docker's DNS,
+# which names a container for as long as it runs - an unhealthy or a paused one included (measured
+# on Docker 29, 2026-11-01) - so it cannot be the lever. The lever is the replica's own network
+# namespace: a rule there REFUSES every new connection that does not come from inside the container
+# (`--syn`, so an established connection - a request in flight, a WebSocket - is untouched; `! -i lo`,
+# so its own healthcheck and Docker's DNS on 127.0.0.11 still work). A refused connect is the one
+# failure every nginx in front hands to the next replica with no byte sent. The rule lives and dies
+# with the namespace: nothing on the host changes, and nothing outlives the container.
+#
+# THE PROOF, read from the namespace's own sockets: no connection still half-open (state 03,
+# SYN_RECV - one that slipped in before the rule and could still complete) and every listener's
+# accept queue empty (state 0A, whose rx_queue column IS that queue), on two consecutive reads. Once
+# the rule holds no handshake can start, so the first clean read means none can complete any more,
+# and the second means none is still waiting: SIGTERM after that closes a listener nobody is queued on.
+out_of_rotation() {
+  local service="$1" cid="$2"
+  # shellcheck disable=SC2016 # the script runs in the helper's shell, not this one
+  $DOCKER_CLI run --rm --network "container:$cid" --cap-add NET_ADMIN --entrypoint sh \
+    "$ROLLING_NETNS_IMAGE" -c '
+      iptables -w -I INPUT ! -i lo -p tcp --syn -j REJECT --reject-with tcp-reset || exit 2
+      clean=0
+      read=0
+      while [ "$read" -lt "$1" ]; do
+        read=$((read + 1))
+        waiting="$(awk '\''FNR > 1 && ($4 == "03" || ($4 == "0A" && substr($5, 10) != "00000000")) { n++ } END { print n + 0 }'\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null)"
+        if [ "$waiting" = 0 ]; then
+          clean=$((clean + 1))
+          if [ "$clean" -ge 2 ]; then
+            echo "$read"
+            exit 0
+          fi
+        else
+          clean=0
+        fi
+        sleep 0.1
+      done
+      echo "$waiting"
+      exit 3
+    ' sh "$ROLLING_QUIESCE_READS"
+}
+
+# retire <service> <container...> - takes the given replicas out of rotation, then drains and removes
+# them. `docker stop` sends the image's stop signal and waits ROLLING_DRAIN_SECONDS for the process to
+# leave by itself.
 retire() {
-  local service="$1" cid
+  local service="$1" cid out rc
   shift
   for cid in "$@"; do
+    out="$(out_of_rotation "$service" "$cid")"
+    rc=$?
+    case "$rc" in
+    0) printf '  %s: %s is out of rotation, its accept queue proven empty after %s read(s)\n' "$service" "${cid:0:12}" "$out" ;;
+    3)
+      # The rule holds - nothing new reaches it - but its process did not accept what was already
+      # queued: it is hung, and those connections are lost whether it is stopped now or later.
+      # Stopping it is still the right move; it is said, because it is the defect this function exists
+      # to prevent, arriving from a replica that cannot be helped.
+      printf '::error::%s: %s still held %s unaccepted connection(s) after %s reads - its process is not accepting; retiring it anyway\n' \
+        "$service" "${cid:0:12}" "$out" "$ROLLING_QUIESCE_READS" >&2
+      ;;
+    *)
+      # The rule could not be set: the replica is STILL in rotation, and stopping it now is the 502
+      # this exists to prevent. Stop the deploy instead - both replicas keep serving.
+      printf '::error::%s: could not take %s out of rotation (exit %s) - stopping the deploy; both replicas are serving\n' \
+        "$service" "${cid:0:12}" "$rc" >&2
+      return 1
+      ;;
+    esac
     printf '  %s: retiring %s (drain up to %ss)\n' "$service" "${cid:0:12}" "$ROLLING_DRAIN_SECONDS"
     $DOCKER_CLI stop --time "$ROLLING_DRAIN_SECONDS" "$cid" >/dev/null || return 1
     $DOCKER_CLI rm "$cid" >/dev/null || return 1

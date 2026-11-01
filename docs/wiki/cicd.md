@@ -279,8 +279,49 @@ in `depends_on` order):
    serving (measured: 0 failed requests across a refused release).
 3. Wait out the Docker DNS lifetime nginx caches (`ROLLING_RESOLVER_TTL_SECONDS`, 2 s, plus one), so
    every proxy has seen the new address.
-4. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
+4. **Take the old replica out of rotation, and prove it** (`out_of_rotation`, since 2026-11-01): a
+   rule inside ITS network namespace refuses every new connection from outside the container, and
+   the deploy waits until no connection is half-open and every listener's accept queue is empty, on
+   two consecutive reads of the namespace's own `/proc/net/tcp`.
+5. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
    flight, exits (`drain-on-sigterm.ts` in the four NestJS services, `serve_until` in the gateway).
+
+**Why step 4 exists - a 502 one release in thirty (main CI run 41311303760, 2026-11-01: 1 POST in
+346).** Closing a listener RESETS every connection still in its accept queue: handshakes the kernel
+had completed and the process had not yet accepted. The nginx in front had already written the POST
+into that connection, so it read the reset as `recv() failed (104: Connection reset by peer) while
+reading response header from upstream`, and a POST that has been sent is the one request nginx may
+not replay - `502`. No handler can close that window itself: a handshake can always complete between
+the last `accept()` and the `close()`, and the window is as wide as the event loop is busy. The
+fixture's API is now busy for 1.5 s when `SIGTERM` arrives, which makes the hole a certainty instead
+of a 1-in-30 race: 4 `502`s on a run without step 4, 0 with it.
+
+**What "out of rotation" can and cannot be here, measured on Docker 29 (2026-11-01):**
+
+- **Docker's DNS is not a lever.** It names a container for as long as it runs: an UNHEALTHY
+  container and a PAUSED one are both still returned. A "drain" health state would change nothing a
+  proxy sees.
+- **`docker network disconnect` is not one either:** it removes the address the requests in flight
+  are answered on.
+- **nginx may not be the one to retry** (`proxy_next_upstream non_idempotent` would replay a POST that
+  WAS processed after any reset). The fix keeps nginx's rule and removes the reset.
+- **So the lever is the replica's own namespace:** `iptables -I INPUT ! -i lo -p tcp --syn -j REJECT
+  --reject-with tcp-reset`, set from a one-second container joined to it (`--network container:<id>
+  --cap-add NET_ADMIN`, the official `docker` image pinned by digest, `ROLLING_NETNS_IMAGE`).
+  `--syn` leaves every established connection alone - a request in flight, a WebSocket; `! -i lo`
+  leaves the healthcheck and Docker's DNS on `127.0.0.11`. A refused connect is the failure every
+  nginx hands to the next replica with no byte sent. The rule dies with the namespace: nothing on the
+  host changes.
+- **The proof**, not a delay: once the rule holds no handshake can start, so a read with no
+  `SYN_RECV` row (state `03`) means none can complete any more, and a second read with every LISTEN
+  row's `rx_queue` (its accept queue) at 0 means none is still waiting. A process that never empties
+  its queue is retired anyway after `ROLLING_QUIESCE_READS` reads, with an `::error::` - its queued
+  connections are lost either way. A rule that cannot be set STOPS the deploy with both replicas
+  serving.
+- **Owed before it reaches the shared host:** the helper is a container and an image (~450 MB
+  unpacked) on a host where a new container waits on the DSI's disk extension, and a netfilter rule,
+  even one inside our own container's namespace, is the kind of change the DSI asked to be told of
+  first ([durable-rules](durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration)).
 
 **Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a

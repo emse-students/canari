@@ -68,9 +68,10 @@ dc() {
   $COMPOSE -f "$FIX_HOST/compose.yml" "$@"
 }
 on_port_conflict() { return 1; }
-# One second instead of ten: the fixture's API drains in 150 ms, and a frontend replica holds no
-# WebSocket here.
-export ROLLING_DRAIN_SECONDS=1
+# Three seconds instead of ten: the fixture's API is busy for 1.5 s when SIGTERM arrives (api.mjs says
+# why) and then answers what it holds in 150 ms, and a frontend replica holds no WebSocket here. A
+# drained replica leaves by itself; this bounds only the one that cannot.
+export ROLLING_DRAIN_SECONDS=3
 # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
 . "$REPO/infrastructure/lib/rolling.sh"
 
