@@ -272,7 +272,10 @@
   function edgeStep() {
     edgeFrame = null;
     if (!selection || edgeDirection === 0 || !scroller) return;
+    const before = scroller.scrollTop;
     scroller.scrollTop += edgeDirection * EDGE_STEP_PX;
+    // At the scroll limit the box did not move: the loop ends instead of spinning in place.
+    if (scroller.scrollTop === before) return;
     selectAt(edgeAt.x, edgeAt.y);
     edgeFrame = requestAnimationFrame(edgeStep);
   }
@@ -280,6 +283,7 @@
   function handlePointerUp(e: PointerEvent) {
     if (!press || e.pointerId !== press.pointerId) return;
     const range = selected;
+    edgeDirection = 0;
     clearPress();
     // No range was drawn: a plain tap, and the click that follows opens the sheet.
     if (!selection) return;
@@ -308,21 +312,16 @@
   /**
    * Whether tapping a unit does anything: a taken unit always opens its reading, a free one only
    * where `isOfferedStart` says (the booking window for a booker; a block that has not begun for
-   * the organiser). One that cannot
-   * be booked now is drawn greyed and is not a control at all.
+   * the organiser). One that cannot be booked now is drawn greyed and is not a control at all.
    */
   function offered(unit: SlotUnit): boolean {
     return unit.state !== 'free' || isOfferedStart(space, unit, nowMs, lastRefusedStart, blockMode);
   }
 
-  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
-  function bookableStart(unit: SlotUnit): boolean {
-    return isOfferedStart(space, unit, nowMs, lastRefusedStart, false);
-  }
-
   /** What a cell says, and whether the booking window refuses it now. */
   function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
-    const bookable = unit.state !== 'free' || bookableStart(unit);
+    // The SAME rule as `offered()` and `planning.ts`: what is drawn free is what a tap acts on.
+    const bookable = offered(unit);
     const text = unitText(unit, bookable);
     // A free unit already over keeps its name for a screen reader but is not written in the cell.
     return { text, closed: !bookable, past: !bookable && isPastUnit(unit, nowMs) };

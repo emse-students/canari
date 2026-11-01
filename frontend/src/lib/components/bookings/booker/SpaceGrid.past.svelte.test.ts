@@ -93,6 +93,18 @@ describe('SpaceGrid - past and unavailable units', () => {
     expect((cells[0] as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('reads a unit inside the notice as free for the organiser, as it acts on it (one rule)', async () => {
+    // unit(3) is refused to a booker (24 h notice) but not to the organiser: the grid must not
+    // draw it closed while the tap works.
+    const booker = await open([unit(3)], vi.fn(), false);
+    expect(booker[0].getAttribute('aria-label')).toContain(m.bookings_cell_closed());
+    app && unmount(app, { outro: false });
+    document.body.innerHTML = '';
+    const organiser = await open([unit(3)], vi.fn(), true);
+    expect(organiser[0].getAttribute('aria-label')).not.toContain(m.bookings_cell_closed());
+    expect((organiser[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('offers the organiser no unit that has begun: the server freezes history', async () => {
     // unit(2) starts at NOW exactly; it is not "to come", so no block may start on it.
     const cells = await open([unit(2)], vi.fn(), true);
