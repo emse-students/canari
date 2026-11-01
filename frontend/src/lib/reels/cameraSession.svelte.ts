@@ -28,6 +28,7 @@ import {
   type CameraFacing,
   type CameraFault,
 } from './cameraAccess';
+import { DEFAULT_LENS, recallLens, rememberLens } from './cameraLens';
 import {
   DIGITAL_ZOOM_RANGE,
   clampZoom,
@@ -48,10 +49,18 @@ export class CameraSession {
   phase = $state<CameraPhase>('stopped');
   fault = $state<CameraFault | null>(null);
   /**
-   * THE CAMERA OPENS ON THE FRONT LENS (user, 2026-10-02: the selfie is a reel's usual first shot).
-   * Not persisted: every session of the tab starts here, and the flip button is per take.
+   * THE CAMERA OPENS ON THE LENS LAST USED ANYWHERE IN THE APP (owner, 2026-11-01), the front one
+   * when none is remembered (user, 2026-10-02: the selfie is a reel's usual first shot). One memory
+   * per device for every camera ({@link recallLens}); a flip writes it ({@link rememberLens}).
    */
-  facing = $state<CameraFacing>('user');
+  facing = $state<CameraFacing>(recallLens());
+  /**
+   * The remembered lens that the FIRST open has not yet proven this device has; `null` once it has
+   * been opened or the session was told another lens. Only an open still carrying it may fall back
+   * to the other lens: an explicit flip that cannot open is the member's to see.
+   */
+  /** Cleared only when an open settles in its own generation (a superseded or suspended one keeps it). */
+  #unprovenLens: CameraFacing | null = this.facing === DEFAULT_LENS ? null : this.facing;
   stream = $state.raw<MediaStream | null>(null);
   torchOn = $state(false);
   /** Read from the open track, never assumed: the front lenses measured have no torch. */
@@ -181,8 +190,29 @@ export class CameraSession {
     this.facing = facing;
     this.phase = 'starting';
     this.fault = null;
+    const unproven = this.#unprovenLens === facing && !switching ? facing : null;
     try {
-      const stream = await this.#open(facing, switching);
+      let stream: MediaStream;
+      try {
+        stream = await this.#open(facing, switching);
+      } catch (err) {
+        // The remembered lens is not on this device (a rear camera a webcam never had): the other
+        // lens opens instead, once, and the memory is left as the member chose it.
+        if (
+          unproven === null ||
+          generation !== this.#generation ||
+          !(err instanceof CameraAccessError) ||
+          err.fault !== 'unavailable'
+        ) {
+          throw err;
+        }
+        const other = otherFacing(facing);
+        console.warn(
+          `[camera-session] #${generation} the remembered ${facing} lens is unavailable on this device - opening ${other}`
+        );
+        this.facing = other;
+        stream = await this.#open(other, false);
+      }
       if (generation !== this.#generation) {
         console.debug(
           `[camera-session] #${generation} came back after the session moved on - releasing it`
@@ -199,9 +229,13 @@ export class CameraSession {
         this.phase = 'stopped';
         return;
       }
+      if (unproven !== null) this.#reconcileRememberedLens(stream);
       this.stream = stream;
       this.#install(stream, generation);
       this.phase = 'live';
+      // Settled in its own generation: the lens is proven, and a flip that got here is the member's.
+      this.#unprovenLens = null;
+      if (switching) rememberLens(facing);
       this.#watchCameras();
     } catch (err) {
       if (generation !== this.#generation) return;
@@ -224,7 +258,26 @@ export class CameraSession {
       }
       this.fault = fault;
       this.phase = 'error';
+      this.#unprovenLens = null;
     }
+  }
+
+  /**
+   * After the first open on a REMEMBERED lens, says what the device actually gave. A track that
+   * reports its facing wins over what was asked; a track that reports none is a desktop webcam,
+   * which looks at the member whatever was remembered, so it reads as the front lens (mirroring
+   * follows {@link facing}). The memory itself is left alone: it is the member's choice, not the
+   * device's.
+   */
+  #reconcileRememberedLens(stream: MediaStream): void {
+    const reported = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+    const actual: CameraFacing =
+      reported === 'user' || reported === 'environment' ? reported : 'user';
+    if (actual === this.facing) return;
+    console.warn(
+      `[camera-session] asked ${this.facing}, the device gave ${reported ?? 'a lens with no facing'} - reading it as ${actual}`
+    );
+    this.facing = actual;
   }
 
   /** The other lens, outside a take: everything is reopened ({@link start}). A take uses {@link flipDuringTake}. */
@@ -280,6 +333,8 @@ export class CameraSession {
       this.stream = stream;
       this.flipping = false;
       this.#install(stream, generation);
+      // Only a lens that OPENED is remembered: a device that refused it must not be asked again.
+      rememberLens(next);
     } catch (err) {
       if (generation !== this.#generation) return;
       const fault = err instanceof CameraAccessError ? err.fault : 'unavailable';
