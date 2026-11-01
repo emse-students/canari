@@ -1379,6 +1379,7 @@
   "chat_channel_settings_label": "Channel settings",
   "chat_group_settings_label": "Group settings",
   "chat_dm_settings_label": "Chat settings",
+  "chat_open_profile_label": "Open the profile of {name}",
   "chat_settings_title": "Settings",
   "chat_e2e_established_preview": "E2E channel established.",
   "chat_waiting_own_device": "Waiting to be added. This happens by itself as soon as another device of yours already in this conversation, or another member, opens the app.",
