@@ -1,12 +1,14 @@
 # A three-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (the real
 # infrastructure/edge/nginx.conf, the real image) holds the host port, a FRONTEND nginx proxies to an
-# API, and both of those are images "this repository builds" (prefix `rolltest/`) declared overlap.
+# API, and both of those are images "this repository builds" (prefix `rolltest/`) declared overlap,
+# each with the rotation that takes its old replica out of the nginx in front before it stops.
 name: canari-rolltest
 
 services:
   api:
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: rolltest/api:${TAG:?TAG is required}
     environment:
       VERSION: ${TAG}
@@ -23,7 +25,11 @@ services:
   frontend:
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: rolltest/frontend:${TAG:?TAG is required}
+    # The replica lists rolling.sh writes, mounted as production mounts them.
+    volumes:
+      - ${EDGE_DIR:?EDGE_DIR is required}/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"
     healthcheck:

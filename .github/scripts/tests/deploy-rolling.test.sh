@@ -68,6 +68,9 @@ dc() {
   $COMPOSE -f "$FIX_HOST/compose.yml" "$@"
 }
 on_port_conflict() { return 1; }
+# Where rolling.sh writes the replica lists: the real edge/rotation, which the edge mounts with edge/
+# and the fixture's frontend mounts as production's does. The written lists are never tracked.
+ROTATION_DIR="$REPO/infrastructure/edge/rotation"
 # Three seconds instead of ten: the fixture's API is busy for 1.5 s when SIGTERM arrives (api.mjs says
 # why) and then answers what it holds in 150 ms, and a frontend replica holds no WebSocket here. A
 # drained replica leaves by itself; this bounds only the one that cannot.
@@ -80,6 +83,7 @@ cleanup() {
   dc down -v --remove-orphans >/dev/null 2>&1 || true
   docker image rm -f rolltest/api:v1 rolltest/api:v2 rolltest/api:broken rolltest/api:v3 \
     rolltest/frontend:v1 rolltest/frontend:v2 rolltest/frontend:broken rolltest/frontend:v3 >/dev/null 2>&1 || true
+  rm -f "$ROTATION_DIR"/*.conf
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -109,7 +113,8 @@ field() {
   bun -e "const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); console.log($2)" "$TMP/$1.json"
 }
 plan() {
-  dc config --format json | "$PYTHON" "$REPO/infrastructure/lib/replace-modes.py" rolltest/
+  # `tr`: a Windows Python ends its lines with CR, which would end up inside a replica list.
+  dc config --format json | "$PYTHON" "$REPO/infrastructure/lib/replace-modes.py" rolltest/ | tr -d '\r'
 }
 running_versions() {
   docker ps --filter "label=com.docker.compose.project=$PROJECT" --filter "label=com.docker.compose.service=api" \
@@ -149,8 +154,19 @@ edge_before="$(containers_of edge)"
 printf '\ndeploy-rolling: v1 -> v2, replaced by rolling.sh under load\n'
 build v2
 export TAG=v2
+# A connection held open across the release, as a WebSocket is: the nginx worker proxying it keeps
+# the OLD replica list after the reload, for as long as the connection lives. The release must prove
+# that worker can no longer choose a replica, not wait for it to exit - which would be never.
+curl -sN "http://127.0.0.1:${ROLLTEST_PORT}/api/hold" >/dev/null 2>&1 &
+HOLD_PID=$!
 start_client release
-if replace_services <<<"$(plan)"; then ok "replace_services succeeded"; else fail "replace_services succeeded"; fi
+if replace_services <<<"$(plan)" | tee "$TMP/release.log"; then ok "replace_services succeeded"; else fail "replace_services succeeded"; fi
+kill "$HOLD_PID" 2>/dev/null || true
+if grep -qE '^  frontend: [0-9a-f]+ reloaded; .*\([1-9][0-9]* old worker\(s\) still finishing' "$TMP/release.log"; then
+  ok "a connection an old frontend worker was still proxying did not hold the release back"
+else
+  fail "no frontend reload was proven with an old worker still proxying - the held connection was not seen, or was waited for"
+fi
 # MSYS_NO_PATHCONV: Git Bash would rewrite `/etc/nginx/...` into a Windows path before docker.exe
 # saw it. No effect off Windows.
 if MSYS_NO_PATHCONV=1 dc exec -T edge nginx -s reload -c /etc/nginx/edge/nginx.conf >/dev/null 2>&1; then

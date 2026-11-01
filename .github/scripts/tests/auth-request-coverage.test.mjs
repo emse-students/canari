@@ -209,7 +209,9 @@ function authRequestLocations() {
     }
     if (!current) continue;
     if (/auth_request\s+\/internal\/auth\/verify/.test(line)) current.authRequest = true;
-    const up = line.match(/^\s*set\s+\$upstream_\w+\s+([a-z0-9-]+):\d+/);
+    // `<service>:<port>` for a service reached by DNS, `<service>` alone for one chosen from its
+    // replica list (an `upstream <service>` block, docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    const up = line.match(/^\s*set\s+\$upstream_\w+\s+([a-z0-9-]+)(?::\d+)?;/);
     if (up) current.upstream = up[1];
     // `rewrite ^/api/call(.*) /ws$1 break;` - what the upstream is asked for is NOT the location
     // path. Reading the path alone reported call-service as serving nothing under `/api/call`.

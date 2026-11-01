@@ -315,6 +315,10 @@ on_port_conflict() {
   }
 }
 
+# Where rolling.sh writes which replicas each nginx in front may choose: inside edge/, which the edge
+# already mounts, and mounted read-only into the frontend as /etc/nginx/rotation (both compose files).
+# Not tracked by git, so `git reset --hard` leaves the lists the running proxies were reloaded on.
+ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
 # shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
 . "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
 

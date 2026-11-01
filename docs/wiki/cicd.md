@@ -277,51 +277,66 @@ in `depends_on` order):
 2. Wait for its healthcheck (`start_interval: 2s`, so a ready replica is seen in seconds, not at the
    next 30 s tick). An unhealthy replica is removed and the deploy STOPS - the old one never stopped
    serving (measured: 0 failed requests across a refused release).
-3. Wait out the Docker DNS lifetime nginx caches (`ROLLING_RESOLVER_TTL_SECONDS`, 2 s, plus one), so
-   every proxy has seen the new address.
-4. **Take the old replica out of rotation, and prove it** (`out_of_rotation`, since 2026-11-01): a
-   rule inside ITS network namespace refuses every new connection from outside the container, and
-   the deploy waits until no connection is half-open and every listener's accept queue is empty, on
-   two consecutive reads of the namespace's own `/proc/net/tcp`.
+3. **Put the new replica in rotation and take the old one out, and prove it** (since 2026-11-01).
+   The nginx in front of the service - the frontend's for the five services it proxies, the edge's
+   for the frontend, named by the label `canari.deploy.rotation: <proxy>:<port>` - chooses a replica
+   from an explicit list, `upstream <service> { server <container name>:<port> resolve; }`, that
+   `rolling.sh` writes into `infrastructure/edge/rotation/<proxy>.conf`. The deploy rewrites the list
+   with the new replica and without the old one, runs `nginx -t` and `nginx -s reload` in each
+   running replica of the proxy (no new container), and waits for the proof below.
+4. **Wait until nothing is queued on the old replica**: two consecutive reads of its own
+   `/proc/net/tcp{,6}` with no half-open connection (`SYN_RECV`, state `03`) and every LISTEN row's
+   `rx_queue` (its accept queue) at 0. What it has in flight is printed, and left to step 5.
 5. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
    flight, exits (`drain-on-sigterm.ts` in the four NestJS services, `serve_until` in the gateway).
 
-**Why step 4 exists - a 502 one release in thirty (main CI run 41311303760, 2026-11-01: 1 POST in
-346).** Closing a listener RESETS every connection still in its accept queue: handshakes the kernel
+**Why steps 3 and 4 exist - a 502 one release in thirty (main CI run 41311303760, 2026-11-01: 1 POST
+in 346).** Closing a listener RESETS every connection still in its accept queue: handshakes the kernel
 had completed and the process had not yet accepted. The nginx in front had already written the POST
 into that connection, so it read the reset as `recv() failed (104: Connection reset by peer) while
 reading response header from upstream`, and a POST that has been sent is the one request nginx may
-not replay - `502`. No handler can close that window itself: a handshake can always complete between
-the last `accept()` and the `close()`, and the window is as wide as the event loop is busy. The
-fixture's API is now busy for 1.5 s when `SIGTERM` arrives, which makes the hole a certainty instead
-of a 1-in-30 race: 4 `502`s on a run without step 4, 0 with it.
+not replay - `502`. A replica that closes its listener while it is still chosen cannot close that
+window itself: a handshake can always complete between the last `accept()` and the `close()`, and the
+window is as wide as the event loop is busy. So the replica leaves rotation first, provably, and is
+told to stop after.
 
-**What "out of rotation" can and cannot be here, measured on Docker 29 (2026-11-01):**
+**The proof that a reload has taken effect is read, never waited out.** A reload starts new workers
+on the new list; the old workers keep the old list and every connection they hold - a reload never
+cuts one. An old worker accepts nothing new, so it can only choose a replica for a request it was
+already handling, and only before that request is being proxied. So `rolling.sh` reads, inside each
+proxy container, every pre-reload worker's sockets (`/proc/<pid>/fd`) joined to the TCP table, and the
+reload holds once a new worker exists and each old worker's client connections (sockets on a port
+nginx listens on) are all paired with an established upstream connection. Waiting for the old workers
+to EXIT instead - the first design asked for - would wait for the last WebSocket opened before the
+release: a `/api/ws` lives an hour and is kept alive by its pings. The test holds such a connection
+open across the release and asserts the reload is proven with that old worker still alive.
 
-- **Docker's DNS is not a lever.** It names a container for as long as it runs: an UNHEALTHY
-  container and a PAUSED one are both still returned. A "drain" health state would change nothing a
-  proxy sees.
-- **`docker network disconnect` is not one either:** it removes the address the requests in flight
-  are answered on.
-- **nginx may not be the one to retry** (`proxy_next_upstream non_idempotent` would replay a POST that
-  WAS processed after any reset). The fix keeps nginx's rule and removes the reset.
-- **So the lever is the replica's own namespace:** `iptables -I INPUT ! -i lo -p tcp --syn -j REJECT
-  --reject-with tcp-reset`, set from a one-second container joined to it (`--network container:<id>
-  --cap-add NET_ADMIN`, the official `docker` image pinned by digest, `ROLLING_NETNS_IMAGE`).
-  `--syn` leaves every established connection alone - a request in flight, a WebSocket; `! -i lo`
-  leaves the healthcheck and Docker's DNS on `127.0.0.11`. A refused connect is the failure every
-  nginx hands to the next replica with no byte sent. The rule dies with the namespace: nothing on the
-  host changes.
-- **The proof**, not a delay: once the rule holds no handshake can start, so a read with no
-  `SYN_RECV` row (state `03`) means none can complete any more, and a second read with every LISTEN
-  row's `rx_queue` (its accept queue) at 0 means none is still waiting. A process that never empties
-  its queue is retired anyway after `ROLLING_QUIESCE_READS` reads, with an `::error::` - its queued
-  connections are lost either way. A rule that cannot be set STOPS the deploy with both replicas
-  serving.
-- **Owed before it reaches the shared host:** the helper is a container and an image (~450 MB
-  unpacked) on a host where a new container waits on the DSI's disk extension, and a netfilter rule,
-  even one inside our own container's namespace, is the kind of change the DSI asked to be told of
-  first ([durable-rules](durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration)).
+**What the reload does to WebSockets and to the edge.** Nothing is cut by a reload, at either nginx:
+a WebSocket stays on the old worker and on the replica it was opened to. It ends only when that
+replica is retired - the gateway's, or the frontend's for the edge's streams - which is the drop the
+list below already names. The edge's own end-of-deploy reload (its `nginx.conf` from the checkout)
+reads the same `rotation/edge.conf`, so it changes nothing about which frontend is chosen.
+
+**What "out of rotation" could not be, measured on Docker 29 (2026-11-01):**
+
+- **Docker's DNS.** It names a container for as long as it runs: an UNHEALTHY container and a PAUSED
+  one are both still returned, so a "drain" health state would change nothing a proxy sees.
+- **`docker network disconnect`.** It removes the address the requests in flight are answered on.
+- **A retry at nginx** (`proxy_next_upstream non_idempotent`): it would replay a POST that WAS
+  processed after any reset. The fix keeps nginx's rule and removes the reset.
+- **A netfilter rule in the replica's own namespace** (the first version of this fix): sound, but a
+  helper container, a ~450 MB image and a firewall rule on the shared host. The owner chose the
+  replica lists instead (2026-11-01).
+
+**Measured on the fixture, whose API is busy for 1.5 s when `SIGTERM` arrives** (it makes the reset a
+certainty instead of a 1-in-30 race), concurrency 12: with the old replica kept in the list while it
+stops, `502 x6` and one `ECONNRESET` (at the edge, the frontend's own queue) in 1540 POSTs; with
+steps 3-4, 0 failures in 1692 and the longest request 172 ms. The ~2 s stall a proxy used to spend on
+a retired replica's cached address is gone with the DNS rotation.
+
+**`resolve` costs no window at a reload** (measured: 3000 requests across 10 reloads, all `200`):
+nginx resolves the names when it loads the list. A replica that restarts in place under a new
+address is followed by `resolve` at `valid=2s`.
 
 **Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
@@ -329,7 +344,7 @@ declaration cannot hold:
 
 | Mode        | Meaning                                         | Services                                                                                            | What it requires                                             |
 | ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no volume, a healthcheck with `start_interval` |
+| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` |
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | -                                                            |
 | `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge`                                                            | not an image this repository builds                          |
 
@@ -337,11 +352,15 @@ declaration cannot hold:
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
 `stream` (L4) mode whose configuration is `infrastructure/edge/nginx.conf`, mounted as a DIRECTORY
 (a file mount keeps the inode `git reset --hard` replaces) and reloaded in place after each deploy. It
-resolves `frontend` through Docker's DNS at 2 s and fails a refused connect over to the next address.
-The frontend's own nginx does the same for the services behind it: `resolver valid=2s`,
-`proxy_connect_timeout 2s`, `proxy_next_upstream error timeout`. A refused connect is retried even for
-a POST, because nothing was sent. **These three numbers must agree with `rolling.sh`**, and
-`deploy-replace.test.sh` fails when they do not.
+chooses a frontend from `edge/rotation/edge.conf`, the list above, which lives in that same directory
+so the edge needed no new mount; the frontend mounts `edge/rotation` read-only as `/etc/nginx/rotation`.
+The lists are never tracked (`edge/rotation/.gitignore`), so `git reset --hard` leaves the ones the
+running proxies were reloaded on. A workstation or e2e stack, with no such deploy, reads the list
+baked in the frontend image: every replica Docker's DNS names, as before. Both nginx keep
+`proxy_connect_timeout 2s` and `proxy_next_upstream` for a connect refused by a replica that DIED:
+nothing was sent, so even a POST is safe to hand on. `deploy-replace.test.sh` asserts that the lists
+are written where both proxies read them, and that each routed service is an upstream of the image's
+list on the port its label declares.
 
 **The proof is a test that sends throughout** (`.github/scripts/tests/deploy-rolling.test.sh`, a
 fixture estate of the same shape): ~1500 POSTs at concurrency 12 across a release, ALL `200`, on
@@ -352,13 +371,15 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
 
 **What is NOT zero, said rather than hidden:**
 
-- A request can stall up to ~2 s when a proxy still holds the retired replica's address and the
-  connect times out instead of being refused (measured max 2.2 s).
+- **The first deploy carrying the replica lists** still runs the OLD frontend image, which reads no
+  list, while the five services behind it are replaced: that one deploy keeps the reset window it
+  had. From the next one on, every overlap service leaves rotation before it stops.
 - A WebSocket on the retired gateway or frontend is closed, and the client reconnects - a drop, not
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- A Node-to-Node call landing in a peer's drain window can still be refused (not observed).
+- A Node-to-Node call still resolves its peer through Docker's DNS, so one landing in a peer's
+  drain window can still be refused or reset (not observed): no list governs it.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`

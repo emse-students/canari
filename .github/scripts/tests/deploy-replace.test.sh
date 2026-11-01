@@ -11,7 +11,6 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 MODES="$REPO/infrastructure/lib/replace-modes.py"
-ROLLING="$REPO/infrastructure/lib/rolling.sh"
 DEPLOY="$REPO/infrastructure/deploy/deploy-environment.sh"
 FRONTEND_NGINX="$REPO/infrastructure/local/Dockerfile.frontend"
 EDGE_NGINX="$REPO/infrastructure/edge/nginx.conf"
@@ -84,15 +83,15 @@ for name, s in json.load(sys.stdin)["services"].items():
   else
     fail "$file: FRONTEND_HOST_PORT is published by: ${holders:-nobody}"
   fi
-  if printf '%s\n' "$plan" | grep -qx 'edge pinned yes'; then
+  if printf '%s\n' "$plan" | grep -qx 'edge pinned yes -'; then
     ok "$file: the edge is pinned"
   else
-    fail "$file: the edge is not 'pinned yes'"
+    fail "$file: the edge is not 'pinned yes -'"
   fi
-  if printf '%s\n' "$plan" | grep -qx 'frontend overlap no'; then
-    ok "$file: the frontend is replaced with overlap"
+  if printf '%s\n' "$plan" | grep -qx 'frontend overlap no edge:80'; then
+    ok "$file: the frontend is replaced with overlap, and taken out of rotation at the edge"
   else
-    fail "$file: the frontend is not 'overlap no'"
+    fail "$file: the frontend is not 'overlap no edge:80'"
   fi
 
   # Order: the frontend is replaced before the edge, so on the deploy that introduces the edge the
@@ -115,6 +114,32 @@ for v in json.load(sys.stdin)["services"]["edge"].get("volumes") or []:
   */edge' /etc/nginx/edge') ok "$file: the edge mounts the edge/ directory" ;;
   *) fail "$file: the edge mounts '$edge_mount', not the edge/ directory" ;;
   esac
+
+  # The frontend reads the replica lists from the directory the deploy writes them into, read-only:
+  # a list written where nginx does not look would leave every retiring replica in rotation.
+  frontend_mount="$(printf '%s' "$config" | "$PYTHON" -c '
+import json, sys
+for v in json.load(sys.stdin)["services"]["frontend"].get("volumes") or []:
+    print(v.get("type"), v.get("source", "").replace("\\", "/"), v.get("target", ""), v.get("read_only", False))')"
+  case "$frontend_mount" in
+  'bind '*'/edge/rotation /etc/nginx/rotation True') ok "$file: the frontend mounts edge/rotation read-only as /etc/nginx/rotation" ;;
+  *) fail "$file: the frontend mounts '$frontend_mount', not edge/rotation read-only at /etc/nginx/rotation" ;;
+  esac
+
+  # Every service the frontend nginx routes to by a list has, in the image, the list a workstation
+  # reads - by the same name and on the port its label declares.
+  while read -r svc _ _ rot; do
+    rot="${rot%$'\r'}" # a Windows Python ends its lines with CR
+    [ "${rot%%:*}" = frontend ] || continue
+    if grep -qF "upstream $svc {" "$FRONTEND_NGINX" && grep -qF "server $svc:${rot#*:} resolve;" "$FRONTEND_NGINX"; then
+      ok "$file: $svc is an upstream of the frontend nginx on port ${rot#*:}"
+    else
+      fail "$file: $svc is routed through the frontend on port ${rot#*:}, but the frontend image declares no such upstream"
+    fi
+    if grep -qE "set \\\$upstream_[a-z_]+ $svc:[0-9]+;" "$FRONTEND_NGINX"; then
+      fail "$file: the frontend nginx still names $svc with a port - DNS, not its replica list"
+    fi
+  done <<<"$plan"
 
   # The edge is HEALTHY only once it LISTENS, and by the same test the rolling fixture proves: a
   # pinned service with no healthcheck is believed at `running`, before nginx has opened its port
@@ -144,6 +169,18 @@ refuses "a service with no mode" '{"services":{"a":{"image":"own/a:1"}}}' 'no ca
 refuses "an unknown mode" '{"services":{"a":{'"$L"':"rolling"},"image":"own/a:1"}}}' 'is not one of'
 refuses "overlap on a host port" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1",'"$HC"',"ports":[{"target":80,"published":"8081"}]}}}' 'host port'
 refuses "overlap on a volume" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1",'"$HC"',"volumes":[{"type":"volume","source":"d","target":"/d"}]}}}' 'mounts a volume'
+R='"canari.deploy.rotation":"p:80"'
+P='"p":{'"$L"':"pinned"},"image":"x"}'
+refuses "overlap with no rotation" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1",'"$HC"'}}}' 'no canari.deploy.rotation'
+refuses "a rotation through no service" '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"'}}}' 'names no other service'
+refuses "a rotation on an exclusive service" '{"services":{"a":{'"$L"':"exclusive",'"$R"'},"image":"own/a:1"},'"$P"'}}' 'never taken out of rotation'
+refuses "overlap on a writable bind mount" '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d"}]},'"$P"'}}' 'mounts a volume'
+if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d","read_only":true}]},'"$P"'}}' |
+  "$PYTHON" "$MODES" own/ | grep -qx 'a overlap no p:80'; then
+  ok "accepts overlap on a read-only bind mount, and prints its rotation"
+else
+  fail "refuses overlap on a read-only bind mount, or prints no rotation"
+fi
 refuses "overlap with no healthcheck" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1"}}}' 'no healthcheck'
 refuses "overlap with no start_interval" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1","healthcheck":{"test":["CMD","true"]}}}}' 'start_interval'
 refuses "pinned on an image this repository builds" '{"services":{"a":{'"$L"':"pinned"},"image":"own/a:1"}}}' 'built by this repository'
@@ -157,17 +194,29 @@ else
   fail "dependency order is '$order', expected 'z a '"
 fi
 
-# ── 3. The numbers the replacement relies on agree everywhere they are written ──
-ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9][0-9]*\)$/\1/p' "$ROLLING")"
-[ -n "$ttl" ] || fail "rolling.sh declares no ROLLING_RESOLVER_TTL_SECONDS"
-for cfg in "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX"; do
-  valid="$(grep -o 'resolver 127\.0\.0\.11 valid=[0-9]*s' "$cfg" | sed 's/.*valid=\([0-9]*\)s/\1/' | sort -u)"
-  if [ "$valid" = "$ttl" ]; then
-    ok "${cfg#"$REPO"/}: resolver valid=${ttl}s, the lifetime the deploy waits out"
-  else
-    fail "${cfg#"$REPO"/}: resolver valid=${valid:-none}s, but rolling.sh waits out ${ttl:-?}s"
-  fi
-done
+# ── 3. The replica lists are written where the proxies read them ──────────────
+# shellcheck disable=SC2016 # the literal line of deploy-environment.sh, unexpanded on purpose
+if grep -qF 'ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"' "$DEPLOY"; then
+  ok "deploy-environment.sh writes the replica lists into infrastructure/edge/rotation"
+else
+  fail "deploy-environment.sh writes the replica lists somewhere neither proxy mounts"
+fi
+if grep -qF 'include /etc/nginx/edge/rotation/edge.conf;' "$EDGE_NGINX" && grep -qF 'proxy_pass frontend;' "$EDGE_NGINX"; then
+  ok "the edge chooses a frontend replica from its list"
+else
+  fail "the edge does not read edge/rotation/edge.conf, or does not proxy to it"
+fi
+if grep -qF 'include /etc/nginx/rotation/frontend.conf;' "$FRONTEND_NGINX" && grep -qF 'include /etc/nginx/rotation/frontend.conf;' "$FIXTURE_NGINX"; then
+  ok "the frontend nginx and the fixture both read /etc/nginx/rotation/frontend.conf"
+else
+  fail "the frontend nginx or the fixture does not include /etc/nginx/rotation/frontend.conf"
+fi
+if git -C "$REPO" check-ignore -q infrastructure/edge/rotation/frontend.conf && [ -f "$REPO/infrastructure/edge/rotation/.gitignore" ]; then
+  ok "the lists' directory exists in every checkout and the lists are never tracked"
+else
+  fail "infrastructure/edge/rotation is missing, or a written list would be tracked"
+fi
+
 for directive in 'proxy_connect_timeout 2s;' 'proxy_next_upstream error timeout;'; do
   if grep -qF "    $directive" "$FRONTEND_NGINX" && grep -qF "    $directive" "$FIXTURE_NGINX"; then
     ok "the frontend nginx and the fixture both carry '$directive'"
@@ -179,13 +228,6 @@ if grep -q 'proxy_next_upstream on;' "$EDGE_NGINX" && grep -q 'proxy_connect_tim
   ok "the edge fails a refused connect over to the next replica"
 else
   fail "the edge has no connect failover"
-fi
-# The image that takes a retiring replica out of rotation runs on the host at every deploy: pinned by
-# digest like every third-party image, so a moved tag cannot change what it executes there.
-if grep -qE "^ROLLING_NETNS_IMAGE='[^'@]+@sha256:[0-9a-f]{64}'$" "$ROLLING"; then
-  ok "rolling.sh pins the image that takes a replica out of rotation by digest"
-else
-  fail "rolling.sh's ROLLING_NETNS_IMAGE is not pinned by digest"
 fi
 
 # ── 4. The deploy replaces nothing the old way ────────────────────────────────

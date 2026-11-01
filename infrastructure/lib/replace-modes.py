@@ -4,7 +4,7 @@
 Reads `docker compose config --format json` on stdin and prints one line per service, in the order
 the deploy must replace them (every service after everything it `depends_on`):
 
-    <service> <mode> <publishes-a-host-port: yes|no>
+    <service> <mode> <publishes-a-host-port: yes|no> <rotation: proxy:port, or ->
 
 Takes one argument: the image prefix of what THIS repository builds (`<registry>/<owner>/<repo>/`),
 because one rule below is about those images and no other.
@@ -26,7 +26,14 @@ puts every release's outage back. A service added later states its mode on the d
 WHAT `overlap` REQUIRES, because each is a way two replicas cannot coexist - and the deploy refuses
 rather than discover it on production:
   - no host port: a host port belongs to ONE container, so the second could not start;
-  - no volume: two writers on one store is exactly the state `exclusive` exists for;
+  - no volume it could write: two writers on one store is exactly the state `exclusive` exists for.
+    A READ-ONLY bind mount is two readers of one file, and is allowed (the rotation file the
+    deploy writes for the nginx in front, below);
+  - a ROTATION, as the label `canari.deploy.rotation: <proxy service>:<port>`: the nginx that
+    routes to this service by an explicit list of replicas the deploy writes, so the old replica
+    can be taken OUT of that list - and proven out - before it is told to stop. A replica still in
+    rotation when its listener closes resets whatever is queued on it: a 502 on a POST nginx may
+    not replay (main CI run 41311303760, 2026-11-01);
   - a compose-level healthcheck WITH `start_interval`: the old replica leaves when the new one is
     `healthy`, so a service with no healthcheck has no moment at which that is known, and without
     `start_interval` Docker runs the first check one full `interval` (30 s) after the start.
@@ -44,6 +51,7 @@ import json
 import sys
 
 LABEL = "canari.deploy.replace"
+ROTATION_LABEL = "canari.deploy.rotation"
 MODES = ("overlap", "exclusive", "pinned")
 
 
@@ -61,7 +69,22 @@ def dependencies_of(service):
     return list(raw) if isinstance(raw, (list, dict)) else []
 
 
-def refusals_for(name, service, own_prefix):
+def writable_volumes(service):
+    """Every mount of this service except a read-only bind (which two replicas can share)."""
+    out = []
+    for volume in service.get("volumes") or []:
+        if isinstance(volume, dict) and volume.get("type") == "bind" and volume.get("read_only"):
+            continue
+        out.append(volume)
+    return out
+
+
+def rotation_of(service):
+    """The `proxy:port` this service is routed through, or None."""
+    return labels_of(service).get(ROTATION_LABEL)
+
+
+def refusals_for(name, service, own_prefix, services):
     """Every reason this service cannot be replaced the way it declares, as sentences."""
     mode = labels_of(service).get(LABEL)
     if mode is None:
@@ -72,7 +95,7 @@ def refusals_for(name, service, own_prefix):
     if mode == "overlap":
         if service.get("ports"):
             refusals.append(f"{name}: overlap, but it publishes a host port only one container can hold")
-        if service.get("volumes"):
+        if writable_volumes(service):
             refusals.append(f"{name}: overlap, but it mounts a volume two replicas would both write")
         health = service.get("healthcheck") or {}
         if not health.get("test") or health.get("disable"):
@@ -81,6 +104,19 @@ def refusals_for(name, service, own_prefix):
             refusals.append(
                 f"{name}: overlap, but its healthcheck has no start_interval - its first check would run one full interval after the start"
             )
+    rotation = rotation_of(service)
+    if mode == "overlap" and rotation is None:
+        refusals.append(
+            f"{name}: overlap, but no {ROTATION_LABEL} label names the proxy that routes to it - its old replica could not be taken out of rotation before it stops"
+        )
+    if rotation is not None:
+        proxy, _, port = rotation.partition(":")
+        if mode != "overlap":
+            refusals.append(f"{name}: {ROTATION_LABEL} on a {mode} service, which is never taken out of rotation")
+        if proxy not in services or proxy == name:
+            refusals.append(f"{name}: {ROTATION_LABEL}={rotation} names no other service of this file")
+        if not port.isdigit():
+            refusals.append(f"{name}: {ROTATION_LABEL}={rotation} is not <proxy service>:<port>")
     if mode == "pinned" and str(service.get("image", "")).startswith(own_prefix):
         refusals.append(
             f"{name}: pinned, but its image is built by this repository, so every release replaces it - declare overlap or exclusive"
@@ -114,7 +150,7 @@ def main(argv):
         print("replace-modes: the compose configuration declares no service", file=sys.stderr)
         return 1
 
-    refusals = [line for name in sorted(services) for line in refusals_for(name, services[name], own_prefix)]
+    refusals = [line for name in sorted(services) for line in refusals_for(name, services[name], own_prefix, services)]
     if refusals:
         for line in refusals:
             print(f"replace-modes: {line}", file=sys.stderr)
@@ -128,7 +164,7 @@ def main(argv):
     for name in order:
         service = services[name]
         ports = "yes" if service.get("ports") else "no"
-        print(f"{name} {labels_of(service)[LABEL]} {ports}")
+        print(f"{name} {labels_of(service)[LABEL]} {ports} {rotation_of(service) or '-'}")
     return 0
 
 

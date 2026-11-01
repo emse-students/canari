@@ -147,6 +147,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     # TAG IS REQUIRED, WITH NO DEFAULT. Production defaults to `:latest`; the previous version of
     # this file defaulted to `:dev`, a MUTABLE tag, which means a redeploy could not be reproduced
     # and a rollback had no name to roll back to. CD passes the commit sha.
@@ -214,6 +215,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3010
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -391,6 +393,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3012
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -470,6 +473,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3014
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -572,6 +576,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -610,6 +615,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -619,6 +625,12 @@ services:
       # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL are absent for the same reason as in
       # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
       # runtime, and a `VITE_` variable is baked in at BUILD time.
+    # WHICH REPLICAS THIS nginx MAY CHOOSE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out of this list - by a reload, proven - before it is
+    # stopped. The edge reads the same directory through its own mount of edge/.
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
+    volumes:
+      - ./edge/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
