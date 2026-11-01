@@ -478,10 +478,9 @@ async function processBulkAddition(
       return notAdded('no-devices');
     }
 
-    const lock = await (
-      mlsService.acquireAddLockAnswer?.(conversation.id) ??
-      mlsService.acquireAddLock(conversation.id).then((ok) => (ok ? 'taken' : 'held'))
-    ).catch(() => 'unanswered' as const);
+    const lock = await mlsService
+      .acquireAddLockAnswer(conversation.id)
+      .catch(() => 'unanswered' as const);
     if (lock !== 'taken') {
       // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer
       // says nothing about anyone else, and is a failure the member may retry.

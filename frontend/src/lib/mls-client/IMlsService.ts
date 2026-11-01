@@ -1103,9 +1103,9 @@ export interface IMlsService {
   /**
    * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
    * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
-   * about anyone else. Optional: a test double that only knows the boolean reads a refusal as `held`.
+   * about anyone else.
    */
-  acquireAddLockAnswer?(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
+  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**

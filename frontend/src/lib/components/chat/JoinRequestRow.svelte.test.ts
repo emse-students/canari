@@ -153,7 +153,7 @@ describe('JoinRequestRow', () => {
     );
   });
 
-  it('says another member is answering, not that something broke, when the add lock is busy', async () => {
+  it('says someone is adding people, not that something broke, when the add lock is busy', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const approve = vi.fn(async () => ({
       done: false as const,
@@ -171,7 +171,7 @@ describe('JoinRequestRow', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     const [text, type] = vi.mocked(showToast).mock.calls[0]!;
     expect(type).toBe('info');
-    expect(text).toMatch(/autre membre est en train|Another member is answering/);
+    expect(text).toMatch(/Quelqu'un est en train d'ajouter|Someone is adding people/);
   });
 
   it('says another member already answered when the answer lost a race', async () => {

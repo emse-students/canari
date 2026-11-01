@@ -44,6 +44,7 @@ function inviteDeps(registerImpl?: (u: string) => Promise<void>) {
     // A rebuild re-reads the roster (`rosterPremise`): the inviter alone, as at the start.
     getGroupUserMembers: vi.fn(async () => [{ userId: 'u1' }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
     getGroupMemberIdentities: vi.fn(async () => [] as string[]),
@@ -120,7 +121,7 @@ describe('inviteMembersToGroup - says what it did', () => {
 
   it('answers `add-lock-busy` when another device holds the add lock, and stages nothing', async () => {
     const d = inviteDeps();
-    d.mlsService.acquireAddLock = vi.fn(async () => false);
+    d.mlsService.acquireAddLockAnswer = vi.fn(async () => 'held' as const);
 
     const outcome = await inviteMembersToGroup(['bob'], convo, d.deps as never);
 
@@ -130,18 +131,14 @@ describe('inviteMembersToGroup - says what it did', () => {
 
   it('answers `add-lock-busy` only for an ANSWERED refusal; no answer is `add-lock-unanswered`', async () => {
     const held = inviteDeps();
-    (held.mlsService as { acquireAddLockAnswer?: unknown }).acquireAddLockAnswer = vi.fn(
-      async () => 'held'
-    );
+    held.mlsService.acquireAddLockAnswer = vi.fn(async () => 'held');
     expect(await inviteMembersToGroup(['bob'], convo, held.deps as never)).toEqual({
       kind: 'not-added',
       reason: 'add-lock-busy',
     });
 
     const silent = inviteDeps();
-    (silent.mlsService as { acquireAddLockAnswer?: unknown }).acquireAddLockAnswer = vi.fn(
-      async () => 'unanswered'
-    );
+    silent.mlsService.acquireAddLockAnswer = vi.fn(async () => 'unanswered');
     expect(await inviteMembersToGroup(['bob'], convo, silent.deps as never)).toEqual({
       kind: 'not-added',
       reason: 'add-lock-unanswered',
