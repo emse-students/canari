@@ -203,6 +203,10 @@ enum InstallOutcome {
     /// Biometric mode found no key - a cancelled or refused sheet, a wiped entry. EXPECTED: the
     /// frontend hands the user to the PIN modal, so it is no failure and does not warn.
     NoKeystoreKey,
+    /// The saved state is framed under another device key (`STATE_KEY_MISMATCH`) - the PIN was
+    /// changed on another device. EXPECTED: the frontend offers the old-PIN recovery, so it does not
+    /// warn either.
+    SealedUnderAnotherKey,
     /// Any other refusal: a verdict on the saved bytes or an untyped failure. Accused.
     Refused,
 }
@@ -220,10 +224,13 @@ impl InstallGuard {
     }
 
     /// Records why this attempt will not install, before its refusal propagates: the code decides
-    /// the drop's level ([`StateLoadRefusal::is_keystore_key_unavailable`]), never its message.
+    /// the drop's level ([`StateLoadRefusal::is_keystore_key_unavailable`],
+    /// [`StateLoadRefusal::is_sealed_under_another_key`]), never its message.
     fn refused(&mut self, refusal: &StateLoadRefusal) {
         self.outcome = if refusal.is_keystore_key_unavailable() {
             InstallOutcome::NoKeystoreKey
+        } else if refusal.is_sealed_under_another_key() {
+            InstallOutcome::SealedUnderAnotherKey
         } else {
             InstallOutcome::Refused
         };
@@ -255,6 +262,9 @@ impl Drop for InstallGuard {
             InstallOutcome::Installed => return,
             InstallOutcome::NoKeystoreKey => log::debug!(
                 "[MLS] initialiser_mls found no keystore key (the PIN modal is next) - ending the native session so no previous one stays installed"
+            ),
+            InstallOutcome::SealedUnderAnotherKey => log::debug!(
+                "[MLS] initialiser_mls found the state sealed under another device key (the old-PIN recovery is next) - ending the native session so no previous one stays installed"
             ),
             InstallOutcome::Unreported | InstallOutcome::Refused => log::warn!(
                 "[MLS] initialiser_mls did not install a manager ({:?}) - ending the native session so no previous one stays installed",
@@ -1899,19 +1909,26 @@ mod tests {
         );
     }
 
-    /// A REFUSED BIOMETRIC SHEET IS AN EXPECTED OUTCOME, AND THE GUARD KNOWS IT BY TYPE: the
-    /// refusal's code makes the outcome `NoKeystoreKey` (a debug line, not a warning), any other
-    /// refusal stays `Refused` - and either way the session is still ended.
+    /// A REFUSED BIOMETRIC SHEET AND AN OLD-PIN STATE ARE EXPECTED OUTCOMES, AND THE GUARD KNOWS THEM
+    /// BY CODE: `NoKeystoreKey` and `SealedUnderAnotherKey` (debug lines, not warnings), any other
+    /// refusal - a text naming either code included - stays `Refused`, and either way the session is
+    /// still ended.
     #[test]
     fn a_keystore_refusal_is_recorded_as_expected_and_still_ends_the_session() {
         let _s = serialise();
         let no_key = StateLoadRefusal::from(mls_core::MlsError::KeystoreKeyUnavailable(
             "sheet cancelled".into(),
         ));
+        let old_pin = StateLoadRefusal::from(mls_core::MlsError::StateSealedUnderAnotherKey(
+            "header names another key".into(),
+        ));
+        let old_pin_in_prose = StateLoadRefusal::from("STATE_KEY_MISMATCH: a sentence".to_string());
         let altered = StateLoadRefusal::from(mls_core::MlsError::StateAltered("tag".into()));
         let untyped = StateLoadRefusal::from("KEYSTORE_KEY_UNAVAILABLE: a sentence".to_string());
         for (refusal, expected) in [
             (no_key, InstallOutcome::NoKeystoreKey),
+            (old_pin, InstallOutcome::SealedUnderAnotherKey),
+            (old_pin_in_prose, InstallOutcome::Refused),
             (altered, InstallOutcome::Refused),
             (untyped, InstallOutcome::Refused),
         ] {

@@ -260,7 +260,7 @@ impl MlsError {
     pub fn state_verdict_code(&self) -> Option<&'static str> {
         match self {
             MlsError::StateAltered(_) => Some("STATE_ALTERED"),
-            MlsError::StateSealedUnderAnotherKey(_) => Some("STATE_KEY_MISMATCH"),
+            MlsError::StateSealedUnderAnotherKey(_) => Some(STATE_KEY_MISMATCH),
             MlsError::StateUndecryptable(_) => Some("STATE_UNDECRYPTABLE"),
             MlsError::StateIdentityMismatch(_) => Some("IDENTITY_MISMATCH"),
             _ => None,
@@ -306,12 +306,24 @@ pub struct StateLoadRefusal {
 /// ([`StateLoadRefusal::is_keystore_key_unavailable`]) cannot drift apart.
 const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
 
+/// The code of [`MlsError::StateSealedUnderAnotherKey`] - one constant for the code written
+/// ([`MlsError::state_verdict_code`]) and the code tested
+/// ([`StateLoadRefusal::is_sealed_under_another_key`]).
+const STATE_KEY_MISMATCH: &str = "STATE_KEY_MISMATCH";
+
 impl StateLoadRefusal {
     /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
     /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
     /// `code` field, never from `message`.
     pub fn is_keystore_key_unavailable(&self) -> bool {
         self.code == Some(KEYSTORE_KEY_UNAVAILABLE)
+    }
+
+    /// True when the saved state is framed under ANOTHER device key (`STATE_KEY_MISMATCH`): the PIN
+    /// was changed on another device and the OLD one opens it - an EXPECTED outcome the caller
+    /// answers with the old-PIN recovery, read from the `code` field, never from `message`.
+    pub fn is_sealed_under_another_key(&self) -> bool {
+        self.code == Some(STATE_KEY_MISMATCH)
     }
 }
 

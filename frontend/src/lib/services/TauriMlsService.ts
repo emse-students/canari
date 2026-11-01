@@ -752,10 +752,10 @@ export class TauriMlsService extends BaseMlsService {
       // this one is a decrypt that failed and handed the rest of its time to a recovery, and a
       // report that merged them would show a fresh-start boot as a slow load.
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
       // `mls.bin` IS ONE FILE PER INSTALL, AND A RECORD BESIDE IT SAYS WHOSE IT IS. When that record
@@ -820,9 +820,6 @@ export class TauriMlsService extends BaseMlsService {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
       } else if (recovery === 'pause') {
-        console.info(
-          `[MLS] The saved state did not open (${cause}) - nothing rotated, nothing written; the gate asks next`
-        );
         throw new SavedStateUnopenedError(
           cause === 'rotated' || cause === 'undecryptable' || cause === 'unreadable_now'
             ? cause

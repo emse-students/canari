@@ -301,11 +301,12 @@ export interface DecryptedApplication {
 /** Options for {@link IMlsService.init}. */
 export interface MlsInitOptions {
   /**
-   * When true, a saved state that fails to decrypt with the given PIN is NOT discarded
-   * via the destructive fresh-start fallback; instead {@link SavedStateUnopenedError}
-   * is thrown so the caller can offer cross-device PIN recovery (decrypt with the old PIN)
-   * before any local history is dropped. A state no PIN can open (`mismatch`, `altered`) is
-   * rotated regardless: pausing for it would strand the user with nothing to try.
+   * When true, a saved state that may be a PIN rotated elsewhere (`rotated`, `undecryptable`) is
+   * NOT rotated away; {@link SavedStateUnopenedError} is thrown so the caller can offer cross-device
+   * PIN recovery (decrypt with the old PIN) before any local history is dropped. It decides ONLY
+   * that: a state no PIN can open (`mismatch`, `altered`) is rotated regardless, and a cause that
+   * proves nothing (`unknown`, `unreadable_now`, an empty keystore) is never rotated, with or
+   * without it ({@link recoveryOfStateLoadFailure}).
    */
   noFreshStart?: boolean;
   /**
@@ -399,8 +400,10 @@ export class GroupDrainAbandonedError extends Error {
 }
 
 /**
- * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
- * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
+ * Thrown by {@link IMlsService.init} when the saved local state did not open under the key in hand
+ * and nothing proves it broken: a reason an OLD PIN may still cure (`rotated`, `undecryptable`)
+ * under `noFreshStart`, and - WHATEVER the caller passed - a cause that proves nothing about the
+ * bytes (`unknown`, `unreadable_now`; {@link recoveryOfStateLoadFailure}). Nothing was written.
  *
  * **IT CARRIES ITS CAUSE AS A TYPE, AND THAT IS WHY IT REPLACED A MESSAGE.** It used to be
  * `new Error('MLS_LOCAL_STATE_UNDECRYPTABLE')`, read back by comparing `reason.message`, and the one

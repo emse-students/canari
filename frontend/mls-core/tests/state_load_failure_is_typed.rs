@@ -358,6 +358,18 @@ fn a_state_load_refusal_carries_its_code_from_the_variant_and_never_from_the_tex
         !StateLoadRefusal::from("KEYSTORE_KEY_UNAVAILABLE: a String".to_string())
             .is_keystore_key_unavailable()
     );
+    // The old-PIN state too: by its CODE, never by text naming it.
+    assert!(
+        StateLoadRefusal::from(MlsError::StateSealedUnderAnotherKey("x".into()))
+            .is_sealed_under_another_key()
+    );
+    assert!(
+        !StateLoadRefusal::from(MlsError::StateAltered("x".into())).is_sealed_under_another_key()
+    );
+    assert!(
+        !StateLoadRefusal::from("STATE_KEY_MISMATCH: a String".to_string())
+            .is_sealed_under_another_key()
+    );
     // An untyped refusal keeps its whole `Display`: it has no code field to lead its log line.
     let untyped = MlsError::OpenMls("a codec error".into());
     let shown = untyped.to_string();

@@ -32,7 +32,6 @@ import {
   VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
-import { MlsStateLoadUntypedError } from '$lib/mls-client/mlsStateLoadError';
 import {
   heldLastResortKeyPackage,
   mintKeyPackages,
@@ -850,10 +849,10 @@ export class WebMlsService extends BaseMlsService {
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
       // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN - same reasoning as
@@ -923,9 +922,6 @@ export class WebMlsService extends BaseMlsService {
         opts?.noFreshStart === true
       );
       if (recovery === 'pause') {
-        console.info(
-          `[MLS] The saved state did not open (${cause}) - nothing rotated, nothing written; the gate asks next`
-        );
         throw new SavedStateUnopenedError(
           cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
           e
@@ -943,9 +939,10 @@ export class WebMlsService extends BaseMlsService {
             : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
-        // ONE LINE PER FAILURE: an untyped refusal was already accused at its boundary
-        // (`mlsStateLoadErrorOf`), and a second line here was the same failure logged twice.
-        if (!(e instanceof MlsStateLoadUntypedError)) console.error('[MLS] WASM init failed:', e);
+        // ONE LINE PER FAILURE: an `unknown` cause was already accused - at its boundary
+        // (`mlsStateLoadErrorOf`) or, for an error no boundary built, by `classifyStateLoadFailure` -
+        // and a second line here was the same failure logged twice.
+        if (cause !== 'unknown') console.error('[MLS] WASM init failed:', e);
         throw e;
       }
     }

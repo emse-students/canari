@@ -177,4 +177,18 @@ describe('WebMlsService init - a cause that proves nothing destroys nothing', ()
     ].filter((c) => String(c[0]).includes('a trap') || String(c[1]).includes('a trap'));
     expect(lines).toHaveLength(1);
   });
+
+  it('an error NO boundary built (a TypeError) with no state is logged ONCE - by the classifier', async () => {
+    loadAndInitWasm.mockRejectedValue(new TypeError('a wiring fault'));
+    const ctx = makeCtx();
+
+    const failure = await initImpl(ctx, undefined, {}).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(TypeError);
+    const lines = [
+      ...vi.mocked(console.warn).mock.calls,
+      ...vi.mocked(console.error).mock.calls,
+    ].filter((c) => c.some((part) => String(part).includes('a wiring fault')));
+    expect(lines).toHaveLength(1);
+  });
 });
