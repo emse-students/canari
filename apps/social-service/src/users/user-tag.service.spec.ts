@@ -549,6 +549,18 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
           )
       );
 
+    // The mode is read under the buyer's tier lock: a payment landing after cotisations were
+    // disabled is a typed, FINAL refusal - not a BadRequestException the caller reads as retryable.
+    it('answers a typed COTISATION_NOT_ENABLED, and throws nothing, when the mode is gone', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: null }, []);
+
+      expect(
+        await service.grantCotisantIfARise('asso1', 'user1', 'system', 'sans-alcool', {})
+      ).toEqual({ refused: 'COTISATION_NOT_ENABLED' });
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
     it('refuses a cheaper tier than the one held, and grants and revokes nothing', async () => {
       const { service, repo } = makeService();
       mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, priced);

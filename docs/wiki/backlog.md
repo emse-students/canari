@@ -43,37 +43,6 @@ no `bookings` host on Android - a cost accepted on 2026-10-29
 release on both estates (the owner's gesture), read it back from the public version endpoint, and
 delete this entry.
 
-## Cotisation-disabled follow-ups (after the tier stack lands)
-
-Left by the review of #2584. Start after the tier stack has merged.
-
-- **P2 - a paid form that grants a cotisation still takes money after its association disables
-  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
-  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
-  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
-  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
-  record is written), but the grant is still retried as if it could succeed. Fix it like the
-  product path: refuse opening the payment of a granting form while the association has no
-  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
-- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
-  membership product with a cotisation mode but no stored tag opens a checkout, then ends
-  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
-  operator, privately.
-- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
-  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
-  never one whose tier is no longer a rise when the sweep settles it.
-- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
-  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
-- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
-  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
-  local fresh-database run only - CI never shows it. Make the spec create what it reads.
-- **P3 - retagging a tier leaves the forms that grant the old key behind.** Changing a tier's key
-  does not update the `cotisationVariantKey` of the forms granting the old one: those forms then
-  refuse every new answer (the tier ranks `unranked`) and an answer already in flight ends
-  `paid_not_granted`. Either carry the new key to those forms in the retag's transaction, or refuse
-  the retag while a form still names the old key; the hourly `[PAID_NOT_GRANTED]` line is what
-  names a payment it already caught.
-
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
 Left by the review of #2544. Start after the tier stack (#2544 and its followers) has merged.
@@ -929,27 +898,13 @@ over HTTPS (a portal cannot answer for the server without a certificate error, w
 failure), but the rig reproduces it over plain HTTP. Fix: the content-type check before counting a
 send. Owed: one device reading on the Mi 9T behind a portal.
 
-## P2/P3 - Writes that trust a 2xx without reading anything (review of #2428, 2026-10-25)
-
-#2428 covered the places that PARSE a 2xx. About 140 write sites read no body at all, so a portal's
-`200` is believed. Ranked:
-
-- **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
-  (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.
-- **P3** `registerMember` swallows every outcome but its two typed refusals (`USER_BLOCKED`,
-  `MEMBER_NOT_ADMITTED` since ADM-3); its removal condition is
-  [legacy-compatibility](legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
-
-The plan is the shared guard (`assertAnsweredByApi`, `utils/apiJson.ts`) applied per site with its
-test. `dismissGroup` and `removeMemberFromServer` already carry it (#2428). A blanket sweep inside `apiFetch` is not the plan: some routes answer
-non-JSON on purpose (media, files).
-
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 
-`trackedFetch` calls `tracked.answered` on the portal's `200` before any reader sees the body, and
-every other `apiFetch` (a presence poll, the version probe) does the same. So the store never leaves
-"reachable", and when the portal ends there is no transition for the reconnect resume to fire on: a
-kept send goes on its backoff ladder, up to 60 s later. It is not a local fix. Reporting
+`trackedFetch` no longer counts the portal's page as an answer, and the probe no longer ends on it
+([offline-and-weak-network section 22](frontend/offline-and-weak-network.md#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01)):
+it settles the request and moves no reading. But nothing MARKS the server down either, so the store
+never leaves "reachable", and when the portal ends there is no transition for the reconnect resume to
+fire on: a kept send goes on its backoff ladder, up to 60 s later. It is not a local fix. Reporting
 `tracked.failed` on the send alone would flip the store, and the next poll answered by the same
 portal would flip it back and fire a resume into the portal. The fix needs `trackedFetch` to know
 which routes speak JSON, the version probe included.
