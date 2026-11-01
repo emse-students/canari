@@ -154,8 +154,8 @@ text. From this editor only `MEMBER_PRICE_TAG_NOT_A_TIER` can still arrive (the 
 tier): a derived key is never year-shaped and the edit form sends no key, so `TIER_KEY_YEAR_SHAPED`
 answers only a client that still types one.
 
-What this removed: the "changing the identifier transfers the cotisants" field - recorded in
-[backlog](backlog.md#p3---no-screen-turns-the-base-tier-into-a-named-one-2026-10-26).
+What this removed: the "changing the identifier transfers the cotisants" field. No screen turns the
+base tier into a named one.
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 

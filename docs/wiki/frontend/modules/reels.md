@@ -1231,6 +1231,5 @@ and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never pa
 **Fix, at capture time**: a reel is prepared with `trimToVideo` (`prepareVideoForUpload`,
 `videoSpanTrim`): the output is cut to the video track's own span, so no pass shows a still picture
 over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
-a seek-free loop (re-appending the segments to MSE) is a design of its own, in
-[backlog](../../backlog.md#p3---a-reels-loop-holds-its-first-frame-210-ms-longer-than-the-file-says-on-the-mi-9t-measured-2026-10-16-not-built).
+a seek-free loop (re-appending the segments to MSE) is a design of its own, not built.
 A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.

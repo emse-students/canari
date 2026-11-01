@@ -3358,7 +3358,7 @@ The outbox asked whether the group still existed before every send (a reply reac
 
 ### Session state of 2026-10-12, and three release rules
 
-The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-12.md)).
+The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
 
 ### Fixed - the typing bubble stands clear of the composer instead of sitting on its edge
 
@@ -4286,7 +4286,7 @@ The DSI replaced the CAS callback with the new host, so `auth.canari-emse.fr` an
 
 ### Changed - every navigation goes through `resolve()`, and the lint rule that enforces it is on
 
-The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled ([backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md)).
+The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled.
 
 ### Fixed - a `returnTo` carries no base path, and a bad `?redirect=` falls back instead of throwing
 
@@ -7492,7 +7492,6 @@ quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence
 La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
-[backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md).
 
 ### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
 
