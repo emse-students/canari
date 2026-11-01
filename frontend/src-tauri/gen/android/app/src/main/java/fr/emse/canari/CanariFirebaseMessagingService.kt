@@ -2020,6 +2020,36 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * The caller's photo for the incoming-call SCREEN, which draws it full-bleed (the blurred
+         * backdrop) and as a 144dp face - so the notification icon, circle-cropped at
+         * [notificationIconSizePx], is the wrong picture twice: a disc with transparent corners
+         * behind the blur, and an upscaled face. The ORIGINAL bytes are in [avatarCacheFile];
+         * [fetchAvatar] runs first only so a miss fills that cache by the one path that may
+         * (push secret, remembered absence). Decoded UNCROPPED, sampled to [targetPx] by
+         * [decodeSampled]; the screen crops the face itself, in drawing.
+         *
+         * @return null when the caller has no photo; a non-null with `uncropped = false` when only
+         *   the icon could be had (the cache file unreadable) - the screen then keeps its gradient
+         *   and shows the icon as the face. Network I/O on a miss: OFF the main thread.
+         */
+        fun callScreenPhoto(context: Context, userId: String, targetPx: Int): CallScreenPhoto? {
+            val icon = context.fetchAvatar(userId) ?: return null
+            val file = context.avatarCacheFile(userId)
+            val full = if (file.exists()) {
+                context.decodeSampled(targetPx) { BitmapFactory.decodeFile(file.absolutePath, it) }
+            } else {
+                null
+            }
+            if (full == null) {
+                Log.w(TAG, "callScreenPhoto: no readable original for ${userId.take(8)} (exists=${file.exists()}) - the icon is the face, no backdrop")
+                return CallScreenPhoto(icon, uncropped = false)
+            }
+            icon.recycle()
+            Log.d(TAG, "callScreenPhoto: ${full.width}x${full.height} uncropped for ${userId.take(8)} (target=$targetPx)")
+            return CallScreenPhoto(full, uncropped = true)
+        }
+
+        /**
          * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
          *
          * Extracted from [fetchAvatar] when the association logo became a second caller. The cache

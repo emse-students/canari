@@ -11,4 +11,13 @@
     <color name="call_halo">#FFF6C232</color>
     <color name="call_accept">#FF16A34A</color>
     <color name="call_decline">#FFDC2626</color>
+    <!-- The white inks over that dark screen, as the in-app ring writes them: text-white,
+         the kind pill's bg-white/10 and ring-white/15, its text-white/90, the action labels'
+         white at 85%, and the buttons' press ripple at 30%. -->
+    <color name="call_on_screen">#FFFFFFFF</color>
+    <color name="call_on_screen_secondary">#E6FFFFFF</color>
+    <color name="call_on_screen_label">#D9FFFFFF</color>
+    <color name="call_pill_fill">#1AFFFFFF</color>
+    <color name="call_pill_stroke">#26FFFFFF</color>
+    <color name="call_ripple">#4DFFFFFF</color>
 </resources>

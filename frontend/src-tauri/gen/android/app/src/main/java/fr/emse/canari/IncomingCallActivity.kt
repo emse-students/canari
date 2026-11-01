@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -36,6 +35,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.lang.ref.WeakReference
+
+/**
+ * The caller's photo for the call screen ([CanariFirebaseMessagingService.callScreenPhoto]):
+ * [uncropped] says whether [bitmap] is the whole original (backdrop and face) or only the
+ * circle-cropped notification icon (the face alone).
+ */
+class CallScreenPhoto(val bitmap: Bitmap, val uncropped: Boolean)
 
 /**
  * THE INCOMING-CALL SCREEN OF A CLOSED OR LOCKED PHONE (the native ring, owner 2026-10-30): the
@@ -190,11 +196,13 @@ class IncomingCallActivity : Activity() {
             Log.d(TAG, "caller not named on this phone - no photo on the call screen")
         } else {
             val app = applicationContext
+            // The ORIGINAL photo, sampled to the screen's short edge: the backdrop is full-bleed.
+            val target = minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
             Thread({
-                val bitmap = CanariFirebaseMessagingService.callAvatar(app, callerId)
+                val photo = CanariFirebaseMessagingService.callScreenPhoto(app, callerId, target)
                 runOnUiThread {
-                    if (bitmap != null && !isFinishing) screen.showPhoto(bitmap)
-                    Log.d(TAG, "caller photo on the call screen: ${bitmap != null}")
+                    if (photo != null && !isFinishing) screen.showPhoto(photo)
+                    Log.d(TAG, "caller photo on the call screen: ${photo != null} uncropped=${photo?.uncropped}")
                 }
             }, "canari-ring-avatar").start()
         }
@@ -202,13 +210,15 @@ class IncomingCallActivity : Activity() {
 
     /** The views a late photo lands in: the face itself, and the blurred backdrop behind the screen. */
     private class Screen(val photo: ImageView, val initials: TextView, val backdrop: ImageView) {
-        fun showPhoto(bitmap: Bitmap) {
-            photo.setImageBitmap(bitmap)
+        fun showPhoto(source: CallScreenPhoto) {
+            // The face is cropped round IN DRAWING (its frame clips to its oval, CENTER_CROP fills it).
+            photo.setImageBitmap(source.bitmap)
             photo.visibility = View.VISIBLE
             initials.visibility = View.GONE
-            // The blur needs RenderEffect (API 31); below it the gradient alone is the backdrop.
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
-                backdrop.setImageBitmap(bitmap)
+            // The backdrop wants the whole, UNCROPPED photo - the notification icon would blur into a
+            // disc with transparent corners - and RenderEffect (API 31). Otherwise the gradient alone.
+            if (source.uncropped && android.os.Build.VERSION.SDK_INT >= 31) {
+                backdrop.setImageBitmap(source.bitmap)
                 backdrop.visibility = View.VISIBLE
             }
         }
@@ -291,7 +301,7 @@ class IncomingCallActivity : Activity() {
         val initials = TextView(this).apply {
             layoutParams = FrameLayout.LayoutParams(match, match)
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+            setTextColor(getColor(R.color.call_on_screen))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
             setTypeface(typeface, Typeface.BOLD)
             text = initialsOf(title)
@@ -325,7 +335,7 @@ class IncomingCallActivity : Activity() {
         val name = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(wrap, wrap).apply { topMargin = dp(8) }
             text = title
-            setTextColor(Color.WHITE)
+            setTextColor(getColor(R.color.call_on_screen))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
@@ -339,8 +349,8 @@ class IncomingCallActivity : Activity() {
             setPadding(dp(12), dp(6), dp(14), dp(6))
             background = GradientDrawable().apply {
                 cornerRadius = dp(999).toFloat()
-                setColor(withAlpha(Color.WHITE, 0.1f))
-                setStroke(dp(1), withAlpha(Color.WHITE, 0.15f))
+                setColor(getColor(R.color.call_pill_fill))
+                setStroke(dp(1), getColor(R.color.call_pill_stroke))
             }
             addView(ImageView(this@IncomingCallActivity).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) }
@@ -349,7 +359,7 @@ class IncomingCallActivity : Activity() {
             })
             addView(TextView(this@IncomingCallActivity).apply {
                 text = res.getString(if (hasVideo) R.string.call_screen_kind_video else R.string.call_screen_kind_audio)
-                setTextColor(withAlpha(Color.WHITE, 0.9f))
+                setTextColor(getColor(R.color.call_on_screen_secondary))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
                 setTypeface(typeface, Typeface.BOLD)
             })
@@ -544,7 +554,7 @@ class IncomingCallActivity : Activity() {
         clipToPadding = false
         addView(ImageButton(this@IncomingCallActivity).apply {
             layoutParams = LinearLayout.LayoutParams(dp(72), dp(72))
-            background = RippleDrawable(ColorStateList.valueOf(withAlpha(Color.WHITE, 0.3f)), oval(color), null)
+            background = RippleDrawable(ColorStateList.valueOf(getColor(R.color.call_ripple)), oval(color), null)
             setImageResource(icon)
             setPadding(dp(20), dp(20), dp(20), dp(20))
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -557,7 +567,7 @@ class IncomingCallActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { topMargin = dp(10) }
             text = label
-            setTextColor(withAlpha(Color.WHITE, 0.85f))
+            setTextColor(getColor(R.color.call_on_screen_label))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })

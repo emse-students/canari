@@ -716,7 +716,7 @@
               data-testid="call-halo"
             ></div>
             <div
-              class="bg-cn-yellow/20 motion-safe:animate-call-halo absolute inset-0 rounded-full motion-safe:[animation-delay:1.2s]"
+              class="bg-cn-yellow/20 motion-safe:animate-call-halo-late absolute inset-0 rounded-full"
             ></div>
           {/if}
           <div

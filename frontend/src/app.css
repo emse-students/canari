@@ -173,6 +173,8 @@
      Tailwind's `ping`, which doubles in size and snaps back. Gated `motion-safe` at its call site,
      and the global reduced-motion rule below would stop it anyway. */
   --animate-call-halo: callHalo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  /* The second halo: the same breath, half of it (1.2s) behind the first. */
+  --animate-call-halo-late: callHalo 2.4s cubic-bezier(0, 0, 0.2, 1) 1.2s infinite;
   @keyframes callHalo {
     0% {
       transform: scale(1);
