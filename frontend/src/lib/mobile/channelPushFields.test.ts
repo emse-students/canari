@@ -72,6 +72,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     'utf8'
   );
   const channelSeal = readFileSync(resolve(here, '../utils/graine/channelSeal.ts'), 'utf8');
+  const messaging = readFileSync(resolve(here, '../composables/useMessaging.svelte.ts'), 'utf8');
 
   const fanOutBody = functionBody(
     serviceSource,
@@ -309,9 +310,21 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(rustCommand).toContain('ZJJIZ)Z');
     expect(channelHandler).toContain('authorProven = opening.authorProven;');
     expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
+    // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT (review of #2888, LOW-1): the socket
+    // trigger names a salon's speaker from `display_names.json`, and resolving the sender is what
+    // notes the name - so the mirror is flushed between the two, never after the post.
+    const resolved = messaging.indexOf('void resolveNotificationSenderName(senderId, convo)');
+    const flushed = messaging.indexOf('await flushNameMirror();', resolved);
+    const posted = messaging.indexOf(
+      'ctx.sendSystemNotification(senderName, notificationBody',
+      resolved
+    );
+    expect(resolved).toBeGreaterThan(-1);
+    expect(flushed).toBeGreaterThan(resolved);
+    expect(posted).toBeGreaterThan(flushed);
     // NEVER A BORROWED FACE: a line not added (the other trigger posted it first) lends no icon.
     expect(kotlinSource).toMatch(
-      /\} else if \(alreadyPosted\) \{[\s\S]{0,400}style\.messages\.lastOrNull\(\)\?\.person\?\.icon/
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,600}style\.messages\s*\.lastOrNull \{[^}]*\}\s*\?\.person\?\.icon/
     );
 
     // The NSE handler ALONE: the shared slice runs on past it, into the rule's own definition.

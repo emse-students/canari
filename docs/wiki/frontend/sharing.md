@@ -149,8 +149,9 @@ preselection, never a destination by itself.
   published before that are retired ONCE PER INSTALL: `CanariApplication` calls
   `ConversationShortcuts.removeRecordedWithPrefix` (`removeLongLivedShortcuts`, the record rewritten,
   the count logged at INFO) and then writes the done flag `salon_shortcuts_retired`
-  (SharedPreferences `canari_one_time_steps`) - only after a removal that did not fail, so a failure
-  is tried again at the next start. **A salon shortcut the user pinned to the home screen is disabled
+  (SharedPreferences `canari_one_time_steps`) - only after a removal that did not fail, and never on
+  an unreadable record (`ShortcutRecord.readOrNull` answers null), so either is tried again at the
+  next start. **A salon shortcut the user pinned to the home screen is disabled
   too** (`disablePinnedShortcuts`): it stays on the launcher, greyed out, and says it is no longer
   available.
 - **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch

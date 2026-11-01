@@ -109,7 +109,41 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
     // The second trigger of one message adds no line; its own icon then describes nothing shown,
     // so the large icon is the face of the line the shade shows last.
     expect(kotlin).toMatch(
-      /\} else if \(alreadyPosted\) \{[\s\S]{0,400}val shownFace = style\.messages\.lastOrNull\(\)\?\.person\?\.icon\?\.toIcon\(/
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,500}val shownFace = style\.messages\s*\.lastOrNull \{ it\.person != null && it\.person\?\.name != selfPerson\.name \}\s*\?\.person\?\.icon\?\.toIcon\(/
+    );
+    // The reader's own inline reply is attributed to the style's user (`selfPerson`, or no Person):
+    // its face is never the conversation's (review of #2888, LOW-2).
+    expect(kotlin).toContain('previous.user');
+  });
+
+  it('retires the salon shortcuts once, and never on an unreadable record (review of #2888, LOW-3)', () => {
+    // An unreadable record is not "nothing recorded": the removal answers null, and the done flag
+    // is written only for a non-null answer, so the next start tries again.
+    const shortcuts = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java/ConversationShortcuts.kt'
+      ),
+      'utf8'
+    );
+    const record = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java/ShortcutRecord.kt'
+      ),
+      'utf8'
+    );
+    const application = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariApplication.kt'
+      ),
+      'utf8'
+    );
+    expect(shortcuts).toContain('val ids = record.readOrNull(context) ?: return null');
+    expect(record).toMatch(/is unreadable: \$\{e\.message\}"\)\s*null\s*\}/);
+    expect(application).toMatch(
+      /if \(removed != null\) \{\s*migrations\.edit\(\)\.putBoolean\(SALON_SHORTCUTS_RETIRED, true\)\.apply\(\)/
     );
   });
 });

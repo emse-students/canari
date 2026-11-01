@@ -2503,8 +2503,12 @@ them. The name never rides the push and is never fetched on the push path (user 
     neither (review of #2881, which caught a first version naming nobody on the socket path while
     the push named the author).
   - **Never a borrowed face.** The second trigger adds no line, so its large icon describes nothing
-    shown: a shortcut-less post (a salon) takes the face of the line the shade shows LAST
-    (`style.messages.lastOrNull()?.person?.icon`), never the icon the second call brought.
+    shown: a shortcut-less post (a salon) takes the face of the last line SOMEBODY ELSE wrote,
+    never the icon the second call brought, and never the reader's own inline reply (attributed to
+    the style's user, `selfPerson`).
+  - **The name is on disk before the socket trigger reads it.** `notifyInbound` resolves the sender
+    (which notes the name for `display_names.json`), then awaits `flushNameMirror`, then posts: a
+    proven author resolved in that very task is named, not "Quelqu'un".
   - **The title is the last trigger's wording.** The push titles a salon `<Communaute> - #<salon>`
     (`buildChannelPushTitle`, from its payload's workspace name); the WebView's salon row carries no
     community name, so the socket trigger titles it with the salon alone (`notificationGroupName`).
