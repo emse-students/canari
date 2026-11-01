@@ -210,6 +210,10 @@ fn take_ndjson_handoff(
 
 /// The file the native push paths write (Android `appendFcmCacheEntry`, iOS `canari_push.mm`).
 const FCM_CACHE_FILE: &str = "fcm_message_cache.ndjson";
+/// What `CanariDrainAppGroupFcmCache` (canari_push.mm) renamed the App Group's file to before copying
+/// it - the rename is the drain's first step, so an entry is here until its copy has landed.
+/// MIRRORED BY `kFcmCacheDrainingFileName` there.
+const FCM_CACHE_DRAINING_FILE: &str = "fcm_message_cache.ndjson.draining";
 /// What [`take_fcm_cache_in`] moved aside is `<prefix><generation>.ndjson`, kept until the
 /// frontend has persisted it ([`ack_fcm_cache_in`]). One file per take, never appended to.
 pub(crate) const FCM_CACHE_TAKEN_PREFIX: &str = "fcm_message_cache.taken.";
@@ -470,6 +474,7 @@ pub(crate) fn push_cache_message_ids_in(
     for dir in dirs {
         let mut names: Vec<String> = taken_files(dir).into_iter().map(|(_, n)| n).collect();
         names.push(FCM_CACHE_FILE.to_string());
+        names.push(FCM_CACHE_DRAINING_FILE.to_string());
         for name in names {
             let text = match std::fs::read_to_string(dir.join(&name)) {
                 Ok(t) => t,
@@ -2650,7 +2655,9 @@ mod delete_user_push_files_tests {
 
 #[cfg(test)]
 mod fcm_cache_take_tests {
-    use super::{ack_fcm_cache_in, take_fcm_cache_in, FcmCacheTake, FCM_CACHE_FILE};
+    use super::{
+        ack_fcm_cache_in, take_fcm_cache_in, FcmCacheTake, FCM_CACHE_DRAINING_FILE, FCM_CACHE_FILE,
+    };
     use crate::native_cache::{seal_line, CacheKey, Purpose};
 
     const KEY: CacheKey = [5u8; 32];
@@ -2844,6 +2851,24 @@ mod fcm_cache_take_tests {
             vec!["taken", "live"]
         );
         std::fs::remove_dir_all(&d).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// AN ENTRY IN THE MIDDLE OF THE iOS DRAIN IS STILL READ: the drain renames the App Group's file
+    /// before it copies it, and the copy may fail and leave it there for the next activation.
+    #[test]
+    fn an_entry_being_drained_is_still_read() {
+        let group = dir("ids-draining");
+        push_presented(&group, "draining", Some(true));
+        std::fs::rename(
+            group.join(FCM_CACHE_FILE),
+            group.join(FCM_CACHE_DRAINING_FILE),
+        )
+        .unwrap();
+        push_presented(&group, "after", Some(true));
+        let mut found = super::push_cache_message_ids_in(&[group.as_path()], Some(&KEY));
+        found.sort();
+        assert_eq!(found, vec!["after", "draining"]);
         std::fs::remove_dir_all(&group).ok();
     }
 

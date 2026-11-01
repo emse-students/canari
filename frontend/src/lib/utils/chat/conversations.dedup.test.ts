@@ -1,7 +1,6 @@
 import { mergeDirectConversationDuplicates } from './conversations';
 import type { ConversationMeta } from '$lib/db/types';
 import type { IStorage } from '$lib/db/types';
-import type { IMlsService } from '$lib/mls-client/IMlsService';
 
 const ME = 'aaaa0000-0000-0000-0000-000000000000';
 const PEER = 'bbbb0000-0000-0000-0000-000000000000';
@@ -31,19 +30,12 @@ function makeStorage(): IStorage {
   } as unknown as IStorage;
 }
 
-function makeMlsService(getGroupMetaImpl: (id: string) => unknown): IMlsService {
-  return {
-    getGroupMeta: vi.fn().mockImplementation((id: string) => Promise.resolve(getGroupMetaImpl(id))),
-    deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
-  } as unknown as IMlsService;
-}
-
 describe('mergeDirectConversationDuplicates', () => {
   it('traite deux groupes du meme pair comme doublons independants (successeurs retires) - garde le plus recent', async () => {
     // Successors are retired: even a former predecessor/successor pair is now merged as two
     // independent duplicates, keeping the most recent and removing the older one everywhere.
     const storage = makeStorage();
-    const mls = makeMlsService(() => null);
+    const owed: string[] = [];
 
     const result = await mergeDirectConversationDuplicates(
       [makeMeta(PRED_ID, 900), makeMeta(SUCC_ID, 1000)],
@@ -51,21 +43,21 @@ describe('mergeDirectConversationDuplicates', () => {
       'pin',
       storage,
       () => {},
-      mls
+      owed
     );
 
     // The most recent (SUCC) is kept, the older (PRED) is removed locally and on the server.
     expect(result.map((c) => c.id)).toContain(SUCC_ID);
     expect(result.map((c) => c.id)).not.toContain(PRED_ID);
     expect(storage.deleteConversation).toHaveBeenCalledWith(PRED_ID);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(PRED_ID);
+    expect(owed).toHaveLength(1);
+    expect(owed[0]).toBe(PRED_ID);
   });
 
-  it('actually calls deleteGroupOnServer for a true duplicate with no succession relationship', async () => {
+  it('owes the server delete of a true duplicate with no succession relationship', async () => {
     // Two independent groups for the same peer (two devices opened the conv at the same time).
     const storage = makeStorage();
-    const mls = makeMlsService(() => null); // aucune relation successeur
+    const owed: string[] = [];
 
     const older = makeMeta(IND_A, 500);
     const newer = makeMeta(IND_B, 1000);
@@ -76,16 +68,16 @@ describe('mergeDirectConversationDuplicates', () => {
       'pin',
       storage,
       () => {},
-      mls
+      owed
     );
 
     // The most recent is kept
     expect(result.map((c) => c.id)).toContain(IND_B);
     expect(result.map((c) => c.id)).not.toContain(IND_A);
     expect(storage.deleteConversation).toHaveBeenCalledWith(IND_A);
-    // deleteGroupOnServer MUST be called to prevent resurrection via discoverMissingGroups
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(IND_A);
+    // The server delete MUST be owed, or discoverMissingGroups resurrects the duplicate
+    expect(owed).toHaveLength(1);
+    expect(owed[0]).toBe(IND_A);
   });
 });
 
@@ -113,7 +105,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
 
   it('does not take a fresh conversation with the same peer, even when it is the newer record', async () => {
     const storage = makeStorage();
-    const mls = makeMlsService(() => null);
+    const owed: string[] = [];
 
     const result = await mergeDirectConversationDuplicates(
       [tomb(2000), makeMeta(FRESH_ID, 1000)],
@@ -121,7 +113,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
       'pin',
       storage,
       () => {},
-      mls
+      owed
     );
 
     // BOTH SURVIVE. The tombstone stays until a MANUAL deletion (rules 2 and 4) and the new
@@ -129,7 +121,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
     // is not deleted on the server, which would take it from the peer as well.
     expect(result.map((c) => c.id).sort()).toEqual([FRESH_ID, TOMB_ID].sort());
     expect(storage.deleteConversation).not.toHaveBeenCalled();
-    expect(mls.deleteGroupOnServer).not.toHaveBeenCalled();
+    expect(owed).toEqual([]);
   });
 
   it('is not absorbed INTO the fresh one either, when it is the older record', async () => {
@@ -137,7 +129,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
     // looks harmless and is not - a record kept deliberately until the user removes it would vanish
     // on a login, and its messages would surface inside a conversation the user thinks is new.
     const storage = makeStorage();
-    const mls = makeMlsService(() => null);
+    const owed: string[] = [];
 
     const result = await mergeDirectConversationDuplicates(
       [tomb(500), makeMeta(FRESH_ID, 1000)],
@@ -145,19 +137,19 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
       'pin',
       storage,
       () => {},
-      mls
+      owed
     );
 
     expect(result.map((c) => c.id).sort()).toEqual([FRESH_ID, TOMB_ID].sort());
     expect(storage.deleteConversation).not.toHaveBeenCalled();
-    expect(mls.deleteGroupOnServer).not.toHaveBeenCalled();
+    expect(owed).toEqual([]);
   });
 
   it('still merges two LIVE duplicates, so the guard is the lifecycle and not the peer', async () => {
     // The anti-vacuity case: a guard that switched the merge off entirely would pass both cases
     // above and break the thing this function exists for.
     const storage = makeStorage();
-    const mls = makeMlsService(() => null);
+    const owed: string[] = [];
 
     const result = await mergeDirectConversationDuplicates(
       [makeMeta(IND_A, 900), makeMeta(IND_B, 1000)],
@@ -165,7 +157,7 @@ describe('mergeDirectConversationDuplicates - a record pending deletion', () => 
       'pin',
       storage,
       () => {},
-      mls
+      owed
     );
 
     expect(result.map((c) => c.id)).toEqual([IND_B]);

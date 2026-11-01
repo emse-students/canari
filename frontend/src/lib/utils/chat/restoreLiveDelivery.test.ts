@@ -203,7 +203,8 @@ describe('the seed waits on no network', () => {
     expect(seeded.owedServerDeletes).toEqual(['dm-old']);
     expect([...conversations.keys()]).toEqual(['dm-new']);
 
-    deleteGroupOnServer.mockImplementation(async () => {});
+    // The history phase sends it AFTER its replay and does not wait on it either: the delete still
+    // never answers, and the replay resolves.
     await replayConversationHistories(ctx, seeded);
     expect(deleteGroupOnServer).toHaveBeenCalledWith('dm-old');
   });

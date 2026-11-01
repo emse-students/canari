@@ -4,16 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * THE iOS FOREGROUND FLAG AND THE PUSH CACHE DRAIN, asserted on the native source - the only gate
- * these have short of an iPhone (`docs/wiki/device-verification.md`).
+ * THE iOS ACTIVE SIGNAL, THE FOREGROUND FLAG AND THE PUSH CACHE DRAIN, asserted on the native
+ * source - the only gate these have short of an iPhone (`docs/wiki/device-verification.md`).
  *
- * - The flag the page reads (`window.__canariForeground`) is told from the same two callbacks that
- *   set the extension's App Group flag, and after every page load: without it the page read "in
- *   front" in every state and decided as an app on screen.
+ * - The page is told whether the app is ACTIVE (`window.__canariActive`, `appActive.ts`) from the
+ *   same two callbacks that set the extension's App Group flag, and after every page load - and NOT
+ *   through `__canariForeground`, which ten other consumers read with its own meaning.
  * - A new process clears the App Group flag at launch: one that died in front never ran
  *   `willResignActive`, and every push after it was written `presented: false` and announced twice.
- * - The drain writes the app's copy BEFORE it removes the App Group file, and removes it only if the
- *   extension wrote nothing meanwhile: the other order lost every entry a failed write held.
+ * - The drain RENAMES the App Group file before reading it, writes the app's copy, and only then
+ *   removes the renamed file: nothing the extension writes during the drain can be deleted unread.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCES = resolve(here, '../../../src-tauri/gen/apple/Sources/canari');
@@ -28,31 +28,30 @@ function body(source: string, signature: string): string {
   return source.slice(start, end);
 }
 
-describe('the iOS foreground flag', () => {
+describe('the iOS active signal', () => {
   it('is told to the page on both transitions', () => {
     expect(body(IOS_MM, 'static void CanariOnDidBecomeActive(')).toContain(
-      'CanariPushForegroundToPage(YES)'
+      'CanariPushActiveToPage(YES)'
     );
     expect(body(IOS_MM, 'static void CanariOnWillResignActive(')).toContain(
-      'CanariPushForegroundToPage(NO)'
+      'CanariPushActiveToPage(NO)'
     );
   });
 
   it('is told again after every page load', () => {
-    const observer = IOS_MM.slice(
-      IOS_MM.indexOf('@implementation CanariLoadObserver'),
-      IOS_MM.indexOf('@end', IOS_MM.indexOf('@implementation CanariLoadObserver'))
-    );
-    expect(observer).toContain('CanariPushForegroundToPage(g_isInForeground');
+    const start = IOS_MM.indexOf('@implementation CanariLoadObserver');
+    const observer = IOS_MM.slice(start, IOS_MM.indexOf('@end', start));
+    expect(observer).toContain('CanariPushActiveToPage(g_isInForeground');
   });
 
-  it('writes the global and the event Android writes', () => {
-    const push = body(IOS_MM, 'static void CanariPushForegroundToPage(BOOL inForeground) {');
-    expect(push).toContain('window.__canariForeground=');
-    expect(push).toContain("'canari:foreground'");
+  it('writes its own global and event, and leaves the foreground flag alone', () => {
+    const push = body(IOS_MM, 'static void CanariPushActiveToPage(BOOL active) {');
+    expect(push).toContain('window.__canariActive=');
+    expect(push).toContain("'canari:active'");
+    expect(IOS_MM).not.toMatch(/__canariForeground\s*=/);
   });
 
-  it('is cleared in the App Group at every launch', () => {
+  it('the App Group foreground flag is cleared at every launch', () => {
     const bootstrap = body(IOS_MM, 'void canari_ios_bootstrap(void) {');
     const launch = bootstrap.slice(
       bootstrap.indexOf('UIApplicationDidFinishLaunchingNotification'),
@@ -66,16 +65,26 @@ describe('the iOS foreground flag', () => {
 describe('the App Group push cache drain', () => {
   const drain = body(PUSH_MM, 'void CanariDrainAppGroupFcmCache(void) {');
 
-  it("writes the app's copy before it removes the App Group file", () => {
+  it('renames the App Group file, then copies it, then removes the renamed file', () => {
+    const rename = drain.indexOf('moveItemAtURL:srcUrl toURL:drainingUrl');
+    const read = drain.indexOf('stringWithContentsOfURL:drainingUrl');
     const write = drain.indexOf('writeToFile:');
-    const remove = drain.indexOf('removeItemAtURL:');
-    expect(write).toBeGreaterThanOrEqual(0);
+    const remove = drain.lastIndexOf('removeItemAtURL:drainingUrl');
+    expect(rename).toBeGreaterThanOrEqual(0);
+    expect(read).toBeGreaterThan(rename);
+    expect(write).toBeGreaterThan(read);
     expect(remove).toBeGreaterThan(write);
   });
 
-  it('removes it only when the extension wrote nothing during the drain', () => {
-    const guard = drain.indexOf('isEqualToString:incoming');
-    expect(guard).toBeGreaterThanOrEqual(0);
-    expect(drain.indexOf('removeItemAtURL:')).toBeGreaterThan(guard);
+  it('never deletes the file the extension writes to', () => {
+    expect(drain).not.toContain('removeItemAtURL:srcUrl');
+  });
+
+  it('names the same draining file the Rust reader reads', () => {
+    const rust = readFileSync(resolve(here, '../../../src-tauri/src/commands/push.rs'), 'utf8');
+    const native = /kFcmCacheDrainingFileName = @"([^"]+)"/.exec(PUSH_MM)?.[1];
+    const reader = /FCM_CACHE_DRAINING_FILE: &str = "([^"]+)"/.exec(rust)?.[1];
+    expect(native).toBeDefined();
+    expect(native).toBe(reader);
   });
 });

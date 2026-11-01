@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
+import { isIosAppInactive, onIosAppActive } from '$lib/utils/appActive';
 import type {
   IMlsService,
   GroupMeta,
@@ -769,7 +770,26 @@ export abstract class BaseMlsService implements IMlsService {
     setIntegrityFindingReporter((finding) =>
       this.delivery.deliveryPost('integrity-finding', { ...finding })
     );
+    // THE FRAMES LEFT QUEUED WHILE THE iPHONE APP WAS INACTIVE ARE PULLED ON ITS RETURN: the socket
+    // may have survived the short inactive window, so no reconnect pull would ever ask for them.
+    this.offIosActive = onIosAppActive(() => {
+      if (this.withheldWhileInactive.size === 0) return;
+      console.log(
+        `[QUEUE] the app is active again - pulling the ${this.withheldWhileInactive.size} frame(s) left queued while it was not`
+      );
+      this.withheldWhileInactive.clear();
+      void this.fetchPendingMessages();
+    });
   }
+
+  /**
+   * The queued rows this page left unconsumed while the iPhone app was inactive (`appActive.ts`),
+   * pulled again when it becomes active. Their ids only: nothing else of theirs is kept.
+   */
+  private readonly withheldWhileInactive = new Set<string>();
+
+  /** Unsubscribes the active-signal listener, in {@link destroy}. */
+  private offIosActive: (() => void) | null = null;
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -996,6 +1016,7 @@ export abstract class BaseMlsService implements IMlsService {
     // what a TestFlight iPhone showed on 2026-10-25 (two sockets at the PIN gate, both alive after the
     // sign-out) is owed the app's own log. The pause sends `disconnect`: the presence goes at once.
     this.socketRetired = true;
+    this.offIosActive?.();
     console.log('[WS] MLS client destroyed - its socket is released and no open may follow');
     this.pauseSocket();
     // NOTHING PARKED OUTLIVES THE CLIENT: a join waiting on a round that will never settle here
@@ -2519,10 +2540,35 @@ export abstract class BaseMlsService implements IMlsService {
     const welcomedGroups: string[] = [];
     /** This drain's own window, closed by handle so an overlapping window cannot be closed instead. */
     let drainIngest: BulkIngestHandle | null = null;
+    /** Rows this drain left queued because the iPhone app was inactive - see the gate below. */
+    const withheld: string[] = [];
+    /** Their groups: a later frame of the same group is left too, so the order is never inverted. */
+    const withheldGroups = new Set<string>();
 
     await this.messageScheduler.drain(
       async (msg) => {
         const groupId = msg.groupId;
+        // OUT OF FRONT ON AN iPHONE, NO QUEUED FRAME IS CONSUMED (`appActive.ts`). Consuming one
+        // spends its secret, and the notification extension - which decrypts read-only from
+        // `mls.bin` - would announce the server's push for it with no content. So it is left
+        // exactly as the server holds it: not decrypted, not ACKed, forgotten by the dedup
+        // (`settleDelivery(false)`) so the pull on return is admitted, and nothing else of it
+        // recorded. The server pushes it, the extension announces it, the pull brings it back.
+        //
+        // ATOMIC WITH THE START OF DECRYPTION: this check and the callback below run in one
+        // synchronous stretch, and the native transition arrives as a JS task, so a frame either
+        // starts here while active - and completes, banner and ACK, as before - or never starts.
+        // A frame with no queued row is consumed as before: nothing could push it.
+        if (
+          msg.queuedMessageId &&
+          (isIosAppInactive() || (groupId !== undefined && withheldGroups.has(groupId)))
+        ) {
+          this.settleDelivery(msg.queuedMessageId, false);
+          this.withheldWhileInactive.add(msg.queuedMessageId);
+          withheld.push(msg.queuedMessageId);
+          if (groupId !== undefined) withheldGroups.add(groupId);
+          return;
+        }
         recordQueueDrainMessage(groupId);
 
         // group_reset control messages: ACK and ignore on both platforms.
@@ -2670,6 +2716,15 @@ export abstract class BaseMlsService implements IMlsService {
           drainIngest = this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
+          if (withheld.length > 0) {
+            console.log(
+              `[QUEUE] ${withheld.length} frame(s) left queued - the iPhone app is inactive; the server is asked to push them now`
+            );
+            // NOT AWAITED, AND NOTHING DEPENDS ON IT: it only brings the deferred push forward.
+            // Unanswered or refused, the row is still queued and the server pushes it ten seconds
+            // after it sent it (`scheduleDeferredPush`), as it always has.
+            void this.delivery.pushQueuedNow(withheld);
+          }
           if (ackIds.length > 0) {
             logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
             // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the

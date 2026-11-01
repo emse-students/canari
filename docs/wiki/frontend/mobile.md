@@ -2257,55 +2257,63 @@ rows from the local store BEFORE `markInboundReady` (`useConversations.seedConve
 phase `seed_conversations`), and the history phase, whose barriers need the socket, still runs after
 the gateway and replays what the seed returned instead of seeding again. No frame, held, live or
 pulled, can meet a map without its conversation, and nothing is held or delayed to get there. The
-seed touches no network: a merged duplicate 1:1 is only NAMED there (`owedServerDeletes`) and deleted
-on the server by the history phase, so a slow request can never hold the inbound gate shut.
+seed touches no network: a merged duplicate 1:1 is only NAMED there (`owedServerDeletes`), and the
+history phase sends those deletes AFTER its replay without waiting on them (best effort, each
+failure logged; the next server GC repeats them).
 
 **Round-2 review fixes (2026-11-01).** A message is recorded as announced only once its banner was
 actually posted (`sendSystemNotification` answers whether it was; a throttle, a refused permission or
 a throw leaves the message announceable). A new process clears the App Group's foreground flag at
 launch, because a process that died in front never ran `willResignActive` and every push after it
-was written `presented: false`. `CanariDrainAppGroupFcmCache` writes the app's copy BEFORE it removes
-the App Group file, and removes it only if the extension wrote nothing during the drain - the old
-order lost every entry a failed write held.
+was written `presented: false`. `CanariDrainAppGroupFcmCache` RENAMES the App Group file to
+`fcm_message_cache.ndjson.draining` before reading it, writes the app's copy, and only then removes
+the renamed file: whatever the extension writes during the drain starts a new App Group file the
+drain never touches, and a failed copy leaves the draining file for the next activation.
+`push_cache_message_ids` reads the draining file too.
 
-#### Out of front, the banner is the page's or the push's - the server's ACK says which (2026-11-01)
+#### Out of front, the server announces (2026-11-01)
 
-**The page knows when it is out of front.** iOS writes `window.__canariForeground` and the
-`canari:foreground` event - the pair Android's activity writes - from `didBecomeActive` /
-`willResignActive` and after every page load (`CanariPushForegroundToPage`). Before, the global was
-never set on iOS and the page read "in front" in every state.
+**The page knows when the app is ACTIVE**, through a signal of its own: iOS writes
+`window.__canariActive` and a `canari:active` event from `didBecomeActive` / `willResignActive` and
+after every page load (`CanariPushActiveToPage`), read by `appActive.ts` only. NOT
+`__canariForeground`: `isAppInForeground()` keeps its meaning for the ten other iOS consumers (calls,
+tones, playback, the checkpoint flush, reconnects, read-marking).
 
-**The page and the push could not see each other.** Out of front the page still holds its socket for
-a while, receives a frame and ACKs it; the server pushes a row whose ACK has not arrived after ten
-seconds (`scheduleDeferredPush`), or at once to an offline device, and the extension announces that
-push. The page cannot know whether the push fired, the push cannot know what the page decided.
+**Why the page must not consume a frame while inactive.** The extension decrypts read-only from
+`mls.bin`. A frame the page has already consumed has spent its secret (and the page persists its
+state), so the extension's decrypt of the same frame is refused (`SecretReuse`, read as
+`mls-refused-for-good` by `refused_by_mls`) and its banner falls back to "Nouveau message" with no
+content. And the ACK deletes the row, so a long payload carried by reference could no longer be
+fetched by `queuedMessageId`. Every design where the page consumes first and a push follows loses
+the content.
 
-**So the server makes them exclusive and records the winner** (`push-claim.ts`): one Redis key per
-queued row, `push-claim:<queuedId>`, written `SET ... NX GET`. A push that would draw claims `push`
-before sending, and is not sent if the ACK claimed first; the ACK claims `ack` for every row it finds
-queued, and only READS the claim of an id it no longer finds (a retry). Its answer lists `pushed` (a
-push owns the banner) and `unresolved` (no claim to read, or Redis refused). A retried ACK reads back
-the verdict its first attempt was given. Nothing un-claims: a push that claimed and then failed to
-send is logged at error level and keeps the banner - that one is a missing banner, and the line is
-its trace. The TTL (180 days, twice the 90-day queue retention) is garbage collection; a claim that
-expired before a retry reached it answers `unresolved`, never a guessed owner.
+**So, while the iPhone app is inactive, the page consumes NO queued frame** - application, commit
+and Welcome alike (`BaseMlsService.processQueue`). The frame is not decrypted, not ACKed, forgotten
+by the delivery dedup so the pull on return is admitted, and nothing else of it is recorded; a later
+frame of a group already left in the same drain is left too, so the order is never inverted. The
+check is made in the same synchronous stretch as the start of decryption, so a frame either starts
+while active - and completes, banner and ACK, as before - or never starts. The page then asks the
+server to push those rows NOW (`POST /api/mls/messages/push-now`): it brings the deferred push
+forward, deletes nothing, and a repeated or foreign ask is a no-op (the waiting timer is taken once,
+in memory, `MessagingService.deferredPushes`). When the app is active again the page pulls them.
 
-**The page, out of front, waits for that answer** (`bannerOwnership.ts`, `notifyInbound`): each
-message is bound to the queued row that carried it, and the decision waits for the ACK of that row -
-the first attempt's answer, or the retry out of `sessionStorage` that finally lands. Then:
-
-| Verdict | Who announces |
+| Case | Who announces |
 | --- | --- |
-| In front (no wait) | the page |
-| `page` - the ACK claimed it, no push will be sent | the page |
-| `push` - the push claimed it first | the extension; the page is silent and records the id as announced |
-| `unresolved` | the page (a duplicate rather than a missing banner) |
-| `legacy` - a server older than the claim | the page, as before ([legacy-compatibility](../legacy-compatibility.md)) |
-| no answer ever - the ACK never reached the server | the extension: the row stays queued and is pushed |
+| Active | the page, as before |
+| Inactive, a private conversation's frame | the extension, from the server's push - decrypted FIRST, with its content |
+| Inactive, a frame that began decrypting while active | the page (it was ACKed, no push follows) |
+| Inactive, a salon message | the extension, from the salon's push to every member; the page is silent |
+| `push-now` refused or a server without it | the extension, from the deferred push ten seconds later ([legacy-compatibility](../legacy-compatibility.md)) |
+| Back to active | nobody again: the pull brings the rows, the push cache says they were presented |
 
-**What this costs, deliberately:** a message received and read on arrival while backgrounded is no
-longer silently absorbed - out of front, someone announces it, exactly once. And a page woken back
-to the front while it waited does not announce it (`canSeeArrival` is asked again after the wait).
+**What the extension may write** (checked 2026-11-01): it calls only `canari_native_decrypt_message`
+and `canari_native_decrypt_message_with_commits` (read-only - "These never persist `mls.bin`",
+`mobile/background.rs`, and the catch-up's commits are "applied to the loaded manager only ... never
+written back"), plus the epoch read, the device-notice ledger, the cache-line seal, the media
+decrypt and the salon seed store, none of which is `mls.bin`. The two background writers of
+`mls.bin` - a Welcome (`canari_native_process_welcome_background`) and an outbox send - run in the
+APP process (`canari_push.mm`), behind `g_mlsStateLock` and `write_over_loaded_state`, as they did
+before this change.
 
 #### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 

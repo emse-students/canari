@@ -5,6 +5,6 @@ again; "already notified" is now a durable record keyed by message id, fed by th
 push-cache entries the system actually presented. The login also seeds its conversation rows before
 any frame is let in, and a foreground iPhone banner is titled by its group
 ([mobile](docs/wiki/frontend/mobile.md#the-ios-half-a-message-is-announced-once-by-id-2026-11-01)).
-Out of front, the banner is the page's or the push's, never both: the server makes the ACK and the
-deferred push exclusive, and its ACK answer says which won
-([mobile](docs/wiki/frontend/mobile.md#out-of-front-the-banner-is-the-pages-or-the-pushs---the-servers-ack-says-which-2026-11-01)).
+Out of front, the server announces: an inactive iPhone consumes no queued frame, so the extension
+decrypts the push first and shows its content, once; a salon is not announced twice
+([mobile](docs/wiki/frontend/mobile.md#out-of-front-the-server-announces-2026-11-01)).
