@@ -1090,18 +1090,6 @@ A fallback is a signal, not a path. What is owed:
 - keep the empty-pool WARN as the accusing line it is.
 Not before the stable.
 
-## P2 - The nightly archive is mostly one group's undelivered queue (measured 2026-10-24)
-
-The archive went from 80 MB (10-11) to 716 MB (10-13) and holds ~650 MB since. The cause is
-`queued_message`: 189 205 rows of community key group `1b1687d0`, written 10-12 and 10-13 by the
-broadcast seed answers #1768 has since stopped, and **172 060 of them (728 MB) are owed to 109
-devices with neither a session nor a push token**. They belong in the archive while they are owed,
-so nothing was excluded. **Decision owed to the user:** whether to delete the rows of devices that
-can no longer fetch them (a production deletion, the same predicate family as the
-[queue audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)'s reaper), or let them leave
-at the 90-day bound around 2027-01-10. Numbers and SQL shape:
-[backup](infrastructure/backup.md#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13).
-
 ## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
 
 On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only

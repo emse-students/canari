@@ -538,3 +538,14 @@ A device that comes back registers again, the designed path; restoring one means
 positional argument), so it revoked a device id `undefined` under a user id that does not exist and
 purged nothing. That `revoked_device` row was deleted by its id a minute later, the arguments were
 passed through the environment instead, and the run guards against a call that purges no queued row.
+
+## Re-measured 2026-11-01: the same predicate names a new population
+
+Read-only, all groups: **292 devices** hold a queue and have neither a session row nor a push token,
+**70 377 rows** (about 163 MB), none revoked, all still holding a key package; none of the third
+pass's 109 has a row or a seat left. **It refills**: 1 372 rows were written to 113 of them in the
+last 24 hours (4 490 in 7 days), because 291 of them still hold 721 active seats. Deleting the rows
+alone would therefore be refilled within a day; the fix is the revoke path above, on an allowlist
+measured that day. 220 of the 292 belong to a user with a live session on another device, and 1 sent
+a frame in the last 7 days, so a fourth pass must exclude what shows life. **Not run: a fourth pass
+is the owner's decision.**
