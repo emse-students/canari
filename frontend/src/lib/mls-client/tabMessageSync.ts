@@ -79,7 +79,7 @@ const MESSAGE_EVENT_TYPES = new Set<string>([
  */
 export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
-  | { type: 'outbox_entry_sent'; messageId: string; content?: string }
+  | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
   | { type: 'outbox_entry_cancelled'; messageId: string }
   | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number };
 
@@ -170,12 +170,22 @@ export function requestLeaderOutboxFlush(): void {
  * long as that tab lives - the follower never runs the flush that would have patched the status,
  * and status is derived rather than persisted, so nothing else would ever correct it.
  */
-export function publishOutboxEntrySent(messageId: string, content?: string): void {
+export function publishOutboxEntrySent(
+  messageId: string,
+  content?: string,
+  /**
+   * The server's receive time the send answered. The follower's echo is ordered by it like the
+   * leader's copy (`messageOrder.ts`): without it the echo would leave the "awaiting its server
+   * time" tier at its `sentAt`, a place no other device draws it.
+   */
+  receivedAt?: number | null
+): void {
   if (!getIsTabLeader()) return;
   ensureChannel()?.postMessage({
     type: 'outbox_entry_sent',
     messageId,
     ...(content ? { content } : {}),
+    ...(typeof receivedAt === 'number' ? { receivedAt } : {}),
   } satisfies TabOutboxEvent);
 }
 

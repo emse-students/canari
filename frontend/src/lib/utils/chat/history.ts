@@ -24,16 +24,17 @@ import {
   appMsgToEnvelope,
   isOwnMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
 import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
-import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
@@ -43,6 +44,29 @@ import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
+
+/**
+ * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
+ * the delivery service wrote when it accepted the frame), or `undefined` for a page that states none.
+ *
+ * WHY THE REPLAY NOTES IT (third review of #2824, 1). A device that joined every group by external
+ * commit and restored everything from this replay receives no live frame until the next message, so
+ * `serverClock` knew nothing and the server read mark could not move (`serverMarkCeiling`): a
+ * conversation read in that window showed its badge again after a restart. These rows ARE the
+ * server's word, the same value that dates each replayed row - and ONLY they are read here: nothing
+ * a frame's plaintext carries (a relayed bundle row's `serverTimestamp`, a read mark's `at`) reaches
+ * the clock, so a replay can never raise it past what the server sent.
+ */
+export function newestServerRowTime(
+  rows: ReadonlyArray<{ timestamp?: unknown }>
+): number | undefined {
+  let newest: number | undefined;
+  for (const row of rows) {
+    const at = parseServerTimestampMs(row.timestamp);
+    if (at !== undefined && (newest === undefined || at > newest)) newest = at;
+  }
+  return newest;
+}
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -647,34 +671,9 @@ export function provenRowsIntoMemory(
   return next;
 }
 
-/**
- * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
- * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
- *
- * `isSystem` is derived here and not read, because there is nothing to read: `StoredMessage` has no
- * such column and neither does the encrypted payload. A group notice is recognised by its sentinel
- * sender and by nothing else, so a read path that waited to be told would render every restored
- * notice as an ordinary bubble from an unresolvable author.
- */
-export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
-  return storedMessages.map((m) => {
-    return {
-      id: m.id,
-      senderId: m.senderId,
-      content: m.content,
-      timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
-      isOwn: isOwnMessage(m.senderId, userId),
-      isSystem: isSystemSender(m.senderId),
-      reactions: m.reactions,
-      serverTimestamp: m.serverTimestamp,
-      ...(m.isDeleted ? { isDeleted: true } : {}),
-      ...(m.isEdited ? { isEdited: true } : {}),
-      ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
-      ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
-      ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
-    } satisfies ChatMessage;
-  });
-}
+// Lives with the other message helpers so the outbox can map a stored row without this module;
+// re-exported so every existing import keeps one name.
+export { mapStoredMessagesToChatMessages };
 
 /**
  * Makes a replay's durable progress markers (Redis stream cursor + retry counters) persistent -
@@ -893,6 +892,7 @@ export async function replayConversationHistory(params: {
     // affected by the batch save below at all - which is exactly what made the per-message version
     // fragile enough to need a repair pass of its own.
     const readWatermarkUpdates: ReadWatermarks = {};
+    const serverReadWatermarkUpdates: ReadWatermarks = {};
     // The shared history floor the page carried, merged the same way and applied in the same write.
     // A box rather than a number, because the handler that fills it cannot reassign a local.
     const historyFloorUpdate = { at: 0 };
@@ -1016,6 +1016,7 @@ export async function replayConversationHistory(params: {
         break;
       }
       fetchedAnyPage = true;
+      noteServerTime(userId, newestServerRowTime(history));
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.
@@ -1221,6 +1222,7 @@ export async function replayConversationHistory(params: {
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
+              serverReadWatermarkUpdates,
               historyFloorUpdate,
               pushPendingMessage,
               dropOwnExcluded: (messages) =>
@@ -1455,11 +1457,16 @@ export async function replayConversationHistory(params: {
         convoForRead.readWatermarks,
         readWatermarkUpdates
       );
+      const mergedServerWatermarks = mergeReadWatermarks(
+        convoForRead.serverReadWatermarks,
+        serverReadWatermarkUpdates
+      );
       const mergedFloor = mergeHistoryFloor(convoForRead.historyFloor, historyFloorUpdate.at);
-      if (mergedWatermarks || mergedFloor !== null) {
+      if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
         setConversation(contactName, {
           ...convoForRead,
           ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+          ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
           ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
         });
         await saveConversation?.(contactName).catch(() => {});

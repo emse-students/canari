@@ -169,7 +169,11 @@ import { startPushService, stopPushService } from '$lib/services/PushNotificatio
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
-import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+import {
+  adoptOrphanedMirrorEntries,
+  dateBackgroundSentRow,
+  reconcileOutboxSent,
+} from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
 import { Log } from '$lib/utils/Log';
@@ -2209,9 +2213,11 @@ export async function loginImpl(
       // Reconcile background sends (killed app) first: remove from the outbox any
       // messages already delivered by the native service, BEFORE re-deriving "pending"
       // statuses (otherwise an already-sent message would be shown as pending again).
-      await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
-        cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
-      );
+      await reconcileOutboxSent(ctx.getStorage()!, {
+        deviceKeyB64: ctx.getDeviceKey(),
+        userId: ctx.getUserId(),
+        onDated: (id, receivedAt) => dateBackgroundSentRow(cb.conversations, id, receivedAt),
+      }).catch((e) => cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`));
       stopIfSignedOut('outbox-reconcile');
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();

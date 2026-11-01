@@ -73,11 +73,16 @@ function isUnsent(msg: ChatMessage): boolean {
  * it: see `$lib/utils/chat/readState`.
  */
 function reconcile(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
-  return shouldUpgradeMessage(existing, incoming.content)
+  const kept = shouldUpgradeMessage(existing, incoming.content)
     ? mergeMessageUpgrade(existing, incoming)
     : isEnvelopeContent(existing.content) && isFcmPreviewContent(incoming.content)
       ? existing
       : { ...incoming };
+  // Whichever version is kept, the page's position of the row is the store's latest word on it:
+  // "load older" pages below the lowest one held (`oldestPageKey`).
+  return incoming.pageKey && kept.pageKey !== incoming.pageKey
+    ? { ...kept, pageKey: incoming.pageKey }
+    : kept;
 }
 
 /**
