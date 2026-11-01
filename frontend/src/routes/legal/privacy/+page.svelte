@@ -183,9 +183,12 @@
           est republiée sans accord, mais n'atteint que vos abonnés acceptés. Une publication
           anonyme n'est jamais republiée. Un blocage, dans un sens ou dans l'autre, empêche la
           republication et la retire aussitôt entre les personnes concernées, et un lecteur bloqué
-          par l'auteur ou par vous ne la voit pas. Sont conservés : la republication (la
-          publication, votre compte et sa date), le réglage de chaque auteur et le choix fait pour
-          chaque publication.
+          par l'auteur ou par vous ne la voit pas. Votre republication cesse d'atteindre vos abonnés
+          dès que vous ne voyez plus vous-même la publication (l'auteur vous retire de ses abonnés,
+          vous cessez de le suivre, vous quittez l'association qui la porte) ou que votre compte est
+          restreint, et la notification qu'elle leur a envoyée n'est plus affichée. Sont conservés :
+          la republication (la publication, votre compte et sa date), le réglage de chaque auteur et
+          le choix fait pour chaque publication.
         </dd>
       </div>
       <div>

@@ -265,6 +265,13 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
     AND ${sameSideOfReviewCohortSql(author, `${user}.id`)})`;
 }
 
+/** What a reposter must still hold for their repost to reach anyone: first-hand sight, no grant. */
+const REPOSTER_FIRST_HAND = {
+  adminSeesAll: false,
+  readGrants: false,
+  memberReposts: false,
+} as const;
+
 /**
  * Post row `post` reaches user row `user` through a MEMBER REPOST (WP-F6, decision 1 and Q2 of the
  * follow requests, user 2026-10-25; consent shape, owner 2026-11-01): a person `user` FOLLOWS -
@@ -286,26 +293,50 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
  * write checks it under the author's lock, and withdrawing it deletes the rows under the same lock
  * (`MemberRepostsService`), so no row outlives a "no".
  *
+ * THE REPOSTER STILL HOLDS WHAT THEY PASSED ON, READ HERE AND NOT TRUSTED TO A ROW: the reposter
+ *   still sees the post FIRST-HAND (`postVisibleToUserSql` with `REPOSTER_FIRST_HAND`, which leaves
+ *   member reposts and read grants out, so it never recurses), and is not restricted
+ *   (`user_moderation.isMuted`, the only account restriction social-service holds - the one
+ *   `senderSpeaksSql` reads for D38b). An author who removes the follower, a reposter who unfollows
+ *   or leaves a members-only association, a reposter who is muted: the row stays, and reaches nobody
+ *   until access comes back (Opus review of #2859, 2026-11-01).
+ *
  * MONOTONE IN REPOSTS: adding a row only ever adds readers, which the newly-reached rule
  * (`newlyReachedByMemberRepostSql`) relies on.
  */
 export function memberRepostReachesUserSql(post: string, user: string): string {
-  const personal = `${post}."associationId" IS NULL`;
   return `(NOT COALESCE(${post}.anonymous, false)
     AND ${sameSideOfReviewCohortSql(`${post}."authorId"`, `${user}.id`)}
     AND EXISTS (SELECT 1 FROM member_reposts vis_mrep
       JOIN user_follows vis_mrep_follow ON vis_mrep_follow."followedUserId" = vis_mrep."reposterId"
         AND vis_mrep_follow."followerUserId" = ${user}.id AND ${acceptedFollowSql('vis_mrep_follow')}
+      JOIN users vis_mrep_user ON vis_mrep_user.id = vis_mrep."reposterId"
       WHERE vis_mrep."postId" = ${post}.id
-        AND ${sameSideOfReviewCohortSql('vis_mrep."reposterId"', `${user}.id`)}
-        AND NOT EXISTS (SELECT 1 FROM user_blocks vis_mrep_block
-          WHERE (vis_mrep_block."blockerId" = ${user}.id AND vis_mrep_block."blockedId" = vis_mrep."reposterId")
-             OR (vis_mrep_block."blockerId" = vis_mrep."reposterId" AND vis_mrep_block."blockedId" = ${user}.id)
-             OR (${personal} AND (
-                  (vis_mrep_block."blockerId" = ${user}.id AND vis_mrep_block."blockedId" = ${post}."authorId")
-               OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = ${user}.id)
-               OR (vis_mrep_block."blockerId" = vis_mrep."reposterId" AND vis_mrep_block."blockedId" = ${post}."authorId")
-               OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = vis_mrep."reposterId"))))))`;
+        AND ${memberRepostCarriesSql(post, 'vis_mrep_user', `${user}.id`)}))`;
+}
+
+/**
+ * Repost row by reposter row `reposter` (a `users` alias) of post row `post` still CARRIES the post
+ * to the reader whose id is the expression `readerId` - every condition of
+ * `memberRepostReachesUserSql` but the follow itself, so the card that NAMES a reposter
+ * (`member-repost-card.ts`) names exactly the ones whose repost reaches that reader: the reposter on
+ * the reader's side of the review cohort, not muted, still seeing the post first-hand, and no block
+ * between any pair concerned.
+ */
+export function memberRepostCarriesSql(post: string, reposter: string, readerId: string): string {
+  const personal = `${post}."associationId" IS NULL`;
+  return `(${sameSideOfReviewCohortSql(`${reposter}.id`, readerId)}
+    AND NOT EXISTS (SELECT 1 FROM user_moderation vis_mrep_mod
+      WHERE vis_mrep_mod."userId" = ${reposter}.id AND vis_mrep_mod."isMuted" = true)
+    AND ${postVisibleToUserSql(post, reposter, REPOSTER_FIRST_HAND)}
+    AND NOT EXISTS (SELECT 1 FROM user_blocks vis_mrep_block
+      WHERE (vis_mrep_block."blockerId" = ${readerId} AND vis_mrep_block."blockedId" = ${reposter}.id)
+         OR (vis_mrep_block."blockerId" = ${reposter}.id AND vis_mrep_block."blockedId" = ${readerId})
+         OR (${personal} AND (
+              (vis_mrep_block."blockerId" = ${readerId} AND vis_mrep_block."blockedId" = ${post}."authorId")
+           OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = ${readerId})
+           OR (vis_mrep_block."blockerId" = ${reposter}.id AND vis_mrep_block."blockedId" = ${post}."authorId")
+           OR (vis_mrep_block."blockerId" = ${post}."authorId" AND vis_mrep_block."blockedId" = ${reposter}.id)))))`;
 }
 
 /**

@@ -158,6 +158,10 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     ]) {
       await client.query(migration(name));
     }
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     // 071 gave both (ICM, saint-etienne); A2 addresses the whole Gardanne campus instead.
     await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A2]);
     await client.query(

@@ -1533,6 +1533,24 @@ security review before arming.
   documents). Blocks are CHECKED, never trusted to the severing. Left out with `followers: false`:
   Tout and the promo browse stay feeds of spaces (decision 5). Never a read grant. Monotone in
   reposts.
+- **A repost never outlives what its reposter holds (Opus review, 2026-11-01)**: the row alone
+  carries nothing. `memberRepostCarriesSql` also asks that the reposter STILL sees the post
+  FIRST-HAND (`postVisibleToUserSql` with `memberReposts: false, readGrants: false` - it never
+  recurses) and is not muted (`user_moderation.isMuted`, the only account restriction
+  social-service holds, the one D38b's `senderSpeaksSql` reads). An author who removes the
+  follower, a reposter who unfollows or leaves a members-only association, a muted reposter: the
+  row stays and reaches nobody until the access comes back. The SAME helper filters the card's
+  "Republié par" names and the Suivis arm (`memberRepostedAmongSql`, `republishedFeedAtSql`), so a
+  stale row neither names, surfaces nor dates a post.
+- **An association is never the second step**: every D38/D38b path asks the predicate with
+  `memberReposts: false` - the republication's `assertVisibleTo`, the request's
+  `assertVisibleWithoutGrant` and `describe`, and the offers (`PostsService.firstHandIds`, a
+  column of the one `grantFreeVisibleIds` query; the requestable query). A vote keeps the
+  grant-free set: a repost opens every reader-side act a follow opens.
+- **The bell**: a `member_repost` row is shown only while its recipient still sees the post
+  (`bellRowShownSql`, `getNotifications`): its text preview must not outlive the access, and the
+  access ends on paths (an unfollow, a removal, a membership) no repost write can hook. The row is
+  left to the 90-day sweep.
 - **Consent is state, not a predicate term**: `repostConsentSql` (an entity post always; a personal
   one by its override, else the setting, else ON) is read by the write under the author's advisory
   lock (`member-repost:author:<id>`), then the post row; turning the setting off, or an override
@@ -1585,7 +1603,11 @@ security review before arming.
   and offered nothing), accepted vs pending vs none, Tout untouched, a block
   either way and a left-over row, the newly reached only (announced or not, personal or entity),
   hide, delete and severing, the setting OFF and the override both ways, the card against the
-  write. The six PostgreSQL specs that share the predicate apply 121.
+  write; a repost that outlives its reposter's access (removed follower, unfollow, members-only
+  association left, muted) reaches nobody, names nobody and leaves no bell preview.
+  `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
+  officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
+  The six PostgreSQL specs that share the predicate apply 121.
 
 ### The review cohort - store reviewers in a world of their own (2026-10-31)
 

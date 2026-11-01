@@ -187,6 +187,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     ]) {
       await client.query(migration(name));
     }
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     for (const [id, name] of [
       [A1, 'A1'],
       [A2, 'A2'],

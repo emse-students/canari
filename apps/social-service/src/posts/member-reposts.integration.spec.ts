@@ -20,6 +20,7 @@ import { HttpException } from '@nestjs/common';
 import type { RedisService } from '../common/redis/redis.service';
 import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { MemberRepost } from './entities/member-repost.entity';
+import { bellRowShownSql } from './post-notifications.service';
 import { memberRepostContext } from './member-repost-card';
 import {
   MEMBER_REPOST_CODES,
@@ -36,7 +37,7 @@ const maybe = URL ? describe : describe.skip;
 const migration = (file: string) => readFileSync(join(__dirname, '..', 'migrations', file), 'utf8');
 
 /** The cast. Readable ids: a failure names a person. */
-const USERS: Record<string, { campus: string; formation: string }> = {
+const USERS: Record<string, { campus: string | null; formation: string | null }> = {
   // The AUTHOR of the personal posts (ICM Saint-Etienne).
   au: { campus: 'saint-etienne', formation: 'ICM' },
   // The REPOSTER: shares au's space, so sees au's posts and A1's.
@@ -53,11 +54,16 @@ const USERS: Record<string, { campus: string; formation: string }> = {
   b2: { campus: 'saint-etienne', formation: 'ICM' },
   // An author who withdraws consent account-wide.
   nc: { campus: 'saint-etienne', formation: 'ICM' },
-  // A Gardanne author rp cannot see.
+  // A Gardanne author rp cannot see; also the officer of the members-only A2.
   gx: { campus: 'gardanne', formation: 'ISMIN' },
+  // Authors in NO space, whom rp sees ONLY as their accepted follower: one removes rp, rp unfollows
+  // the other.
+  gy: { campus: null, formation: null },
+  gz: { campus: null, formation: null },
 };
 
 const A1 = '00000000-0000-4000-8000-0000000c0001'; // association, reaches ICM Saint-Etienne (071)
+const A2 = '00000000-0000-4000-8000-0000000c0002'; // created after 071: no rule, its members only
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -84,6 +90,10 @@ const POSTS: {
   { id: P(13), authorId: 'au', announced: false }, // personal, not announced
   { id: P(14), authorId: 'au', announced: true }, // the block severing
   { id: P(15), authorId: 'au', announced: true }, // per-post override, both ways
+  { id: P(16), authorId: 'gy', announced: true }, // the author removes the reposter
+  { id: P(17), authorId: 'gz', announced: true }, // the reposter unfollows the author
+  { id: P(18), authorId: 'gx', associationId: A2, announced: true }, // the reposter leaves A2
+  { id: P(19), authorId: 'au', announced: true }, // the reposter is muted
 ];
 
 function codeOf(err: unknown): string | undefined {
@@ -155,6 +165,9 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
+      CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar(255) NOT NULL,
+        type varchar NOT NULL, "postId" varchar, "actorId" varchar(255));
+      CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false);
     `);
     await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A1', 'a1')`, [A1]);
     await q(migration('071_spaces.sql'));
@@ -164,16 +177,22 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
     await q(migration('121_member_reposts.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('121_member_reposts.sql'));
+    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2')`, [A2]);
+    await q(
+      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
+      [A2]
+    );
     for (const [id, u] of Object.entries(USERS)) {
       await q(
         `INSERT INTO users (id, campus, cursus, "firstName", "lastName") VALUES ($1, $2, $3, $1, 'X')`,
-        [id, u.campus, JSON.stringify([{ formation: u.formation, promo: 2024 }])]
+        [id, u.campus, JSON.stringify(u.formation ? [{ formation: u.formation, promo: 2024 }] : [])]
       );
     }
     await q(
       `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES
          ('fo', 'rp', 'accepted'), ('fp', 'rp', 'pending'), ('fa', 'rp', 'accepted'),
-         ('fa', 'au', 'accepted'), ('sb', 'rp', 'accepted'), ('sr', 'rp', 'accepted')`
+         ('fa', 'au', 'accepted'), ('sb', 'rp', 'accepted'), ('sr', 'rp', 'accepted'),
+         ('rp', 'gy', 'accepted'), ('rp', 'gz', 'accepted')`
     );
     await q(
       `INSERT INTO user_blocks ("blockerId", "blockedId") VALUES
@@ -299,6 +318,10 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
         P(13),
         P(14),
         P(15),
+        P(16),
+        P(17),
+        P(18),
+        P(19),
       ]);
       const forFo = await memberRepostContext(ds.manager, [P(1)], 'fo');
       expect(forFo.reposters.get(P(1))).toEqual([{ id: 'rp', name: 'rp X' }]);
@@ -427,6 +450,87 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
       await reposts.repost(P(14), 'rp');
       await q(`DELETE FROM posts WHERE id = $1`, [P(14)]);
       expect(await repostRows(P(14))).toEqual([]);
+    });
+  });
+
+  describe('A REPOST NEVER OUTLIVES WHAT ITS REPOSTER HOLDS (Opus review of #2859)', () => {
+    /** Whether fo's bell shows its member-repost row about `postId` (`getNotifications`'s gate). */
+    async function bellShows(postId: string): Promise<boolean> {
+      const rows: unknown[] = await q(
+        `SELECT 1 FROM post_notifications n
+          WHERE n."recipientId" = 'fo' AND n."postId" = $1 AND ${bellRowShownSql('n')}`,
+        [postId]
+      );
+      return rows.length > 0;
+    }
+
+    /** rp reposts `postId`; fo, who follows rp, is told and sees it, and the card names rp. */
+    async function repostReachingFo(postId: string): Promise<void> {
+      expect(await sees(postId, 'fo')).toBe(false);
+      await reposts.repost(postId, 'rp');
+      expect(told[0]?.recipientIds).toContain('fo');
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES ('fo', $1, $2, 'rp')`,
+        [MEMBER_REPOST_NOTIFICATION, postId]
+      );
+      expect(await sees(postId, 'fo')).toBe(true);
+      expect(await bellShows(postId)).toBe(true);
+      expect((await memberRepostContext(ds.manager, [postId], 'fo')).reposters.get(postId)).toEqual(
+        [{ id: 'rp', name: 'rp X' }]
+      );
+    }
+
+    /** The row is still there, and reaches nobody: no sight, no bell preview, no name on the card. */
+    async function reachesNobody(postId: string): Promise<void> {
+      expect(await repostRows(postId)).toEqual(['rp']);
+      for (const u of ['fo', 'sb']) expect(await sees(postId, u)).toBe(false);
+      expect(await bellShows(postId)).toBe(false);
+      expect(
+        (await memberRepostContext(ds.manager, [postId], 'fo')).reposters.get(postId)
+      ).toBeUndefined();
+    }
+
+    it('the author removes the reposter from their followers: the repost reaches nobody', async () => {
+      await repostReachingFo(P(16));
+      await q(`DELETE FROM user_follows WHERE "followerUserId" = 'rp' AND "followedUserId" = 'gy'`);
+      await reachesNobody(P(16));
+      expect(await sees(P(16), 'fo')).toBe(false);
+    });
+
+    it('the reposter unfollows the author: the repost reaches nobody', async () => {
+      await repostReachingFo(P(17));
+      await q(`DELETE FROM user_follows WHERE "followerUserId" = 'rp' AND "followedUserId" = 'gz'`);
+      await reachesNobody(P(17));
+      expect(await sees(P(17), 'fo')).toBe(false);
+    });
+
+    it('the reposter leaves a members-only association: its post reposted reaches nobody', async () => {
+      await repostReachingFo(P(18));
+      await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'rp'`, [
+        A2,
+      ]);
+      await reachesNobody(P(18));
+      expect(await sees(P(18), 'fo')).toBe(false);
+    });
+
+    it('a MUTED reposter carries nothing while restricted, and carries again once lifted', async () => {
+      await repostReachingFo(P(19));
+      await q(`INSERT INTO user_moderation ("userId", "isMuted") VALUES ('rp', true)`);
+      await reachesNobody(P(19));
+      await q(`DELETE FROM user_moderation WHERE "userId" = 'rp'`);
+      expect(await sees(P(19), 'fo')).toBe(true);
+    });
+
+    it('the bell gate leaves every other notification type alone', async () => {
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES ('fo', 'comment', $1, 'gy')`,
+        [P(16)]
+      );
+      const rows: unknown[] = await q(
+        `SELECT 1 FROM post_notifications n WHERE n."recipientId" = 'fo' AND n.type = 'comment'
+            AND ${bellRowShownSql('n')}`
+      );
+      expect(rows).toHaveLength(1);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { postVisibleToViewerSql } from '../spaces/reader-spaces';
+import { memberRepostCarriesSql, postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { acceptedFollowSql } from '../follows/follow-status';
 import { FIRST_HAND, repostConsentSql, type RepostConsent } from './member-reposts.service';
 
@@ -77,9 +77,7 @@ export async function memberRepostContext(
            AND mc_follow."followerUserId" = $2 AND ${acceptedFollowSql('mc_follow')}
          JOIN users u ON u.id = mc_rep."reposterId"
         WHERE mc_rep."postId" = ANY($1::uuid[])
-          AND NOT EXISTS (SELECT 1 FROM user_blocks mc_rblock
-            WHERE (mc_rblock."blockerId" = $2 AND mc_rblock."blockedId" = mc_rep."reposterId")
-               OR (mc_rblock."blockerId" = mc_rep."reposterId" AND mc_rblock."blockedId" = $2))
+          AND ${memberRepostCarriesSql('mc_post', 'u', '$2')}
         ORDER BY mc_rep."repostedAt" ASC, u.id ASC`,
       [postIds, viewerId]
     ),

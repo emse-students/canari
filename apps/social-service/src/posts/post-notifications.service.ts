@@ -44,7 +44,29 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
-import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
+import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
+
+/**
+ * The notification type of a member repost reaching a reader for the first time (WP-F6). Declared
+ * here, where the bell is read, because the read gates it (`getNotifications`).
+ */
+export const MEMBER_REPOST_NOTIFICATION = 'member_repost';
+
+/**
+ * Bell row `n` may be shown: any type but a member repost, or a member repost whose post its
+ * recipient still sees (`getNotifications` says why). The type is a constant of this module.
+ *
+ * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
+ * inside a CASE - evaluated for a member-repost row only, whose `postId` is always a post's - and
+ * the lookup keeps the posts primary key.
+ */
+export function bellRowShownSql(n: string): string {
+  const type = `'${MEMBER_REPOST_NOTIFICATION}'`;
+  return `(${n}.type <> ${type} OR EXISTS (SELECT 1 FROM posts notif_post
+    WHERE notif_post.id = (CASE WHEN ${n}.type = ${type} THEN ${n}."postId"::uuid END)
+      AND NOT notif_post."hiddenByModeration"
+      AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}))`;
+}
 
 /**
  * What a notification ABOUT an anonymous post carries instead of the real author - the identity
@@ -492,12 +514,20 @@ export class PostNotificationsService {
    * Returns the most recent notifications for a user, newest first - never one whose actor stands
    * across the review cohort's boundary (`review-cohort.ts`): a row written before the rule is left
    * out, so nobody has to delete it.
+   *
+   * A MEMBER REPOST row (WP-F6) is shown only while its recipient still sees the post: the row
+   * carries a text preview, and the access a repost opened ends without any write this service
+   * could hook - the reader unfollows, the author removes the reposter, the reposter leaves a
+   * members-only association or is muted, consent is withdrawn, the post is hidden. Gating at the
+   * read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01); the
+   * row itself is left to the 90-day sweep.
    */
   async getNotifications(userId: string, limit = 30) {
     return this.notifRepo
       .createQueryBuilder('n')
       .where('n."recipientId" = :userId', { userId })
       .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
+      .andWhere(bellRowShownSql('n'))
       .orderBy('n.createdAt', 'DESC')
       .take(limit)
       .getMany();

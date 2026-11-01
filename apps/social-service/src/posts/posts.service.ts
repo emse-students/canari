@@ -98,6 +98,13 @@ interface PostViewerContext {
    */
   grantFreeIds: Set<string>;
   /**
+   * Of `grantFreeIds`, those the reader sees FIRST-HAND - leaving member reposts out too
+   * (`memberReposts: false`): what a republication enforces, so an association is never the second
+   * step of a chain that began with a member's repost (WP-F6, Opus review 2026-11-01). A vote keeps
+   * `grantFreeIds`: a repost opens a post to every reader-side act a follow opens.
+   */
+  firstHandIds: Set<string>;
+  /**
    * D38b: the associations the reader may ask an author IN THE NAME OF - `POST_AS_ASSO` HELD (a
    * global admin included: the tier grants nothing here), of the kind that may ask, not archived.
    */
@@ -307,6 +314,7 @@ export class PostsService {
     managedAssociationIds: new Set(),
     republishAsIds: new Set(),
     grantFreeIds: new Set(),
+    firstHandIds: new Set(),
     personalRepublishAsIds: new Set(),
     requestablePersonalIds: new Set(),
     personalRequests: new Map(),
@@ -346,11 +354,12 @@ export class PostsService {
         managedAssociationIds: new Set(),
         republishAsIds: new Set(),
         grantFreeIds: new Set(),
+        firstHandIds: new Set(),
         ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator, memberships, grantFreeIds, memberReposts] =
+    const [managedAssociationIds, isModerator, memberships, grantFree, memberReposts] =
       await Promise.all([
         this.associationsService.mayActOnAny(
           viewerId,
@@ -369,7 +378,8 @@ export class PostsService {
       isModerator,
       managedAssociationIds,
       republishAsIds: memberships.all,
-      grantFreeIds,
+      grantFreeIds: grantFree.grantFreeIds,
+      firstHandIds: grantFree.firstHandIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -379,14 +389,25 @@ export class PostsService {
    * same `postVisibleToViewerSql` (`readGrants: false`) that `assertVisible(.., 'VOTE')` and the
    * republication path enforce, so a control is offered exactly when its write is accepted.
    */
-  private async grantFreeVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
-    if (postIds.length === 0) return new Set();
+  private async grantFreeVisibleIds(
+    postIds: string[],
+    viewerId: string
+  ): Promise<{ grantFreeIds: Set<string>; firstHandIds: Set<string> }> {
+    const grantFreeIds = new Set<string>();
+    const firstHandIds = new Set<string>();
+    if (postIds.length === 0) return { grantFreeIds, firstHandIds };
     const rows: unknown = await this.postRepo.manager.query(
-      `SELECT posts.id FROM posts WHERE posts.id = ANY($1::uuid[])
+      `SELECT posts.id,
+              ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+         FROM posts WHERE posts.id = ANY($1::uuid[])
          AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })}`,
       [postIds, viewerId]
     );
-    return new Set(Array.isArray(rows) ? rows.map((r: { id: string }) => r.id) : []);
+    for (const r of Array.isArray(rows) ? (rows as { id: string; firstHand: boolean }[]) : []) {
+      grantFreeIds.add(r.id);
+      if (r.firstHand === true) firstHandIds.add(r.id);
+    }
+    return { grantFreeIds, firstHandIds };
   }
 
   /**
@@ -456,7 +477,7 @@ export class PostsService {
             AND NOT posts."hiddenByModeration"
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
             AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
-            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}
+            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
                  OR (req_block."blockerId" = posts."authorId" AND req_block."blockedId" = $2))`,
@@ -644,8 +665,9 @@ export class PostsService {
   ): boolean {
     if (!viewer.viewerId || !post.associationId) return false;
     if (viewer.isGlobalAdmin) return true;
-    // A grant opens a post to read only: republishing it is a 404 (`RepublicationsService`).
-    if (!this.viewerSeesWithoutGrant(post, viewer)) return false;
+    // A grant opens a post to read only, and a member's repost is not a door an association
+    // republishes through (no chain): either is a 404 (`RepublicationsService`).
+    if (!post.id || !viewer.firstHandIds.has(post.id)) return false;
     const already = new Set((post.republishedBy ?? []).map((r) => r.id));
     return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
@@ -1390,7 +1412,7 @@ export class PostsService {
          OR (NOT COALESCE(posts.anonymous, false)
              AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
          -- What a followed PERSON reposted (WP-F6), never anonymous.
-         OR ${memberRepostedAmongSql('$4')}
+         OR ${memberRepostedAmongSql('$4', `$${5 + tail.length}`)}
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}

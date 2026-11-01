@@ -81,6 +81,8 @@ const POSTS: {
   { id: P(6), authorId: 'aSe', associationId: A1, announced: true },
   { id: P(7), authorId: 'aSe', associationId: A1, announced: true },
   { id: P(8), authorId: 'aSe', associationId: A1, announced: true },
+  // WP-F6: an entity post a Gardanne officer sees ONLY through a member's repost.
+  { id: P(9), authorId: 'aSe', associationId: A1, announced: true },
 ];
 
 maybe('republication and proposals against PostgreSQL (migrations 071-073)', () => {
@@ -149,6 +151,10 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
     await q(migration('078_read_grants.sql'));
     await q(migration('096_personal_republication_requests.sql'));
     await q(migration('121_member_reposts.sql'));
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await q(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     await q(
       `INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A3', 'a3', 'association')`,
       [A3]
@@ -255,6 +261,35 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         [P(1), A3]
       );
       expect(rows).toEqual([]);
+    });
+
+    it('NO CHAIN (WP-F6): an officer who sees an entity post only through a member repost cannot republish it, and is offered nothing', async () => {
+      // dSe (ICM Saint-Etienne) reposted A1's post; bGa, an A2 publisher in Gardanne, follows dSe.
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'dSe')`, [P(9)]);
+      await q(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('bGa', 'dSe', 'accepted')`
+      );
+      try {
+        expect(await sees(P(9), 'bGa')).toBe(true);
+        await expect(republications.republish(P(9), A2, 'bGa', false)).rejects.toBeInstanceOf(
+          NotFoundException
+        );
+        expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(9)])).toEqual(
+          []
+        );
+        // The offer (`PostsService.grantFreeVisibleIds`'s first-hand column) is the same predicate.
+        const offer: { firstHand: boolean }[] = await q(
+          `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+             FROM posts WHERE posts.id = $1`,
+          [P(9), 'bGa']
+        );
+        expect(offer[0]?.firstHand).toBe(false);
+      } finally {
+        await q(
+          `DELETE FROM user_follows WHERE "followerUserId" = 'bGa' AND "followedUserId" = 'dSe'`
+        );
+        await q(`DELETE FROM member_reposts WHERE "postId" = $1`, [P(9)]);
+      }
     });
 
     it('refuses a reader who may not publish as the association (403)', async () => {

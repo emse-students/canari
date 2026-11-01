@@ -239,6 +239,10 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(
       readFileSync(join(__dirname, '..', 'migrations', '121_member_reposts.sql'), 'utf8')
     );
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     await client.query(`INSERT INTO user_follows VALUES ('adminIcm', 'icmSe')`);
     for (const p of POSTS) {
       await client.query(

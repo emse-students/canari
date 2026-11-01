@@ -100,8 +100,8 @@ describe('PostsService feeds of what associations republish', () => {
       const { service, feed } = makeService();
       await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
 
-      expect(feed().sql).toContain(`OR ${memberRepostedAmongSql('$4')}`);
-      expect(memberRepostedAmongSql('$4')).toContain('NOT COALESCE(posts.anonymous, false)');
+      expect(feed().sql).toContain(`OR ${memberRepostedAmongSql('$4', '$5')}`);
+      expect(memberRepostedAmongSql('$4', '$5')).toContain('NOT COALESCE(posts.anonymous, false)');
     });
 
     it('places a row at the latest republication by a followed association', async () => {

@@ -1,4 +1,4 @@
-import { associationVisibleToUserSql } from '../spaces/reader-spaces';
+import { associationVisibleToUserSql, memberRepostCarriesSql } from '../spaces/reader-spaces';
 
 /**
  * A REPUBLICATION IS AN ASSOCIATION PUBLISHING, so the two feeds that list what associations
@@ -52,11 +52,15 @@ export function republishedForViewerSql(viewer: string, among?: string): string 
  * A MEMBER REPOST (WP-F6) by one of `reposters` - a `text[]` placeholder, the viewer's ACCEPTED
  * follows (`FollowsService.getFollowedUserIdsForUser`). It ADMITS the row to "Suivis" and PLACES it
  * at the repost's time, never an anonymous post. Whether the viewer may READ the post is still the
- * arm's own `postVisibleToViewerSql` (`memberRepostReachesUserSql` with its blocks and cohort).
+ * arm's own `postVisibleToViewerSql`; a repost admits and places the row only while it still
+ * CARRIES the post to `viewer` (`memberRepostCarriesSql`: the reposter not muted, still seeing it
+ * first-hand, no block, same cohort side) - a stale row neither surfaces a post nor dates it.
  */
-export function memberRepostedAmongSql(reposters: string): string {
+export function memberRepostedAmongSql(reposters: string, viewer: string): string {
   return `(NOT COALESCE(posts.anonymous, false) AND EXISTS (SELECT 1 FROM member_reposts mf_in
-           WHERE mf_in."postId" = posts.id AND mf_in."reposterId" = ANY(${reposters}::text[])))`;
+           JOIN users mf_in_user ON mf_in_user.id = mf_in."reposterId"
+           WHERE mf_in."postId" = posts.id AND mf_in."reposterId" = ANY(${reposters}::text[])
+             AND ${memberRepostCarriesSql('posts', 'mf_in_user', viewer)}))`;
 }
 
 /**
@@ -68,7 +72,9 @@ export function republishedFeedAtSql(viewer: string, among?: string, reposters?:
   const reposted = reposters
     ? `,
            (SELECT MAX(mf_at."repostedAt") FROM member_reposts mf_at
-             WHERE mf_at."postId" = posts.id AND mf_at."reposterId" = ANY(${reposters}::text[]))`
+             JOIN users mf_at_user ON mf_at_user.id = mf_at."reposterId"
+             WHERE mf_at."postId" = posts.id AND mf_at."reposterId" = ANY(${reposters}::text[])
+               AND ${memberRepostCarriesSql('posts', 'mf_at_user', viewer)})`
     : '';
   return `GREATEST(posts."publishedAt",
            (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)})${reposted})`;

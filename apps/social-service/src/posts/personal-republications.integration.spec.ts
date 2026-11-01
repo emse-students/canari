@@ -474,6 +474,27 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       expect([...offer.personalRepublishAsIds]).toEqual([AG]);
       expect(offer.requestablePersonalIds.size).toBe(0);
     });
+
+    it('NO CHAIN (WP-F6): an officer who sees a post only through a member repost is offered nothing, and asking is a 404', async () => {
+      // pr reposted au's post; outsider, an AG officer in Gardanne, follows pr.
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'pr')`, [P(12)]);
+      await q(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('outsider', 'pr', 'accepted')`
+      );
+      try {
+        expect(await sees(P(12), 'outsider')).toBe(true);
+        const offer = await offerFor('outsider', [P(12)]);
+        expect(offer.requestablePersonalIds.size).toBe(0);
+        expect(await refusedWith(personal.request(P(12), AG, 'outsider'))).toBeInstanceOf(
+          NotFoundException
+        );
+      } finally {
+        await q(
+          `DELETE FROM user_follows WHERE "followerUserId" = 'outsider' AND "followedUserId" = 'pr'`
+        );
+        await q(`DELETE FROM member_reposts WHERE "postId" = $1`, [P(12)]);
+      }
+    });
   });
 
   describe('what may not be asked', () => {

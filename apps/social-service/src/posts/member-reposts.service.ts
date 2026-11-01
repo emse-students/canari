@@ -16,7 +16,7 @@ import {
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { MemberRepost } from './entities/member-repost.entity';
-import { PostNotificationsService } from './post-notifications.service';
+import { MEMBER_REPOST_NOTIFICATION, PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
 import { dropMemberRepostsOf, lockPostRow } from './republication-sql';
 import { isWithheldPost, type PostRow } from './republications.service';
@@ -52,8 +52,7 @@ export const FIRST_HAND = {
   memberReposts: false,
 } as const;
 
-/** The notification type of a repost reaching a reader for the first time. */
-export const MEMBER_REPOST_NOTIFICATION = 'member_repost';
+export { MEMBER_REPOST_NOTIFICATION };
 
 /** The author's consent on one post, as the author's own card shows it. */
 export interface RepostConsent {
