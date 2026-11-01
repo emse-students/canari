@@ -141,6 +141,11 @@ preselection, never a destination by itself.
   (`CanariFirebaseMessagingService.publishConversationShortcut`) share the dynamic set. NOT
   long-lived: the sheet needs no cached copy, so removing the dynamic shortcut removes it
   everywhere. Capped at `getMaxShortcutCountPerActivity`.
+- **A salon never publishes a conversation shortcut** (2026-11-01), though its notification takes
+  the group shape since then: the cap above is shared, a busy salon posting one per message would
+  evict the DMs' shortcuts and these suggestions, and the sheet offers conversations, not salons.
+  `showMessageNotification` skips `publishConversationShortcut` for a `channel_` id and keeps the
+  large icon (the speaker's face or initials).
 - **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
   included, the user's rule for the pending share too: nothing of an account stays for the next
   one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for

@@ -447,11 +447,10 @@ describe('Mention tokens in a native banner', () => {
     // A salon banner's title is the salon, so its author is named on a mention of the reader only:
     // a line above the body on Android, the subtitle on iOS. One book per banner feeds both the
     // author and the tokens. An MLS banner is untouched - its push already names the sender.
-    expect(kotlin).toMatch(
-      /val shownBody = if \(mentionsMe\) "\$\{mentionAuthorLine\(senderId, nameBook, res\)\}\\n\$body" else body/
-    );
+    // Android since 2026-11-01: the salon line names its SPEAKER above it (`ChannelBannerAuthor`),
+    // so the "<name> mentioned you" prefix went - the body says "@vous" under the name.
+    expect(kotlin).not.toMatch(/mentionAuthorLine\(/);
     expect(kotlin).toMatch(/renderMentions\(text, myUserId, res, nameBook\)/);
-    expect(kotlin).toMatch(/getString\(R\.string\.notif_social_mention_title, who\)/);
     expect(swift).toMatch(/if mentionsMe \{\s*content\.subtitle = Self\.mentionAuthorLine\(/);
     expect(swift).toMatch(
       /localizedFormat\("notif\.social\.mention\.title", who, locale: locale\)/

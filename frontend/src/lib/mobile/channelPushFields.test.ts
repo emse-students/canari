@@ -269,8 +269,9 @@ describe('channel push payload contract (social-service writer vs the three nati
     ]);
     onlyThrough(kotlinHandler, /\bval mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
       'val mentionsMe = attribution.mentionsMe',
-      'attribution.authorId?.let { fetchAvatar(it) }',
-      'if (mentionsMe) "${mentionAuthorLine(',
+      // A face only for a NAMED speaker (`ChannelBannerAuthor.drawsFace`), which a blind banner
+      // never is - and no "<name> mentioned you" prefix since 2026-11-01: the speaker is the line's.
+      'attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }',
     ]);
     expect(kotlinHandler).toContain(
       'channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES'

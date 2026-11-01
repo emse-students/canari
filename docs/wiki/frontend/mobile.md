@@ -2426,31 +2426,40 @@ them. The name never rides the push and is never fetched on the push path (user 
 
 - **Where the author was missing: the salon banner only.** Its title is `<Communaute> - #<salon>`
   and its push carries `senderId` alone, so a mention of the reader named nobody. On a mention of
-  this reader (`mentioned=true`), the author line is a line above the body on Android
-  (`mentionAuthorLine`) and the subtitle on iOS (the NSE's `mentionAuthorLine`,
+  this reader (`mentioned=true`), the author line was a line above the body on Android
+  (`mentionAuthorLine`, removed 2026-11-01: the salon line now names its speaker itself, below) and
+  is the subtitle on iOS (the NSE's `mentionAuthorLine`,
   `CanariMentionAuthorLine`), from the existing `notif_social_mention_title` /
   `notif.social.mention.title` sentence - no new string. An MLS (DM or group) banner is unchanged:
   its push has always carried `senderName`, which is the title or the subtitle. **Only on a banner
   that shows the decrypted text** (2026-10-22): a blind salon banner draws no author line, no face
   and no mention route, because nothing proved the server's `senderId`
   ([channel-encryption 21.5](../protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
-- **The salon banner names its SPEAKER too, on Android (2026-11-01).** The owner read a `v1.6.0`
-  salon banner with the message, no author name, no photo, and a "G" disc - the first letter of
+- **The salon banner names its SPEAKER (2026-11-01).** The owner read a `v1.6.0` Android salon
+  banner with the message, no author name, no photo, and a "G" disc - the first letter of
   `#général`. Cause: `postChannelNotification` handed the composed title in as `senderName` with an
-  empty `groupName`, so the only Person Android drew was the salon, and the initials fallback was
-  `generateInitialsBitmap(channelName)` by design (the old `initialsFallback.test.ts` row "draws the
-  SALON, not the speaker"). No photo means `fetchAvatar(senderId)` returned null (a remembered 404 or
-  a failed fetch) and the disc fell back to the salon's letter. Now one pure rule,
-  `push/ChannelBannerAuthor` (tested in `android-tests`), reads the same `display_names.json` once
-  per banner and answers: **Named** - the salon becomes the conversation title, the author the
-  Person on the line, the disc their initials (the group shape a DM or MLS group already has);
-  **Unnamed** - an author the open proved but the phone cannot name: the line says "Quelqu'un" with
-  a "?" disc and `[SALON_AUTHOR] proven author UNNAMED reason=<no-sender-id|not-in-name-book|
-  no-name-file|other-account|no-names|unreadable|no-account>` is logged at WARN; **Unproven** - a
-  blind banner, which proves no author: the salon stays the only Person, with its own letter. The
-  name still never rides the push. **iOS has the same defect and is NOT fixed**: the NSE and
-  `canari_push.mm` set no author subtitle except on a mention and draw `attachInitials(...,
-  name: channelName)` ([backlog](../backlog.d/ios-salon-banner-names-no-speaker.md)).
+  empty `groupName`, so the only Person drawn was the salon, and the initials fallback was
+  `generateInitialsBitmap(channelName)` by design. No photo means `fetchAvatar(senderId)` returned
+  null (a remembered 404 or a failed fetch). One pure rule, Android `push/ChannelBannerAuthor`
+  (tested in `android-tests`), now answers:
+  - **Named** - the open PROVED the author and the phone holds their name: their name, face and
+    initials. Proven means a **v2** session: the native open checks the minter and the signature and
+    says so in its answer (`authorProven`, `background.rs` `open_graine_push`).
+  - **Unnamed** - opened, but the author cannot be named: a **v1** session (`v1-session` - it opens
+    for whoever the push names, so `senderId` is only the server's claim), or a proven author the
+    phone has no name for. "Quelqu'un" with a "?" disc and **no photo**, which beside "Quelqu'un"
+    would name them by the back door.
+  - **Unproven** - a blind banner: "Quelqu'un" with a "?" disc.
+  - **One shape, always**: the salon is the conversation title and every line has a speaker, each
+    with its own Person key (`user:<id>`, `unnamed:<id>`, `salon-unproven`), so a notification
+    mixing named, unnamed and blind lines never renames or merges the lines already in it. **No
+    conversation shortcut** for a salon ([sharing](sharing.md)).
+  - **A mention of the reader** posts on `canari_mentions` with no "<name> mentioned you" prefix: the
+    speaker is above the line and the body says "@vous".
+  - **One line, `[SALON_AUTHOR] author UNNAMED reason=...`**, at WARN for a fault (`unreadable`,
+    `no-sender-id`, `no-account`) and DEBUG for an ordinary state (`v1-session`,
+    `not-in-name-book`, `no-name-file`, `other-account`, `no-names`).
+  The name never rides the push.
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
   `renderMentions`, `CanariRenderMentions`). This device's own id is "you", anybody else is named
@@ -2801,14 +2810,15 @@ with the person, the collapsed line read `Canari Test Beta : Canari Test Beta : 
 expanded view stacked the name twice; untitled, the header reads `Canari - maintenant` and the name
 appears once, above its line. **What the group shape costs**: the header circle is the app's bird,
 not the person's face - the face moves down beside their line, as in a group, because a group
-layout draws the conversation's icon, which a DM without a shortcut does not have. A reaction and a salon keep the old shape on purpose: a reaction line is a
-sentence about its actor, and a salon's "sender" IS its title, so naming either would print the
-title twice. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
+layout draws the conversation's icon, which a DM without a shortcut does not have. A reaction keeps the old shape on purpose: a reaction line is a sentence about its actor. A salon
+took the group shape on 2026-11-01, titled with the salon, every line with its own speaker (see the
+WP-MENTION-NAME section) - and still no conversation shortcut. Stacking, reply, "Marquer comme lu" and the supersede are untouched -
 `repostReplyPending` copies the title and the group flag from what is in the shade.
 
 **One identity, not a bird above a face (user, 2026-10-05).** The group shape above left the header
 circle as the app's bird and put the sender's face beside the line: two round pictures stacked. A
-group-shaped post (a group, or a DM naming each author; never a reaction or a salon) now publishes
+group-shaped post (a group, or a DM naming each author; never a reaction, and never a salon, whose
+group shape since 2026-11-01 takes no shortcut - see [sharing](sharing.md)) now publishes
 a long-lived conversation shortcut (`publishConversationShortcut`, id `chat_<groupId>`) and sets
 `setShortcutId`, so the platform draws the avatar as the conversation circle with the app's small icon
 as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less shapes. **COMPILED

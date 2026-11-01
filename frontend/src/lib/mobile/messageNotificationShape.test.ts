@@ -90,7 +90,10 @@ describe('the avatar cache remembers "no picture", and only that', () => {
 
 describe('a conversation notification shows one identity (user, 2026-10-05)', () => {
   it('hands a group-shaped post to the platform as a conversation, through a shortcut', () => {
-    expect(kotlin).toContain('if (!isReactionNotif && (isGroup || namesEachSender))');
+    // Never for a salon (2026-11-01): the shortcut cap is shared with the DMs and the share sheet.
+    expect(kotlin).toContain(
+      'if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender))'
+    );
     // Through the recorder, so the sign-out can erase it (sharing lot S5).
     expect(kotlin).toContain('ConversationShortcuts.push(context, info)');
     expect(kotlin).toContain('.setLongLived(true)');

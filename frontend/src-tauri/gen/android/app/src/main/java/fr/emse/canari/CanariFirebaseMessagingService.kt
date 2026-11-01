@@ -2493,6 +2493,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * TRUE everywhere a real text is handed in; the salon push says FALSE for a blind banner.
              */
             showsMessage: Boolean = true,
+            /**
+             * The sender Person's key, so two speakers that share a NAME never merge into one
+             * ("Quelqu'un" for two unnamed salon authors, or for a blind line). Null keeps Android's
+             * merge by name, which a DM or an MLS group has always had.
+             */
+            senderKey: String? = null,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
@@ -2537,6 +2543,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val senderPerson = Person.Builder()
                 .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
                 .setIcon(IconCompat.createWithBitmap(largeIcon))
+                .apply { senderKey?.let { setKey(it) } }
                 .build()
             // Our own Person carries our avatar too: Android attributes the inline reply to it while
             // the reply is in flight, so leaving it iconless is a blank face on the only message in
@@ -2655,7 +2662,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
-            val conversationShortcutId = if (!isReactionNotif && (isGroup || namesEachSender)) {
+            // NO SHORTCUT FOR A SALON. Dynamic shortcuts share one platform cap with the DMs and the
+            // direct-share targets, and a busy salon posting one per message would evict them; the
+            // share sheet offers conversations, not salons (`sharing.md`). A salon keeps its large
+            // icon instead - the speaker's face or initials.
+            val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
                 publishConversationShortcut(
                     this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
                 )
@@ -5848,13 +5859,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // language Rust words its own sentences in (empty when none was mirrored: the base locale).
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
-        // The phone's names, read at most once for this banner: the speaker, the author line and the
-        // tokens share it. The read keeps its reason, which the speaker's accusing line names.
-        val namesRead = lazy { logDisplayNamesRead(readDisplayNames(this, myUserId?.lowercase()), "[SALON_AUTHOR]") }
+        // The phone's names, read at most once for this banner: the speaker and the tokens share it.
+        // The read keeps its reason, and the ONE `[SALON_AUTHOR]` line below says it - no second line.
+        val namesRead = lazy { readDisplayNames(this, myUserId?.lowercase()) }
         val nameBook = lazy { namesRead.value.names }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
+        // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
+        // checked). A v1 row opens for whoever the push names, so its author is never named.
+        var authorProven = false
         val body: String = if (seedHeld && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -5873,6 +5887,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
+                        authorProven = json.optBoolean("authorProven", false)
                         renderMentions(text, myUserId, res, nameBook).take(200)
                     } else {
                         buildChannelFallbackText(res, channelName)
@@ -5924,32 +5939,29 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
         // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
         // banner named nobody and drew the SALON's letter as a face (owner, `v1.6.0`).
-        val author = ChannelBannerAuthor.of(showsMessage, attribution.authorId) { nameBookOf(namesRead.value) }
-        val speakerName = when (author) {
-            is ChannelBannerAuthor.Author.Named -> author.name
-            is ChannelBannerAuthor.Author.Unnamed -> {
-                // AN AUTHOR PROVEN AND UNNAMED IS A HOLE, NOT A CASE: the WebView mirrors every name
-                // it resolves, so either it never resolved this one, the mirror lost it, or the push
-                // named nobody. The line says "Someone" with a "?" disc, never the salon's letter.
-                Log.w(TAG, "[SALON_AUTHOR] proven author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc")
-                res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
-            }
-            ChannelBannerAuthor.Author.Unproven -> null
+        val author = ChannelBannerAuthor.of(showsMessage, authorProven, attribution.authorId) {
+            nameBookOf(namesRead.value)
         }
-        // A mention of this reader says WHO above the line - the iOS twin is the banner's subtitle
-        // (WP-MENTION-NAME). Kept beside the named speaker: it is the sentence that says "you".
-        val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
-        val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
-        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author, channelName))
+        if (author is ChannelBannerAuthor.Author.Unnamed) {
+            val line = "[SALON_AUTHOR] author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc"
+            if (ChannelBannerAuthor.accuses(author.reason)) Log.w(TAG, line) else Log.d(TAG, line)
+        }
+        val someone = res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
         val title = buildChannelPushTitle(workspaceName, channelName)
+        val line = ChannelBannerAuthor.line(author, title, someone)
+        // A FACE ONLY FOR A NAMED SPEAKER: a photo beside "Someone" would name them by the back door.
+        val avatarBitmap = attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))
         Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
         return showMessageNotification(
-            // A PROVEN SPEAKER IS THE PERSON AND THE SALON IS THE CONVERSATION - the group shape a
-            // DM or an MLS group already has, so the line carries its author's name and face. With
-            // nothing proved, the salon's title stays the only Person (`groupName` empty), as before.
-            senderName = speakerName ?: title,
-            groupName  = if (speakerName != null) title else "",
-            body       = shownBody,
+            // ALWAYS THE GROUP SHAPE: the salon is the conversation and every line has a speaker with
+            // its own key, so a notification mixing named, unnamed and blind lines keeps each line's
+            // name - see `ChannelBannerAuthor.line`. The speaker is above the line, so a mention of
+            // this reader needs no "<name> mentioned you" prefix: the body says "@vous" itself.
+            senderName = line.personName,
+            groupName  = line.conversationTitle,
+            senderKey  = line.personKey,
+            body       = body,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
@@ -6163,8 +6175,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param text the decrypted message body, possibly carrying tokens
      * @param myUserId this device's user id, or null when the push context could not be read
      * @param res the (locale-aware) context the strings are read from
-     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with
-     *   [mentionAuthorLine], so naming the author and the tokens costs one file read
+     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with its
+     *   speaker ([ChannelBannerAuthor]), so naming the speaker and the tokens costs one file read
      */
     private fun renderMentions(
         text: String,
@@ -6190,25 +6202,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }.replace(Regex("[ \t]{2,}"), " ")
         if (named + unknown > 0) Log.d(TAG, "[MENTION_NAME] named=$named unknown=$unknown")
         return rendered
-    }
-
-    /**
-     * "Alice vous a mentionné" for a salon banner that mentions this reader (WP-MENTION-NAME,
-     * 2026-10-18): the AUTHOR, named from the phone's own copy of names - the same
-     * `display_names.json`, under the same owner rule, as the tokens - and "Quelqu'un" when the phone
-     * has never named them. Never from the push: a salon push carries only `senderId`, and the
-     * decision is that no name rides it.
-     *
-     * Salon only. An MLS (DM or group) banner already names its sender in the title or the line.
-     */
-    private fun mentionAuthorLine(senderId: String, nameBook: Lazy<JSONObject?>, res: Context): String {
-        val name = senderId.lowercase().takeIf { it.isNotEmpty() }
-            ?.let { nameBook.value?.optString(it) }
-            ?.takeIf { it.isNotBlank() }
-        Log.d(TAG, "[MENTION_NAME] author named=${name != null}")
-        // The placeholder opens the sentence in both languages, so the word is capitalised there.
-        val who = name ?: res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
-        return res.getString(R.string.notif_social_mention_title, who)
     }
 
     /**
