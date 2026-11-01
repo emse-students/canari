@@ -355,6 +355,37 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
 
       expect(row.deviceMembership).toBeNull();
+      expect(row.awaitingAdmission).toBe(false);
+    });
+
+    /**
+     * THE ASK IS THE PERSON'S (review of #2442). A joiner's second device holds no device row in the
+     * group yet, so `deviceMembership` is null - and the row read as an ordinary `pending`
+     * conversation rather than one waiting for a member.
+     */
+    it("says a waiting seat on the row itself, for a device that holds no row there (a joiner's second device)", async () => {
+      groupMemberRepo.find.mockResolvedValue([
+        { groupId: 'g-ordinary', userId: 'u1', awaitingAdmission: true },
+      ]);
+      deviceGroupRepo.find.mockResolvedValue([]);
+
+      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+
+      expect(row.deviceMembership).toBeNull();
+      expect(row.awaitingAdmission).toBe(true);
+    });
+
+    it('says it with no device header too, and never on a group this device is active in', async () => {
+      groupMemberRepo.find.mockResolvedValue([
+        { groupId: 'g-ordinary', userId: 'u1', awaitingAdmission: true },
+      ]);
+
+      const [anonymous] = await controller.getUserGroups('u1', 'u1', undefined);
+      expect(anonymous.awaitingAdmission).toBe(true);
+
+      deviceGroupRepo.find.mockResolvedValue([seat('active')]);
+      const [active] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      expect(active.awaitingAdmission).toBe(false);
     });
   });
 });

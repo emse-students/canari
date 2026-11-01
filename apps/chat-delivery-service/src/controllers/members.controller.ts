@@ -368,12 +368,23 @@ export class MembersController {
     // `X-Canari-Device` (self-asserted, only ever used to read ITS OWN rows of the caller's own
     // user), and without it - an older client - the field is `null` for every row, which a client
     // reads as "the server did not say", never as "nothing owed".
+    const awaitingGroups = new Set(
+      memberships.filter((m) => m.awaitingAdmission === true).map((m) => m.groupId)
+    );
     const deviceMembershipOf = await this.readDeviceMemberships(
       safeUserId,
       headerDeviceId,
       activeGroups.map((g) => g.id),
-      new Set(memberships.filter((m) => m.awaitingAdmission === true).map((m) => m.groupId))
+      awaitingGroups
     );
+    const awaitingWithoutDeviceRow = activeGroups.filter(
+      (g) => awaitingGroups.has(g.id) && !deviceMembershipOf.has(g.id)
+    ).length;
+    if (headerDeviceId && awaitingWithoutDeviceRow > 0) {
+      this.logger.log(
+        `[USER_GROUPS] user=${safeUserId} awaitingNoDeviceRow=${awaitingWithoutDeviceRow} (the account's seat awaits a member, this device holds no row there - said as awaiting)`
+      );
+    }
     // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
     // asking other members for a past that never existed.
     //
@@ -398,6 +409,14 @@ export class MembersController {
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
       deviceMembership: deviceMembershipOf.get(g.id) ?? null,
+      // THE ASK IS THE PERSON'S, NOT THE DEVICE'S (review of #2442; owner, 2026-10-31: "la barriere
+      // est une barriere utilisateur, pas appareil"). The roster row is the user's seat, so it is
+      // said on every row whether or not this device holds a device row there: a joiner's second
+      // device, which has none yet, is waiting for the same member's Add as the first and must not
+      // read as an ordinary `pending` conversation. Never on a group this device is ACTIVE in - an
+      // active row is in the tree, whatever the roster flag says.
+      awaitingAdmission:
+        awaitingGroups.has(g.id) && deviceMembershipOf.get(g.id)?.status !== 'active',
     }));
   }
 

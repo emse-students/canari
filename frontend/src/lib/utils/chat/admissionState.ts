@@ -21,12 +21,15 @@ export function isNeverAdmitted(
 }
 
 /**
- * Brings each conversation row's `awaitingAdmission` to what the server's list says of THIS device's
- * seat (`deviceMembership.awaitingAdmission`), the one writer of the flag outside the demotions.
+ * Brings each conversation row's `awaitingAdmission` to what the server's list says of the ACCOUNT's
+ * seat (`UserGroupRow.awaitingAdmission`), the one writer of the flag outside the demotions.
  *
- * A row the server says nothing about - an older server without the field, or no device row for
- * this device (`deviceMembership: null`) - is left as it is: "the server did not say" is not "not an
- * ask". An `active` row is never flagged: this device is in the group, so the person was admitted.
+ * The ask is the person's, not the device's (review of #2442): the list says it whether or not this
+ * device holds a device row there, so a joiner's second device - no row yet - reads its conversation
+ * as waiting for a member like the first, never as an ordinary `pending` one. A row the server says
+ * nothing about (an older server without the field) is left as it is: "the server did not say" is
+ * not "not an ask". An `active` row is never flagged: this device is in the group, so the person was
+ * admitted.
  *
  * @returns the keys whose flag changed, for the caller to persist.
  */
@@ -37,7 +40,7 @@ export function syncAdmissionFlags(
   const changed: string[] = [];
   for (const g of serverGroups) {
     const convo = conversations.get(g.groupId);
-    const said = g.deviceMembership?.awaitingAdmission;
+    const said = g.awaitingAdmission;
     if (!convo || said === undefined) continue;
     const awaiting = said === true && convo.lifecycle !== 'active';
     if ((convo.awaitingAdmission === true) === awaiting) continue;

@@ -1121,7 +1121,7 @@ member's Add); and an entry no member made is written in the conversation and re
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; owed: `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
 than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
-production once the build serves both stores; the four review findings below. The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
+production once the build serves both stores; of the four review findings, the removed member's surviving leaf closed with ADM-3, the relay routes with #2870, the joiner's second device with no device row with the account-seat flag (`UserGroupRow.awaitingAdmission`, 2026-11-01), and the waiting-seat exclusion of calls owes one ring on dev (below). The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
 see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
 [backlog.d](backlog.d/p1-the-admission-rule-fix-forward.md).
 
@@ -1132,14 +1132,6 @@ admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.i
 `calls_mode` is `off` on production, so no ring has gone through it. Owed: one ring on dev with a
 pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
 admitted seat`) - [calls](frontend/modules/calls.md).
-
-## P3 - A joiner's device with no device row is never marked awaiting admission (review of #2442)
-
-The groups list marks a never-admitted conversation per DEVICE seat (`deviceMembership.awaitingAdmission`).
-A joiner's second device that holds no device row in the group when it reads the list is never marked,
-so its row reads as an ordinary `pending` conversation rather than "waiting for a member". Owed: decide
-whether the flag is the user seat's (any device of an awaiting user) and test the second-device case -
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
 
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 

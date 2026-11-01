@@ -1181,6 +1181,32 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     errors.mockRestore();
   });
 
+  it("a joiner's second device, holding no row, asks a member when the account's seat awaits one (review of #2442)", async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: null,
+            awaitingAdmission: true,
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining("the account's seat awaits a member's admission")
+    );
+  });
+
   it('a seated account with no row for this device keeps its own door (the control)', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });

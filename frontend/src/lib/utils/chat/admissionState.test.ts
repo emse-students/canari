@@ -17,23 +17,18 @@ const row = (lifecycle: Conversation['lifecycle'], awaitingAdmission?: boolean):
   ...(awaitingAdmission === undefined ? {} : { awaitingAdmission }),
 });
 
-const listed = (deviceMembership?: UserGroupRow['deviceMembership']): UserGroupRow[] => [
+const listed = (
+  awaitingAdmission?: boolean,
+  deviceMembership: UserGroupRow['deviceMembership'] = null
+): UserGroupRow[] => [
   {
     groupId: 'g1',
     name: 'Groupe',
     isGroup: true,
-    ...(deviceMembership === undefined ? {} : { deviceMembership }),
+    deviceMembership,
+    ...(awaitingAdmission === undefined ? {} : { awaitingAdmission }),
   } as UserGroupRow,
 ];
-
-const seat = (awaitingAdmission?: boolean) =>
-  ({
-    status: 'pending',
-    welcomeQueued: false,
-    addInFlight: false,
-    admitted: false,
-    ...(awaitingAdmission === undefined ? {} : { awaitingAdmission }),
-  }) as UserGroupRow['deviceMembership'];
 
 describe('isNeverAdmitted', () => {
   it('is an ask on a row this device was never in', () => {
@@ -48,29 +43,39 @@ describe('isNeverAdmitted', () => {
 });
 
 describe('syncAdmissionFlags', () => {
-  it("sets the flag from the list's word on this device's seat, and reports the change once", () => {
+  it("sets the flag from the list's word on the account's seat, and reports the change once", () => {
     const conversations = new Map([['g1', row('pending')]]);
 
-    expect(syncAdmissionFlags(conversations, listed(seat(true)))).toEqual(['g1']);
+    expect(syncAdmissionFlags(conversations, listed(true))).toEqual(['g1']);
     expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
-    expect(syncAdmissionFlags(conversations, listed(seat(true)))).toEqual([]);
+    expect(syncAdmissionFlags(conversations, listed(true))).toEqual([]);
+  });
+
+  /**
+   * THE ASK IS THE PERSON'S, NOT THE DEVICE'S (review of #2442). A joiner's second device holds no
+   * device row in the group, so the per-device seat is null - and its row read as an ordinary
+   * `pending` conversation rather than one waiting for a member.
+   */
+  it("flags a joiner's second device, which holds no device row in the group", () => {
+    const conversations = new Map([['g1', row('pending')]]);
+
+    expect(syncAdmissionFlags(conversations, listed(true, null))).toEqual(['g1']);
+    expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
   });
 
   it('clears it once the seat is admitted, and never flags a row this device is in', () => {
     const conversations = new Map([['g1', row('pending', true)]]);
-    expect(syncAdmissionFlags(conversations, listed(seat(false)))).toEqual(['g1']);
+    expect(syncAdmissionFlags(conversations, listed(false))).toEqual(['g1']);
     expect(conversations.get('g1')?.awaitingAdmission).toBe(false);
 
     const active = new Map([['g1', row('active')]]);
-    expect(syncAdmissionFlags(active, listed(seat(true)))).toEqual([]);
+    expect(syncAdmissionFlags(active, listed(true))).toEqual([]);
   });
 
-  it('leaves the row alone when the server does not say - an older server, or no seat row', () => {
+  it('leaves the row alone when the server does not say - an older server', () => {
     const conversations = new Map([['g1', row('pending', true)]]);
 
     expect(syncAdmissionFlags(conversations, listed())).toEqual([]);
-    expect(syncAdmissionFlags(conversations, listed(null))).toEqual([]);
-    expect(syncAdmissionFlags(conversations, listed(seat()))).toEqual([]);
     expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
   });
 });
