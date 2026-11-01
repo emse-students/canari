@@ -3,6 +3,7 @@ import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
+import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import {
   ACCOUNT_KEY,
@@ -304,6 +305,13 @@ export async function wipeDeletedAccountLocalData(
       const removed = await invoke<number>('delete_user_push_files', { userId });
       console.log(`${tag} native push files: ${removed} file(s) removed`);
     });
+    // The notification replies still waiting for the page: ONLY this account's lines, since the file
+    // can hold another account's (`delete_user_quick_replies`, `push.rs`). Always 0 off iOS.
+    await step('the waiting quick replies', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('delete_user_quick_replies', { userId });
+      console.log(`${tag} waiting quick replies: ${removed} line(s) removed`);
+    });
     // THE EXPLICIT RESET OF THE AT-REST KEY, and only once the data it seals is gone: while the
     // marker names the hardware-held key, the guard refuses the keystore delete below (`at_rest_key.rs`).
     // A database that survived keeps its marker, so the entry is refused too and the resume retries both.
@@ -346,6 +354,12 @@ export async function wipeDeletedAccountLocalData(
       if (await store.delete(ACCOUNT_KEY.lastActive(userId))) await store.save();
     });
   }
+
+  // The device-wide release marks name this account: the server ended its sessions in the erasure
+  // fan-out (media-service `cancelAllOwnedBy`), so they are dropped with the rest of its data.
+  await step('the upload release marks', async () => {
+    dropUploadReleaseMarksOf(userId, (line) => console.log(line));
+  });
 
   await step('the per-account local keys', async () => {
     // A keystore entry that survived keeps the device id it is named by, or the resume could never

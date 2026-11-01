@@ -738,6 +738,30 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   `previous-commit-unresolved`. A re-plan that does not complete is a toast naming the conversation
   (`reportLostInvitation`); only an ending a new invitation could lift says "invite them again" - a
   gate refusal and a retired conversation have their own sentences.
+- **A request with no answer BEFORE the commit left is `unreachable`, not `failed`** (NET-3). Typed
+  at the throw: a `TransportFailureError` that is not a `CommitOutcomeUnknownError` (the subclass is
+  caught first) means no stage was ever sent - the inviter's own registration, the device reads, the
+  key packages. Nothing is staged or kept, so the gesture is a WARNING ("try again once back
+  online"), and a re-plan meeting it WAITS (`waiting: connection`) rather than telling the member to
+  invite again. A device list nobody answered is "not known", never "no device": `no-devices` only
+  when the server SAID so for everyone left. The same holds for an add-lock request with no answer
+  (`add-lock-unanswered`, a warning that waits on the connection) and for block checks of which none
+  answered (`unreachable`/`failed`; `nobody-reachable` only when a block was actually found).
+- **An invitee the Add could not reach is named, never dropped silently.** With several invitees, a
+  block check that threw (`unchecked`), a device read nothing answered (`unchecked`), an answered
+  empty device list (`no-device`) or a commit that skipped every device of theirs for its KeyPackage
+  (`no-key-package`: expired, absent or untrusted, `everyDeviceSkipped`) leaves that person out
+  while the others are added - and
+  `BulkAdditionOutcome.leftOut` carries them, so the member is told by display name
+  (`reportBulkAdditionOutcome`; for a re-plan, `chat_invite_resumed_left_out`). A BLOCKED invitee is
+  the one deliberate silent skip.
+- **One outcome, one line** (TOK-2: a failed Add was said three times in 3 ms). `processBulkAddition`
+  logs its outcome ONCE (`narrateBulkAddition`), for every caller - gesture, join answer, re-plan
+  (marked `the invitation lost at epoch N, re-planned`): `[GROUP] an invitation added nobody
+  (<reason>) in <g>...[: <cause>]`, at `info` when it is the designed end of a lost race (a refused
+  admission dated by the seat generation the Add carried), at `warn`, or at `error` with the error
+  itself only when the cause is nothing this code typed (`ApiRefusalError`, `CommitRefusedError`, a transport failure). The
+  reporters only toast.
 
 Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
 invitation; a kept commit is settled only by a connection, while the toast promises "once it is

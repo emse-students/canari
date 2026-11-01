@@ -987,6 +987,118 @@ describe('noteCoverageShortfall', () => {
     expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W2] });
   });
 
+  describe('a shortfall that predates the group is not a shortfall', () => {
+    /** BIG-1, 2026-10-26: the group was minutes old when the phone asked for its five years. */
+    const MINUTES_OLD = NOW - 10 * 60_000;
+    /** A group older than any browser's memory, so a browser's ninety days DO leave a past. */
+    const TWO_YEARS_OLD = NOW - 2 * 365 * DAY;
+    const BROWSERS = Array.from({ length: 8 }, (_, i) => `u${i}:browser`);
+
+    it('elects nobody when every member covers back past the group beginning (BIG-1)', async () => {
+      const mls = service({ target: W2 });
+
+      for (const browser of BROWSERS) {
+        await noteCoverageShortfall(
+          mls,
+          GROUP,
+          browser,
+          { since: SINCE, coveredFrom: NINETY_DAYS, startedAt: MINUTES_OLD },
+          log,
+          NOW
+        );
+      }
+
+      // Eight answers, zero elections and zero probes - where the walk used to cost eight of each.
+      expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+      expect(probe).not.toHaveBeenCalled();
+      const said = log.mock.calls.map((c) => String(c[0]));
+      expect(said.filter((l) => l.includes('before the group began'))).toHaveLength(8);
+      expect(said.some((l) => l.includes('looking for another member'))).toBe(false);
+      // The claims are still facts about those members, recorded as before.
+      expect(statedCoverage(GROUP)).toHaveLength(8);
+    });
+
+    it('still walks on a REAL shortfall - the group is older than the answer reaches', async () => {
+      const mls = service();
+      mls.sendHistoryRequest
+        .mockResolvedValueOnce({ target: W2 })
+        .mockResolvedValueOnce({ noPeerOnline: true, excludedOnline: 2 });
+      const coverage = { since: SINCE, coveredFrom: NINETY_DAYS, startedAt: TWO_YEARS_OLD };
+
+      await noteCoverageShortfall(mls, GROUP, W1, coverage, log, NOW);
+      await noteCoverageShortfall(mls, GROUP, W2, coverage, log, NOW);
+
+      // The same walk as without a start: one member more excluded at each step, and it ends on the
+      // server's proof that every reachable member has answered.
+      expect(mls.sendHistoryRequest.mock.calls.map(([, opts]) => opts.exclude)).toEqual([
+        [W1],
+        [W1, W2],
+      ]);
+      expect(log.mock.calls.flat().join('\n')).toContain(
+        'every reachable member (2) has stated its coverage'
+      );
+    });
+
+    it('walks when the gap reaches into the clock slack below the beginning', async () => {
+      // The start is the SERVER's clock and a message is dated by its SENDER's, so the bound sits a
+      // day below the start. A member whose memory begins inside that day is still short of it.
+      const mls = service({ target: W2 });
+
+      await noteCoverageShortfall(
+        mls,
+        GROUP,
+        W1,
+        { since: SINCE, coveredFrom: NINETY_DAYS, startedAt: NINETY_DAYS + DAY / 2 },
+        log,
+        NOW
+      );
+
+      expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W1] });
+    });
+
+    it('walks as before when the group start is unknown - the direction that loses nothing', async () => {
+      const mls = service({ target: W2 });
+
+      await noteCoverageShortfall(
+        mls,
+        GROUP,
+        W1,
+        { since: SINCE, coveredFrom: NINETY_DAYS, startedAt: undefined },
+        log,
+        NOW
+      );
+
+      expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W1] });
+    });
+
+    it('excludes only members short of the group, not those whose memory reaches its beginning', async () => {
+      // A group 200 days old: a browser (90 days) is short of it, a member whose memory begins 300
+      // days back is not. The next election skips the first and may still draw the second.
+      const startedAt = NOW - 200 * DAY;
+      const mls = service({ target: 'u3:phone' });
+
+      await noteCoverageShortfall(
+        mls,
+        GROUP,
+        W2,
+        { since: SINCE, coveredFrom: NOW - 300 * DAY, startedAt },
+        log,
+        NOW
+      );
+      expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+
+      await noteCoverageShortfall(
+        mls,
+        GROUP,
+        W1,
+        { since: SINCE, coveredFrom: NINETY_DAYS, startedAt },
+        log,
+        NOW
+      );
+      expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W1] });
+    });
+  });
+
   it('forgets the claims with the conversation they describe', async () => {
     const mls = service({ target: W2 });
     await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);

@@ -2,6 +2,7 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
 import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { coverageFallsShort } from '$lib/utils/chat/historyWindow';
 
 /**
  * When a device asks whether it holds the same history as its peers, and how it stops asking.
@@ -859,8 +860,14 @@ export async function noteCoverageShortfall(
   >,
   groupId: string,
   from: string,
-  coverage: { since: number; coveredFrom: number },
-  log: (msg: string) => void
+  coverage: {
+    since: number;
+    coveredFrom: number;
+    /** The server's record of the group's creation, when this device knows it. */
+    startedAt?: number;
+  },
+  log: (msg: string) => void,
+  now: number = Date.now()
 ): Promise<void> {
   const short = groupId.slice(0, 8);
   const stated = coverageStated.get(groupId) ?? new Map<string, number>();
@@ -870,6 +877,18 @@ export async function noteCoverageShortfall(
   if (coverage.coveredFrom <= coverage.since) {
     // It covers what we want after all - our window may have moved since the ask (either side of
     // midnight is enough). Recorded, not chased.
+    return;
+  }
+
+  if (!coverageFallsShort(coverage, now)) {
+    // THE GROUP BEGAN AFTER WHERE THAT MEMBER'S MEMORY BEGINS, so the range it does not cover holds
+    // nothing that could exist, and no other member can hold it either. Measured on BIG-1
+    // (2026-10-26): a phone asking a minutes-old group for its 5 years walked all 8 browser members,
+    // each "1735 d short", with the two state keys equal. Said once, because the peer did send a
+    // frame (a build that predates this check), and the absence of a walk after it needs a reason.
+    log(
+      `[HISTORY_COVERAGE] ${from} covers ${short}… from ${new Date(coverage.coveredFrom).toISOString()}, before the group began - nothing older exists, not looking further`
+    );
     return;
   }
 
@@ -887,10 +906,17 @@ export async function noteCoverageShortfall(
   // it was given, and ours can have moved since - either side of midnight is enough - so a claim
   // recorded as a shortfall an hour ago may cover us now. Excluding on "has spoken" rather than on
   // "cannot help" would skip exactly the member the walk is looking for.
+  // The same predicate as the decision above, so a member is excluded exactly when IT could not
+  // close the gap that is being walked for.
   const shortOfUs = [...stated]
-    .filter(([, from]) => from > coverage.since)
+    .filter(([, from]) =>
+      coverageFallsShort(
+        { since: coverage.since, coveredFrom: from, startedAt: coverage.startedAt },
+        now
+      )
+    )
     .map(([member]) => member);
-  await reconcileGroup(mlsService, groupId, log, Date.now(), shortOfUs);
+  await reconcileGroup(mlsService, groupId, log, now, shortOfUs);
 }
 
 /** What each member has stated about its coverage of a group. Exposed for tests and diagnostics. */

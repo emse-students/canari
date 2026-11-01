@@ -7,6 +7,7 @@
     unpinPost as unpinPostApi,
     unmaskPost as unmaskPostApi,
     unrepublishPost as unrepublishPostApi,
+    setPostRepostConsent,
     type PostEntity,
     type PostComment,
     type PostMediaRef,
@@ -527,6 +528,23 @@
     await reloadAfterRepublication();
   }
 
+  /**
+   * WP-F6: the author flips this post's repost consent. The server answers what applies now (an
+   * override "no" also removes the post's reposts), and the card re-reads itself from it.
+   */
+  async function setRepostConsent(allow: boolean) {
+    try {
+      await setPostRepostConsent(localPost.id, allow);
+      actionMessage = allow
+        ? m.post_repost_consent_allowed_toast()
+        : m.post_repost_consent_forbidden_toast();
+    } catch (err) {
+      Log.d('PostCard', `repost consent of ${localPost.id.slice(0, 8)} failed: ${String(err)}`);
+      errorMessage = m.post_repost_consent_error();
+    }
+    await reloadAfterRepublication();
+  }
+
   /** The requests of the reader's associations still waiting on the author, for the menu. */
   const waitingRequests = $derived(pendingRequests(localPost));
 
@@ -659,6 +677,11 @@
         pendingRequests={waitingRequests}
         onRequestRepublication={() => (republishMode = 'request')}
         onWithdrawRequest={withdrawRequest}
+        canRepost={localPost.canRepost === true}
+        repostedByMe={localPost.repostedByMe === true}
+        onRepostChange={() => void reloadAfterRepublication()}
+        repostsAllowed={localPost.repostConsent?.effective}
+        onSetRepostConsent={(allow) => void setRepostConsent(allow)}
       />
     </div>
 

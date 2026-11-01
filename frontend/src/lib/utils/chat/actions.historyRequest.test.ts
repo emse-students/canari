@@ -84,7 +84,11 @@ const rowOf = (e: HistoryEntry): StoredMessage =>
  * makes the window assertions deterministic: the range start is `max(floor, windowStart)`, so a
  * recent floor decides it outright and the test never has to name a wall clock.
  */
-function storageWith(entries: HistoryEntry[] | 'broken', historyFloor?: number): IStorage {
+function storageWith(
+  entries: HistoryEntry[] | 'broken',
+  historyFloor?: number,
+  startedAt?: number
+): IStorage {
   return {
     getMessages: vi.fn().mockImplementation(async () => {
       if (entries === 'broken') throw new Error('store unreadable');
@@ -102,7 +106,7 @@ function storageWith(entries: HistoryEntry[] | 'broken', historyFloor?: number):
       .fn()
       .mockImplementation(async (id: string) =>
         id === GROUP
-          ? { id: GROUP, name: 'Test', lifecycle: 'active', updatedAt: 0, historyFloor }
+          ? { id: GROUP, name: 'Test', lifecycle: 'active', updatedAt: 0, historyFloor, startedAt }
           : null
       ),
   } as unknown as IStorage;
@@ -650,6 +654,45 @@ describe('handleHistoryRequest - stating our coverage', () => {
 
     expectSilence();
     expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('says NOTHING when the group began after where our memory begins - nothing older exists', async () => {
+    // BIG-1, 2026-10-26: a phone asked a minutes-old group for its five years, every browser member
+    // answered "I cover only from ninety days ago", and the phone walked all eight of them. Our
+    // memory reaching below the group's beginning means we DO cover what was asked: no message of
+    // this group can be older than the group. No floor here, so our coverage is the bare window.
+    const startedAt = Date.now() - 10 * 60_000;
+    const rows = [{ id: 'm1', timestamp: startedAt + 1_000 }];
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), BELOW_FLOOR),
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows, undefined, startedAt) }));
+
+    expectSilence();
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('still states it when the group is OLDER than our memory - a real shortfall', async () => {
+    // The control: the same answer for a group that began before our window does leave a past only
+    // another member can hold, so the asker must still be told to look for it.
+    const startedAt = at('2020-06-01T00:00:00Z');
+    const rows = [{ id: 'm1', timestamp: IN_COVERAGE }];
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), BELOW_FLOOR),
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows, FLOOR, startedAt) }));
+
+    expect(sendHistoryCoverage).toHaveBeenCalledWith(
+      GROUP,
+      { from: SELF, to: REQUESTER, since: BELOW_FLOOR, coveredFrom: FLOOR },
+      expect.anything()
+    );
   });
 
   it('says nothing when no probe ever arrived - there was no ask to answer', async () => {

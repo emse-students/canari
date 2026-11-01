@@ -56,6 +56,8 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // and no switch could ever silence them (2026-10-08 audit): a republished post is a post notice, a
   // repost proposal is a post matter, and a co-organisation proposal is an agenda one.
   social_association_repost: 'posts',
+  // WP-F6: a member's repost is a post notice too.
+  social_member_repost: 'posts',
   social_repost_proposed: 'posts',
   // D38b: an association asks an author to republish their personal post - a post matter.
   social_repost_personal_requested: 'posts',

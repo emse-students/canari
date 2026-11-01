@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -89,12 +89,6 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
 }
 
 /**
- * The v15 -> v16 step: the conversation row gains `server_read_watermarks`, the read marks taken on
- * the SERVER's clock (`$lib/utils/chat/readState`, owner 2026-10-31). Additive and NULL on arrival:
- * the stamped marks already held keep covering what they covered, and the next reading writes the
- * first server mark.
- */
-/**
  * The v15 -> v16 step, second half: the message row gains `order_at`, the key a page is read on
  * (`storedOrderAt`), and `order_pending`, set while that key is only PROVISIONAL. The server time the
  * key is derived from is inside the ciphertext, which a migration run before the device key is known
@@ -148,10 +142,32 @@ export const MESSAGE_ORDER_PENDING_INDEX_STATEMENT =
 /** The `[conversation_id, timestamp]` index the page read used before v16; nothing reads it since. */
 export const LEGACY_MESSAGE_TIME_INDEX_DROP = 'DROP INDEX IF EXISTS idx_messages_conv_time';
 
+/**
+ * The v15 -> v16 step: the conversation row gains `server_read_watermarks`, the read marks taken on
+ * the SERVER's clock (`$lib/utils/chat/readState`, owner 2026-10-31). Additive and NULL on arrival:
+ * the stamped marks already held keep covering what they covered, and the next reading writes the
+ * first server mark.
+ */
 export function conversationServerReadWatermarksStatement(
   columns: readonly string[]
 ): string | null {
   return columns.includes('server_read_watermarks')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN server_read_watermarks TEXT';
+}
+
+/**
+ * The v16 -> v17 step: the conversation row gains `started_at`, the server's record of the group's
+ * creation (`ConversationMeta.startedAt`). It was declared as persisted and was not on this backend:
+ * IndexedDB stores the whole object, SQLite only its named columns, so a phone forgot it on every
+ * reload until the next group sweep. History reconciliation reads it to tell a coverage shortfall
+ * that predates the group from a real one. NULL on arrival, which reads as unknown - the next sweep
+ * fills it (`recordGroupStart`). Returns `null` when the column is there, so the step is a no-op twice.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationStartedAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('started_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
 }

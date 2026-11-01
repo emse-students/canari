@@ -1,8 +1,11 @@
 import { sendChatMessage } from './messaging';
+import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
 import type { Conversation } from '$lib/types';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 
 const enqueueOutboxMessage = vi.fn().mockResolvedValue(undefined);
+/** The outbox's own refusal type, kept real: what is asserted is that nobody re-types it. */
+class OutboxEnqueueError extends Error {}
 vi.mock('./outbox', () => ({
   enqueueOutboxMessage: (...args: unknown[]) => enqueueOutboxMessage(...args),
   cancelOutboxMessage: vi.fn().mockResolvedValue(false),
@@ -48,6 +51,8 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
         addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
           calls.push('echo');
           options = o;
+          // What a store that wrote the pair reports (`useMessaging`).
+          o.onPairWritten?.();
         },
       } as any,
     };
@@ -91,6 +96,57 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     });
     await sendChatMessage('hello', 'alice', null, h.deps);
     expect(h.calls).toEqual(['echo', 'enqueue']);
+  });
+
+  it('a throw AFTER the durable write reaches the caller typed as a written message', async () => {
+    // Review of #2843, A3: the quick-reply drain put a reply back on any throw, and the next take
+    // sent it a second time beside the copy the outbox already held. The OUTBOX classifies it at
+    // the throw (M1, `outbox.test.ts`); the send path passes it on untouched.
+    const h = harness();
+    enqueueOutboxMessage.mockImplementationOnce(async (entry: { id: string }) => {
+      throw new MessageWrittenError(entry.id, new Error('mirror write failed'));
+    });
+    const sent = sendChatMessage('hello', 'alice', null, h.deps);
+    await expect(sent).rejects.toBeInstanceOf(MessageWrittenError);
+    await expect(sent).rejects.toMatchObject({ messageId: h.options.messageId });
+  });
+
+  it('a refusal before any write is passed on as it is - never called a written message (M1)', async () => {
+    const h = harness();
+    enqueueOutboxMessage.mockImplementationOnce(async () => {
+      throw new OutboxEnqueueError('no storage layer');
+    });
+    const sent = sendChatMessage('hello', 'alice', null, h.deps);
+    await expect(sent).rejects.toBeInstanceOf(OutboxEnqueueError);
+    await expect(sent).rejects.not.toBeInstanceOf(MessageWrittenError);
+  });
+
+  it('a throw BEFORE the write is not one', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async () => {
+      throw new Error('storage refused');
+    };
+    const sent = sendChatMessage('hello', 'alice', null, h.deps);
+    await expect(sent).rejects.toThrow('storage refused');
+    await expect(sent).rejects.not.toBeInstanceOf(MessageWrittenError);
+  });
+
+  it('a pair write that FAILED is not called durable: the outbox writes its own row (M1)', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async (_s: string, _c: string, _n: string, o: any) => {
+      throw new MessagePairWriteError(o.messageId, new Error('quota'));
+    };
+    const result = await sendChatMessage('hello', 'alice', null, h.deps);
+    expect(result.success).toBe(true);
+    expect(enqueueOutboxMessage).toHaveBeenCalledTimes(1);
+    expect(enqueueOutboxMessage.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it('a store that wrote nothing (no storage) is not called durable either', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async () => {};
+    await sendChatMessage('hello', 'alice', null, h.deps);
+    expect(enqueueOutboxMessage.mock.calls[0][1]).toBeUndefined();
   });
 
   it('a reply carries its quote into the entry, and still travels with the echo', async () => {

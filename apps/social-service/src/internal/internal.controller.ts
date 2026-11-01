@@ -1,3 +1,4 @@
+import { severMemberRepostsBetween } from '../posts/member-reposts.service';
 import { LydiaCashiersService } from '../associations/lydia-cashiers.service';
 import {
   Controller,
@@ -128,8 +129,12 @@ export class InternalController {
     );
     // TypeORM's Postgres driver answers a DELETE with `[rows, rowCount]`.
     const bellRows = Array.isArray(bell) && typeof bell[1] === 'number' ? bell[1] : 0;
+    // WP-F6: a block removes the reposts either person made of the other's personal posts (owner,
+    // 2026-11-01). The reader predicate checks the same blocks, so a severing that fails opens
+    // nothing; the unblock severs again before it lifts the block.
+    const reposts = await severMemberRepostsBetween(this.userFollowRepo.manager, userA, userB);
     this.logger.log(
-      `[INTERNAL_SEVER_FOLLOWS] a=${short(userA)} b=${short(userB)} removed=${removed} requestNotices=${bellRows}`
+      `[INTERNAL_SEVER_FOLLOWS] a=${short(userA)} b=${short(userB)} removed=${removed} requestNotices=${bellRows} memberReposts=${reposts}`
     );
     return { ok: true, removed };
   }

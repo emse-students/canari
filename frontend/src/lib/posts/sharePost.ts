@@ -4,9 +4,13 @@ import { runShareOut, shareTextOut } from '$lib/sharing/shareOut';
 import { landShareOn } from '$lib/sharing/shareLanding';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
 import { Log } from '$lib/utils/Log';
+import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
+import { repostToFollowers, undoRepost } from './api';
 
 /**
- * HOW A POST IS SHARED: the three rows of its share sheet (`PostShareSheet`), opened by the
+ * HOW A POST IS SHARED: the rows of its share sheet (`PostShareSheet`), opened by the
  * "Partager" row of a post's menu (`PostActionsMenu`) and by the send button of the CanaReels rail
  * (`ReelViewer`). Every row shares the SAME thing - the post's link, `/posts/<id>` on the public
  * origin - and the link carries nothing but the id: a reader who may not see the post is refused by
@@ -56,4 +60,57 @@ export function sharePostLinkOut(postId: string): void {
  */
 export function copyPostLink(postId: string): void {
   void copyPublicShareLink(`/posts/${postId}`);
+}
+
+/**
+ * The sentence a refused repost (WP-F6) reads as, from the server's typed `code` - never from its
+ * message.
+ */
+export function repostRefusalMessage(code: string | null, status: number | null): string {
+  switch (code) {
+    case 'MEMBER_REPOST_ANONYMOUS':
+      return m.post_repost_refused_anonymous();
+    case 'MEMBER_REPOST_BLOCKED':
+      return m.post_repost_refused_blocked();
+    case 'MEMBER_REPOST_NOT_ALLOWED':
+      return m.post_repost_refused_not_allowed();
+    case 'MEMBER_REPOST_ALREADY':
+      return m.post_repost_refused_already();
+    default:
+      return status === 404 ? m.post_repost_refused_gone() : m.post_repost_error();
+  }
+}
+
+/**
+ * "Republier pour mes abonnes" (WP-F6): reposts the post to the member's ACCEPTED followers, and
+ * says so with a toast either way. Resolves to whether the post is now reposted by the member, so
+ * the host updates its card from the answer rather than from a guess.
+ */
+export async function repostToMyFollowers(postId: string): Promise<boolean> {
+  Log.i('sharePost', `reposting ${postId.slice(0, 8)} to the member's followers`);
+  try {
+    await repostToFollowers(postId);
+    showToast(m.post_repost_done(), 'info');
+    return true;
+  } catch (e: unknown) {
+    const code = refusalCode(e);
+    Log.i('sharePost', `repost of ${postId.slice(0, 8)} refused: ${code ?? String(e)}`);
+    showToast(repostRefusalMessage(code, refusalStatus(e)), 'error');
+    return code === 'MEMBER_REPOST_ALREADY';
+  }
+}
+
+/** Takes the member's own repost back. Resolves to whether the post is STILL reposted by them. */
+export async function undoMyRepost(postId: string): Promise<boolean> {
+  Log.i('sharePost', `taking back the repost of ${postId.slice(0, 8)}`);
+  try {
+    await undoRepost(postId);
+    showToast(m.post_repost_undone(), 'info');
+    return false;
+  } catch (e: unknown) {
+    Log.i('sharePost', `undo of the repost of ${postId.slice(0, 8)} failed: ${String(e)}`);
+    if (refusalStatus(e) === 404) return false;
+    showToast(m.post_repost_error(), 'error');
+    return true;
+  }
 }

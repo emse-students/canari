@@ -1130,6 +1130,8 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret?: string
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
+    // The open upload sessions first: no device of an erased account can release them any more.
+    await this.uploadSessions.cancelAllOwnedBy(userId);
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
     if (failed > 0) {
       // A 2xx would tell the erasure queue this half is done. It is not: the objects that failed

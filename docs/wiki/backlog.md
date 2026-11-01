@@ -121,7 +121,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 BUILT (draft #2859, for `1.6.0`).** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -283,7 +283,10 @@ ordinary review.
   space / other space x personal / anonymous / association post), the read-grants spec unchanged,
   and the privacy-policy paragraph in the same pull request.
 - **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming).** The consent setting (per author, per post); the SQL beside the
+  review before arming). BUILT, draft pull request #2859, migration 121**
+  ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
+  owed: the Opus review, then arming on the owner's go (it changes who sees what). The plan as
+  written: The consent setting (per author, per post); the SQL beside the
   republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
   on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
   reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;
@@ -320,12 +323,6 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
   it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
   members decision it is not a loss: drop it at INFO with its reason, once.
-- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
-  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
-  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
-  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
-  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
-  before the first round (never learn by failing what a fact could tell).
 - **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
   DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
   count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other
@@ -1056,36 +1053,6 @@ merged. The design has to show that this fence covers every way a socket-close r
 an in-flight Add, including the Welcome loop after the accept. Needs an Opus design and security
 review.
 
-## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
-It logs `console.error('[SYNC] processBulkAddition failed:', …)` and returns `not-added('failed')`,
-and `reportBulkAdditionRefusal` then toasts that the invitation added nobody. The commit is KEPT
-and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3, captive portal on
-the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
-logged as an error and shown to the member as a failure, and the member may retry an Add that is
-going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
-P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land.
-**#2426 (merged) covers the TYPED case**: a `CommitOutcomeUnknownError` now returns
-`outcome-unknown`, logs at `warn` and is said as a warning ("pending connection"), pinned by
-`conversationRefusalMessage.test.ts` and `lostInvitation.test.ts`. **What is left is the
-catch-all**: a no-answer NOT thrown as that type still reaches `console.error` and `failed`. Whether
-a portal on the commit POST always reaches the typed error is what the OFF-3 replay on the next build
-answers - if it falls through, the fix is at the throw, not at the toast.
-
-## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) asks `isBlockedWith` for each invitee before the Add. A
-check that THROWS (a captive portal, a dropped link) only logs `[ERROR] Could not check whether <id>
-can be added, skipping`, and the invitee leaves the batch. The user is told only when NOBODY is left
-(`nobody-reachable`, `chat_invite_error_nobody_reachable`). With several invitees and one that could
-not be checked, the others are added, the gesture reads as a success, and the dropped person is
-named nowhere on screen - the user silently loses part of an action. The same shape follows two
-steps later: an invitee whose device fetch comes back empty is skipped with `[WARN] Skipped: no
-devices found` and no notice. Found by reading while the campaign ran the portal row (NET-3) on
-`1.4.1-alpha.3`; the fix is to carry the skipped users in `BulkAdditionOutcome` and name them in
-the notice. A blocked invitee is skipped deliberately and stays out of this.
-
 ## P3 - A leave made while the link is down loses its `memberLeft` notice for good (RM-8, 2026-10-25)
 
 When a member leaves while every request fails, `leaveGroupAndBroadcast`'s notice send throws:
@@ -1211,21 +1178,6 @@ failed attempts in about eight seconds. Nothing is lost, and the order holds. Bu
 failing what a fact on the same client could have told it. The fix is to carry the group's
 unknown-outcome state to where the outbox decides to attempt a send, so that it waits for the
 settlement instead of trying and failing.
-
-## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)
-
-When a bulk Add fails, the client says so three times within 3 ms. Read on `1.4.1-alpha.4`, TOK-2,
-where the token renewal behind the commit failed (`DeliveryRenewalFailedError`):
-
-- an untagged `Bulk invite error: <typed error>` at log level;
-- `[SYNC] processBulkAddition failed: <typed error>` at `console.error`, with a stack;
-- `[GROUP] an invitation added nobody (failed)`.
-
-All three carry the same fact. The rule is that a line is either expected and necessary, or the
-visible end of something upstream. So one failed Add should be ONE accusing line that carries the
-typed outcome: tagged, at the level the outcome deserves, with no stack for a typed and expected
-error. The cross-client rig forgives the three as TOK-2's provoked narration until this is fixed, and
-the needle's comment points here.
 
 ## P3 - A harness self-test run failed twice and could not be reproduced (2026-10-25)
 
@@ -2458,6 +2410,8 @@ searches), `HEAD` content-length.
 
 ## P2 - A withdrawn or wiped chat reel can leak its upload session for 24 h (owed BEFORE `CHAT_REEL_WRITER_ENABLED`)
 
+**BUILT 2026-11-01** (draft pull request `fix/chat-reel-session-release`): the durable mark, the startup/reconnect drain, the erasure fan-out ending the owner's sessions. Two paths stay the 24 h sweep's by design (a revoked device's factory wipe, the forgot-PIN reset): [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Delete this entry when it ships.
+
 Found in the review of #2117 (RC-5, 2026-10-19), not built. The withdrawal of a queued chat reel releases its resumable session with a best-effort `DELETE`. **Three paths still leak it** to media-service's 24 h sweep:
 - a cancel made offline - the weak link the reel was stuck on - logs `NOT released`;
 - a sign-out and an account erasure wipe the outbox without a `DELETE`;
@@ -3048,7 +3002,9 @@ full-screen ring. The web's own local notification is now deferred while the pag
 ([calls](frontend/modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)).
 Owed: one foreground ring on the iPhone. If a banner still shows, the two native candidates are
 (a) the notification plugin's own `UNUserNotificationCenter` delegate presenting in the foreground
-if it replaced `CanariNotificationDelegate` (which answers `UNNotificationPresentationOptionNone`
+if it replaced `CanariNotificationDelegate` - it DID, on every launch until 2026-11-01, when the slot
+was taken back for Canari at launch ([mobile](frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01));
+re-read the ring on a build carrying that (`CanariNotificationDelegate` answers `UNNotificationPresentationOptionNone`
 in the foreground, `canari_push.mm`), and (b) the server's ring push (`calls.service.ts`:
 VoIP -> CallKit, or the FCM alert for a device without a VoIP token) reaching a device whose app is
 on screen - a CallKit report cannot be skipped for a VoIP push, so that half is a server question

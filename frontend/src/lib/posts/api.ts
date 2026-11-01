@@ -210,6 +210,20 @@ export interface PostEntity {
    * line. A personal post carries it too once its author accepted a request (D38b).
    */
   republishedBy?: PostAssociationAuthor[];
+  /**
+   * WP-F6 "Republier pour mes abonnes": the reader may repost it to their accepted followers now.
+   * The server's answer (consent, blocks, anonymity, visibility); checked again on the write.
+   */
+  canRepost?: boolean;
+  /** WP-F6: the reader reposted it - the share sheet offers to take it back. */
+  repostedByMe?: boolean;
+  /** WP-F6: the people the reader follows who reposted it, oldest first - "Republie par Y". */
+  repostedBy?: { id: string; name: string }[];
+  /**
+   * WP-F6: on the reader's OWN personal post only, its repost consent - the post's override (null
+   * follows the account setting) and what applies now. Absent on every other card.
+   */
+  repostConsent?: { override: boolean | null; effective: boolean };
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
@@ -274,10 +288,11 @@ export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
 export interface ReelLimits {
   maxDurationMs: number;
   /**
-   * The longest reel sent in a conversation (60 s, D-size). ABSENT from an older server's answer:
-   * a reader must treat `undefined` as "this server has no chat cap yet", never default a number.
+   * The longest reel sent in a conversation (60 s, D-size, `CHAT_REEL_MAX_DURATION_MS`), served since
+   * 89a81ad7d5. Required: a chat reel is never filmed nor prepared without it, and never under the
+   * 90 s reel cap instead (`servedChatCapMs` checks the answer at run time).
    */
-  chatMaxDurationMs?: number;
+  chatMaxDurationMs: number;
   retentionDays: number;
   warningWindowDays: number;
 }
@@ -604,6 +619,47 @@ export async function requestPersonalRepublication(
   return request(`/api/posts/${postId}/republication-requests`, {
     method: 'POST',
     body: JSON.stringify({ associationId }),
+  });
+}
+
+/**
+ * WP-F6: reposts the post to the caller's ACCEPTED followers. A refusal carries a typed `code`
+ * (`MEMBER_REPOST_*`), read with `refusalCode`.
+ */
+export async function repostToFollowers(
+  postId: string
+): Promise<{ postId: string; newlyReached: number }> {
+  return request(`/api/posts/${postId}/reposts`, { method: 'POST' });
+}
+
+/** WP-F6: takes the caller's own repost back. */
+export async function undoRepost(postId: string): Promise<{ ok: boolean }> {
+  return request(`/api/posts/${postId}/reposts`, { method: 'DELETE' });
+}
+
+/** WP-F6: the caller's account-wide consent to member reposts (ON when never set). */
+export async function getRepostSettings(): Promise<{ allowReposts: boolean }> {
+  return request('/api/posts/me/repost-settings');
+}
+
+/** WP-F6: sets it; turning it off removes, at once, every repost it no longer covers. */
+export async function setRepostSettings(
+  allowReposts: boolean
+): Promise<{ allowReposts: boolean; removed: number }> {
+  return request('/api/posts/me/repost-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ allowReposts }),
+  });
+}
+
+/** WP-F6: the author's override for one post - true, false, or null to follow the setting. */
+export async function setPostRepostConsent(
+  postId: string,
+  allowReposts: boolean | null
+): Promise<{ override: boolean | null; effective: boolean; removed: number }> {
+  return request(`/api/posts/${postId}/repost-consent`, {
+    method: 'PUT',
+    body: JSON.stringify({ allowReposts }),
   });
 }
 

@@ -55,6 +55,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
+  conversationStartedAtStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   LEGACY_MESSAGE_TIME_INDEX_DROP,
@@ -201,7 +202,8 @@ export class SqliteStorage implements IStorage {
                 history_floor    INTEGER,
                 image_media_id   TEXT,
                 awaiting_admission INTEGER,
-                server_read_watermarks TEXT
+                server_read_watermarks TEXT,
+                started_at       INTEGER
             )
         `);
 
@@ -508,6 +510,17 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 16');
     }
 
+    if (currentVersion < 17) {
+      // v16->v17: the conversation keeps the server's record of the group's creation (`started_at`),
+      // which this backend dropped on every save while IndexedDB kept it. Additive and NULL on
+      // arrival, read as unknown: the next group sweep fills it (`recordGroupStart`).
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const add = conversationStartedAtStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 17, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 17');
+    }
+
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
     // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
@@ -522,7 +535,7 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
       [
         conv.id,
         conv.name,
@@ -533,6 +546,7 @@ export class SqliteStorage implements IStorage {
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
+        conv.startedAt ?? null,
       ]
     );
   }
@@ -555,6 +569,8 @@ export class SqliteStorage implements IStorage {
         typeof r.image_media_id === 'string' && r.image_media_id ? r.image_media_id : null,
       // On Android the plugin returns INTEGER columns as strings.
       awaitingAdmission: Number(r.awaiting_admission) === 1,
+      // INTEGER, so a string on Android too; absent or unusable reads as unknown.
+      ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
     };
   }
 
@@ -907,7 +923,7 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
       [
         conv.id,
         conv.name,
@@ -918,6 +934,7 @@ export class SqliteStorage implements IStorage {
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
         conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
+        conv.startedAt ?? null,
       ]
     );
   }
