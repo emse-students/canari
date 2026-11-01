@@ -93,8 +93,20 @@ export interface TrackRequestOptions {
 
 /** A request counted by {@link ConnectivityStore.trackRequest}; settle it exactly once. */
 export interface TrackedRequest {
-  /** The server answered (any status). `latencyMs` is excluded from the average when `measured` is false. */
+  /**
+   * OUR API answered (any status, its JSON - see `responseOrigin`). `latencyMs` is excluded from the
+   * average when `measured` is false.
+   */
   answered(measured?: boolean): void;
+  /**
+   * Something answered that is not proven to be our API (no JSON type: a captive portal's `511`, a
+   * WAF's HTML `403`, an edge's 5xx page - or a route's own non-JSON body, which the header cannot
+   * tell apart). It proves nothing about the server either way, so it settles the request and moves
+   * no reading: neither reachable nor unreachable, no latency sample.
+   *
+   * @param what The request and what answered it, for the debug line.
+   */
+  unproven(what: string): void;
   /** The request failed before an answer: a transport failure, a deadline expiry or a cancellation. */
   failed(error: unknown): void;
 }
@@ -341,6 +353,12 @@ class ConnectivityStore {
         this.lastAnswerAt = Date.now();
         this.notifyServerReachable();
         if (measured) this.observeLatency(Date.now() - startedAt);
+        this.recomputeSlow();
+      },
+      unproven: (what) => {
+        if (!this.inFlight.has(id)) return;
+        settle();
+        console.debug(`[CONNECTIVITY] ${what} - not proven to be the API, reachability unchanged`);
         this.recomputeSlow();
       },
       failed: (error) => {

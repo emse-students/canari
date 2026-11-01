@@ -55,7 +55,6 @@
 ## A revoked device whose refresh cannot name its revocation
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
-## P2/P3 - Writes that trust a 2xx without reading anything (review of #2428, 2026-10-25)
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 ## P3 - The outbox sends into a group whose commit outcome it already knows is unknown (DUP-5, 2026-10-25)
 ## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)

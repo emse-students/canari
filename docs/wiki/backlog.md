@@ -1142,27 +1142,13 @@ over HTTPS (a portal cannot answer for the server without a certificate error, w
 failure), but the rig reproduces it over plain HTTP. Fix: the content-type check before counting a
 send. Owed: one device reading on the Mi 9T behind a portal.
 
-## P2/P3 - Writes that trust a 2xx without reading anything (review of #2428, 2026-10-25)
-
-#2428 covered the places that PARSE a 2xx. About 140 write sites read no body at all, so a portal's
-`200` is believed. Ranked:
-
-- **P3** `renameGroup` / `setGroupImage`, and the notification-preference PATCH/PUTs
-  (`notifications/preferencesApi.ts`): the change is lost silently and shows again on reload.
-- **P3** `registerMember` swallows every outcome but its two typed refusals (`USER_BLOCKED`,
-  `MEMBER_NOT_ADMITTED` since ADM-3); its removal condition is
-  [legacy-compatibility](legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25).
-
-The plan is the shared guard (`assertAnsweredByApi`, `utils/apiJson.ts`) applied per site with its
-test. `dismissGroup` and `removeMemberFromServer` already carry it (#2428). A blanket sweep inside `apiFetch` is not the plan: some routes answer
-non-JSON on purpose (media, files).
-
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 
-`trackedFetch` calls `tracked.answered` on the portal's `200` before any reader sees the body, and
-every other `apiFetch` (a presence poll, the version probe) does the same. So the store never leaves
-"reachable", and when the portal ends there is no transition for the reconnect resume to fire on: a
-kept send goes on its backoff ladder, up to 60 s later. It is not a local fix. Reporting
+`trackedFetch` no longer counts the portal's page as an answer, and the probe no longer ends on it
+([offline-and-weak-network section 22](frontend/offline-and-weak-network.md#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01)):
+it settles the request and moves no reading. But nothing MARKS the server down either, so the store
+never leaves "reachable", and when the portal ends there is no transition for the reconnect resume to
+fire on: a kept send goes on its backoff ladder, up to 60 s later. It is not a local fix. Reporting
 `tracked.failed` on the send alone would flip the store, and the next poll answered by the same
 portal would flip it back and fire a resume into the portal. The fix needs `trackedFetch` to know
 which routes speak JSON, the version probe included.
