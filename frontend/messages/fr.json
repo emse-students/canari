@@ -383,6 +383,7 @@
   "outbox_upload_refused": "Ce fichier n'a pas pu être envoyé : le serveur l'a refusé. Supprimez ce message, puis réessayez ou envoyez une autre version du fichier.",
   "outbox_reel_send_expired": "Cette vidéo n'a pas pu être envoyée avant son expiration : elle ne le sera plus. Filmez-en une nouvelle si besoin.",
   "outbox_reel_take_lost": "Cette vidéo n'a pas pu être envoyée : son fichier n'est plus sur cet appareil. Supprimez ce message et filmez-en une nouvelle.",
+  "outbox_reel_over_budget": "Cette vidéo n'a pas pu être envoyée : vous avez atteint la limite d'envoi de vidéos pour aujourd'hui. Supprimez ce message et renvoyez-la demain.",
   "upload_failed_label": "Envoi refusé par le serveur",
   "upload_unsent_group_deleted": "Non envoyé : cette conversation a été supprimée",
   "upload_unsent_not_a_member": "Non envoyé : vous ne faites plus partie de cette conversation",

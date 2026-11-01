@@ -1,5 +1,6 @@
 import type { ReelLimits } from '$lib/posts/api';
 import type { CaptureDestination } from './reelCapture';
+import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 /**
  * THE WRITER OF A CANAREEL IN A CONVERSATION - `false` UNTIL RC-5 AND RC-7 HAVE SHIPPED (user,
@@ -87,6 +88,18 @@ export function captureCapMs(
   destination: CaptureDestination
 ): number | null {
   return destination === 'chat' ? servedChatCapMs(limits) : limits.maxDurationMs;
+}
+
+/**
+ * How many conversations RC-12's sheet may tick for one take: the SMALLER of the server's
+ * `chatReelMaxTargets` and what one take may carry on this client (`REEL_TAKE_MAX_SENDS`, which the
+ * outbox refuses past with a typed error). `null` when the server served no usable count - the sheet
+ * then offers no multi-send, never a guessed number. Pure.
+ */
+export function chatReelTargetCap(limits: Pick<ReelLimits, 'chatReelMaxTargets'>): number | null {
+  const served: unknown = limits.chatReelMaxTargets;
+  if (typeof served !== 'number' || !Number.isInteger(served) || served < 1) return null;
+  return Math.min(served, REEL_TAKE_MAX_SENDS);
 }
 
 /** The server's reel-limits answer carried no usable chat cap: the take is parked, never prepared. */

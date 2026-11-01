@@ -771,9 +771,15 @@ export interface IStorage {
    * The queue as the flusher polls it: every entry sorted by `sentAt`, but a `media` entry carries
    * its scheduling columns ONLY (`media` undefined) - its payload is the whole file, and reading
    * the queue several times per flush must not decode it. Ask {@link getOutboxEntry} for the one
-   * entry about to be sent.
+   * entry about to be sent. A SENT-TAKE RECORD (RC-13, `REEL_TAKE_RECORDS`) is not queued work and
+   * is left out - see {@link getReelTakeRecords}.
    */
   getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * The SENT-TAKE RECORDS (RC-13, `conversationId` = `REEL_TAKE_RECORDS`), decoded, which the queue
+   * read leaves out: what "Supprimer partout" and a send deleted for everyone look a take up in.
+   */
+  getReelTakeRecords(deviceKeyB64: string): Promise<OutboxEntry[]>;
   /**
    * One entry with its full payload, or null when it is no longer queued. Throws
    * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
@@ -797,7 +803,12 @@ export interface IStorage {
     conversationId: string,
     deviceKeyB64: string
   ): Promise<OutboxEntry[]>;
-  /** Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent. */
+  /**
+   * Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent,
+   * and STILL a no-op when the row is deleted between the read and the write: the write is
+   * conditional on the row (an `UPDATE` on SQLite, a get-then-put in one transaction on IndexedDB),
+   * so a late patch never resurrects a withdrawn or sent row.
+   */
   updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, deviceKeyB64: string): Promise<void>;
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;

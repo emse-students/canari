@@ -72,9 +72,10 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  */
 /**
  * How media-service answered a chat hold on an adopted upload (RC-13, {@link MediaService.holdChatReel}):
- * held, refused for good (the take uploads its own), or no answer (asked again).
+ * held, refused for good (the take uploads its own), over today's chat-reel budget (a verdict: the
+ * take's sends fail for good), or no answer (asked again).
  */
-export type ChatReelHoldAnswer = 'held' | 'refused' | 'unanswered';
+export type ChatReelHoldAnswer = 'held' | 'refused' | 'over-budget' | 'unanswered';
 
 export type MediaRetentionClass =
   | 'ephemeral'
@@ -198,7 +199,7 @@ import {
 } from '$lib/mediaSegmented';
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
-import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { isOverBudgetBody, uploadRefusalFrom } from '$lib/utils/mediaErrors';
 import { responseOrigin } from '$lib/utils/apiRefusal';
 import type { ReleaseAnswer } from '$lib/utils/chat/uploadReleaseMarks';
 import { readApiJson } from '$lib/utils/apiJson';
@@ -1004,7 +1005,9 @@ export class MediaService {
    * - `held`: the server holds it for the chats;
    * - `refused`: media-service's own answer that this file cannot be held (absent, swept past its
    *   24 h, not this owner's) - the take uploads its own, and no retry would change the answer;
-   * - `unanswered`: a transport failure, an edge page, a 5xx or a 429 budget - asked again later.
+   * - `over-budget`: media-service's own 429 naming the daily budget (`code`, never the message) -
+   *   a verdict for today, so the take's sends fail for good rather than asking all day;
+   * - `unanswered`: a transport failure, an edge page, a 5xx or any other 429 - asked again later.
    */
   async holdChatReel(mediaId: string, token: () => Promise<string>): Promise<ChatReelHoldAnswer> {
     const res = await this.chatReelRequest('POST', `/${mediaId}/hold`, token);
@@ -1016,6 +1019,16 @@ export class MediaService {
     if ([403, 404, 410].includes(res.status) && responseOrigin(res) === 'gateway') {
       appendLog(`[media] chat hold on ${mediaId} REFUSED: HTTP ${res.status}`);
       return 'refused';
+    }
+    if (res.status === 429 && responseOrigin(res) === 'gateway') {
+      const body = await res.text().catch((e: unknown) => {
+        appendLog(`[media] chat hold on ${mediaId}: its 429 body unreadable: ${String(e)}`);
+        return '';
+      });
+      if (isOverBudgetBody(body)) {
+        appendLog(`[media] chat hold on ${mediaId} REFUSED: over today's chat-reel budget`);
+        return 'over-budget';
+      }
     }
     appendLog(`[media] chat hold on ${mediaId} unanswered: HTTP ${res.status}, asked again later`);
     return 'unanswered';

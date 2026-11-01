@@ -406,6 +406,12 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
  * the eventual re-encode happen at the right epoch.
  */
 export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  // THE OWNER IS BOUND HERE, ONCE: these deps serve one session's outbox, whose rows are that
+  // account's. Read at call time, an account switch in the middle of a drive would hold, release or
+  // give back the first account's files under the second's identity (owner-bound, so refused - and
+  // the release owed to the first account would then be lost with its outbox).
+  const ownerId = ctx.getUserId();
+  const ownerToken = ownerTokenOf(ownerId);
   return {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
@@ -470,18 +476,17 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
     // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      const ownerId = ctx.getUserId();
       await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
     // A CHAT-REEL TAKE'S FILE (RC-13), under the same owner-bound token: the hold on an adopted feed
     // upload, and its release once no message cites it. Both owed in the take row, not here.
     holdChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
-      return new MediaService().holdChatReel(mediaId, ownerTokenOf(ctx.getUserId()));
+      return new MediaService().holdChatReel(mediaId, ownerToken);
     },
     releaseChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
-      return new MediaService().releaseChatReel(mediaId, ownerTokenOf(ctx.getUserId()));
+      return new MediaService().releaseChatReel(mediaId, ownerToken);
     },
   };
 }

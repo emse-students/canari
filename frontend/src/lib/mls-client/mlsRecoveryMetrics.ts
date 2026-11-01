@@ -76,6 +76,8 @@ export type MlsMetricEvent =
         | 'expired'
         /** A chat-reel send whose take row is gone: its file is no longer on this device (RC-13). */
         | 'take-lost'
+        /** A chat-reel take over its owner's daily upload budget, media-service's own 429 (RC-13). */
+        | 'over-budget'
         /**
          * The row was already retired by the recovery's own proof (no seat left, `stopRecovering`)
          * while the entry waited for the group - a re-admission whose Welcome never came, among others.

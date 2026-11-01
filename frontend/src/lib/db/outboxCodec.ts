@@ -20,6 +20,14 @@ import type { OutboxBlobRef, OutboxEntry } from './types';
 export const REEL_TAKE_QUEUE = 'reel-take';
 
 /**
+ * The `conversation_id` of a SENT-TAKE RECORD (RC-13): a take every send of which settled and one of
+ * which went, kept to its expiry for "Supprimer partout". It is NOT queued work, so the queue read
+ * ({@link IStorage.getOutboxQueue}) leaves it out - no flush decrypts it, drives it or counts it - and
+ * `getReelTakeRecords` is its one reader.
+ */
+export const REEL_TAKE_RECORDS = 'reel-take-sent';
+
+/**
  * Whether rows of `kind` may own an attachment blob: a `media` row (an ordinary attachment) and a
  * `reel-take` (the take's raw then prepared file). The ONE list both stores read when they delete a
  * row, so a take's slots go with it.

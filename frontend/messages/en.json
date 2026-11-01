@@ -351,6 +351,7 @@
   "outbox_upload_refused": "This file could not be sent: the server refused it. Delete this message, then try again or send another version of the file.",
   "outbox_reel_send_expired": "This video could not be sent before it expired, and it will not be sent now. Film a new one if needed.",
   "outbox_reel_take_lost": "This video could not be sent: its file is no longer on this device. Delete this message and film a new one.",
+  "outbox_reel_over_budget": "This video could not be sent: you have reached today's video sending limit. Delete this message and send it again tomorrow.",
   "upload_failed_label": "Upload refused by the server",
   "upload_unsent_group_deleted": "Not sent: this conversation was deleted",
   "upload_unsent_not_a_member": "Not sent: you are no longer a member of this conversation",

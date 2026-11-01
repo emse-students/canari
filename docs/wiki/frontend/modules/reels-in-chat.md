@@ -1274,22 +1274,61 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   `INSERT` (`outboxInsertSql`, at most `OUTBOX_ROWS_PER_STATEMENT`), then the echoes, as for a single
   send; on IndexedDB one transaction over `outbox` and `messages`. The echo is drawn with
   `skipDbSave` - it is already on disk.
+- **The cap on targets is ONE number on both engines.** `REEL_TAKE_MAX_SENDS` (`sqliteBatch.ts`) is
+  the sends that fit beside their take in one SQLite statement, 82; IndexedDB has no such bound and is
+  held to it anyway, so a take never queues on the web and fails on a phone. `enqueueTake` refuses past
+  it with `ReelTakeTooManySendsError` (an `OutboxEnqueueError`), before anything is written. **RC-12's
+  sheet caps at `chatReelTargetCap(limits)`**: the SMALLER of the server's `chatReelMaxTargets` (15,
+  `GET /api/posts/reel-limits`) and this one, and `null` (no multi-send offered) when the server served
+  no usable count - never a guessed number.
 - **The take is driven beside the lanes, never in one** (`driveTakes` in `runFlushOnce`): prepared and
   uploaded ONCE through RC-5's own upload task (`launchUpload`, now given the conversations whose
-  lanes wait on it). A send resolves its file from its take (`resolveTakeSend`) and answers
+  lanes wait on it). **The preparation runs BEFORE the upload slot is taken** (`prepareOutsideSlot`):
+  it waits for the encoder lease, which a publish step may hold for a minute, and a slot held through
+  that wait stalled every other attachment behind an encode not yet started. A send resolves its file from its take (`resolveTakeSend`) and answers
   `uploading` until there is one, holding back only what depends on it. Progress and status are
   drawn on every live send's bubble (`viewIdsOf`); a Retry on a send retries the take while the file
   is not there.
 - **Liveness from the rows, no counter.** A send is marked `sent` on its take BEFORE its row is
   deleted (`markSendSent`). When any send row goes - sent, failed for good, withdrawn - `settleTake`
   reads the take and the queue under a per-take lock: a send still queued keeps it; one that went
-  and stands makes it the SENT-TAKE RECORD (`state: 'sent'`, no file, deleted after its expiry); none
-  withdraws it (`withdrawTake`: the transfer aborted, the session released, and a file it holds given
-  back through a durable `releasing` state, the row deleted only once
-  `DELETE /api/media/chat-reel/:id` answered). An unreadable queue decides nothing (`queueOrNull`).
+  and stands makes it the SENT-TAKE RECORD (`state: 'sent'`, no file); none withdraws it
+  (`withdrawTake`: the transfer aborted, the session released, and a file it holds given back through
+  a durable `releasing` state, the row deleted only once `DELETE /api/media/chat-reel/:id` answered).
+  An unreadable queue decides nothing (`queueOrNull`).
+- **A record is not queued work.** Its `conversationId` becomes `REEL_TAKE_RECORDS`, which
+  `getOutboxQueue` leaves out on both engines (before anything is decrypted): no flush reads, drives or
+  counts it. `getReelTakeRecords` is its one reader (`sentTakeOf`, `reelSendDeleted`); an expired one
+  reads as no record, and the records past their expiry are swept once per session beside the orphan
+  blobs. A release moves it back to `REEL_TAKE_QUEUE` - that is queued work, retried.
+- **A file that lands after the withdrawal is released durably.** A withdrawal while the take's
+  transfer or its chat hold is still under way keeps the row `releasing` instead of deleting it; the
+  transfer writes its ref onto that row (or the hold its file), and the take drive releases it - or,
+  when nothing came of it, deletes the row (giving back the session the row names, after a relaunch).
+  The `releasing` drive re-reads the row under the take's lock, so an older snapshot never asks a
+  second release.
+- **No late write resurrects a take, and every take write is the take's lock's.** The upload task's
+  session and ref writes, the preparation's write and the adoption's go through `writeTakeRow`: under
+  the lock, from the row re-read there (nothing on a deleted row or a record; the ref and the session
+  still land on a `releasing` row, whose release owes them). Below it, the store's merge is
+  conditional on the row for EVERY entry: SQLite rewrites with `OUTBOX_UPDATE_ROW_SQL` (an `UPDATE ...
+  WHERE id`, never `INSERT OR REPLACE`), IndexedDB with a get-then-put in one transaction. The drive
+  checks a withdrawal synchronously right before it claims a transfer, and never re-notes a take this
+  page life withdrew.
+- **Only the leader tab writes take rows** (web). The lock is per tab and the rows are shared, so a
+  follower forwards `reelSendDeleted` and `adoptPublishedUpload` to the leader (`forwardReelTakeWrite`,
+  `outbox_reel_send_deleted` / `outbox_reel_take_adopt`) and never settles a take: its withdrawal of a
+  send deletes the row and asks the leader to flush, whose take drive settles it. A take composed in a
+  follower does not wait for its publish step - a wait on another tab's publish would hang on a tab
+  that may close, with nothing to tell the leader - so the leader uploads its own file (the forwarded
+  adoption is taken if it lands first).
 - **Failures.** The take's upload failure takes an attachment's dispositions; a refusal for good
-  (`too-large`, `refused`, `unpreparable`) fails EACH queued send for good, its sentence in each
-  thread. A send past its `expiresAtMs` fails for good (`expired`, `outbox_reel_send_expired`); a send
+  (`too-large`, `refused`, `unpreparable`, `over-budget`) fails EACH queued send for good, its sentence
+  in each thread (`failTakeSends`). **`over-budget` is media-service's own 429 for the daily
+  `chat-reel` budget**, read from the `code: 'chat-reel-over-budget'` its body carries
+  (`CHAT_REEL_OVER_BUDGET`, one copy each side) - never the message; every other 429 (an open-session
+  limit, the edge) has no code and stays transient. The take's upload init and the chat hold
+  (`holdChatReel` answers `over-budget`) both reach it, and the thread says `outbox_reel_over_budget`. A send past its `expiresAtMs` fails for good (`expired`, `outbox_reel_send_expired`); a send
   whose take row is gone fails as `take-lost` (`outbox_reel_take_lost`).
 - **Adoption (15.5).** `enqueueTake(..., { awaitsPublish })` makes the take wait, in this page life
   only, for `adoptPublishedUpload` (fed by `publishReel`'s new `onUploaded`, called after the upload
@@ -1299,6 +1338,9 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   it waits on the ladder.
 - **The encoder lease** (`video/encoderLease.ts`): FIFO, abort-aware, taken by `publishReel` and by
   `prepareQueuedChatReel`.
+- **The owner is bound once.** `makeOutboxDeps` reads the account when it builds the deps: the chat
+  hold, its release and a session release go out under THAT account's owner-bound token, so an
+  account switch mid-drive never acts on the first account's files as the second.
 - **D-delete-one and "Supprimer partout".** `applyDeleteLocally` tells the outbox when a reel message
   is deleted for everyone (`reelSendDeleted`): the record marks it, and the file is released when no
   message citing it stands. `handleDeleteReelEverywhere` deletes every standing send of the record
@@ -1309,10 +1351,20 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
 leaves neither; one send refused for good while two go; a cancel of one send keeps the take;
 "Annuler partout"; a send past its hint; feed + chats with ONE upload on the fake server and the hold
 before the first send; a post refused after the upload still sends the chats; a publish step ended
-before its upload; a refused hold; D-delete-one. `encoderLease.test.ts`, `chatReelTake.test.ts`.
+before its upload; a refused hold; D-delete-one. And, from the review of #2900: over today's budget at
+the upload init and at the hold (each send fails for good, never retried) while a 429 without the code
+is retried; a file landing after the withdrawal released from the `releasing` row; a kill while
+releasing; a cancel during the preparation's write; a withdrawal while the drive reads the take; two
+sends ending at once; a kill between the sent mark and the row delete; a follower tab's forwarded
+writes and the leader doing them; the cap refused typed; a take waiting for the encoder holding no
+upload slot; the record out of the queue. `outboxPayloadPatch.test.ts` (both engines: a row deleted
+during the merge stays deleted), `outboxDepsOwner.test.ts`, `encoderLease.test.ts`,
+`chatReelTake.test.ts`.
 
 **Not built here, and why.** The bubble menu entries "Supprimer partout" and "Annuler partout": they
 are offered only for a take sent to two or more conversations, which nothing can create before the
 sheet, so they land with RC-12 over the controller and composable functions above. RC-12 also wires
-`onUploaded` / `endPublishWait` from the sheet's publish hand-over, and posts the tab's
-`reel_sendto_failed_in` notice. Owed on devices: the RC-0 re-run and the readings, with the switch.
+`onUploaded` / `endPublishWait` from the sheet's publish hand-over - **`endPublishWait` in a
+`finally`**, on every way the publish step ends (posted, refused, cancelled, thrown): a take whose
+publish wait is never ended waits for that page life - and posts the tab's `reel_sendto_failed_in`
+notice. It caps the targets at `chatReelTargetCap` (above). Owed on devices: the RC-0 re-run and the readings, with the switch.

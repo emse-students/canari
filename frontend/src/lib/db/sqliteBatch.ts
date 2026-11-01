@@ -75,6 +75,24 @@ export const OUTBOX_COLUMNS = 12;
 export const OUTBOX_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / OUTBOX_COLUMNS);
 
 /**
+ * The most conversations ONE chat-reel take may be sent to on THIS client, whatever the engine: the
+ * sends that fit beside their take in one SQLite statement (82). IndexedDB has no such bound, and is
+ * held to the same one on purpose, so a take never queues on the web and is refused on a phone. The
+ * server's `chatReelMaxTargets` (15) is the tighter bound in practice; the sheet honours the SMALLER
+ * of the two (`chatReelTargetCap`).
+ */
+export const REEL_TAKE_MAX_SENDS = OUTBOX_ROWS_PER_STATEMENT - 1;
+
+/**
+ * Rewrites EVERY column of one outbox row, by id, and only if it is still there: the store's merge
+ * (`updateOutboxEntry`) writes with it so a patch that lands after the row was deleted (a withdrawal,
+ * a send) puts nothing back - `INSERT OR REPLACE` would resurrect it. Parameters in
+ * {@link outboxInsertSql}'s column order, `id` first.
+ */
+export const OUTBOX_UPDATE_ROW_SQL =
+  'UPDATE outbox SET conversation_id = $2, sent_at = $3, kind = $4, status = $5, attempts = $6, last_attempt_at = $7, next_attempt_at = $8, server_errors = $9, created_at = $10, iv = $11, cipher_text = $12 WHERE id = $1';
+
+/**
  * `INSERT OR REPLACE` for `rows` outbox rows, placeholders numbered across the whole statement like
  * {@link messageInsertSql}. One row is the ordinary queued entry; several are a chat-reel take and
  * its sends, which ONE statement makes atomic.

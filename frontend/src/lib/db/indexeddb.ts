@@ -1,4 +1,5 @@
 import { encryptData, decryptData } from '../encryption';
+import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
@@ -41,6 +42,7 @@ import {
   outboxClearColumns,
   outboxKindHoldsBlob,
   OUTBOX_CLEAR_PATCH_KEYS,
+  REEL_TAKE_RECORDS,
 } from './outboxCodec';
 import {
   byNewestSession,
@@ -1339,12 +1341,30 @@ export class IndexedDbStorage implements IStorage {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    const media = rows.filter((r) => r.kind === 'media').map((r) => decodeOutboxEntry(r));
+    // A SENT-TAKE RECORD IS NOT QUEUED WORK (RC-13): left out before anything is decrypted.
+    const queued = rows.filter((r) => r.conversationId !== REEL_TAKE_RECORDS);
+    const media = queued.filter((r) => r.kind === 'media').map((r) => decodeOutboxEntry(r));
     const others = await this.decodeOutboxRows(
-      rows.filter((r) => r.kind !== 'media'),
+      queued.filter((r) => r.kind !== 'media'),
       deviceKeyB64
     );
     return [...media, ...others].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
+  }
+
+  /** See {@link IStorage.getReelTakeRecords}: the records the queue read leaves out. */
+  async getReelTakeRecords(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx.objectStore('outbox').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const records = await this.decodeOutboxRows(
+      rows.filter((r) => r.conversationId === REEL_TAKE_RECORDS),
+      deviceKeyB64
+    );
+    return records.sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
   }
 
   /** One entry with its full payload - see {@link IStorage.getOutboxEntry}. */
@@ -1446,7 +1466,29 @@ export class IndexedDbStorage implements IStorage {
     // The row read above is the small one: a blob-format row carries a key, not the file, so the
     // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
     const merged = mergeOutboxEntry(entry, patch);
-    await this.saveOutboxEntry(merged, deviceKeyB64);
+    // PUT ONLY IF THE ROW IS STILL THERE, get and put in ONE readwrite transaction (as for a clear
+    // patch above): a row deleted while this merge was decrypting (a withdrawal, a send) stays
+    // deleted - a bare put would resurrect it, and the flusher would send a withdrawn message.
+    let gone = false;
+    await writeOutboxWithBlob(this.blobs, merged, async (blobKeyB64) => {
+      const encrypted = await encryptData(encodeOutboxSensitive(merged, blobKeyB64), deviceKeyB64);
+      const row = { ...outboxClearColumns(merged), ...encrypted };
+      const tx = db.transaction('outbox', 'readwrite');
+      const done = idbCommitted(tx);
+      const store = tx.objectStore('outbox');
+      const req = store.getKey(id);
+      req.onsuccess = () => {
+        if (req.result === undefined) gone = true;
+        else store.put(row);
+      };
+      await done;
+    });
+    if (gone) {
+      appendLog(`[DB] outbox ${id.slice(0, 8)}… deleted during its update - not written back`);
+      // Bytes this patch carried went to a blob slot no row names: given back now.
+      if (merged.media?.fileBytes?.length) await deleteOutboxBlobQuietly(this.blobs, id);
+      return;
+    }
     if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 

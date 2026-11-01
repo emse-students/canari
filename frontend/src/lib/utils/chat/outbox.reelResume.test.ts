@@ -3,7 +3,7 @@
  * A CHAT REEL THROUGH THE OUTBOX, KILLED AT EVERY STAGE (reels-in-chat RC-5), AS A TAKE WITH ONE AND
  * WITH THREE SENDS (RC-13): the suite runs twice, and every promise below holds for both.
  *
- * The raw take is queued at once; the outbox prepares it inside the upload task, stores the prepared
+ * The raw take is queued at once; the outbox prepares it in the upload task (before its slot), stores the prepared
  * file IN PLACE of the take (the other blob slot, then the row), and uploads it through a resumable
  * session whose state is recorded before the first part leaves. Each case below kills the app at
  * one point of that path and starts a second life on the same disk, and asserts the two promises:
@@ -18,18 +18,27 @@
 import 'fake-indexeddb/auto';
 import { SvelteMap } from 'svelte/reactivity';
 
+/** This tab's role, and the outbox event handlers each life registered (a channel's receivers). */
+const tab = vi.hoisted(() => ({
+  role: 'leader' as 'leader' | 'follower',
+  handlers: [] as Array<(event: TabOutboxEvent) => void>,
+}));
 const tabOutboxMock = vi.hoisted(() => ({
   requestLeaderOutboxFlush: vi.fn(),
   publishOutboxEntrySent: vi.fn(),
   publishOutboxEntryCancelled: vi.fn(),
   publishOutboxEntryFailed: vi.fn(),
-  subscribeTabOutboxEvents: vi.fn(() => () => {}),
+  forwardReelTakeWrite: vi.fn(),
+  subscribeTabOutboxEvents: vi.fn((handler: (event: TabOutboxEvent) => void) => {
+    tab.handlers.push(handler);
+    return () => {};
+  }),
 }));
 vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
-  getIsTabLeader: () => true,
-  getTabLeadership: () => 'leader',
-  whenTabLeadershipDecided: () => Promise.resolve('leader'),
+  getIsTabLeader: () => tab.role === 'leader',
+  getTabLeadership: () => tab.role,
+  whenTabLeadershipDecided: () => Promise.resolve(tab.role),
 }));
 vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
@@ -39,6 +48,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 import {
   OutboxEnqueueError,
   OutboxPrepareRefusedError,
+  ReelTakeTooManySendsError,
   createOutbox,
   type OutboxController,
   type OutboxDeps,
@@ -58,6 +68,10 @@ import type { OutboxEntry } from '$lib/db';
 import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
 import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
+import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
+import { CHAT_REEL_OVER_BUDGET } from '$lib/utils/mediaErrors';
+import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
+import { acquireEncoderLease, withEncoderLease } from '$lib/video/encoderLease';
 import { SqliteStorage } from '$lib/db/sqlite';
 import { buildChatReelTake } from '$lib/reels/chatReelTake';
 import { publishReel, ReelPublishError } from '$lib/reels/publishReel';
@@ -165,6 +179,12 @@ interface LifeOptions {
   deleted?: string[];
   /** The chat hold's answer on an adopted upload; the default holds it. */
   hold?: ChatReelHoldAnswer;
+  /** The release of a take's file; the default is answered. */
+  release?: () => Promise<'answered' | 'unanswered'>;
+  /** Runs once the server stored the file, before the upload returns it (the body has left). */
+  afterUpload?: () => Promise<void>;
+  /** Runs right AFTER the take's full row (with its file) was read for its transfer. */
+  afterFullRead?: () => Promise<void>;
 }
 
 const ACCEPT = async () => undefined;
@@ -184,8 +204,17 @@ function life(w: World, opts: LifeOptions = {}) {
       k: string
     ) => live(() => s.saveReelTake(t, sends, k)),
     getOutboxQueue: (k: string) => live(() => s.getOutboxQueue(k)),
+    getReelTakeRecords: (k: string) => live(() => s.getReelTakeRecords(k)),
     getOutboxEntry: (id: string, k: string, o?: { withFile?: boolean }) =>
-      live(() => s.getOutboxEntry(id, k, o)),
+      live(async () => {
+        const row = await s.getOutboxEntry(id, k, o);
+        if (row?.kind === 'reel-take' && o?.withFile !== false && opts.afterFullRead) {
+          const hook = opts.afterFullRead;
+          opts.afterFullRead = undefined;
+          await hook();
+        }
+        return row;
+      }),
     updateOutboxEntry: (id: string, p: Partial<OutboxEntry>, k: string) =>
       live(() => s.updateOutboxEntry(id, p, k)),
     deleteOutboxEntry: (id: string) => live(() => s.deleteOutboxEntry(id)),
@@ -238,6 +267,7 @@ function life(w: World, opts: LifeOptions = {}) {
       partBytes: PART,
       log: () => undefined,
     }).finally(() => w.settled++);
+    if (opts.afterUpload) await opts.afterUpload();
     return {
       type: 'video',
       mediaId: done.mediaId,
@@ -312,7 +342,7 @@ function life(w: World, opts: LifeOptions = {}) {
     releaseChatReel: (mediaId) =>
       live(async () => {
         w.events.push(`release ${mediaId}`);
-        return 'answered' as const;
+        return opts.release ? opts.release() : ('answered' as const);
       }),
   });
   return {
@@ -399,6 +429,8 @@ function hangPart(w: World, index: number, onHit: () => void = () => undefined) 
 }
 
 beforeEach(() => {
+  tab.role = 'leader';
+  tab.handlers.length = 0;
   connectivity.reset();
 });
 afterEach(() => clearAllUploads());
@@ -459,18 +491,19 @@ describe.each([1, 3])(
     it('KILL AFTER THE PREPARED BLOB, BEFORE ITS ROW: the row still opens the RAW take, which is prepared again', async () => {
       const w = world();
       const first = life(w);
-      // The kill: the prepared file's blob is committed, the row that would name it never is.
+      // The kill: the prepared file's blob is committed, the row that would name it never is (the
+      // store's merge rewrites the row with ONE `UPDATE`, its first after the take is queued).
       const execute = w.sql.db.execute;
-      let inserts = 0;
+      let rewrites = 0;
       w.sql.db.execute = async (q: string, p?: any[]) => {
-        if (q.includes('INSERT OR REPLACE INTO outbox') && ++inserts === 2) {
+        if (q.includes('UPDATE outbox SET conversation_id') && ++rewrites === 1) {
           first.kill();
           return NEVER();
         }
         return execute(q, p);
       };
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(inserts).toBe(2));
+      await vi.waitFor(() => expect(rewrites).toBe(1));
       expect((await w.blobs.list()).map((b) => b.id).sort()).toEqual([ID, `${ID}#b`]);
       w.sql.db.execute = execute;
 
@@ -581,7 +614,7 @@ describe.each([1, 3])(
       await cancelAll(l, N);
       await vi.waitFor(() => expect(aborted).toBe(true));
       await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
-      expect(w.sql.rows.size).toBe(0);
+      await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
       expect(w.server.sent).toEqual([]);
       expect(sends(l)).toBe(0);
     });
@@ -746,10 +779,10 @@ describe.each([1, 3])(
       const w = world();
       const l = life(w);
       const execute = w.sql.db.execute;
-      let inserts = 0;
-      // The first INSERT queues the take; the second would name the prepared file.
+      let rewrites = 0;
+      // The INSERT queues the take; the first whole-row rewrite would name the prepared file.
       w.sql.db.execute = async (q: string, p?: any[]) => {
-        if (q.includes('INSERT OR REPLACE INTO outbox') && ++inserts === 2) {
+        if (q.includes('UPDATE outbox SET conversation_id') && ++rewrites === 1) {
           throw new Error('database or disk is full');
         }
         return execute(q, p);
@@ -880,6 +913,9 @@ describe('one take, several conversations (RC-13)', () => {
     expect((await takeRow(w))?.take?.state).toBe('sent');
     expect(w.uploads).toBe(1);
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
+    // THE RECORD IS NO QUEUED WORK: no flush reads, drives or counts it.
+    expect(await w.storage.getOutboxQueue(KEY)).toEqual([]);
+    expect((await w.storage.getReelTakeRecords(KEY)).map((r) => r.id)).toEqual([ID]);
   });
 
   it('a cancel of ONE send keeps the take: the encoder runs on, and the file goes to the other two', async () => {
@@ -928,7 +964,8 @@ describe('one take, several conversations (RC-13)', () => {
     await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
     expect(await l.outbox.cancelTakeEverywhere(SEND_IDS[2])).toBe(3);
     await vi.waitFor(() => expect(aborted).toBe(true));
-    expect(w.sql.rows.size).toBe(0);
+    // KEPT `releasing` while its transfer ran, deleted once it ended with no file.
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
     await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
     expect(sends(l)).toBe(0);
   });
@@ -1037,5 +1074,293 @@ describe('one take, several conversations (RC-13)', () => {
     expect(w.events).toContain(`release ${media.mediaId}`);
     expect(w.sql.rows.size).toBe(0);
     expect(await l.outbox.sentTakeOf(SEND_IDS[2])).toBeNull();
+  });
+
+  it("OVER TODAY'S BUDGET at the take's upload: media-service's own 429 fails each send for good, its sentence in each thread, never retried", async () => {
+    const w = world();
+    const l = life(w);
+    w.server.fault = (method, path) =>
+      method === 'POST' && path === ''
+        ? {
+            status: 429,
+            body: { statusCode: 429, message: 'budget', code: CHAT_REEL_OVER_BUDGET },
+          }
+        : undefined;
+    await enqueueTake(l, 3);
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
+    expect(w.server.sent.filter((r) => r.method === 'POST' && r.path === '')).toHaveLength(1);
+    expect(sends(l)).toBe(0);
+  });
+
+  it('a 429 WITHOUT the budget code (a session limit, the edge) stays transient: retried, then delivered', async () => {
+    const w = world();
+    const l = life(w);
+    w.server.fault = (method, path, n) =>
+      method === 'POST' && path === '' && n === 1 ? 429 : undefined;
+    await enqueueTake(l, 3);
+    await vi.waitFor(() => expect(['waiting', 'retrying']).toContain(uploadViewOf(VIEW)?.phase));
+    l.outbox.retryUpload(VIEW);
+    await expectDeliveredOnce(w, l, 3);
+    expect(l.notices).toEqual([]);
+  });
+
+  it("OVER TODAY'S BUDGET at the chat hold on the publish step's file: each send fails for good, nothing uploaded", async () => {
+    const w = world();
+    const l = life(w, { hold: 'over-budget' });
+    await enqueueTake(l, 3, { awaitsPublish: true });
+    const ref = await publishStepUpload(w);
+    await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
+    l.outbox.endPublishWait(ID);
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
+    expect(w.uploads).toBe(0);
+    expect(w.prepares).toHaveLength(0);
+    expect(sends(l)).toBe(0);
+  });
+
+  it('A FILE THAT LANDS AFTER THE WITHDRAWAL is written on the `releasing` row and released from it, durably', async () => {
+    const w = world();
+    // The body has left and the server stored the object; the member cancels before the ref is written.
+    const l: ReturnType<typeof life> = life(w, { afterUpload: () => cancelAll(l, 3) });
+    await enqueueTake(l, 3);
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    const [stored] = [...w.server.stored.keys()];
+    expect(w.events).toEqual([`release ${stored}`]);
+    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+    expect(sends(l)).toBe(0);
+  });
+
+  it('A KILL WHILE RELEASING: the next life reads `releasing` from the row and releases the file, once', async () => {
+    const w = world();
+    let asked = false;
+    const first: ReturnType<typeof life> = life(w, {
+      afterUpload: () => cancelAll(first, 3),
+      release: () => {
+        asked = true;
+        first.kill();
+        return NEVER();
+      },
+    });
+    await enqueueTake(first, 3);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    const row = (await takeRow(w))!;
+    expect(row.take?.state).toBe('releasing');
+    const mediaId = row.media!.uploadedRef!.mediaId;
+
+    const second = life(w);
+    await second.outbox.flush();
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(w.events).toEqual([`release ${mediaId}`, `release ${mediaId}`]);
+    expect(sends(second)).toBe(0);
+  });
+
+  it("A CANCEL DURING THE PREPARATION'S WRITE: the write lands first (the take's lock), the withdrawal after it - no row comes back", async () => {
+    const w = world();
+    let l!: ReturnType<typeof life>;
+    const execute = w.sql.db.execute;
+    let cancel: Promise<void> | null = null;
+    w.sql.db.execute = async (q: string, p?: any[]) => {
+      if (!cancel && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
+        // Every send withdrawn while this write is held: the last one's settle then waits for the
+        // take's lock, which the preparation's write holds.
+        cancel = cancelAll(l, 3);
+        await vi.waitFor(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+      }
+      return execute(q, p);
+    };
+    l = life(w);
+    await enqueueTake(l, 3);
+    await vi.waitFor(() => expect(cancel).not.toBeNull());
+    await cancel;
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+    expect(w.server.stored.size).toBe(0);
+    expect(sends(l)).toBe(0);
+  });
+
+  it('a withdrawal WHILE THE DRIVE READS THE TAKE never starts its transfer (checked right before the claim)', async () => {
+    const w = world();
+    const l: ReturnType<typeof life> = life(w, { afterFullRead: () => cancelAll(l, 3) });
+    await enqueueTake(l, 3);
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await l.outbox.flush();
+    expect(w.prepares).toHaveLength(0);
+    expect(w.uploads).toBe(0);
+    expect(uploadViewOf(VIEW)).toBeUndefined();
+  });
+
+  it('TWO SENDS ENDING AT ONCE are marked one after the other: the record names both, nothing released', async () => {
+    const w = world();
+    let arrived = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const l = life(w, {
+      send: async () => {
+        if (++arrived === 3) open();
+        await gate;
+      },
+    });
+    await enqueueTake(l, 3);
+    await expectDeliveredOnce(w, l, 3);
+    expect(await sentIds(w)).toEqual(SEND_IDS);
+    expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
+  });
+
+  it('A KILL BETWEEN THE SENT MARK AND THE ROW DELETE: the next life sends that message again (same id), never loses it, and records the take', async () => {
+    const w = world();
+    let first!: ReturnType<typeof life>;
+    const execute = w.sql.db.execute;
+    let killed = false;
+    w.sql.db.execute = async (q: string, p?: any[]) => {
+      if (!killed && q.includes('DELETE FROM outbox WHERE id') && p?.[0] === SEND_IDS[0]) {
+        killed = true;
+        first.kill();
+        return NEVER();
+      }
+      return execute(q, p);
+    };
+    first = life(w);
+    await enqueueTake(first, 1);
+    await vi.waitFor(() => expect(killed).toBe(true));
+    expect(await sentIds(w)).toEqual([SEND_IDS[0]]);
+    w.sql.db.execute = execute;
+
+    const second = life(w);
+    await second.outbox.flush();
+    await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    expect((await takeRow(w))?.take?.state).toBe('sent');
+    expect(w.events.filter((e) => e === 'send g1').length).toBeLessThanOrEqual(2);
+    expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
+    expect(w.uploads).toBe(1);
+  });
+
+  it('A FOLLOWER TAB WRITES NO TAKE ROW: its deletion and its adoption are forwarded, its last cancel leaves the settle to the leader', async () => {
+    const w = world();
+    const leader = life(w, {
+      prepare: (signal) =>
+        new Promise((_, reject) =>
+          signal.addEventListener('abort', () => reject(new UploadAbortedError(signal.reason)))
+        ),
+    });
+    await enqueueTake(leader, 1);
+    await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+    tab.role = 'follower';
+    const follower = life(w);
+    const before = await takeRow(w);
+
+    await follower.outbox.reelSendDeleted(SEND_IDS[0]);
+    expect(tabOutboxMock.forwardReelTakeWrite).toHaveBeenCalledWith({
+      type: 'outbox_reel_send_deleted',
+      messageId: SEND_IDS[0],
+    });
+    const ref = await publishStepUpload(w);
+    await follower.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
+    expect(tabOutboxMock.forwardReelTakeWrite).toHaveBeenCalledWith({
+      type: 'outbox_reel_take_adopt',
+      takeId: ID,
+      uploaded: { ref, durationMs: 4200 },
+    });
+    expect(await takeRow(w)).toEqual(before);
+
+    // The member's cancel in the follower deletes the send row; the TAKE is the leader's to settle.
+    tabOutboxMock.requestLeaderOutboxFlush.mockClear();
+    expect(await follower.outbox.cancelPending(SEND_IDS[0])).toBe(true);
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+    expect((await takeRow(w))?.take?.state).toBeUndefined();
+
+    tab.role = 'leader';
+    await leader.outbox.flush();
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+  });
+
+  it("THE LEADER DOES A FOLLOWER'S FORWARDED DELETION: the record marks it, and the last releases the file", async () => {
+    const w = world();
+    const l = life(w);
+    await enqueueTake(l, 1);
+    await expectDeliveredOnce(w, l, 1);
+    const { media } = await sentReel(w, l);
+    // The channel delivers it to the leader's handler (the one this life registered).
+    tab.handlers[0]({ type: 'outbox_reel_send_deleted', messageId: SEND_IDS[0] });
+    await vi.waitFor(() => expect(w.events).toContain(`release ${media.mediaId}`));
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+  });
+
+  it('A TAKE PAST WHAT ONE TAKE MAY CARRY is refused, typed, before anything is written - on either engine', async () => {
+    const w = world();
+    const l = life(w);
+    const rows = buildChatReelTake({
+      takeId: ID,
+      sentAt: 100,
+      senderId: 'u',
+      bytes: RAW,
+      mimeType: 'video/webm',
+      fileName: 'take.webm',
+      targets: Array.from({ length: REEL_TAKE_MAX_SENDS + 1 }, (_, i) => ({
+        messageId: `bbbbbbbb-2222-4333-8444-${String(i).padStart(12, '0')}`,
+        groupId: `g${i}`,
+        conversationKey: `g${i}`,
+      })),
+    });
+    await expect(l.outbox.enqueueTake(rows.take, rows.sends)).rejects.toBeInstanceOf(
+      ReelTakeTooManySendsError
+    );
+    expect(w.sql.rows.size).toBe(0);
+    expect(REEL_TAKE_MAX_SENDS).toBe(82);
+  });
+
+  it('A TAKE WAITING FOR THE ENCODER HOLDS NO UPLOAD SLOT: a ready file uploads and goes meanwhile', async () => {
+    const release = await acquireEncoderLease('publish (test)');
+    try {
+      const w = world();
+      const l = life(w, {
+        prepare: (signal) =>
+          withEncoderLease('take (test)', signal, async () => ({
+            bytes: PREPARED,
+            mimeType: 'video/mp4',
+            fileName: 'reel.mp4',
+            width: 720,
+            height: 1280,
+            durationMs: 4200,
+          })),
+      });
+      // Two RAW takes, as many as there are upload slots, both waiting for the encoder.
+      for (const [i, takeId] of [
+        'cccccccc-2222-4333-8444-555555555551',
+        'cccccccc-2222-4333-8444-555555555552',
+      ].entries()) {
+        const rows = buildChatReelTake({
+          takeId,
+          sentAt: 100,
+          senderId: 'u',
+          bytes: RAW,
+          mimeType: 'video/webm',
+          fileName: 'take.webm',
+          targets: [{ messageId: SEND_IDS[i], groupId: GROUPS[i], conversationKey: GROUPS[i] }],
+        });
+        rows.take.media!.expiresAtMs = EXPIRES;
+        rows.sends[0].entry.media!.expiresAtMs = EXPIRES;
+        await l.outbox.enqueueTake(rows.take, rows.sends);
+      }
+      await vi.waitFor(() => expect(w.prepares).toHaveLength(2));
+      // A take whose file is READY (nothing to encode) goes straight to a slot.
+      const ready = buildChatReelTake({
+        takeId: ID,
+        sentAt: 100,
+        senderId: 'u',
+        bytes: PREPARED,
+        mimeType: 'video/mp4',
+        fileName: 'reel.mp4',
+        targets: [{ messageId: SEND_IDS[2], groupId: 'g3', conversationKey: 'g3' }],
+      });
+      ready.take.media!.prepare = undefined;
+      ready.take.media!.expiresAtMs = EXPIRES;
+      ready.sends[0].entry.media!.expiresAtMs = EXPIRES;
+      await l.outbox.enqueueTake(ready.take, ready.sends);
+      await vi.waitFor(() => expect(l.mls.sendMessage.mock.calls.map((c) => c[0])).toEqual(['g3']));
+      l.kill();
+    } finally {
+      release();
+    }
   });
 });
