@@ -2864,6 +2864,86 @@ as a failure; it says `PASS - all media went through the E2E transform`. (4) An 
 ended `outcome=answered-or-unrung`; with no typed outcome the line now names which: `answered`, or
 `unrung` for a ring that never left.
 
+## "It stays a long time on encryption before the call" (owner, Android 1.5.3, 2026-10-31)
+
+Nine calls in the owner's log. **The encryption is not slow**: `exportSecret` takes 20-60 ms. What
+the owner saw, and what was serial:
+
+- **The label.** `CallOverlay` showed "Vérification du chiffrement..." whenever `e2eProven` was
+  false - so through the WHOLE ring, 6-57 s of a person not answering yet. **Fixed:** the line is
+  chosen by `callE2eLine(kind, proven)` (`utils/callStatusText.ts`): nothing while `incoming` or
+  `ringing` (the status alone), the check from `connecting` on, the shield once proven; the ended
+  summary keeps an earned shield and starts no check. Tests per state: `callE2eLine.test.ts`,
+  `CallOverlay.svelte.test.ts` ("the encryption line").
+- **The callee's answer was strictly serial**: room-token, then an AWAITED "answered" MLS notice
+  (0.3-0.7 s), then the ICE servers (up to 764 ms), then `getUserMedia`, then the keys, then the
+  socket and the join - 1.2-2.6 s. **Fixed (`acceptCall`):** the token, the ICE servers, the
+  microphone and the keys run side by side (`Promise.all`), each logged with its own duration
+  (`[Call] setup step <name>: N ms`), then the join. What each depended on, checked: the token is
+  where the server refuses, so the notice and the ring-end leave only once it is in hand (a refused
+  answer still tells nobody); the ICE servers need only membership (`getIceServers` in
+  `calls.service.ts`), and `fetchIceServers` now RETURNS the withheld-relay code instead of setting
+  it, so an answer landing after its call ended leaves nothing for the next one; a microphone granted
+  beside a refused token is released by `setupMedia`'s own `assertSetupLive`; keys derived for a
+  call that ended are zeroed by `setupEncryption`, and the worker dies with the call. **A cost taken
+  knowingly (review F7 of #2830):** an answer the server REFUSES (a block set during the ring, a
+  closed window) may still light the microphone for a moment, or show the system's permission
+  prompt on a first call, before the refusal ends it. A refusal of an answer is rare; every answer
+  pays the serial wait. A step stopped because a sibling step failed logs `setup step <name>
+  abandoned after N ms (the call ended)`; only the step that failed says `failed`.
+- **The "answered" notice is no longer awaited** (`announceAnswered`). Its only reader is a SIBLING
+  device of the callee still ringing the same call (`handleCallSignal`, `callMsg.answered`), whose
+  ring stops when it lands; nothing on the caller or in the call record waits for it, and the
+  server's ring-end (`'answered'`) stops the system surfaces on its own path. So the guarantee it
+  carries is kept (it leaves after the token, and still stops the siblings), and only the wait is
+  gone. A notice that fails is said at ERROR (`answered notice for <call> not sent - our other
+  devices keep ringing until their window closes`). **Not done: prefetching during the ring.** The
+  ICE servers would mint a TURN credential per ringing device per ring, declined calls included, and
+  a fetch that failed early in a 60 s ring would fail an answer made on a link that works by then;
+  in parallel with the token the fetch costs nothing extra.
+- **The caller built its peer connection only at `PeerReady`.** It is now built right after the
+  join and BEFORE the ring (`initPeerConnection({ awaitingPeer: true })`), with
+  `iceCandidatePoolSize: 1`: the engine gathers host, srflx and relay candidates through the ring
+  and surfaces them at the first `setLocalDescription`. Nothing that needs the peer runs while it
+  waits (`pcAwaitingPeer`): no offer (`offerIfNeeded` returns), no report tick, no E2E path check,
+  no video ladder. The transforms are attached in the task that creates each sender, as for every
+  build. `PeerReady` ADOPTS it (`adoptRingPeerConnection`): the report and the ladder start, and the
+  offer is queued. **Every exit of a ring closes it**: `endCall` closes it at once, not after the
+  1.5 s summary (`closeRingPeerConnection` - it holds a TURN allocation for a call nobody answered),
+  and `cleanup` closes it on every other path; tested per exit in `CallService.p2p.test.ts` ("the
+  peer connection built during the ring is closed on every exit": hang-up, window closed, declined,
+  busy, a refused seat, a refused ring, a hang-up during the build). A camera turned on or off
+  during the ring acts on it as on any peer connection, and the offer at the adoption carries it.
+  **A signalling loss DURING the ring records no outage baseline** (`onPairBroken` skips a peer
+  connection still awaiting its peer, and the adoption clears `packetsAtLoss`; review F6 of #2830):
+  a baseline read from a connection with no media outlived the ring, so a later outage whose path
+  still read `connected` while carrying nothing was never restarted. Tested in
+  `CallService.p2p.test.ts` ("a signalling loss during the ring leaves no baseline").
+- **`setup_ms` counted the human.** It ran from the tap, so a 40 s ring read as a 40 s setup. Split
+  into `ring_ms` (ring start to the answer - on the caller from the moment the ring LEFT, the
+  server's fan-out answered, so its own setup before that is not counted as the human's; on the
+  callee from its page starting to ring) and `connect_ms` (the answer to the first E2E proof),
+  in `[CALL_REPORT]` and on two lines of their own (`[Call] answered (...) ring_ms=N`, `[Call] E2E
+  proven ... (connect_ms=N)`); the observables are in
+  [calls-revival-plan](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).
+- **Noise, same log.** `[Call] no Media Session API` was logged 313 times in 46 s of an outgoing
+  video ring: the parent re-derives `participants` on every change of the conversations map, so
+  `primary` was a NEW object many times a second and the Media Session `$effect` (and the Android
+  ongoing-call publish) re-ran with it. They now read `peerTitle` / `peerUserId`, strings a
+  re-derivation leaves equal; and `callMediaSession.ts` says each refusal once per call (emptied by
+  `clearCallMediaSession`). The reachability probes that kept running after the app paused, and the
+  stall counter reading "3/2", are [offline-and-weak-network](../offline-and-weak-network.md#21-no-probe-while-the-app-is-off-screen-and-a-stall-count-that-stops-at-its-limit-2026-10-31).
+
+**Expected callee saving:** the serial 1.2-2.6 s becomes roughly the LONGEST of its four steps
+(token ~one round trip, ICE up to 764 ms, the microphone, the keys 20-60 ms) plus the join, and the
+0.3-0.7 s notice leaves the path entirely - an estimate of 0.6-1.5 s saved per answer, until the
+phones measure it. **Owed (bench phones, Mi 9T and iPhone 12, on a pre-release carrying this):**
+`connect_ms` per direction against the log's 1.2-2.6 s; the five `setup step` lines of the callee,
+the longest named; on the caller, `ice gathering=` at the adoption line (`complete` or `gathering`
+means the pool worked), and a ring cancelled before the answer showing `closing the peer connection
+built during the ring` with no `[CALL_REPORT]`; the ring showing no encryption line; one `no Media
+Session API` line per call at most.
+
 ## Responsibilities
 
 - WebRTC audio/video calls within MLS groups (E2E encrypted).

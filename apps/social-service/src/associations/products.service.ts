@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { assertKindMaySell } from './selling-kinds';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -1244,6 +1245,7 @@ export class ProductsService {
 
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
+    assertKindMaySell(this.logger, associationId, asso.type, 'product create');
 
     if (
       dto.customAmountMinCents !== undefined &&
@@ -1457,6 +1459,17 @@ export class ProductsService {
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
+    const owner = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: { id: true, type: true },
+    });
+    // A product of a kind that sells nothing may be taken OFF sale, never put on sale or repriced.
+    const deactivationOnly = Object.entries(dto).every(
+      ([key, value]) => value === undefined || (key === 'isActive' && value === false)
+    );
+    if (owner && !deactivationOnly) {
+      assertKindMaySell(this.logger, associationId, owner.type, 'product update');
+    }
 
     if (product.type === 'balance_topup' && !isGlobalAdmin) {
       this.logger.debug(
@@ -2001,6 +2014,7 @@ export class ProductsService {
       throw new BadRequestException('cotisationMode is required when cotisationEnabled is true');
     }
     const cotisationMode = asso.cotisationMode;
+    assertKindMaySell(this.logger, asso.id, asso.type, 'cotisation provisioning');
 
     const existing = await this.productRepo.find({
       where: { associationId: asso.id, type: 'membership' },
