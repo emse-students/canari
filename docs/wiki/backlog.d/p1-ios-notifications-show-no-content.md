@@ -4,6 +4,14 @@ Reported 2026-11-01 by the owner for a real user on iOS `1.5.3`: iPhone message 
 no content, reportedly the generic "Nouveau message", and earlier versions showed it (a
 REGRESSION, per the user). The user's in-app log had no `[FCM_CACHE]` line.
 
+**Re-read later the same day: the banner is `Nouveau message de <name>`, not `Nouveau message`**,
+app in the background or killed. That text is the extension's own fallback
+(`notif.message.from`, `fallbackText` in `canari_NSE/NotificationService.swift`); the server's
+alert body is the bare `Nouveau message`. So on that phone the extension IS loaded and runs, and
+falls back on a handled branch: the deployment-target cause below is ruled out for this user. The
+`1.5.3` build carries no `[NSE_OUTCOME]` log; the cause is read from the first stable carrying it
+(the user receives a few messages backgrounded, then killed, and exports the log).
+
 **The chain, read link by link (2026-11-01, mechanism in
 [mobile](../frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)):**
 
