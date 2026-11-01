@@ -39,3 +39,48 @@ export function planSpeakerRoute(
   if (target) return { kind: 'device', deviceId: target.deviceId };
   return speaker ? { kind: 'unavailable' } : { kind: 'default' };
 }
+
+/** The subset of an audio element the router moves. */
+export interface RoutableSink {
+  setSinkId?: (id: string) => Promise<void>;
+}
+
+/** What the router needs from its host, so a test can hand in its own. */
+export interface SpeakerRouterDeps {
+  enumerate: () => Promise<readonly RouteCandidate[]>;
+  log: (line: string) => void;
+}
+
+/**
+ * The page's request to move ONE audio element to the loudspeaker or the earpiece, ordered.
+ *
+ * `enumerate()` is async and nothing else orders two requests for the same element: a fast speaker
+ * on -> off would let the first one's `setSinkId(speaker)` land AFTER the second one's
+ * `setSinkId('')`, leaving the voice on the loudspeaker under an earpiece UI. So each request takes
+ * a generation for its element BEFORE the await and a result that is no longer the latest is dropped
+ * after it (a state check, not a delay). Elements are independent: the voice and the ringback never
+ * cancel each other.
+ */
+export function createSpeakerRouter(deps: SpeakerRouterDeps) {
+  const generations = new Map<object, number>();
+  return async function route(sink: RoutableSink, speaker: boolean): Promise<void> {
+    const mine = (generations.get(sink) ?? 0) + 1;
+    generations.set(sink, mine);
+    try {
+      const kind = speaker ? 'speaker' : 'earpiece';
+      const devices = await deps.enumerate();
+      if (generations.get(sink) !== mine) return;
+      const plan = planSpeakerRoute(devices, speaker, typeof sink.setSinkId === 'function');
+      // The earpiece is the DEFAULT output of a call, never a listed device.
+      if (plan.kind === 'already-default') return;
+      if (plan.kind === 'unavailable' || !sink.setSinkId) {
+        deps.log(`[Call] WARN no '${kind}' output to route to on this engine - route unchanged`);
+        return;
+      }
+      await sink.setSinkId(plan.kind === 'device' ? plan.deviceId : '');
+      deps.log(`[Call] audio routed to ${plan.kind === 'device' ? kind : 'the default output'}`);
+    } catch (e) {
+      deps.log(`[Call] audio routing failed: ${String(e)}`);
+    }
+  };
+}

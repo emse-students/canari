@@ -40,6 +40,14 @@ export function callHoldsAppSound(): boolean {
   return holders.size > 0;
 }
 
+/** App tones refused while the gate was held, since it was last taken. */
+let silencedTones = 0;
+
+/** Counts one app tone refused because a call holds the sound (told on the gate's release line). */
+export function noteToneSilenced(): void {
+  silencedTones++;
+}
+
 /**
  * States the call phase of `holder` (a `CallService` instance). Logs only a CHANGE of the gate, with
  * the phase that caused it, so a reading shows exactly when the app went quiet and when it came back.
@@ -51,13 +59,20 @@ export function reportCallSoundPhase(holder: string, phase: string): void {
   const after = holders.size > 0;
   if (before === after) return;
   // `Log.i`, NOT `Log.d`: the in-app log records no debug, so this line was unreadable on a device
-  // (iPhone 12, 2026-10-30). One line per CHANGE of the gate, which is what `Log.i` is for.
-  Log.i(
-    'AUDIO',
-    after
-      ? `a call holds the app's sound (${holder} is ${phase}) - tones, media and notification sounds are silenced`
-      : `the call released the app's sound (${holder} is ${phase})`
-  );
+  // (iPhone 12, 2026-10-30). One line per CHANGE of the gate, which is what `Log.i` is for; the
+  // tones silenced meanwhile are COUNTED (one line per tone would be one per message) and told here.
+  if (after) {
+    silencedTones = 0;
+    Log.i(
+      'AUDIO',
+      `a call holds the app's sound (${holder} is ${phase}) - tones, media and notification sounds are silenced`
+    );
+  } else {
+    Log.i(
+      'AUDIO',
+      `the call released the app's sound (${holder} is ${phase}) - ${silencedTones} tone(s) silenced during the call`
+    );
+  }
   held.set(after);
 }
 
@@ -69,5 +84,6 @@ export function retireCallSoundHolder(holder: string): void {
 /** Test seam: forgets every holder, as a fresh page load would. */
 export function resetCallSoundGateForTest(): void {
   holders.clear();
+  silencedTones = 0;
   held.set(false);
 }

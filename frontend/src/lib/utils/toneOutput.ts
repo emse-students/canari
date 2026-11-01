@@ -1,5 +1,5 @@
 import { onAppScreenChange } from '$lib/utils/appForeground';
-import { callHoldsAppSound } from '$lib/utils/callSoundGate';
+import { callHoldsAppSound, noteToneSilenced } from '$lib/utils/callSoundGate';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -100,8 +100,9 @@ function suspendIfIdle(ctx: AudioContext, reason: string): void {
 export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call' = 'app'): void {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return;
   if (purpose === 'app' && callHoldsAppSound()) {
-    // `Log.i`: the wiki promises this line, and `Log.d` never reaches the in-app log.
-    Log.i('AUDIO', `${name} tone silenced - a call holds the app's sound`);
+    // `Log.d`, one per tone = one per message: the COUNT reaches the in-app log on the gate's release.
+    noteToneSilenced();
+    Log.d('AUDIO', `${name} tone silenced - a call holds the app's sound`);
     return;
   }
   armScreenWatch();

@@ -64,7 +64,7 @@
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
-  import { planSpeakerRoute } from '$lib/utils/callAudioRoute';
+  import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
   import { untrack } from 'svelte';
@@ -283,24 +283,12 @@
    * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
    * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
-  async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
-    try {
-      const kind = speaker ? 'speaker' : 'earpiece';
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const plan = planSpeakerRoute(devices, speaker, 'setSinkId' in sink);
-      // The earpiece is the DEFAULT output of a call, never a listed device (`callAudioRoute.ts`).
-      if (plan.kind === 'already-default') return;
-      if (plan.kind === 'unavailable') {
-        appendLog(`[Call] WARN no '${kind}' output to route to on this engine - route unchanged`);
-        return;
-      }
-      await (sink as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(
-        plan.kind === 'device' ? plan.deviceId : ''
-      );
-      appendLog(`[Call] audio routed to ${plan.kind === 'device' ? kind : 'the default output'}`);
-    } catch (e) {
-      appendLog(`[Call] audio routing failed: ${String(e)}`);
-    }
+  const routeSpeaker = createSpeakerRouter({
+    enumerate: () => navigator.mediaDevices.enumerateDevices(),
+    log: appendLog,
+  });
+  function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
+    return routeSpeaker(sink as HTMLAudioElement & RoutableSink, speaker);
   }
 
   $effect(() => {
