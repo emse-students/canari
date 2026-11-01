@@ -1406,8 +1406,8 @@ and the server holds the person outside until a member answers:
 - **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
   BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
   leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
-  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
-  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Closed by ADM-3:
+  the commit is the one writer ([below](#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 - **"Only through a member's decision" holds from a client floor**, not from this build:
   a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
   the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
