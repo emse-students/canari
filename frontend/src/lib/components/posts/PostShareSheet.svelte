@@ -15,7 +15,7 @@
    * Mounted by the post menu (`PostActionsMenu`) and by the reel viewer (`ReelViewer`): from inside
    * the viewer, `Modal` takes the viewer's dialog rung on its own (`utils/viewerLayer.ts`).
    */
-  import { Hash, Link, Search, Share2 } from '@lucide/svelte';
+  import { Hash, Link, Repeat2, Search, Share2 } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
@@ -27,7 +27,13 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { missingPeerNameIds, shareCandidates } from '$lib/sharing/shareDestinations';
   import { canShareOut } from '$lib/sharing/shareOut';
-  import { copyPostLink, sendPostLinkInApp, sharePostLinkOut } from '$lib/posts/sharePost';
+  import {
+    copyPostLink,
+    repostToMyFollowers,
+    sendPostLinkInApp,
+    sharePostLinkOut,
+    undoMyRepost,
+  } from '$lib/posts/sharePost';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
 
@@ -42,9 +48,23 @@
      * else would take it off the composer the link waits in.
      */
     onSentInApp?: () => void;
+    /** WP-F6: the reader may repost it to their followers (the server's `canRepost`). */
+    canRepost?: boolean;
+    /** WP-F6: the reader reposted it - the row offers to take it back instead. */
+    repostedByMe?: boolean;
+    /** WP-F6: the repost's state after the reader's tap, as the server answered it. */
+    onRepostChange?: (postId: string, repostedByMe: boolean) => void;
   }
 
-  let { open, postId, onClose, onSentInApp }: Props = $props();
+  let {
+    open,
+    postId,
+    onClose,
+    onSentInApp,
+    canRepost = false,
+    repostedByMe = false,
+    onRepostChange,
+  }: Props = $props();
 
   let query = $state('');
   /** DM names fetched after the grid was first drawn - see `missingPeerNameIds`. */
@@ -173,6 +193,21 @@
       role="group"
       aria-label={m.post_share_label()}
     >
+      {#if repostedByMe || canRepost}
+        <button
+          type="button"
+          class={ACTION}
+          data-repost-row
+          onclick={() =>
+            act((id) => {
+              const write = repostedByMe ? undoMyRepost(id) : repostToMyFollowers(id);
+              void write.then((reposted) => onRepostChange?.(id, reposted));
+            })}
+        >
+          <span class={ACTION_DISC}><Repeat2 size={20} strokeWidth={2.25} /></span>
+          {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
+        </button>
+      {/if}
       <button type="button" class={ACTION} onclick={() => act(copyPostLink)}>
         <span class={ACTION_DISC}><Link size={20} strokeWidth={2.25} /></span>
         {m.post_copy_link_label()}

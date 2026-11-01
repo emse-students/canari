@@ -19,12 +19,15 @@ export const REPUBLISHED_BY_SHOWN = 1;
  * are. `null` when nobody republished the post, so the card draws no line at all.
  */
 export function republishedByLine(
-  republishedBy: PostEntity['republishedBy']
+  republishedBy: PostEntity['republishedBy'],
+  repostedBy: PostEntity['repostedBy'] = []
 ): { names: string[]; extra: number } | null {
-  if (!republishedBy || republishedBy.length === 0) return null;
+  // WP-F6: the people the reader follows who reposted it come after the associations - one line.
+  const all = [...(republishedBy ?? []), ...(repostedBy ?? [])].map((r) => r.name).filter(Boolean);
+  if (all.length === 0) return null;
   return {
-    names: republishedBy.slice(0, REPUBLISHED_BY_SHOWN).map((a) => a.name),
-    extra: Math.max(0, republishedBy.length - REPUBLISHED_BY_SHOWN),
+    names: all.slice(0, REPUBLISHED_BY_SHOWN),
+    extra: Math.max(0, all.length - REPUBLISHED_BY_SHOWN),
   };
 }
 
@@ -32,8 +35,11 @@ export function republishedByLine(
  * The words of that line - "Republie par BDE, BDS +2" - or `null` when nobody republished the post.
  * The post header and the reel overlay both put it beside the time, so they read it from here.
  */
-export function republishedByText(republishedBy: PostEntity['republishedBy']): string | null {
-  const line = republishedByLine(republishedBy);
+export function republishedByText(
+  republishedBy: PostEntity['republishedBy'],
+  repostedBy: PostEntity['repostedBy'] = []
+): string | null {
+  const line = republishedByLine(republishedBy, repostedBy);
   if (!line) return null;
   const names = line.names.join(', ');
   return line.extra > 0
