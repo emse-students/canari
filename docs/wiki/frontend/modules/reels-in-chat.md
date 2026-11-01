@@ -810,15 +810,20 @@ preparation and its Retry; a refused one that fails for good; and a seeded flaky
 media-service's `upload-session.service.spec.ts` walks the client's resume sequence across server
 restarts.
 
-**RC-3 WIRED IN (2026-11-01)**: `prepareQueuedChatReel` prepares a queued take with
+**RC-3 WIRED IN (2026-11-01)**: `prepareQueuedChatReel` (`utils/chat/prepareQueuedChatReel.ts`)
+reads the upload limits and `reel-limits` BEFORE the encoder runs, then prepares with
 `chatReelPrepareOptions` (`profile: 'chat'`, `maxSeconds` = the server's `chatMaxDurationMs` / 1000,
-the plaintext ceiling as `maxBytes`), reading `reel-limits` beside the upload limits; a cap it cannot
-read (offline) is an ordinary failure, the take kept and parked, never prepared without its cap. The
-chat camera arms its ring and checks a gallery pick against `captureCapMs(limits, 'chat')` (60 s);
-the feed and post destinations keep `maxDurationMs`. A server that serves no `chatMaxDurationMs` (older
-than RC-3) is said with a warning and its reel cap applies. Pinned by `chatReelWriter.test.ts`. A take
-over the cap by more than the encoder's 0.5 s grace is `too long`: failed for good, as section 14
-classifies it.
+the plaintext ceiling as `maxBytes`). **There is no fallback to the 90 s reel cap**: `chatMaxDurationMs`
+is REQUIRED in `ReelLimits` (served since 89a81ad7d5), and an answer without a usable one
+(`servedChatCapMs` is `null`) throws `ChatReelCapMissingError`. That error is ordinary, as is a cap that
+cannot be read at all (offline), so the outbox PARKS the take (kept, Retry) and it is never prepared
+without its cap. The chat camera arms its ring and checks a gallery pick against
+`captureCapMs(limits, 'chat')` (60 s); the feed and post destinations keep `maxDurationMs`. A chat
+answer without the cap is said at ERROR when the limits arrive, and the camera does not film (the
+"refused" fault). A take over the cap by more than the encoder's 0.5 s grace is `too long`: failed
+for good, as this section classifies it. Pinned by `chatReelWriter.test.ts`,
+`prepareQueuedChatReel.test.ts`, `outbox.reelResume.test.ts` (the cap unreadable: the real preparer
+parks the take) and `ReelCapture.svelte.test.ts` (60 s in a chat, 90 s in the feed).
 
 **Not built**: a caption on a reel (the review has no text field; "Envoyer" sends the take alone),
 preparing while the member reviews (RC-11), and a background upload a suspended app continues (the
