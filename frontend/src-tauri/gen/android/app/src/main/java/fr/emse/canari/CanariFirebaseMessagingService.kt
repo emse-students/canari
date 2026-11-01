@@ -4340,7 +4340,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * [answer] is a native answer (a push decrypt, an accepted background Add); its `ownDeviceAdded`
      * array holds the keys Rust found to be this account's owner alerts (`mobile/device_notice.rs`).
      * They are claimed in the ledger the app shares (`nativeClaimDeviceNotices`), so a push replaying
-     * the same commit, or the app having already shown it, announces nothing. In the FOREGROUND
+     * the same commit, or the app having already shown it, announces nothing; nor does a key of an
+     * account the app has not pre-claimed since the update (counted `held` in the answer). In the FOREGROUND
      * nothing is claimed or posted: the app takes the same event and shows its in-app alert, which is
      * the only alert a user looking at the app gets.
      */
@@ -4351,8 +4352,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "$where: ${keys.length()} device(s) added to this account - foreground, the app alerts")
             return
         }
-        val claimed = try {
-            JSONArray(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
+        val claim = try {
+            JSONObject(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
             return
@@ -4360,8 +4361,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
             return
         }
+        val claimed = claim.optJSONArray("claimed") ?: JSONArray()
+        val held = claim.optInt("held", 0)
+        if (held > 0) {
+            Log.i(TAG, "$where: $held new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
+        }
         if (claimed.length() == 0) {
-            Log.d(TAG, "$where: device(s) added to this account were already announced")
+            if (held == 0) Log.d(TAG, "$where: device(s) added to this account were already announced")
             return
         }
         Log.i(TAG, "$where: ${claimed.length()} new device(s) on this account - local notification")

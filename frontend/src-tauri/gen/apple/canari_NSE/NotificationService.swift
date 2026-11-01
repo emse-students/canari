@@ -1172,11 +1172,20 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] \(source): device-notice claim returned nothing - not announced")
       return
     }
-    let claimedJson = String(cString: raw)
+    let claimJson = String(cString: raw)
     canari_free_string(raw)
-    let claimed = (try? JSONSerialization.jsonObject(with: Data(claimedJson.utf8))) as? [String] ?? []
+    // `{"claimed": [...], "held": n}` - `held` counts the keys of an account the app has not
+    // pre-claimed since the update (`engine_claim_device_notices`).
+    let claim = (try? JSONSerialization.jsonObject(with: Data(claimJson.utf8))) as? [String: Any] ?? [:]
+    let claimed = claim["claimed"] as? [String] ?? []
+    let held = claim["held"] as? Int ?? 0
+    if held > 0 {
+      NSLog("[CanariNSE] \(source): \(held) new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
+    }
     guard !claimed.isEmpty else {
-      NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+      if held == 0 {
+        NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+      }
       return
     }
     let content = UNMutableNotificationContent()
