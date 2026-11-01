@@ -159,6 +159,27 @@ export function spanOf(
  */
 export type BlockDensity = 'full' | 'line' | 'icon';
 
+/**
+ * What a block too NARROW for a row of avatar and text (under `STACK_BELOW_REM` wide) has room to
+ * stack under its avatar, by height alone: 0 only the avatar, 1 the name, 2 the name and the hours
+ * on one line, 3 the name and the hours on two lines (start, then end). Widths are the container
+ * query's business; this is the height half of the same decision.
+ */
+export type StackedLines = 0 | 1 | 2 | 3;
+
+/** Rem thresholds: avatar 1.5, a line 1 each, padding 0.5 and the gap 0.25 between them. */
+export function stackedLines(heightRem: number): StackedLines {
+  if (heightRem >= 5.25) return 3;
+  if (heightRem >= 4.25) return 2;
+  if (heightRem >= 2.75) return 1;
+  return 0;
+}
+
+/** The container width (rem) under which a booking's avatar and text stack instead of sitting in a row. */
+export const STACK_BELOW_REM = 7;
+/** The container width (rem) under which the hours go on two lines, the start and then the end. */
+export const SPLIT_TIME_BELOW_REM = 5;
+
 /** Rem thresholds: two text lines need about 2.75rem with padding, one line about 1.5rem. */
 export function blockDensity(heightRem: number): BlockDensity {
   if (heightRem >= 2.75) return 'full';

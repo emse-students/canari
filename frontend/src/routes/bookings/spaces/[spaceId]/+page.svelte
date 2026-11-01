@@ -87,7 +87,7 @@
   }
 </script>
 
-<PageContainer width="tool">
+<PageContainer width="grid">
   {#if space}
     <Breadcrumb
       crumbs={[

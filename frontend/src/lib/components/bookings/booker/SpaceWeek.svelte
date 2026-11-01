@@ -45,7 +45,7 @@
   /**
    * THE WEEK OF ONE SPACE, ONE COLUMN AT A TIME (WP-B5, WP-R2, WP-R5): days as columns on a desktop
    * and one day under a week strip on a phone (D46, D48; the width decides, as the agenda's does),
-   * the column selector, and the sheets that book, block and read a taken unit. ONE read holds the
+   * the column selector, and the sheets that book, block and read a taken unit. THE WEEK ROLLS: seven days from today (owner, 2026-11-01), moved by sevens. ONE read holds the
    * week and the day before it, so the strip's dots, the day and the column counts come from the
    * same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
    * `block` mode, where a drag or a tap on free units opens "Indisponible" (D50) instead of a booking.
@@ -87,8 +87,10 @@
   let slotsError = $state('');
   /** A phone draws one day under the strip; wider screens draw the week. */
   let narrow = $state(isScheduleAgendaViewport());
-  /** The day shown (a phone), and with it the week shown. */
+  /** The day shown (a phone). */
   let date = $state(untrack(() => localDate(nowMs, space.timeZone)));
+  /** The first day of the rolling week shown: today at first (owner, 2026-11-01), then moved by sevens. */
+  let start = $state(untrack(() => localDate(nowMs, space.timeZone)));
   /** The column shown: a space with several columns shows one at a time (D44, D46). */
   let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
   let sheet = $state<Sheet | null>(null);
@@ -102,7 +104,7 @@
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
-  const weekAll = $derived(date ? weekDates(date) : []);
+  const weekAll = $derived(start ? weekDates(start) : []);
   const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
   /** The week of the chosen column: the strip's dots, and the desktop grid. */
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
@@ -110,7 +112,7 @@
   const layout = $derived(narrow ? weekLayout(columnUnits, [date], space, nowMs) : week);
   /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
   const weekHeld = $derived.by(() => {
-    const want = weekReadRange(date);
+    const want = weekReadRange(start);
     return loaded !== null && loaded.from <= want.from && want.to <= loaded.to;
   });
   /**
@@ -179,7 +181,7 @@
     // Bumped on EVERY call, the cache hit included: a slow read for a week left behind must not
     // land once the view came back to a week already held.
     const ticket = ++slotsRead;
-    const { from, to } = weekReadRange(date);
+    const { from, to } = weekReadRange(start);
     if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
     slotsError = '';
     try {
@@ -195,14 +197,24 @@
     }
   }
 
-  /** A whole week at a time: the same weekday on a phone, so the strip keeps its place. */
+  /** Seven days at a time: the day shown moves with the window, so a phone strip keeps its place. */
   function moveWeek(weeks: number) {
+    start = addDays(start, weeks * WEEK_DAYS);
     date = addDays(date, weeks * WEEK_DAYS);
     void ensureSlots();
   }
 
+  /** A day of the strip's window; one outside it starts a new window. */
   function chooseDate(next: string) {
     date = next;
+    if (!weekAll.includes(next)) start = next;
+    void ensureSlots();
+  }
+
+  /** "Aujourd'hui": the window starts on today again, whichever of its days holds today now. */
+  function goToday() {
+    start = today;
+    date = today;
     void ensureSlots();
   }
 
@@ -283,16 +295,16 @@
           onSelect={chooseDate}
           onPrevious={() => moveWeek(-1)}
           onNext={() => moveWeek(1)}
-          away={date !== today}
-          onToday={() => chooseDate(today)}
+          away={date !== today || start !== today}
+          onToday={goToday}
         />
       {:else}
         <WeekBar
           label={weekLabel}
-          away={!weekAll.includes(today)}
+          away={start !== today}
           onPrevious={() => moveWeek(-1)}
           onNext={() => moveWeek(1)}
-          onToday={() => chooseDate(today)}
+          onToday={goToday}
         />
       {/if}
       <div
