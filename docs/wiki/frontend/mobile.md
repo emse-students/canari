@@ -1077,17 +1077,23 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   `expired` (the stage it reached) only. Rotated to `nse_outcomes.1.ndjson` past 32 KiB, so the
   pair stays bounded. Both sides `flock` `nse_outcomes.lock` - **the extension never waits for
   it**: it sits on the path that hands the content back, so the extension takes it `LOCK_NB`, and
-  when the app holds it the run's line goes into its own marker, renamed `nse_done.<pid>.<n>.json`,
-  which the app consumes like a line. Every `Trace` property is read and written under the run's
-  lock, because the expiry reads it on another thread while the decrypt writes it.
+  when the app holds it the run's line is written atomically as `nse_done.<pid>.<n>.json`, and
+  only THEN is its marker removed - so the app's listing sees the marker, the done record or both,
+  never a marker carrying an outcome and never neither. The app consumes a done record like a line.
+  A short append is cut back (`ftruncate`) to the size measured under the lock before it, so no
+  torn line stays to glue itself to the next one. Every `Trace` property is read and written under
+  the run's lock, because the expiry reads it on another thread while the decrypt writes it.
 - **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
-  `nse_inflight.<pid>.<n>.json`, stamped with the boot it ran in (`kern.boottime`), rewritten at
-  every stage, removed with its line - under the run's lock, and never rewritten once the run has
-  ended, so an expired run cannot come back as a marker. The app turns the marker of a process
-  PROVEN gone (stamped in another boot, or `kill(pid, 0)` answering `ESRCH`) into a `killed` line
-  carrying the stage and footprint it reached, unless a line with the same `pid` and `at` was
-  already taken (the run DID write); a live or unknowable process keeps its marker - no clock - and
-  at most 64 are kept, the oldest beyond that removed with a warning.
+  `nse_inflight.<pid>.<n>.json`, stamped with the boot session it ran in (`kern.bootsessionuuid`,
+  compared for EQUALITY - not `kern.boottime`, which Darwin recomputes when the clock is stepped and
+  would call a live run killed), rewritten at every stage, removed with its line - under the run's
+  lock, and never rewritten once the run has ended, so an expired run cannot come back as a marker.
+  A marker whose run's line was already taken (same `pid` and `at`) is removed uncounted, alive or
+  not; otherwise the app turns the marker of a process PROVEN gone (stamped in another boot
+  session, or `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and
+  footprint it reached. A live or unknowable process keeps its marker - no clock - and at most 64
+  are kept, the oldest beyond that removed with a warning. A file the run removed between the
+  app's listing and its removal is "already moved", not an error.
 - **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files, the done
   records and the dead markers under the lock and re-serialises each line through a TYPED
   allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`, enums for `outcome` and `stage`,

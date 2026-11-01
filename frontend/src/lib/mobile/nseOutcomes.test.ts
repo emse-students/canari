@@ -80,7 +80,14 @@ describe('the extension and the reader agree on the file contract', () => {
     // writer refuse once it is set - so an end followed by a mark leaves no marker.
     const end = block.match(/func end\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
     expect(end).toMatch(/locked \{\s*guard !written else \{ return \}\s*written = true/);
-    expect(end).toContain('removeItem(at: marker)');
+    expect(end).toContain('defer { removeMarker(marker) }');
+    // The done record is written under its own name, atomically, and the marker never carries an
+    // outcome: the only file a marker is written to is its own, from `writeMarkerLocked`.
+    expect(end).toMatch(
+      /data\.write\(to: dir\.appendingPathComponent\(doneName\), options: \.atomic\)/
+    );
+    expect(end).not.toMatch(/write\(to: marker/);
+    expect(end).not.toMatch(/\brename\(/);
     const mark = block.match(/func mark\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
     expect(mark).toMatch(/locked \{\s*guard !written else \{ return \}/);
     expect(block).toMatch(/func writeMarkerLocked\(\) \{\s*guard !written,/);
@@ -93,7 +100,26 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(swift).toContain('"nse_done."');
     expect(rust).toContain('"nse_done."');
     // A marker is stamped with its boot, which the reader compares.
-    expect(block).toContain('fields["boot"] = NseOutcomeLog.bootTime()');
-    expect(rust).toContain('number("boot")');
+    // ...by its boot SESSION, an identity compared for equality: `kern.boottime` moves when the
+    // clock is stepped and would call a live run killed.
+    expect(block).toContain('fields["boot"] = session');
+    expect(block).toContain('sysctlbyname("kern.bootsessionuuid"');
+    expect(rust).toContain('c"kern.bootsessionuuid"');
+    expect(rust).toContain('marker.text("boot")');
+    expect(`${block}\n${rust}`).not.toMatch(/KERN_BOOTTIME/);
+  });
+
+  it('cuts a short write back to the size measured under the lock', () => {
+    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
+    const append = block.slice(block.indexOf('static func append('));
+    const measured = append.indexOf('let before = info.st_size');
+    const written = append.indexOf('write(fd, $0.baseAddress, $0.count)');
+    expect(append.indexOf('flock(lockFd, LOCK_EX | LOCK_NB)')).toBeLessThan(measured);
+    expect(measured).toBeGreaterThan(0);
+    expect(measured).toBeLessThan(written);
+    const shortBranch = append.slice(written, append.indexOf('return true'));
+    expect(shortBranch).toContain('if wrote != bytes.count {');
+    expect(shortBranch).toContain('ftruncate(fd, before)');
+    expect(shortBranch).toMatch(/return false\s*\}\s*$/);
   });
 });

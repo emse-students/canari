@@ -590,14 +590,25 @@ class NotificationService: UNNotificationServiceExtension {
       return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
-    /// This boot's `kern.boottime`, in seconds: a marker stamped with another boot is a run that
-    /// died with that boot, whatever process holds its pid now. -1 when the kernel does not answer.
-    static func bootTime() -> Int {
-      var mib: [Int32] = [CTL_KERN, KERN_BOOTTIME]
-      var tv = timeval()
-      var size = MemoryLayout<timeval>.size
-      guard sysctl(&mib, 2, &tv, &size, nil, 0) == 0 else { return -1 }
-      return Int(tv.tv_sec)
+    /// This boot's `kern.bootsessionuuid`: a marker stamped with another boot's is a run that died
+    /// with that boot, whatever process holds its pid now. An IDENTITY, compared for equality - not
+    /// `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time zone or a
+    /// manual change), so a live run would read as another boot's and be reported `killed`. Nil when
+    /// the kernel does not answer, which only disables the boot proof (twin: `boot_session` in
+    /// `commands/nse_outcomes.rs`).
+    static func bootSession() -> String? {
+      var size = 0
+      guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
+        NSLog("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno)")
+        return nil
+      }
+      var buffer = [CChar](repeating: 0, count: size + 1)
+      guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else {
+        NSLog("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno)")
+        return nil
+      }
+      let session = String(cString: buffer)
+      return session.isEmpty ? nil : session
     }
 
     /// One run's record: what it is, how far it got, and what it decided. EVERY mutable property is
@@ -691,26 +702,34 @@ class NotificationService: UNNotificationServiceExtension {
             return
           }
           let marker = dir.appendingPathComponent(markerName)
-          if NseOutcomeLog.append(record, dir: dir) {
-            try? FileManager.default.removeItem(at: marker)
+          defer { removeMarker(marker) }
+          if NseOutcomeLog.append(record, dir: dir) { return }
+          // THE DONE RECORD IS WRITTEN UNDER ITS OWN NAME, ATOMICALLY, AND ONLY THEN IS THE MARKER
+          // REMOVED: the app's listing sees the marker, the done record, or both - never a marker
+          // carrying an outcome, never a moment with neither. Both at once is one run, which the
+          // reader settles by its (pid, at).
+          guard let data = try? JSONSerialization.data(withJSONObject: record) else {
+            NSLog("[CanariNSE] outcome: ERROR not appended and not encoded for a done record")
             return
           }
-          guard let data = try? JSONSerialization.data(withJSONObject: record),
-            (try? data.write(to: marker, options: .atomic)) != nil
-          else {
-            NSLog("[CanariNSE] outcome: ERROR not appended and not left as a done record")
-            return
-          }
-          if rename(marker.path, dir.appendingPathComponent(doneName).path) != 0 {
-            // The marker now carries its outcome; the reader takes an outcome-bearing marker as done.
-            NSLog("[CanariNSE] outcome: done record left under the marker name errno=\(errno)")
-          } else {
+          do {
+            try data.write(to: dir.appendingPathComponent(doneName), options: .atomic)
             NSLog("[CanariNSE] outcome: log busy - left as a done record for the app to take")
+          } catch {
+            NSLog(
+              "[CanariNSE] outcome: ERROR not appended and no done record: \(errorReason(error))")
           }
         }
       }
 
       private var elapsedMs: Int { Int(Date().timeIntervalSince(started) * 1000) }
+
+      /// Removes the run's marker; already gone is the expected answer when nothing was ever written.
+      private func removeMarker(_ marker: URL) {
+        if unlink(marker.path) != 0, errno != ENOENT {
+          NSLog("[CanariNSE] outcome: in-flight marker NOT removed errno=\(errno)")
+        }
+      }
 
       private func recordLocked(outcome: String?, cause: String?) -> [String: Any] {
         NseOutcomeLog.record(
@@ -722,7 +741,7 @@ class NotificationService: UNNotificationServiceExtension {
       private func writeMarkerLocked() {
         guard !written, let dir = NotificationService.appGroupDir() else { return }
         var fields = recordLocked(outcome: nil, cause: nil)
-        fields["boot"] = NseOutcomeLog.bootTime()
+        if let session = NseOutcomeLog.bootSession() { fields["boot"] = session }
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
         do {
           try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
@@ -789,11 +808,27 @@ class NotificationService: UNNotificationServiceExtension {
         return false
       }
       defer { close(fd) }
+      // The size BEFORE this line, measured under the lock: a short write is cut back to it, so a
+      // torn line never stays in the file to glue itself to the next one.
+      var info = stat()
+      guard fstat(fd, &info) == 0 else {
+        NSLog("[CanariNSE] outcome: log not measured errno=\(errno)")
+        return false
+      }
+      let before = info.st_size
       var bytes = [UInt8](data)
       bytes.append(0x0A)
       let wrote = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
       if wrote != bytes.count {
-        NSLog("[CanariNSE] outcome: short write \(wrote)/\(bytes.count) errno=\(errno)")
+        let writeErrno = errno
+        if ftruncate(fd, before) != 0 {
+          NSLog(
+            "[CanariNSE] outcome: ERROR short write \(wrote)/\(bytes.count) errno=\(writeErrno) NOT cut back errno=\(errno)"
+          )
+        } else {
+          NSLog(
+            "[CanariNSE] outcome: short write \(wrote)/\(bytes.count) errno=\(writeErrno) - cut back")
+        }
         return false
       }
       return true
