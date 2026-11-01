@@ -37,11 +37,26 @@ describe('savedStateFailure', () => {
   });
 
   it('keeps the observation, both remedies named, for a legacy blob or an untyped failure', () => {
-    for (const reason of ['undecryptable', 'unknown'] as const) {
-      const failure = savedStateFailure(new SavedStateUnopenedError(reason, new Error('x')));
-      expect(failure.code, reason).toBe('local_state_unopenable');
-      expect(failure.message, reason).toBe(m.auth_local_state_unopenable());
-    }
+    const failure = savedStateFailure(new SavedStateUnopenedError('undecryptable', new Error('x')));
+    expect(failure.code).toBe('local_state_unopenable');
+    expect(failure.message).toBe(m.auth_local_state_unopenable());
+  });
+
+  it('says retry-first, with no reset, for an untyped cause that proves nothing about the bytes', () => {
+    const failure = savedStateFailure(new SavedStateUnopenedError('unknown', new Error('x')));
+    expect(failure.code).toBe('local_state_unknown');
+    expect(failure.message).toBe(m.auth_local_state_unknown());
+    expect(failure.message).not.toBe(m.auth_local_state_unopenable());
+    expect(isRecoverableWithOldPin(failure.code)).toBe(false);
+    expect(provesOtherAccountState(failure.code)).toBe(false);
+  });
+
+  it('keeps its own sentence for a state unreadable right now', () => {
+    const failure = savedStateFailure(
+      new SavedStateUnopenedError('unreadable_now', new Error('x'))
+    );
+    expect(failure.code).toBe('local_state_unreadable_now');
+    expect(failure.message).toBe(m.auth_local_state_unreadable_now());
   });
 
   it('names another tab, and offers neither the old PIN nor a reset, when a rotation was refused', () => {

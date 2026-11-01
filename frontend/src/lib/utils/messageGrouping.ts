@@ -1,6 +1,6 @@
 import type { ChatMessage } from '$lib/types';
 import { formatDayLabel, formatTime24, toValidDate } from '$lib/utils/dates';
-import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 
@@ -57,7 +57,11 @@ export function groupMessages(messages: ChatMessage[], now: Date = new Date()): 
   const TIME_GAP_MS = 15 * 60 * 1000; // 15 minutes
 
   for (const msg of sorted) {
-    const d = toValidDate(msg.timestamp);
+    // THE ROW'S OWN INSTANT ON THE CONVERSATION'S CLOCK (`messageTime`, the server's when known),
+    // never let below the previous row's: the rows the server has not dated yet sit after every dated
+    // one at their `sentAt`, which may be older, and a separator must never step back a day.
+    const at = messageTime(msg);
+    const d = toValidDate(new Date(lastTimestamp !== null ? Math.max(at, lastTimestamp) : at));
     const msgDate = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     const msgTime = d.getTime();
 

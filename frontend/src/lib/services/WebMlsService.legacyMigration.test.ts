@@ -16,19 +16,27 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 import { WebMlsService } from './WebMlsService';
 import { SavedStateUnopenedError } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { MlsStateVerdictError } from '$lib/mls-client/mlsStateSeal';
 
 // THE CODES `mls-core` THROWS, not the sentences it used to. Both are this crate's own throws and
 // both are typed since 2026-09-08, because the classifier that routes on them had a default arm
 // that gave every unrecognised failure the diagnosis "your PIN was changed on another device".
 // A fixture carrying the old prose now classifies as `unknown` - which is the point of the change,
 // and is what these two lines being wrong looked like.
-const UNOPENABLE = new Error('STATE_UNDECRYPTABLE: aead::Error');
-const MISMATCH = new Error(
-  'IDENTITY_MISMATCH: expected u:web-u-new but state contains u:web-u-old'
+const UNOPENABLE = new MlsStateVerdictError('STATE_UNDECRYPTABLE', 'aead::Error');
+const MISMATCH = new MlsStateVerdictError(
+  'IDENTITY_MISMATCH',
+  'expected u:web-u-new but state contains u:web-u-old'
 );
 // The two halves a FRAMED blob's fingerprint separates (step 2, 2026-10-17).
-const ROTATED = new Error("STATE_KEY_MISMATCH: the state's header names a different device key");
-const ALTERED = new Error('STATE_ALTERED: v2 AES-GCM tag did not verify under the right key');
+const ROTATED = new MlsStateVerdictError(
+  'STATE_KEY_MISMATCH',
+  "the state's header names a different device key"
+);
+const ALTERED = new MlsStateVerdictError(
+  'STATE_ALTERED',
+  'v2 AES-GCM tag did not verify under the right key'
+);
 
 /** Asserts `init` paused for the old PIN, typed, with the cause the login reads. */
 async function expectPaused(run: Promise<void>, reason: string): Promise<void> {

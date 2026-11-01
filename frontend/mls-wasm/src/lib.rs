@@ -1,6 +1,6 @@
 use log::{Level, Metadata, Record};
 use mls_core::pending_submission::PendingSubmissionRead;
-use mls_core::MlsManager;
+use mls_core::{MlsManager, StateLoadRefusal};
 use wasm_bindgen::prelude::*;
 
 mod pin_crypto;
@@ -136,6 +136,21 @@ pub fn state_blob_verdict(
     }
 }
 
+/// A failed state load as the JS object `{ code: string | null, message: string }` - the same two
+/// fields the Tauri `initialiser_mls` command rejects with, so `mlsStateLoadErrorOf` (TypeScript)
+/// builds ONE typed error from either boundary and never reads a recovery out of `message`.
+fn state_load_refusal_to_js(refusal: StateLoadRefusal) -> JsValue {
+    let obj = js_sys::Object::new();
+    let code = refusal.code.map_or(JsValue::NULL, JsValue::from_str);
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("code"), &code);
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("message"),
+        &JsValue::from_str(&refusal.message),
+    );
+    obj.into()
+}
+
 // ----------------------------------------------------
 
 /// `{ data: Uint8Array, sender: string | null, author: 'unsigned' | 'verified' | 'refused' }` for
@@ -246,9 +261,9 @@ impl WasmMlsClient {
         {
             log::info!("Loading encrypted state with device key");
             let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64)
-                .map_err(|e| JsValue::from_str(&e))?;
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?;
             MlsManager::load_with_key(user_id, device_id, Some(blob), &key)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?
         } else {
             if state_bytes.is_none() && device_key_b64.is_some() && state_was_expected {
                 log::warn!(
@@ -257,7 +272,7 @@ impl WasmMlsClient {
             }
             log::info!("Loading/Creating clean state");
             MlsManager::load_or_create(user_id, device_id, state_bytes)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?
         };
 
         Ok(WasmMlsClient { manager })

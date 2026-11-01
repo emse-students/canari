@@ -10,7 +10,7 @@ import {
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   isMlsManagerAbsent,
@@ -51,6 +51,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
+import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
@@ -751,10 +752,10 @@ export class TauriMlsService extends BaseMlsService {
       // this one is a decrypt that failed and handed the rest of its time to a recovery, and a
       // report that merged them would show a fresh-start boot as a slow load.
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
       // `mls.bin` IS ONE FILE PER INSTALL, AND A RECORD BESIDE IT SAYS WHOSE IT IS. When that record
@@ -785,17 +786,12 @@ export class TauriMlsService extends BaseMlsService {
         throw new VaultOwnerUnprovenError(refusal);
       }
 
-      // No key in the keystore (a cancelled or refused sheet, a wiped entry) says nothing about
-      // the saved state and is recoverable - the user just needs to enter their PIN. Do NOT
-      // destroy the device identity: let the error propagate to the PIN modal.
-      const isKeystoreEmpty = cause === 'keystore_unavailable';
-
       // A snapshot written before v0.11.0 sits in the Argon2id envelope and cannot decrypt with
       // the device key, which is indistinguishable here from a key rotated on another device.
       // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
       // Must not `return` on success - the push-context write below this block still has to run.
       let migrated = false;
-      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin && !isKeystoreEmpty) {
+      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin) {
         try {
           await this.invokeInit(deviceKeyB64, state, opts.legacyPin, opts.stateOnDisk);
           migrated = true;
@@ -813,24 +809,24 @@ export class TauriMlsService extends BaseMlsService {
         }
       }
 
-      if (migrated) {
+      // ONE DECISION FOR BOTH PLATFORMS (`recoveryOfStateLoadFailure`): anything no PIN can open
+      // is rotated; a PIN rotated elsewhere pauses under `noFreshStart`; and a cause that proves
+      // nothing about the bytes - `unknown`, or an empty keystore (a cancelled or refused sheet, a
+      // wiped entry: the PIN modal is the answer) - NEVER rotates, whatever the caller passed.
+      const recovery = migrated
+        ? 'recovered'
+        : recoveryOfStateLoadFailure(cause, savedStateExists, opts?.noFreshStart === true);
+      if (recovery === 'recovered') {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
-      } else if ((noPinOpensState(cause) || savedStateExists) && !isKeystoreEmpty) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR, and the test
-        // is written that way round deliberately. A `mismatch` decrypted fine and names another
-        // device; an `altered` state's header names THIS key and its tag fails (DE7, CORRUPT-2) -
-        // honouring noFreshStart for either strands the user on a gate asking for a PIN that cannot
-        // exist. Everything else - a PIN rotated elsewhere, a legacy blob that says nothing, a
-        // failure this classifier has never been taught about - is a reason to STOP rather than to
-        // rotate an identity and lose what the blob still holds. Never widened past the fingerprint:
-        // a rotation on every failed decrypt destroys the history of every real PIN rotation.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      } else if (recovery === 'pause') {
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' || cause === 'unreadable_now'
+            ? cause
+            : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
@@ -1183,14 +1179,18 @@ export class TauriMlsService extends BaseMlsService {
       // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
       // (by construction, on every exit that did not install); this is the same end through the one
       // helper every path uses, so the previous account's manager and key cannot be left installed
-      // whatever the native side did. The install's own error is the one that propagates.
+      // whatever the native side did. The install's own error is the one that propagates, typed
+      // HERE at the invoke boundary: the command rejects with `{ code, message }`
+      // (`StateLoadRefusal`), so `classifyStateLoadFailure` and the login read a TYPE, never the
+      // message. No older string shape is understood: the app embeds this frontend, so the native
+      // half that answers is always the one built with it.
       await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
         (teardown: unknown) =>
           console.error(
             `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
           )
       );
-      throw e;
+      throw mlsStateLoadErrorOf(e);
     }
   }
 

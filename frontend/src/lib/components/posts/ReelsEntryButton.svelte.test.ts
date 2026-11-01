@@ -66,7 +66,8 @@ function renderRow() {
 it('draws ONE row: the three tabs, then the named clap icon at its right end', () => {
   const { target, row, icon } = renderRow();
   expect(target.querySelectorAll('[data-feed-tab-row]')).toHaveLength(1);
-  expect(row.children).toHaveLength(2);
+  expect(row.children).toHaveLength(3);
+  expect(row.querySelector('[data-feed-tabs-info]')).not.toBeNull();
   expect(row.lastElementChild).toBe(icon);
   expect(icon.getAttribute('aria-label')).toBe(m.posts_reels_open());
   expect(icon.querySelector('svg')).not.toBeNull();
