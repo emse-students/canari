@@ -235,6 +235,14 @@ fi
 ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
 # shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
 . "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
+# WHATEVER ENDS THIS SCRIPT puts a list a replacement had taken out back at rest, and says so: a
+# failure, `set -e`, a cancelled job or a dropped session. A signal becomes an exit, so the EXIT trap
+# runs for it too (bash runs no EXIT trap on a signal it has no trap for). Best effort - a proxy that
+# cannot be reloaded now is reloaded by the next deploy's rotation_seed, first.
+trap 'rotation_restore_in_flight "the deploy exited (status $?)" || true' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 printf '\nreading how each service may be replaced\n'
 REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {

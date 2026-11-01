@@ -174,6 +174,24 @@ if docker build -q -t rolltest/frontend-real -f "$REPO/infrastructure/local/Dock
 else
   fail "Dockerfile.frontend builds"
 fi
+# `keepalive 0` in the lists is what keeps the pairing check sound, and it only means "cache nothing"
+# on the nginx it was measured on, >= 1.29.7 (the version that made the cache a default). Both frontend images
+# float on `nginx:stable-alpine`, so the floor is asserted on what they build to, not assumed.
+nginx_at_least_1_29_7() {
+  local v
+  v="$(docker run --rm --entrypoint nginx "$1" -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p')"
+  printf '%s\n' "$v"
+  [ -n "$v" ] && [ "$(printf '1.29.7\n%s\n' "$v" | sort -V | head -1)" = 1.29.7 ]
+}
+build_fixture_probe="$(docker build -q --build-arg CONF=frontend.conf -f "$FIX/frontend.Dockerfile" "$FIX" 2>/dev/null)"
+for image in rolltest/frontend-real "$build_fixture_probe"; do
+  if version="$(nginx_at_least_1_29_7 "$image")"; then
+    ok "a frontend image runs nginx $version, at least the 1.29.7 the lists' keepalive 0 is written for"
+  else
+    fail "a frontend image runs nginx ${version:-unknown}, older than 1.29.7 - the lists' keepalive 0 does not mean what rolling.sh needs"
+  fi
+done
+[ -z "$build_fixture_probe" ] || docker image rm -f "$build_fixture_probe" >/dev/null 2>&1 || true
 # shellcheck disable=SC2016 # the image prefix as the compose file spells it, unexpanded on purpose
 prod_plan="$(docker compose -f "$REPO/infrastructure/docker-compose.prod.yml" config --no-interpolate --format json 2>/dev/null |
   "$PYTHON" "$REPO/infrastructure/lib/replace-modes.py" '${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/' | tr -d '\r')"
@@ -347,23 +365,25 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 if [ "$(auth_held)" = 1 ]; then ok "the POST is held in its auth subrequest before the release starts"; else fail "the POST never reached its auth subrequest"; fi
-# NO IDLE CONNECTION TO THE API IS CACHED (2026-11-01). Eight POSTs answered one after the other, and
-# the one request left is in its auth subrequest, so an ESTABLISHED connection from the frontend to
-# :3000 now is an idle one nginx kept - which the pairing check cannot tell from a chosen request
-# (CI: 13 of them paired this POST, which then got a 502). `keepalive 0` in the lists forbids it. Read
-# right after the POSTs: the API's own keep-alive timeout would otherwise close them first, which is
-# why this went unseen on a slower machine.
-for _ in $(seq 1 8); do curl -s -o /dev/null -X POST "$URL"; done
-idle=0
+# NO IDLE CONNECTION TO THE API IS CACHED (2026-11-01): an idle cached connection is one the pairing
+# check cannot tell from a chosen request (CI: 13 of them paired this POST, which then got a 502).
+# Asserted on the running frontend's own `nginx -T`, not on a socket count: a count read right after
+# a request also sees the upstream nginx is in the middle of closing (measured: 4, gone a second
+# later), which no read can tell from a cached one without a clock. The behaviour is this case's
+# own: without the line, the POST below was paired and answered 502 one CI run in two.
+cached=""
 for c in $(containers_of frontend); do
-  # A table that cannot be read is not a clean one.
-  table="$(docker exec "$c" cat /proc/net/tcp 2>/dev/null)" || idle="?"
-  [ "$idle" = "?" ] || idle=$((idle + $(printf '%s\n' "$table" | awk '$3 ~ /:0BB8$/ && $4 == "01" { n++ } END { print n + 0 }')))
+  dump="$(docker exec "$c" nginx -T 2>/dev/null)" || {
+    cached="$cached unreadable:${c:0:12}"
+    continue
+  }
+  printf '%s\n' "$dump" | awk '/^upstream api \{$/ { on = 1 } on && $1 == "keepalive" && $2 == "0;" { found = 1 } on && $0 == "}" { on = 0 } END { exit !found }' ||
+    cached="$cached ${c:0:12}"
 done
-if [ "$idle" = 0 ]; then
-  ok "the frontend keeps no idle connection to the API between requests"
+if [ -z "$cached" ] && [ -n "$(containers_of frontend)" ]; then
+  ok "the running frontend's upstream api caches no connection (keepalive 0 in what nginx -T reads)"
 else
-  fail "the frontend holds ${idle:-?} idle connection(s) to the API - an upstream cache the pairing check would count as chosen requests"
+  fail "the running frontend's upstream api may cache idle connections:${cached:- no frontend running}"
 fi
 deploy >"$TMP/auth.log" 2>&1 &
 DEPLOY_PID=$!
@@ -397,6 +417,25 @@ if [ "$(cat "$TMP/hold-auth.code")" = 200 ]; then
   ok "the POST released from its auth_request was answered 200"
 else
   fail "the POST released from its auth_request was answered $(cat "$TMP/hold-auth.code")"
+fi
+
+# ── 3b. A list at rest on disk that the proxy does not run ──────────────────
+# What a restore whose reload failed leaves (2026-11-01 review): the file names the API by DNS, the
+# frontend still runs a list naming its container. The next deploy's seed must reload anyway - the
+# rollback below would otherwise retire that container under a frontend still choosing it.
+printf '\ndeploy-rolling: a list at rest on disk, while the frontend still runs a container name\n'
+api_name="$(docker inspect -f '{{.Name}}' "$(containers_of api)")"
+api_name="${api_name#/}"
+rotation_write frontend api "$(rotation_block frontend api 3000 "$api_name")" &&
+  rotation_apply frontend plain >/dev/null &&
+  rotation_write frontend "" ""
+# The seed's own report: rotation_reload says `reloaded` only once it has seen a worker started after
+# the reload it sent, and the render id it wrote read back through `nginx -T`.
+if rotation_seed <<<"$(plan)" >"$TMP/seed.log" 2>&1 && grep -qE '^  frontend: [0-9a-f]+ reloaded; a new worker runs on the list$' "$TMP/seed.log"; then
+  ok "the next deploy's seed reloads a frontend whose list is at rest on disk but not in what it runs"
+else
+  fail "the seed did not reload the frontend whose list was at rest on disk only"
+  cat "$TMP/seed.log" >&2
 fi
 
 # ── 4. A rollback, by the library of a release older than the lists ─────────

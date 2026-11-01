@@ -89,12 +89,12 @@ for name, s in json.load(sys.stdin)["services"].items():
   else
     fail "$file: FRONTEND_HOST_PORT is published by: ${holders:-nobody}"
   fi
-  if printf '%s\n' "$plan" | grep -qx 'edge pinned yes -'; then
+  if printf '%s\n' "$plan" | grep -qE '^edge pinned yes - [^ ]+$'; then
     ok "$file: the edge is pinned"
   else
     fail "$file: the edge is not 'pinned yes -'"
   fi
-  if printf '%s\n' "$plan" | grep -qx 'frontend overlap no edge:80'; then
+  if printf '%s\n' "$plan" | grep -qE '^frontend overlap no edge:80 [^ ]*/frontend:[^ ]+$'; then
     ok "$file: the frontend is replaced with overlap, and taken out of rotation at the edge"
   else
     fail "$file: the frontend is not 'overlap no edge:80'"
@@ -134,7 +134,7 @@ for v in json.load(sys.stdin)["services"]["frontend"].get("volumes") or []:
 
   # Every service the frontend nginx routes to by a list has, in the image, the list a workstation
   # reads - by the same name and on the port its label declares.
-  while read -r svc _ _ rot; do
+  while read -r svc _ _ rot _; do
     rot="${rot%$'\r'}" # a Windows Python ends its lines with CR
     [ "${rot%%:*}" = frontend ] || continue
     if grep -qF "upstream $svc {" "$FRONTEND_NGINX" && grep -qF "server $svc:${rot#*:} resolve;" "$FRONTEND_NGINX"; then
@@ -193,10 +193,10 @@ refuses "a rotation through no service" '{"services":{"a":{'"$L"':"overlap",'"$R
 refuses "a rotation on an exclusive service" '{"services":{"a":{'"$L"':"exclusive",'"$R"'},"image":"own/a:1"},'"$P"'}}' 'never taken out of rotation'
 refuses "overlap on a writable bind mount" '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d"}]},'"$P"'}}' 'mounts a volume'
 if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d","read_only":true}]},'"$P"'}}' |
-  "$PYTHON" "$MODES" own/ | grep -qx 'a overlap no p:80'; then
-  ok "accepts overlap on a read-only bind mount, and prints its rotation"
+  "$PYTHON" "$MODES" own/ | grep -qx 'a overlap no p:80 own/a:1'; then
+  ok "accepts overlap on a read-only bind mount, and prints its rotation and its image"
 else
-  fail "refuses overlap on a read-only bind mount, or prints no rotation"
+  fail "refuses overlap on a read-only bind mount, or prints no rotation or no image"
 fi
 refuses "overlap with no healthcheck" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1"}}}' 'no healthcheck'
 refuses "overlap with no start_interval" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1","healthcheck":{"test":["CMD","true"]}}}}' 'start_interval'
@@ -341,6 +341,16 @@ if [ -n "$seed_line" ] && [ -n "$first_up" ] && [ "$seed_line" -lt "$first_up" ]
 else
   fail "deploy-environment.sh does not seed the replica lists before its first 'dc up' (seed ${seed_line:-absent}, up ${first_up:-absent})"
 fi
+# Whatever ends the deploy puts a list taken out back at rest: an EXIT trap, and every signal a
+# cancelled job or a dropped session sends turned into an exit, so that trap runs for it too.
+trap_line="$(grep -n "^trap 'rotation_restore_in_flight .*' EXIT\$" "$DEPLOY" | head -1 | cut -d: -f1)"
+signals=""
+for sig in HUP INT TERM; do grep -qE "^trap 'exit [0-9]+' $sig\$" "$DEPLOY" || signals="$signals $sig"; done
+if [ -n "$trap_line" ] && [ -n "$seed_line" ] && [ "$trap_line" -lt "$seed_line" ] && [ -z "$signals" ]; then
+  ok "deploy-environment.sh restores the service in flight on exit, a HUP, an INT or a TERM included"
+else
+  fail "deploy-environment.sh lacks the exit trap before the seed, or a signal turned into an exit:${signals:- none missing}"
+fi
 
 # ── 5. The rotation library, against a Docker it can only ask ─────────────────
 # Every function below reads Docker through DOCKER_CLI; here that is a stub describing an estate, so
@@ -409,6 +419,45 @@ edge pinned yes -'
   rm -f "$ROT"/*.conf
   rotation_seed <<<"$PLAN" >/dev/null
   verdict "rotation_seed writes the lists again when the directory lost them" '[ -f "$ROT/front.conf" ] && [ -f "$ROT/edge.conf" ]'
+  # A list at rest ON DISK says nothing of what nginx runs (a restore whose reload failed): the seed
+  # reloads every proxy, its list changed or not.
+  applied="$(
+    rotation_apply() { echo "$1:$2"; }
+    rotation_seed <<<"$PLAN" | grep -v '^rotation: '
+  )"
+  verdict "rotation_seed reloads every proxy even when its list on disk is already at rest" \
+    '[ "$(printf "%s\n" "$applied" | sort | tr "\n" " ")" = "edge:plain front:plain " ]'
+  # A deploy that ends between a take-out and its restore: the exit trap puts the list back.
+  rotation_take_out api api-new >/dev/null
+  ROTATION_IN_FLIGHT=api
+  rotation_restore_in_flight "a test" 2>/dev/null
+  verdict "a service still in flight when the deploy ends is put back at rest, and is no longer in flight" \
+    '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ -z "$ROTATION_IN_FLIGHT" ]'
+  verdict "with nothing in flight, the exit trap does nothing" '[ -z "$(rotation_restore_in_flight "a test" 2>&1)" ]'
+
+  # A proxy that reads no list is a TRANSITION only when it runs the previous release's image.
+  legacy="$(
+    fake_docker() {
+      case "$1" in
+      ps) echo fe-1 ;;
+      exec) printf '# configuration file /etc/nginx/conf.d/default.conf:\nset $a api:3000;\nset $b sib:3001;\n' ;;
+      inspect) echo sha256:running ;;
+      image) echo "$WANTED" ;;
+      *) return 1 ;;
+      esac
+    }
+    rotation_routes_set <<<'api overlap no front:3000 own/api:2
+sib overlap no front:3001 own/sib:2
+front overlap no edge:80 own/front:2'
+    WANTED=sha256:running
+    rotation_apply front plain >/dev/null 2>&1 || echo own-image-refused
+    WANTED=sha256:newer
+    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy from before the replica lists::' && echo older-image-drained
+  )"
+  verdict "a proxy reading no list that runs THIS release's own image is refused, not taken for a transition" \
+    'printf "%s\n" "$legacy" | grep -qx own-image-refused'
+  verdict "a proxy reading no list that runs the previous release's image is drained the old way, with a warning" \
+    'printf "%s\n" "$legacy" | grep -qx older-image-drained'
 
   # auth_request: which upstream connections are subrequests, read from `nginx -T`.
   rotation_routes_set <<<'core-service overlap no frontend:3012

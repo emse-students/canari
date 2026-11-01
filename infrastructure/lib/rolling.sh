@@ -148,9 +148,27 @@ ROTATION_TOKEN=""
 # Whether the last rotation_write changed a list, render id aside.
 ROTATION_CHANGED=no
 
-# rotation_routes_set - reads the plan replace-modes.py prints on stdin and keeps its routes.
+# The image this release runs for each service, "<service> <image>" per line, from the plan.
+ROTATION_IMAGES=""
+
+# rotation_routes_set - reads the plan replace-modes.py prints on stdin and keeps its routes and the
+# image of each service.
 rotation_routes_set() {
-  ROTATION_ROUTES="$(awk '$4 != "" && $4 != "-" { split($4, r, ":"); print $1, r[1], r[2] }')"
+  local plan
+  plan="$(cat)"
+  ROTATION_ROUTES="$(printf '%s\n' "$plan" | awk '$4 != "" && $4 != "-" { split($4, r, ":"); print $1, r[1], r[2] }')"
+  ROTATION_IMAGES="$(printf '%s\n' "$plan" | awk 'NF >= 5 && $5 != "-" { print $1, $5 }')"
+}
+
+# rotation_runs_this_release <proxy> <container> - whether <container> runs the very image this release
+# deploys for <proxy>: 0 yes, 1 no, 2 unknown (no image in the plan, or one not on this host).
+rotation_runs_this_release() {
+  local image running wanted
+  image="$(printf '%s\n' "$ROTATION_IMAGES" | awk -v s="$1" '$1 == s { print $2 }')"
+  [ -n "$image" ] || return 2
+  wanted="$($DOCKER_CLI image inspect -f '{{.Id}}' "$image" 2>/dev/null)" || return 2
+  running="$($DOCKER_CLI inspect -f '{{.Image}}' "$2" 2>/dev/null)" || return 2
+  [ "$running" = "$wanted" ]
 }
 
 # rotation_file <proxy> - where the list a proxy includes is written.
@@ -551,8 +569,21 @@ rotation_apply() {
       ports="$(printf '%s\n' "$dump" | rotation_subrequest_ports "$proxy")" || return 1
       rotation_reload "$proxy" "$pid" "$mode" "$ports" || return 1
     elif printf '%s\n' "$dump" | rotation_is_legacy "$proxy"; then
-      printf '::warning title=A proxy from before the replica lists::%s: %s reads no rotation/%s.conf and names its services by DNS - an image older than 2026-11-01 (the first deploy carrying the lists, or a rollback). It is drained the old way.\n' \
-        "$proxy" "${pid:0:12}" "$proxy" >&2
+      # A TRANSITION ONLY: the image still running is the PREVIOUS release's (the first deploy carrying
+      # the lists, or the roll-forward after a rollback). The image this release deploys reading no
+      # list is a release built wrong, and is refused like any proxy that reads none.
+      rotation_runs_this_release "$proxy" "$pid"
+      case $? in
+      0)
+        printf "::error::%s: %s runs THIS release's own image, and it reads no rotation/%s.conf - not a transition from an older release; stopping the deploy\n" \
+          "$proxy" "${pid:0:12}" "$proxy" >&2
+        return 1
+        ;;
+      1) printf "::warning title=A proxy from before the replica lists::%s: %s reads no rotation/%s.conf and names its services by DNS - the previous release's image (the first deploy carrying the lists, or the roll-forward after a rollback). It is drained the old way.\n" \
+        "$proxy" "${pid:0:12}" "$proxy" >&2 ;;
+      *) printf "::error::%s: %s reads no rotation/%s.conf, and whether it runs this release's image could not be read - drained the old way, as a transition would be\n" \
+        "$proxy" "${pid:0:12}" "$proxy" >&2 ;;
+      esac
       legacy=1
     else
       printf '::error::%s: %s includes no rotation/%s.conf, and does not name its services by DNS either - nothing would take a retiring replica out of its rotation; stopping the deploy\n' \
@@ -573,8 +604,14 @@ rotation_apply() {
 # rotation_seed - reads the plan on stdin and writes every proxy's list in the resting form. Called
 # BEFORE ANY `up`: the frontend and the edge include their list unconditionally and refuse to start
 # without it - a fresh host, a lost directory. A list that already exists is normalised to the
-# resting form too (a deploy killed mid-replacement leaves a container name in it), and a running
-# proxy whose list that changed is reloaded on it.
+# resting form too (a deploy killed mid-replacement leaves a container name in it).
+#
+# EVERY RUNNING PROXY IS RELOADED ON IT, CHANGED OR NOT (2026-11-01 review). "At rest" is a fact about
+# what nginx RUNS, and the file is only what it was last told: a restore whose reload failed leaves the
+# file at rest and nginx on a container name, and a seed that reloaded only on a changed file would
+# never correct it - then a rollback, whose older library never touches the lists, retires that
+# container and the proxy answers 502 (on the edge, the whole site). One graceful reload per proxy per
+# deploy, verified like every other (rotation_apply reads the render id back through `nginx -T`).
 rotation_seed() {
   local proxy
   rotation_routes_set
@@ -587,10 +624,28 @@ rotation_seed() {
   for proxy in $(printf '%s\n' "$ROTATION_ROUTES" | awk 'NF { print $2 }' | sort -u); do
     rotation_write "$proxy" "" "" || return 1
     printf 'rotation: %s written for %s\n' "$(rotation_file "$proxy")" "$proxy"
-    if [ "$ROTATION_CHANGED" = yes ]; then
-      rotation_apply "$proxy" plain || return 1
-    fi
+    rotation_apply "$proxy" plain || return 1
   done
+}
+
+# The service one of whose replicas is out of rotation right now: set by replace_overlap from the
+# take-out until its list is back at rest, so whatever ends the deploy in between - a failure, a
+# cancelled job, a signal - knows which list to put back (rotation_restore_in_flight).
+ROTATION_IN_FLIGHT=""
+
+# rotation_restore_in_flight <why> - puts the list of the service in flight back at rest, if any, and
+# says so at a level that accuses: a deploy that ends between a take-out and its restore is a deploy
+# that did not end the way it was written to. For the caller's EXIT trap (deploy-environment.sh).
+rotation_restore_in_flight() {
+  local service="$ROTATION_IN_FLIGHT"
+  [ -n "$service" ] || return 0
+  printf '::error::%s with %s out of rotation - putting its list back at rest\n' "$1" "$service" >&2
+  if rotation_restore "$service"; then
+    ROTATION_IN_FLIGHT=""
+    return 0
+  fi
+  printf '::error::%s: its list could NOT be put back at rest in what the proxy runs - the next deploy reloads it first (rotation_seed); a rollback before that would retire a replica the proxy still names\n' "$service" >&2
+  return 1
 }
 
 # rotation_take_out <service> <container...> - the block of <service> names the given replicas alone
@@ -646,10 +701,16 @@ $1 == "sl" { hdr = 1; next }
 END { if (!hdr) { print "? ?"; exit } for (i = 1; i <= k; i++) if (E[i] in listen) f++; print w + 0, f + 0 }'
 
 # wait_unqueued <service> <container> - returns once nothing is waiting to be accepted by the
-# replica, which rotation has already stopped sending anything new: two clean reads in a row mean no
-# half-open connection could still complete and none is still queued. A read that fails (the exec, or
-# the table) is UNKNOWN, never clean. In flight is printed, not waited for: SIGTERM is what drains
-# it, and a WebSocket would never let it reach zero. Returns 1 when the reads run out.
+# replica, which rotation has already stopped sending anything new FROM nginx: two clean reads in a row
+# mean no half-open connection from nginx could still complete and none is still queued. A read that
+# fails (the exec, or the table) is UNKNOWN, never clean. In flight is printed, not waited for:
+# SIGTERM is what drains it, and a WebSocket would never let it reach zero. Returns 1 when the reads
+# run out.
+#
+# WHAT IT DOES NOT COVER: a call from ANOTHER SERVICE (chat-gateway to chat-delivery, social to core,
+# frontend-ssr to all three...) resolves the replica through Docker's DNS, never left any rotation,
+# and can arrive after the two reads - for those callers the reads are a clock, not a proof. The
+# enumerated gap: docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md.
 wait_unqueued() {
   local service="$1" cid="$2" read=0 clean=0 out="" raw
   while [ "$read" -lt "$ROLLING_QUIESCE_READS" ]; do
@@ -738,17 +799,20 @@ replace_overlap() {
   # One reload puts the new replica in and takes the old one out; the old one is stopped only once
   # that holds. ANY failure from here puts the list back at rest - naming every replica still
   # running, the old one included, since nothing stopped it - so a failed deploy, like a finished
-  # one, leaves lists an older release's deploy (a rollback) can follow.
+  # one, leaves lists an older release's deploy (a rollback) can follow. A restore that itself fails
+  # leaves the service IN FLIGHT, so the caller's exit trap tries once more and says so.
+  ROTATION_IN_FLIGHT="$service"
   if ! rotation_take_out "$service" "$new"; then
-    rotation_restore "$service" || true
+    rotation_restore_in_flight "the take-out failed" || true
     return 1
   fi
   # shellcheck disable=SC2086 # deliberate word splitting: one id per word
   if ! retire "$service" $old; then
-    rotation_restore "$service" || true
+    rotation_restore_in_flight "the retirement failed" || true
     return 1
   fi
-  rotation_restore "$service"
+  rotation_restore "$service" || return 1
+  ROTATION_IN_FLIGHT=""
 }
 
 # replace_in_place <service> <publishes-a-host-port> - compose recreates the container if, and only

@@ -4,7 +4,7 @@
 Reads `docker compose config --format json` on stdin and prints one line per service, in the order
 the deploy must replace them (every service after everything it `depends_on`):
 
-    <service> <mode> <publishes-a-host-port: yes|no> <rotation: proxy:port, or ->
+    <service> <mode> <publishes-a-host-port: yes|no> <rotation: proxy:port, or -> <image, or ->
 
 Takes one argument: the image prefix of what THIS repository builds (`<registry>/<owner>/<repo>/`),
 because one rule below is about those images and no other.
@@ -164,7 +164,7 @@ def main(argv):
     for name in order:
         service = services[name]
         ports = "yes" if service.get("ports") else "no"
-        print(f"{name} {labels_of(service)[LABEL]} {ports} {rotation_of(service) or '-'}")
+        print(f"{name} {labels_of(service)[LABEL]} {ports} {rotation_of(service) or '-'} {service.get('image') or '-'}")
     return 0
 
 

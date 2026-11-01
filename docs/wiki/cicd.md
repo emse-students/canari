@@ -310,7 +310,8 @@ for the minute its replacement takes. Three things follow:
   unconditional, and the bind mount hides the image's own list, so a fresh host or a lost directory
   would leave both unable to start. `deploy-environment.sh` reads the plan and calls `rotation_seed`
   BEFORE its first `dc up`: every list written in the resting form (a list a killed deploy left
-  mid-replacement is put back at rest too), and a running proxy whose list that changed is reloaded.
+  mid-replacement is put back at rest too), and EVERY running proxy is reloaded on it, changed or not
+  ([why](#a-rollback-across-the-replica-lists)).
 - **A rollback across the replica lists works** ([below](#a-rollback-across-the-replica-lists)).
 
 **Before a reload, the proxy is asked what it would load.** `nginx -T` in the proxy's replica must
@@ -322,7 +323,10 @@ service routed through it by `<service>:<port>`. It is the image the first deplo
 still finds running, and the one a rollback brings back. It is drained exactly as every deploy drained
 before the lists - the retiring replica stays up `ROLLING_RESOLVER_TTL_SECONDS + 1` (3 s) while that
 nginx re-resolves the name - with a `::warning` naming it. Never a regression, never a refusal; the
-next deploy runs no such image. A reload nginx REFUSED after `nginx -T` accepted the files is read
+next deploy runs no such image. Only a transition takes that path: the running image must be the
+PREVIOUS release's - the plan carries each service's image, and THIS release's own frontend image
+reading no list is a release built wrong, refused at `::error`
+([legacy-compatibility](legacy-compatibility.md)). A reload nginx REFUSED after `nginx -T` accepted the files is read
 from the proxy's own error log (`[emerg]` since the reload) the moment no new worker has appeared,
 instead of being waited out for ten minutes.
 
@@ -369,8 +373,12 @@ clock; the read count bounds only a request that never ends.
   flight. The frontend's variable `proxy_pass` targets cache nothing (measured: no idle `:3001` in the
   same dump). The edge's lists are `stream` (`ROTATION_STREAM_PROXIES`), which caches nothing and
   refuses the directive. The cost is a connection per proxied request between the frontend and the
-  services - what every release before nginx 1.29.7 did. `deploy-rolling.test.sh` sends eight POSTs
-  and asserts the frontend then holds no idle connection to the API (without the line: one).
+  services - what every release before nginx 1.29.7 did. `deploy-rolling.test.sh` asserts the line
+  in the running frontend's own `nginx -T`, and that both frontend images build to nginx >= 1.29.7
+  (they float on `nginx:stable-alpine`). Not by counting sockets after a request: such a count also
+  sees the upstream nginx is in the middle of closing (measured: 4, gone a second later), which no
+  read tells from a cached one without a clock. The behaviour itself is the `auth_request` case: the
+  POST it holds was paired and answered `502` one CI run in two without the line.
 - **What it does not prove.** A request whose upstream FAILS after it was paired may choose again
   from the old list: `proxy_next_upstream` (an idempotent method only, nginx's own rule) or an
   `error_page` that proxies elsewhere (the frontend's all answer from nginx itself). That needs a
@@ -379,7 +387,11 @@ clock; the read count bounds only a request that never ends.
   the frontend's configuration). Both are said, not waited for.
 - **What it cannot read is unknown, never clean**: a table with no header prints `?`, a failed
   `docker exec` is a read that did not happen, and an old worker whose fd list reads EMPTY (a live
-  worker always holds its listening socket) makes the read `?`.
+  worker always holds its listening socket) makes the read `?`. The cost of that rule, said: an old
+  worker still alive with NO socket at all (shutting down, its listening socket closed, held only by
+  a timer) also reads `?`, so the check never holds while it lives; if it outlives
+  `ROLLING_ROTATION_READS` (10 minutes) the deploy fails with the old replica still serving - safe,
+  never a 502.
 - **The read runs as the workers' own uid** (`docker exec -u`, the uid read from
   `/proc/<worker>/status` before the reload). Found while fixing the review (2026-11-01): the first
   version read `/proc/<pid>/fd` as root, which for another user's process needs `CAP_SYS_PTRACE`, which
@@ -458,13 +470,25 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- **The lists govern the two nginx, and nothing else.** A service-to-service call resolves its peer
-  through Docker's DNS: social-service and frontend-ssr reach core-service as
-  `http://core-service:3012` (`USER_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `CORE_SERVICE_URL` in both
-  compose files), so while core-service is replaced, a call of theirs that lands in the old
-  replica's accept queue as it closes can still be reset - a POST among them answered with an error
-  (not observed). Taking a replica out of rotation for those callers would need a list in each of
-  them; nothing is built for it.
+- **The lists govern the two nginx, and nothing else: every service-to-service call still goes
+  around them** (enumerated in both compose files, 2026-11-01 second review). A caller resolves its
+  peer through Docker's DNS, which names the retiring replica until it stops:
+
+  | Caller | Peer (overlap) | Variables |
+  | --- | --- | --- |
+  | chat-gateway | chat-delivery-service | `DELIVERY_SERVICE_URL` - the message-send path itself |
+  | chat-gateway | social-service | `SOCIAL_SERVICE_URL` |
+  | core-service | social-service | `FORM_URL`, `FORM_SERVICE_URL` |
+  | social-service | core-service | `USER_SERVICE_URL`, `PAYMENT_SERVICE_URL` |
+  | social-service | chat-delivery-service | `DELIVERY_INTERNAL_URL` |
+  | frontend-ssr | core-service, social-service, chat-delivery-service | `CORE_SERVICE_URL`, `SOCIAL_SERVICE_URL`, `DELIVERY_SERVICE_URL` |
+
+  (media-service, reached by three of them, is `exclusive`: its gap is the one above.) For these
+  callers the retiring replica never leaves rotation, so `wait_unqueued`'s two clean reads of its
+  accept queue are a CLOCK, not a proof: a call can land in the queue after them and be reset when
+  the listener closes - a POST among them answered with an error (not observed). That is a gap, owned
+  in the queue: [backlog](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md). Every claim
+  of "no 502" in this section is about requests that go through nginx.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
@@ -492,10 +516,23 @@ retires the old one, as it always did (its reset window included). The older com
 frontend's list mount and the older `edge/nginx.conf` reads no list, so after the rollback nothing
 reads them; the untracked files stay, and the next deploy carrying the lists re-seeds them.
 
-The rule is an invariant: **no deploy ends with a list naming a container** - finished, or failed
-(step 6). Only a runner killed in the middle of a replacement can leave one, and `rotation_seed` puts
-it back at rest at the start of the next deploy of this code; a ROLLBACK straight after such a kill
-would find it, so re-run the newer deploy first. `deploy-rolling.test.sh` rolls the fixture back with
+The rule is an invariant about what nginx RUNS, not about a file: **no deploy ends with a proxy
+running a list that names a container** - finished, failed (step 6), or interrupted. Three mechanisms
+hold it, none of them a human procedure (2026-11-01 second review):
+
+- **A failure between take-out and restore** restores the service in flight
+  (`rotation_restore_in_flight`), whose reload is verified like any other.
+- **A deploy that ends there anyway** - `set -e`, a cancelled job, a dropped session - runs
+  `deploy-environment.sh`'s EXIT trap, which does the same and says so at `::error`; `HUP`, `INT` and
+  `TERM` are turned into exits so that trap runs for them too. A `SIGKILL` runs nothing.
+- **What none of that reached** - a restore whose reload failed (the file at rest, nginx not), or a
+  `SIGKILL` - is corrected first by the next deploy of this code: `rotation_seed` reloads EVERY
+  running proxy, its list changed or not, because a file at rest proves nothing about what nginx
+  loaded. The one window left is a rollback started straight after such a `SIGKILL` or failed reload,
+  before any newer deploy: both are logged at `::error` when they happen, naming the consequence.
+
+`deploy-rolling.test.sh` puts the frontend on a container-name list with the file at rest and asserts
+the next seed reloads it (with the old conditional reload, it did not), then rolls the fixture back with
 the library main shipped before the lists (frozen as `rolling-fixture/rolling-pre-rotation.sh`) and
 asserts the estate answers on the older version with no edge reload, and `deploy-replace.test.sh`
 holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`.
