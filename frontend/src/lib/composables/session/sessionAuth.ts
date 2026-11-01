@@ -593,7 +593,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
 }
 
 /**
- * The login failure for a saved state that `init` refused to open or replace (`noFreshStart`).
+ * The login failure for a saved state that `init` refused to open or replace - under `noFreshStart`,
+ * or for a cause that proves nothing about the bytes, which is never replaced
+ * (`recoveryOfStateLoadFailure`).
  *
  * READ FROM THE TYPE, NEVER FROM `reason.message`: it used to compare the message against one
  * shared marker, which collapsed every cause into one screen. Three answers now, each with the

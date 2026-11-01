@@ -9,6 +9,7 @@ import {
   MLS_STATE_BLOB_V2_KDF_SALT,
   MLS_STATE_SEAL_V2_WRITER_ENABLED,
   MlsStateUnreadableNowError,
+  MlsStateVerdictError,
   isMlsStateBlobV2,
   mlsStateKeyFingerprint,
   openMlsStateBlobV2,
@@ -147,10 +148,22 @@ describe('sealMlsStateBlobV2', () => {
   it('the web opener answers mls-core codes for what the BYTES decide: another key, a stub', async () => {
     const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
     const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
-    await expect(openMlsStateBlobV2(blob, other)).rejects.toThrow(/^STATE_KEY_MISMATCH: /);
-    await expect(openMlsStateBlobV2(blob.slice(0, 16 + 27), DEVICE_KEY_B64)).rejects.toThrow(
-      /^STATE_UNDECRYPTABLE: .*version 2/
+    // TYPED AT THE THROW: the classifier reads `code` on the type, never the message.
+    const rotated = await openMlsStateBlobV2(blob, other).catch((e: unknown) => e);
+    expect(rotated).toBeInstanceOf(MlsStateVerdictError);
+    expect((rotated as MlsStateVerdictError).code).toBe('STATE_KEY_MISMATCH');
+    expect(String(rotated)).toMatch(/STATE_KEY_MISMATCH: /);
+    const stub = await openMlsStateBlobV2(blob.slice(0, 16 + 27), DEVICE_KEY_B64).catch(
+      (e: unknown) => e
     );
+    expect(stub).toBeInstanceOf(MlsStateVerdictError);
+    expect((stub as MlsStateVerdictError).code).toBe('STATE_UNDECRYPTABLE');
+    expect((stub as Error).message).toMatch(/^STATE_UNDECRYPTABLE: .*version 2/);
+    const notV2 = await openMlsStateBlobV2(new Uint8Array(64), DEVICE_KEY_B64).catch(
+      (e: unknown) => e
+    );
+    expect(notV2).toBeInstanceOf(MlsStateVerdictError);
+    expect((notV2 as MlsStateVerdictError).code).toBe('STATE_UNDECRYPTABLE');
   });
 
   it('an altered body or header is NOT called altered by WebCrypto: unreadable now, typed', async () => {

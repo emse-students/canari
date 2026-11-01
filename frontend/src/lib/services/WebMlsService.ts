@@ -28,7 +28,7 @@ import {
   wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
@@ -849,10 +849,10 @@ export class WebMlsService extends BaseMlsService {
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
       // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN - same reasoning as
@@ -913,17 +913,20 @@ export class WebMlsService extends BaseMlsService {
         throw new SavedStateUnopenedError('unreadable_now', e);
       }
 
-      if (noPinOpensState(cause) || state != null) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
-        // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
-        // must not be rotated away. The browser keeps one state per account, so it has no owner
-        // record to consult.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      // THE SAME ONE DECISION AS `TauriMlsService` (`recoveryOfStateLoadFailure`): `unknown` and an
+      // empty keystore are never rotated away, whatever the caller passed. The browser keeps one
+      // state per account, so it has no owner record to consult.
+      const recovery = recoveryOfStateLoadFailure(
+        cause,
+        state != null,
+        opts?.noFreshStart === true
+      );
+      if (recovery === 'pause') {
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
@@ -936,7 +939,10 @@ export class WebMlsService extends BaseMlsService {
             : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
-        console.error('[MLS] WASM init failed:', e);
+        // ONE LINE PER FAILURE: an `unknown` cause was already accused - at its boundary
+        // (`mlsStateLoadErrorOf`) or, for an error no boundary built, by `classifyStateLoadFailure` -
+        // and a second line here was the same failure logged twice.
+        if (cause !== 'unknown') console.error('[MLS] WASM init failed:', e);
         throw e;
       }
     }
