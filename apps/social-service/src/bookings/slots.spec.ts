@@ -5,6 +5,8 @@ import {
   availabilityWindows,
   bookingsOutsideAvailability,
   checkRangeShape,
+  datesAround,
+  rangeLengthRefusal,
   slotUnits,
   unitStates,
 } from './slots';
@@ -275,12 +277,159 @@ describe('a window crosses AT MOST ONE midnight (review of #1993)', () => {
     ).toEqual(['2026-11-02 23:00-23:00Z', '2026-11-03 23:00-23:00Z']);
   });
 
-  it('a 24/7 resource refuses a booking across midnight: two days are two windows', () => {
-    // 23:00-01:00 Paris, Monday to Tuesday. The cost of the at-most-one-midnight rule, accepted
-    // and named in docs/wiki/bookings-chantier.md "WP-B2 as built".
-    const range = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2026-11-03T00:00:00Z') };
-    const windows = availabilityWindows(step(60, 2), allWeek, [], '2026-11-02', '2026-11-03');
-    expect(checkRangeShape(step(60, 2), windows, range)).toBe('outside-availability');
+  // Two whole days in a row are ONE continuous opening: a booking runs from one day's window into
+  // the next one's (docs/wiki/bookings-chantier.md, "a booking crosses the midnight between two
+  // open days"). Paris is UTC+1 in November.
+  const shapeOf = (
+    config: SlotConfig,
+    lines: AvailabilityLine[],
+    exceptions: AvailabilityException[],
+    startIso: string,
+    endIso: string
+  ) => {
+    const range = { startMs: ms(startIso), endMs: ms(endIso) };
+    const [from, to] = datesAround(range, PARIS);
+    return checkRangeShape(config, availabilityWindows(config, lines, exceptions, from, to), range);
+  };
+
+  it.each<
+    [string, SlotConfig, AvailabilityLine[], AvailabilityException[], string, string, string | null]
+  >([
+    [
+      'a 24/7 resource accepts 22:00-02:00 across midnight, Monday to Tuesday',
+      step(60, 4),
+      allWeek,
+      [],
+      '2026-11-02T21:00:00Z',
+      '2026-11-03T01:00:00Z',
+      null,
+    ],
+    [
+      'the week wraps: Sunday 23:00 to Monday 01:00',
+      step(60, 2),
+      allWeek,
+      [],
+      '2026-11-08T22:00:00Z',
+      '2026-11-09T00:00:00Z',
+      null,
+    ],
+    [
+      'a whole weekly day into a whole dated day',
+      step(60, 2),
+      [weekly(1, '00:00', '24:00'), dated('2026-11-03', '00:00', '24:00')],
+      [],
+      '2026-11-02T22:00:00Z',
+      '2026-11-03T00:00:00Z',
+      null,
+    ],
+    [
+      'a several-day booking when maxSteps allows it (Monday 10:00 to Wednesday 10:00)',
+      step(60, 48),
+      allWeek,
+      [],
+      '2026-11-02T09:00:00Z',
+      '2026-11-04T09:00:00Z',
+      null,
+    ],
+    [
+      'maxSteps still holds across midnight',
+      step(60, 2),
+      allWeek,
+      [],
+      '2026-11-02T21:00:00Z',
+      '2026-11-03T01:00:00Z',
+      'too-many-steps',
+    ],
+    [
+      'a booking into a closed day is refused',
+      step(60, 4),
+      [weekly(1, '00:00', '24:00')],
+      [],
+      '2026-11-02T22:00:00Z',
+      '2026-11-03T00:00:00Z',
+      'outside-availability',
+    ],
+    [
+      'a closure (exception) cuts the opening at midnight',
+      step(60, 4),
+      allWeek,
+      [{ fromDate: '2026-11-03', toDate: '2026-11-03' }],
+      '2026-11-02T22:00:00Z',
+      '2026-11-03T00:00:00Z',
+      'outside-availability',
+    ],
+    [
+      'a gap between two days cuts it (Monday ends 23:00)',
+      step(60, 4),
+      [weekly(1, '00:00', '23:00'), weekly(2, '00:00', '24:00')],
+      [],
+      '2026-11-02T21:00:00Z',
+      '2026-11-03T00:00:00Z',
+      'outside-availability',
+    ],
+    [
+      'a step the day does not end on cannot carry a booking past midnight',
+      step(25, 10),
+      allWeek,
+      [],
+      // Monday's last 25-min step is 23:20-23:45 local; the next starts at Tuesday 00:00.
+      '2026-11-02T22:20:00Z',
+      '2026-11-02T23:10:00Z',
+      'misaligned',
+    ],
+    [
+      'whole-day predefined slots are still booked whole, never across',
+      SLOTS,
+      allWeek,
+      [],
+      '2026-11-02T22:00:00Z',
+      '2026-11-03T00:00:00Z',
+      'outside-availability',
+    ],
+  ])('%s', (_case, config, lines, exceptions, start, end, refusal) => {
+    expect(shapeOf(config, lines, exceptions, start, end)).toBe(refusal);
+  });
+
+  describe('an over-long range is refused before any window is built', () => {
+    // Forty years on a 24/7 resource in 5-min steps: the bound answers from the settings alone.
+    const decades = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2066-11-02T22:00:00Z') };
+
+    it.each<[string, SlotConfig, string]>([
+      ['a step space: longer than maxSteps x step', step(5, 12), 'too-many-steps'],
+      ['a slots space: longer than any slot can last', SLOTS, 'outside-availability'],
+    ])('%s', (_case, config, refusal) => {
+      expect(rangeLengthRefusal(config, decades)).toBe(refusal);
+      const started = Date.now();
+      // No window is passed: the bound must not need one.
+      expect(checkRangeShape(config, [], decades)).toBe(refusal);
+      expect(
+        bookingsOutsideAvailability(config, allWeek, [], [{ id: 'x', ...decades }])
+      ).toHaveLength(1);
+      expect(Date.now() - started).toBeLessThan(1_000);
+    });
+
+    it('keeps a range exactly maxSteps long, and an empty one is misaligned', () => {
+      const twoHours = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2026-11-03T00:00:00Z') };
+      expect(rangeLengthRefusal(step(60, 2), twoHours)).toBeNull();
+      expect(rangeLengthRefusal(step(60, 2), { startMs: 1, endMs: 1 })).toBe('misaligned');
+    });
+  });
+
+  it('D29 keeps a booking across midnight while both days stay open, and names it when one closes', () => {
+    const night = {
+      id: 'n',
+      startMs: ms('2026-11-02T22:00:00Z'),
+      endMs: ms('2026-11-03T00:00:00Z'),
+    };
+    expect(bookingsOutsideAvailability(step(60, 2), allWeek, [], [night])).toEqual([]);
+    expect(
+      bookingsOutsideAvailability(
+        step(60, 2),
+        allWeek,
+        [{ fromDate: '2026-11-03', toDate: '2026-11-03' }],
+        [night]
+      ).map((b) => b.id)
+    ).toEqual(['n']);
   });
 
   it('a 24/7 resource keeps an ordinary booking under an unchanged availability (D29)', () => {

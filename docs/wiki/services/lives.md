@@ -8,8 +8,9 @@ half, [below](#the-push-to-the-followers-wp-l7-server-half), 2026-10-19), and th
 floating reactions ([WP-L6](#live-chat-and-floating-reactions-wp-l6), 2026-10-19, draft). The moderation of a live - a report, a staff
 cut, the first-live rules - is WP-L8's server half ([below](#moderation-wp-l8-server-half), 2026-10-19), and the strike ladder and the reported chat line are WP-L8b's ([below](#the-strike-ladder-wp-l8b), 2026-10-21). WP-L2 and WP-L3 were built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
 decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q4**, durable end
-**Q5**, retention **Q10**. **No client calls any of it yet** (WP-L5), and **it is switched OFF on
-production** (below).
+**Q5**, retention **Q10**. The client (WP-L5) is built, and **since the production flip of
+2026-10-30 the deploy lock is open on both estates**: production serves lives from the stable that
+carries it, whenever `platform_config.lives_mode` says `on` (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`,
 `live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`, `live-report-age.scheduler.ts`), migrations `091_lives.sql`,
@@ -26,9 +27,20 @@ BOTH switches are open** - the nginx segment location included, since what it ca
 media-service's answer (a 404, kept 10 s). The answer is the same whichever switch is closed.
 
 **The deploy lock, `LIVE_ENABLED`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service):
-open only when exactly `true`. `render-env.sh` computes it per estate (`compute_live_enabled`):
-**`true` on dev, `false` on production**, asserted on the rendered files by `deploy-env.test.sh`. The
-local compose defaults it to `true`. Moving it takes a deploy.
+open only when exactly `true`. **The literal `true` on both estates since the production flip
+(owner, 2026-10-30)** - a `literal:true` row of `infrastructure/deploy/env-manifest.tsv` that
+`render-env.sh` writes into each estate's `.env` and both services read (the compose default stays
+`false`, so a render that lost the key fails closed); asserted on the rendered files by
+`deploy-env.test.sh`. Until then it was computed per estate, `true` on dev and `false` on production.
+The local compose defaults it to `true`. Moving it takes a deploy, which is why the runtime switch
+below is what closes lives now.
+
+**Turning lives on in production, as it was done.** One pull request moved both deploy-time locks
+(this variable and the client's `LIVE_ENABLED` in `features.ts`) and the camera and microphone
+purpose strings; the release that carries it opens the routes the moment it deploys, so **what decides
+whether production members see lives is `lives_mode` at that moment** - `on` in production, and
+kept on by the owner's decision of 2026-10-30, so lives open discreetly with the `1.5.2` stable. The gates, the readings and
+the order are on [live-production](../frontend/modules/live-production.md), the only copy.
 
 **The runtime kill switch, `platform_config.lives_mode`** (owner, 2026-10-21: lives get a switch
 the server holds BEFORE they open in production, exactly like calls - once the client lock is in a
@@ -78,9 +90,9 @@ they close. What must be true before lives open in production, and in what order
 | --- | --- | --- | --- |
 | Largest segment | 4 MiB of ciphertext | `LIVE_SEGMENT_MAX_BYTES`, `lives/live.constants.ts` (and the store's own refusal in media-service) | `GET /api/lives/limits` |
 | Reconnect window (Q5) | 60 s without a segment ends the live | `LIVE_RECONNECT_WINDOW_MS`, same file | same route |
-| Longest live (L4) | 60 min | `LIVE_MAX_DURATION_MS`, same file | same route |
+| Longest live (L4) | **NONE (owner, 2026-10-31).** A live ends by its broadcaster, by 60 s without a segment, by staff or by an erasure - never by a clock. `maxDurationMs` is no longer served and no shim stands in for it: lives are OFF in production until `1.5.4`, the first build that does not read it (a `1.5.1`-`1.5.3` sheet would print `NaN minutes` against the new answer, see [live-production](../frontend/modules/live-production.md)) | - | - |
 | Manifest window | 10 segments | `LIVE_MANIFEST_WINDOW`, same file | same route |
-| Byte budget per live | 1 687 500 000 B = 2.5 Mb/s (`LIVE_PLANNING_BITRATE_BPS`) x 60 min x 1.5 (`LIVE_BYTE_BUDGET_MARGIN`: encoder overshoot, container, AEAD tag) | `LIVE_BYTE_BUDGET`, same file | same route (`byteBudget`) |
+| Stored bytes per live | **No total budget (owner, 2026-10-31); a running live keeps its newest `LIVE_RETAINED_SEGMENTS` = 20 segments only** (trim, [below](#what-one-broadcaster-may-store)): at most 20 x 4 MiB = 80 MiB whatever its duration. `lives."storedBytes"` counts the retained bytes | `LIVE_RETAINED_SEGMENTS`, `LIVE_TRIM_BATCH`, same file | `byteBudget` is no longer served |
 | Segment rate | segment `index` accepted only while `index < 15 + floor(age / 1 s)` | `LIVE_SEGMENT_BURST`, `LIVE_SEGMENT_MIN_DURATION_MS` | same route |
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
@@ -116,14 +128,14 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer, `503 LIVE_KEY_UNAVAILABLE` when the stored key does not open ([the key at rest](#the-live-key-at-rest)) |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
-| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
+| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 | `POST /api/lives/:id/cut` `{ reason, details? }` | a content moderator (`isContentModerator`) | `{ liveId, broadcasterId, reason, cutAt, endReason, newlyCut, priorCuts, strike, consequence, standing }`, idempotent ([the ladder](#the-strike-ladder-wp-l8b)). `403 LIVE_CUT_FORBIDDEN` (asked before the live is read), `400 LIVE_CUT_REASON_INVALID` (`spam`/`harassment`/`inappropriate`/`other`), `400 LIVE_CUT_DETAILS_INVALID` (over 500 characters), `404 LIVE_NOT_FOUND` ([moderation](#moderation-wp-l8-server-half)) |
 | `POST /api/lives/broadcasters/:userId/withdrawal` `{ reason, details? }` | a content moderator | `{ userId, reason, withdrawnAt, newlyWithdrawn, cutsOnRecord }`, idempotent. `403 LIVE_WITHDRAWAL_FORBIDDEN` (asked first), `400 LIVE_ACCOUNT_INVALID`, the cut's two `400`s, `409 LIVE_WITHDRAWAL_NOT_DUE` (with `cutsOnRecord`, `required: 3`) |
 | `DELETE /api/lives/broadcasters/:userId/withdrawal` | a content moderator | `{ userId, lifted }`, idempotent; `403 LIVE_WITHDRAWAL_FORBIDDEN`, `400 LIVE_ACCOUNT_INVALID` |
 
-**Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `max_duration`, `erased` or `cut`, and a screen branches on it, never on a message.
+**Every `410` is `{ code: 'LIVE_ENDED', endedAt, endReason }`** (one constructor, `liveEnded`): `endReason` is `broadcaster`, `dropped`, `erased` or `cut` (`max_duration` is no longer written: no live has a longest duration, and the database check still allows it for rows of the past), and a screen branches on it, never on a message.
 
 ### Who may watch: the rule of a post
 
@@ -307,9 +319,11 @@ all, and nobody has measured that path.
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
-  broadcaster's removal of a viewer frees that viewer's seat at once, and **an ended live frees all
-  of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded` - which every
-  path that ends a live goes through: the broadcaster's end, the sweep, an ingest that met the end).
+  broadcaster's removal of a viewer frees that viewer's seat at once, and **a live CUT or ERASED
+  frees all of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded`). An
+  ORDINARY end (broadcaster, silence) keeps them: they are what its purge
+  [waits for](#deletion-at-the-end-plus-a-sweep-q10-l3), and each viewer gives its own back on the
+  end's `410` (or lets it lapse within the lease - no renewal is possible after the end).
   The member's live id is LOWER-CASED (`seatMember`): the take is keyed by the row's id, while a
   leave or a removal carries the id as the URL spelled it, which `ParseUUIDPipe` accepts in upper
   case - and a release naming another member would free nothing.
@@ -360,17 +374,17 @@ count.
   segment after a short backoff (it is still in the manifest window), and never fans out parallel
   retries - a burst of retries is exactly what the limit counts.
 
-**The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
-concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied
+**The connection budget, and why nothing is raised.** The host proxy is the DSI's: a host-wide
+proxy connection budget set by the DSI and shared by EVERY site on the host (two per proxied
 connection; [realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md) section 5),
-and raising it is their file and their decision. A seated viewer holds at most four: its app
+and raising it is their file and their decision. Canari keeps its share under a quarter of it. A seated viewer holds at most four: its app
 connection (HTTP/2, the API calls ride it too), its WebSocket and that socket's upstream leg (both
 held by every signed-in member already), and one segment fetch in flight (short: the host buffers it).
-**24 x 4 = 96, under a fifteenth of the budget** - the cap is set by bandwidth long before
+**24 x 4 = 96, well inside that quarter** - the cap is set by bandwidth long before
 connections. Our own nginx keeps the image default (`worker_connections` is not set in
 `Dockerfile.frontend`), and the edge's 4 096 is untouched, as are its `pid /var/run/nginx.pid` and
 `listen 80`, which its healthcheck reads (#2099). `live-segments-route.test.mjs` fails if the cap
-times four ever passes a quarter of 1 500.
+times four ever passes a quarter of the budget.
 
 **WAF.** The host runs CrowdSec inside its nginx. Up to 24 viewers behind one campus address
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
@@ -490,8 +504,8 @@ keeps only `"liveKeyCiphertext"` + `"liveKeyVersion"`:
   (unwatchable through it) and answers a chat-line report **`400 LIVE_CHAT_REPORT_MISMATCH`** (the
   line does not open with a null key). The new sweep seals lives ALREADY OPEN too, not only new
   ones, so this reaches a live that was on air before the deploy. Nothing to undo in the schema, and
-  a plaintext is never restored. Dev only today: `LIVE_ENABLED` is false in production, so no live
-  is open there for either release to serve.
+  a plaintext is never restored. Production met none of it: `LIVE_ENABLED` was false there until the
+  flip of 2026-10-30, so no live was open on production for either release to serve.
 - **What it does not protect**: social-service still holds the key (C12: the seal protects against
   the store and the database's readers, never against social-service), and a database copy taken
   WITH the environment opens everything. The previous plaintext column is dropped once production
@@ -505,7 +519,7 @@ keeps only `"liveKeyCiphertext"` + `"liveKeyVersion"`:
 | --- | --- |
 | `broadcaster` | `POST /api/lives/:id/end` |
 | `dropped` | the sweep, when `COALESCE(lastSegmentAt, startedAt)` is 60 s old |
-| `max_duration` | the sweep, or the ingest that finds the hour up (it writes the end and answers 410) |
+| `max_duration` | NEVER WRITTEN since 2026-10-31 (no duration cap); kept in the database check only |
 | `erased` | the account erasure (below) |
 | `cut` | a content moderator, `POST /api/lives/:id/cut` ([moderation](#moderation-wp-l8-server-half)) |
 
@@ -519,7 +533,7 @@ of 2026-10-18 the ingest held `SELECT ... FOR UPDATE` - a pooled connection - wh
 every connection of the pool (10) and stalled every other route of social-service. The ingest is now
 THREE steps:
 
-1. **Reserve** - one short transaction: every check under the row lock (owner, end, hour, order,
+1. **Reserve** - one short transaction: every check under the row lock (owner, end, order,
    repeat, rate, budget), then `pendingName` / `pendingSha256` / `pendingAt` written and COMMITTED.
 2. **Store** - no transaction open, no connection held.
 3. **Confirm** - one short transaction: under the row lock, insert the segment, advance `nextIndex`,
@@ -557,10 +571,40 @@ purge; a purge waits for a live reservation and ignores an abandoned one.
 
 Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a typed refusal:
 
-- **A byte budget per live**, `storedBytes` on the row against `LIVE_BYTE_BUDGET` (table above). A
-  segment that would cross it is REFUSED (`413 LIVE_BUDGET_EXHAUSTED`) and the live is NOT ended by
-  it: nothing more is accepted, so it ends by its broadcaster or, with no segment for 60 s, by the
-  sweep - one end path, not a second one for a case only an abusive client reaches.
+- **NO total byte budget and NO longest duration (owner, 2026-10-31, reversing the 2026-10-18 budget) -
+  and a TRIM that makes "nothing is stored" true.** The budget was 2.5 Mb/s x 60 min x 1.5, a duration
+  cap in disguise. Before the trim a live stored EVERY sealed segment for its whole length (the manifest
+  only LISTED the newest ten): about 1.1 GB an hour at 2.5 Mb/s, all of it until the end's purge. Now a
+  running live keeps only its newest `LIVE_RETAINED_SEGMENTS` = 2 x `LIVE_MANIFEST_WINDOW` = 20
+  segments, so **what one live stores is at most 20 x 4 MiB (`LIVE_SEGMENT_MAX_BYTES`) = 80 MiB, whatever
+  its duration** (about 20-40 MB at the planning bitrate). `storedBytes` is the retained bytes.
+  - **Why 20**: a manifest names the newest 10; the other 10 are the margin for a viewer that fetched
+    its manifest just before a trim and is still downloading. A viewer polls every second and a
+    segment is ~2 s, so ten more segments are ~20 s against the download of ~1 MB; a viewer further
+    behind than its buffer policy jumps to the newest (`livePlayer` backlog) instead of walking the
+    past, and every segment is self-contained (no init to keep).
+  - **Mechanism** (`LivesService.trim`, after each confirmed segment): the segments to trim are the
+    `live_segments` rows with `index < nextIndex - 20` (at most `LIVE_TRIM_BATCH` = 50 a pass);
+    media-service deletes the named objects (`POST media/internal/live-segments-delete`, idempotent -
+    an absent object is not a failure); THEN, in one transaction, the rows are deleted and
+    `storedBytes` falls by exactly their bytes. **Idempotence is durable state, not a clock**: a
+    crash between the media delete and the row delete, a refused delete or a media outage leave the
+    row, which the next segment's pass finds again. Each pass logs `[LIVE_TRIM] ... trimmed n
+    segment(s) (a..b), B`; a refusal or an unreachable store is a `warn` and never fails the segment
+    just stored. The end's purge is unchanged (it deletes the whole prefix, trimmed or not), so
+    correctness never rests on the trim; only the bound does.
+  - **The trim runs AFTER the segment's answer**, one per live at a time in the process
+    (`trimInBackground`): the ingest's slot (`LIVE_INGEST_MAX_CONCURRENT`) never waits for up to 50
+    store deletes. A second ask while one runs is dropped and loses nothing - the rows are
+    re-selected from durable state by the next segment.
+  - **nginx cache**: the `live_segments` cache (`proxy_cache_valid 200 2m`) may serve a segment
+    that was just trimmed for about two more minutes. The manifest window (10) sits inside the
+    retained 20, so only a viewer far behind can ask for one, and it jumps to the newest anyway.
+  - **Two edges**: a retry of a segment more than 20 behind the newest meets a trimmed row (409
+    `LIVE_SEGMENT_CONFLICT`; the uploader only ever retries the last one); a manifest asked `from` an
+    index older than the oldest kept row answers from the oldest kept.
+  - **Deploy order**: media-service carries the new route; a social-service deployed before it logs
+    the trim's `warn` on each segment until media catches up (nothing breaks), then converges.
 - **A segment rate held as a COUNT in durable state**: `nextIndex` is the number of segments taken,
   compared with the live's age read from the database clock (`index < 15 + floor(age / 1 s)`), so
   one segment a second on average, whatever retries do, with a burst that covers a reconnect's
@@ -573,10 +617,37 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
-There is no replay. At the broadcaster's end the segments and the row are deleted at once; every
-other end, and any purge that failed, is finished by `LiveRetentionScheduler` (every 30 s):
+There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
+viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
+`LiveRetentionScheduler` (every 30 s).
 
-1. end every open live past the reconnect window or the hour;
+**An ordinary end drains its viewers first (LIVE-WEB-2, 2026-10-29).** The purge of an ended live
+is `kept` while the live holds a seat (`LiveSeats.watching(id, 'purge')`, the seats renewed within
+the lease). A seat is renewed by every manifest read and by nothing else, so a held seat is a viewer
+told of segments within the lease that has not said it left: the segments its last manifest named
+are still its to fetch. On `1.5.1-alpha.7` the end's purge deleted segments 5 and 6 between the
+manifest that named them and their download - `404` on both viewers, then the manifest's `404`. The
+order is now a FACT, not a delay: the viewer's player gives its seat back on the end's `410`
+(`livePlayer.ts`), and the next sweep purges; a viewer that never does lets its seat lapse within
+`LIVE_SEAT_LEASE_MS` (30 s).
+
+**Whether to drain is read from durable facts by `purgeEnded` itself, never from `endReason`** (a
+cut of a live already ended keeps its earlier reason, and the erasure writes
+`COALESCE("endReason", 'erased')`):
+
+- **a `live_cuts` row, or a broadcaster that is `DELETED_ACCOUNT`**: moderation or the account's
+  deletion removed it, so every seat is released and the segments go at once - a cut just after an
+  ordinary end, or an erasure inside its drain, included;
+- **`endedAt` older than the lease, on the database clock**: every read answers `410` from `endedAt`
+  on (`assertMayWatch`), so no seat can have been renewed since and every one has lapsed; Redis is
+  not asked, so its outage never holds media past the lease;
+- **otherwise** the seats are read: one held keeps the live (a `debug` line), and a count that cannot
+  be read keeps it too (the seat module's `error`, naming the purge) - for at most the lease.
+
+So an ordinary end's segments outlive it by at most the lease plus one sweep, whatever Redis does.
+The steps of a sweep:
+
+1. end every open live past the reconnect window;
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the
    prefix again**; social-service deletes the row (segments and removed viewers cascade) **only when
    that listing is empty and no delete failed** - termination from a proof, not from a call that
@@ -666,7 +737,7 @@ outlives the purge; a cut, a segment and a viewer join fired together - whicheve
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
 committed may take a seat AFTER the purge freed them: that seat lasts at most its 30 s lease (its
 next poll is a `410` that renews nothing). The same holds for every kind of end, not only a cut -
-filed in [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
+filed in [backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
 
 **Repeat offenders: [the strike ladder](#the-strike-ladder-wp-l8b)**, built 2026-10-21 on the
 decisions of 2026-10-20. Step 1 above records the cut's STRIKE, and the notice after the commit is
@@ -898,7 +969,7 @@ What is left:
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
 and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
-[backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
+[backlog](../backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md).
 
 | Question | Decision | What it changes in what exists |
 | --- | --- | --- |
@@ -982,7 +1053,7 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
 | **Language** | Composed ON THE DEVICE from `contentKey`, as every social push since 2026-08-19: `notif_social_live_started_*` (Android, fr + en) and `notif.social.live_started.*` (iOS app and NSE, fr + en) - FR "X est en live" / "Appuyez pour regarder", EN "X is live" / "Tap to watch". The server's French `title`/`body` ride along for builds older than the key. Pinned by `push-content.spec.ts` and `nativeStrings.test.ts`. |
 | **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: '', iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
-| **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): **off on production**. |
+| **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): open on both estates since the production flip of 2026-10-30, and the ingest that claims also sits behind `lives_mode`. |
 
 Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
 
@@ -1062,7 +1133,7 @@ The numbers (`chatMessageMaxChars`, `chatSealedMaxBytes`, the two rates, `chatBa
 2026-10-19).** The erasure DELETES the rows (no copy is left on the server, and a joiner never
 sees them), but it emits no tombstone: a tombstone needs a new sequence number under each live's
 row lock, one per message, inside the erasure's transaction. A viewer who already drew such a
-message keeps it until it closes the viewer - at most the live's hour - and nothing can fetch it
+message keeps it until it closes the viewer - as long as the live - and nothing can fetch it
 again. **Reporting ONE chat message** is `contentType: 'live_chat'` since 2026-10-21 ([a reported
 chat line](#a-reported-chat-line-wp-l8b)).
 
@@ -1078,7 +1149,7 @@ the first dev reading with several viewers is owed (below).
 The account erasure deletes the account's messages and bursts AFTER `lives_broadcaster` (the
 lives-then-rows order every chat write takes), so an erasure and a message on the account's own live
 wait for each other rather than deadlock. A message whose transaction commits after the erasure's
-DELETE was not visible to it and survives - until its live ends, at most an hour later (C2).
+DELETE was not visible to it and survives - until its live ends (C2).
 
 ## The migration: `091_lives.sql`
 

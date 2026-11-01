@@ -1,0 +1,94 @@
+diff --git a/dist/modules/src/codec-data.js b/dist/modules/src/codec-data.js
+index 6d063544fdea63b5b06bc6b08c874109bc2d2195..d919f82fdd49a68b6289fcb48ee4113461c4b823 100644
+--- a/dist/modules/src/codec-data.js
++++ b/dist/modules/src/codec-data.js
+@@ -3141,3 +3141,60 @@ export const buildDtsSpecificBox = (frameInfo) => {
+ const getDtsChannelCount = (channelLayout) => {
+     return popcount(channelLayout) + popcount(channelLayout & DTS_CHANNEL_LAYOUT_PAIR_MASK);
+ };
++/**
++ * [canari patch, https://github.com/Vanilagy/mediabunny/issues/559] Some `VideoEncoder`s (Firefox on
++ * Windows, through Media Foundation) emit an AVCDecoderConfigurationRecord whose SPS and PPS each
++ * carry their first byte twice, with the reserved bits zeroed - while the key packets carry the
++ * correct parameter sets in-band. Chrome cannot decode such a file. When a key packet's in-band SPS
++ * or PPS differ from the record's, the record is rebuilt from the in-band ones, which ARE the
++ * bitstream. Returns the rebuilt record, or null when the record already matches (or the packet
++ * carries no parameter sets).
++ */
++export const rebuildAvcDescriptionFromInBand = (packetData, description) => {
++    const bytes = toUint8Array(description);
++    if (bytes.length < 5) {
++        return null;
++    }
++    const lengthSize = (bytes[4] & 0b11) + 1;
++    const sps = [];
++    const pps = [];
++    const spsExt = [];
++    for (const loc of iterateNalUnitsInLengthPrefixed(packetData, lengthSize)) {
++        if (loc.offset + loc.length > packetData.length) {
++            return null;
++        }
++        const nalUnit = packetData.subarray(loc.offset, loc.offset + loc.length);
++        const type = extractNalUnitTypeForAvc(nalUnit[0]);
++        if (type === AvcNalUnitType.SPS) {
++            sps.push(nalUnit);
++        }
++        else if (type === AvcNalUnitType.PPS) {
++            pps.push(nalUnit);
++        }
++        else if (type === AvcNalUnitType.SPS_EXT) {
++            spsExt.push(nalUnit);
++        }
++    }
++    if (sps.length === 0 || pps.length === 0) {
++        return null;
++    }
++    const sameUnits = (a, b) => a.length === b.length
++        && a.every((unit, i) => unit.length === b[i].length && unit.every((byte, j) => byte === b[i][j]));
++    const record = deserializeAvcDecoderConfigurationRecord(bytes);
++    if (record && sameUnits(record.sequenceParameterSets, sps) && sameUnits(record.pictureParameterSets, pps)) {
++        return null;
++    }
++    const annexB = new Uint8Array([...sps, ...spsExt, ...pps].reduce((n, unit) => n + 4 + unit.length, 0));
++    let offset = 0;
++    for (const unit of [...sps, ...spsExt, ...pps]) {
++        annexB.set([0, 0, 0, 1], offset);
++        annexB.set(unit, offset + 4);
++        offset += 4 + unit.length;
++    }
++    const rebuilt = extractAvcDecoderConfigurationRecord(annexB);
++    if (!rebuilt) {
++        return null;
++    }
++    rebuilt.lengthSizeMinusOne = lengthSize - 1;
++    return serializeAvcDecoderConfigurationRecord(rebuilt);
++};
+diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
+index b174a361128b55751f2c7c3eaae79c0ef9ec72d0..41564bb995afad887d268a91e23f233df573acb4 100644
+--- a/dist/modules/src/media-source.js
++++ b/dist/modules/src/media-source.js
+@@ -67,7 +67,7 @@ import { EncodedPacket } from './packet.js';
+ import { AudioSample, audioSampleToInterleavedFormat, toInterleavedAudioFormat, VideoSample, } from './sample.js';
+ import { buildAudioEncoderConfig, buildQuantizerEncodeOptions, buildVideoEncoderConfigs, resolveQuality, validateAudioEncodingConfig, validateVideoEncodingConfig, } from './encode.js';
+ import { AudioResampler } from './resample.js';
+-import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
++import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, rebuildAvcDescriptionFromInBand, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
+ import { Logging } from './logging.js';
+ import { readEsDescriptor } from './isobmff/isobmff-reader.js';
+ import { FileSlice } from './reader.js';
+@@ -873,6 +873,15 @@ class VideoEncoderWrapper {
+             });
+         }
+         maybeEnsureIsKeyPacket(this.source._connectedTrack, packet);
++        // [canari patch] https://github.com/Vanilagy/mediabunny/issues/559 - see rebuildAvcDescriptionFromInBand
++        if (this.encodingConfig.codec === 'avc' && packet.type === 'key' && meta?.decoderConfig?.description) {
++            const rebuilt = rebuildAvcDescriptionFromInBand(packet.data, meta.decoderConfig.description);
++            if (rebuilt) {
++                Logging._warn('The VideoEncoder emitted an avcC that does not match the parameter sets in its own'
++                    + ' bitstream; rebuilt it from the in-band SPS/PPS (mediabunny issue 559).');
++                meta = { ...meta, decoderConfig: { ...meta.decoderConfig, description: rebuilt } };
++            }
++        }
+         this.encodingConfig.onEncodedPacket?.(packet, meta);
+         this.lastMuxerPromise
+             = this.muxer.addEncodedVideoPacket(this.source._connectedTrack, packet, meta)

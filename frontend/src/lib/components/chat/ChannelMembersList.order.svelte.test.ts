@@ -75,8 +75,8 @@ describe('ChannelMembersList order', () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
     flushSync();
 
-    const ids = [...target.querySelectorAll('a[href^="/profile/"]')].map((a) =>
-      decodeURIComponent(a.getAttribute('href')!.slice('/profile/'.length))
+    const ids = [...target.querySelectorAll('a[href^="/profile/"]:not([data-profile-link])')].map(
+      (a) => decodeURIComponent(a.getAttribute('href')!.slice('/profile/'.length))
     );
     expect(ids).toEqual(['bob', 'anne', 'maxime', 'melvin', 'gabriel', 'hugo']);
   });

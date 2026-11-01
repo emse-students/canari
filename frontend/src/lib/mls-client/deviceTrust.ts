@@ -73,6 +73,24 @@ export interface DeviceEvent {
    * event recorded before the field existed, which is never announced.
    */
   memberAlreadyPresent?: boolean;
+  /**
+   * Whether this DEVICE was never in this group as far as this device saw: no leaf of its in the
+   * tree the commit was built on, no departure of it recorded here. Decided per group, never from
+   * the pin. Absent on an event recorded before the field existed, which reads as `false`.
+   */
+  firstInGroup?: boolean;
+  /**
+   * Whether the commit that added this device was made by a device that is itself an unvouched entry
+   * in this group, as this app records it (`historyWithheld.ts`): what an unvouched device adds is
+   * unvouched too. Set by the app before deciding (`deliverDeviceEvents`), never by the MLS layer.
+   */
+  addedByUnvouched?: boolean;
+  /**
+   * A MARKER, not a device (`DeviceEvent::events_dropped` in Rust): events of `groupId` were dropped
+   * past the queue's bound, so what was handed over about that group is incomplete. It names no
+   * identity; history is withheld in that group on it (`historyWithheld.ts`).
+   */
+  eventsDropped?: boolean;
 }
 
 /**
@@ -93,7 +111,9 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
     case 'first-sight':
       return event.memberAlreadyPresent === true;
     case 'pinned':
-      return false;
+      // A pin written by another group's tree vouches for nothing here: a device that brought
+      // itself into a group it was never in is announced whatever its pin says.
+      return entersAsUnvouchedDevice(event);
   }
 }
 
@@ -112,6 +132,31 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
  */
 export function entersUninvited(event: DeviceEvent): boolean {
   if (event.addedBy === null || event.memberAlreadyPresent !== false) return false;
+  const admitted = canonicalIdentity(event.identity);
+  return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
+}
+
+/**
+ * Whether this event is a device of a MEMBER that brought ITSELF into the group: the commit admitting
+ * it was signed by that very device (an external commit), its user already held a leaf, and the
+ * device was never in THIS group (`firstInGroup`) - whatever its pin says, since the pins are one
+ * store any group's tree writes. The twin of `DeviceEvent::enters_as_unvouched_device` in Rust.
+ *
+ * In a conversation no member admitted that device - a further device of a member is added by a
+ * member's Add, after a member's tap (`automaticAdmission` in `utils/chat/actions.ts`), and the
+ * device's own recovery never joins itself for a seat it was never admitted to (`requestReAdd`). So
+ * the entry is reported and written in the conversation (`deviceNotices.svelte.ts`), and its key is
+ * never "seen" by the admission rule: seen is a leaf in that group's tree or a member's approval,
+ * never a pin. A device coming back to a group it was in is not this case; in a community or salon
+ * key group every device enters this way and the caller does not ask. AND A DEVICE ADDED BY SUCH A
+ * DEVICE (`addedByUnvouched`) is one too: its Add is no member's.
+ */
+export function entersAsUnvouchedDevice(event: DeviceEvent): boolean {
+  if (event.addedBy === null) return false;
+  // Added by a device that is itself an unvouched entry here: no member vouched for this one either.
+  if (event.addedByUnvouched === true) return true;
+  if (event.memberAlreadyPresent !== true) return false;
+  if (event.firstInGroup !== true) return false;
   const admitted = canonicalIdentity(event.identity);
   return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
 }
@@ -184,13 +229,26 @@ export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
 }
 
 /**
- * How recently a CONTACT's key must have been first seen by the server, against the moment this
- * device learns of it, to be "X added a device". A device a heal brings back into a conversation
- * was registered long before; one its owner just added was registered minutes or hours before.
- * Past it the line is not written - a missed line rather than a false one (user: notices must not
- * become noise). The owner's alert has no such bound (`isNewToItsOwner`).
+ * How recently a key must have been first seen by the server, against the moment this device
+ * learns of it, to be the line "X added a device" - a contact's line AND the line in the account's
+ * own conversations. A device a heal brings back into a conversation was registered long before;
+ * one its owner just added was registered minutes or hours before. Past it the line is not written
+ * - a missed line rather than a false or weeks-late one (user: notices must not become noise). The
+ * owner's alert has no such bound (`isNewToItsOwner`, `ownersAlert`).
  */
 export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
+
+/**
+ * What the server answered about when it first saw one key:
+ * - `dated`: its key history recorded the key at `at`;
+ * - `before-history`: the server LISTS the key among the device's keys and its history has no date
+ *   for it - a positive statement that the key predates the history;
+ * - `unknown`: the server answered and said nothing about this key (not listed, or no ages at all).
+ */
+export type KeyFirstSight =
+  | { kind: 'dated'; at: number }
+  | { kind: 'before-history' }
+  | { kind: 'unknown' };
 
 /**
  * Whether a device this device just saw is NEW TO ITS OWNER - the evidence a notice needs beyond
@@ -200,24 +258,25 @@ export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
  *
  * The evidence is the server's first sight of the device's key (`fetchDeviceSignatureKeys`'
  * `firstSeen`), used ONLY TO SUPPRESS a notice, never to raise one - the signed commit stays the
- * only source of a notice:
- * - an undated key (`null`) predates the server's key history: old, never announced;
- * - the owner's alert needs a key first seen after THIS device enrolled (`ownEnrolledAt`, the first
- *   sight of its own key) - an old device of the account re-added on a young device says nothing,
- *   and a device registered since this one enrolled is announced however late this device learns
- *   of it;
- * - a contact's line needs both that and a key first seen within
- *   {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`.
- *
- * Unknown own enrolment announces nothing: the rule has no baseline to compare with.
+ * only source of a notice, so A SERVER THAT STAYS SILENT MUST NOT SILENCE IT (2026-10-31 review):
+ * - a key the server said nothing about (`unknown`) is new: the commit is the evidence;
+ * - a key the server lists with no date (`before-history`) predates its history: old;
+ * - a dated key is old when first seen before THIS device enrolled (`ownEnrolledAt`, the first
+ *   sight of its own key; `null`, unknown, skips that comparison) - an old device of the account
+ *   re-added on a young device says nothing;
+ * - the line ("X added a device", a contact's or the account's own) also needs a dated key first
+ *   seen within {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`; the owner's alert
+ *   (`ownersAlert`) does not, so a device registered since this one enrolled is alerted however late
+ *   this device learns of it.
  */
 export function isNewToItsOwner(
-  keyFirstSeenAt: number | null,
-  ctx: { learnedAt: number; ownEnrolledAt: number | null; isOwnAccount: boolean }
+  sight: KeyFirstSight,
+  ctx: { learnedAt: number; ownEnrolledAt: number | null; ownersAlert: boolean }
 ): boolean {
-  if (keyFirstSeenAt === null || ctx.ownEnrolledAt === null) return false;
-  if (keyFirstSeenAt < ctx.ownEnrolledAt) return false;
-  return ctx.isOwnAccount || keyFirstSeenAt >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
+  if (sight.kind === 'unknown') return true;
+  if (sight.kind === 'before-history') return false;
+  if (ctx.ownEnrolledAt !== null && sight.at < ctx.ownEnrolledAt) return false;
+  return ctx.ownersAlert || sight.at >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
 }
 
 /** Whether a verdict lets the package be added. */

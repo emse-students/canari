@@ -1,3 +1,3 @@
-version: 1.4.0
+version: 1.5.3
 
-Nouveau : les commentaires s'ouvrent dans une feuille plein écran, avec une zone de saisie plus grande ; on peut commenter anonymement ou au nom d'une association. Dans un groupe, un nouveau membre ne reçoit plus les messages d'avant son arrivée. Corrigé : le glissement du fil vers la caméra n'est plus pris pour « retour », et modifier un post montre le formulaire qu'il porte.
+Nouveau : la liste complète des votants d'un sondage en un geste ; un nouvel appareil d'un membre rejoint seul ses conversations ; un nouveau membre d'un groupe ne reçoit plus les messages d'avant son arrivée. Amélioré : le filtre du fil tient dans une pastille flottante ; une réservation peut passer minuit. Corrigé : un message écrit pendant qu'un appareil attend d'être réintégré part ensuite ; le compteur d'associations du profil ; le GIF d'un commentaire replié.

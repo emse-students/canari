@@ -1,15 +1,20 @@
 /**
- * THE KINDS OF ASSOCIATION THAT REPUBLISH, and the allowlist is the point: "only associations and
- * institutions republish" (user, 2026-10-04). A promo LIST does not; an institution joined with WP6e
- * (migration 075) - a type nobody listed stays refused.
+ * THE KINDS OF ASSOCIATION THAT REPUBLISH, and the allowlist is the point: a type nobody listed
+ * stays refused. "Only associations and institutions republish" (user, 2026-10-04); an institution
+ * joined with WP6e (migration 075); a campaign LIST joined on 2026-10-31 (owner: lists gain the
+ * publications section, `POST_AS_ASSO` / `PROPOSE_EVENT`).
  */
-export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association', 'institution'];
+export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
 
 /**
  * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b): associations only.
  * The user asked for "republier en tant qu'association" (2026-10-19), and an INSTITUTION carrying a
  * student's personal post is what D34-D36 rule out ("never a student's personal post" reaches the
- * personnel side): it stays refused until somebody decides otherwise. A list never republishes.
+ * personnel side): it stays refused until somebody decides otherwise. A list is refused here too (the owner's 2026-10-31 widening covers republishing INTO a list, not a person's consent to it).
  */
 export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association'];
 

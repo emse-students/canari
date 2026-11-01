@@ -246,3 +246,23 @@ describe('older comments, read page by page (through the real ledger)', () => {
     expect(stillThere).toBe(false);
   });
 });
+
+it("a like from the card's preview and the same comment in the open sheet stay in step, both ways", () => {
+  const target = mountCard(row([comment(1)], 1));
+  const previewHeart = () =>
+    target.querySelector<HTMLButtonElement>('[data-comments-preview] button[aria-pressed]')!;
+  const sheetHeart = () =>
+    document.body.querySelector<HTMLButtonElement>('#comment-c1 button[aria-pressed]')!;
+
+  previewHeart().click();
+  flushSync();
+  expect(previewHeart().getAttribute('aria-pressed')).toBe('true');
+  expect(sheetHeart().getAttribute('aria-pressed')).toBe('true');
+  expect(sheetHeart().textContent).toContain('1');
+  expect(previewHeart().textContent).toContain('1');
+
+  sheetHeart().click();
+  flushSync();
+  expect(previewHeart().getAttribute('aria-pressed')).toBe('false');
+  expect(previewHeart().textContent).not.toContain('1');
+});

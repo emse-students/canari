@@ -22,23 +22,34 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 describe('MessagingService - purgeDeviceFootprint', () => {
   let service: MessagingService;
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
+  /** Every statement the transaction ran, in order: a recording INSERT, then the deletes. */
+  let txSteps: string[];
   const transaction = jest.fn();
   const repo = () => ({
     find: jest.fn().mockResolvedValue([]),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
   });
-  let deviceGroupRepo: ReturnType<typeof repo> & { manager: { transaction: jest.Mock } };
+  let deviceGroupRepo: ReturnType<typeof repo> & {
+    manager: { transaction: jest.Mock };
+  };
   let queuedRepo: ReturnType<typeof repo>;
   const redis = { srem: jest.fn().mockResolvedValue(1) };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     txDeletes = [];
+    txSteps = [];
     transaction.mockImplementation((cb: (m: unknown) => Promise<unknown>) =>
       cb({
+        query: (sql: string) => {
+          txSteps.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+          // The two key groups of the device's three groups.
+          return Promise.resolve([{ groupId: 'kg-1' }, { groupId: 'kg-2' }]);
+        },
         getRepository: (entity: unknown) => ({
           delete: (where: unknown) => {
             txDeletes.push({ entity, where });
+            txSteps.push(`DELETE ${(entity as { name: string }).name}`);
             return Promise.resolve({ affected: entity === QueuedMessage ? 4 : 2 });
           },
         }),
@@ -80,5 +91,25 @@ describe('MessagingService - purgeDeviceFootprint', () => {
     expect(purged).toMatchObject({ groupsCleaned: 2, queuedMessagesDeleted: 4 });
     expect(redis.srem).toHaveBeenCalledWith('group:members:g-1', 'bob:b1');
     expect(redis.srem).toHaveBeenCalledWith('group:members:g-2', 'bob:b1');
+  });
+
+  it('a revocation records the key groups the device held, in the SAME transaction, before its rows go', async () => {
+    const purged = await service.purgeDeviceFootprint('bob', 'b1', { recordKeyGroupsHeld: true });
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    // Read from the rows the transaction then deletes - a crash in between cannot lose the binding.
+    expect(txSteps).toEqual([
+      'INSERT INTO dm_revoked_device_groups',
+      'DELETE QueuedMessage',
+      'DELETE DeviceGroupMembership',
+    ]);
+    expect(purged.keyGroupsRecorded).toBe(2);
+  });
+
+  it('the stale-device GC and the PIN reset record nothing: they do not revoke', async () => {
+    const purged = await service.purgeDeviceFootprint('bob', 'b1');
+
+    expect(txSteps).toEqual(['DELETE QueuedMessage', 'DELETE DeviceGroupMembership']);
+    expect(purged.keyGroupsRecorded).toBe(0);
   });
 });

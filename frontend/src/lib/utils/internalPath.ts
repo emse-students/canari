@@ -1,4 +1,15 @@
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
+import type { PathnameWithSearchOrHash } from '$app/types';
+
+/**
+ * An app path (base-less, leading `/`) whose SHAPE the compiler has matched against the route
+ * table: `/posts/${string}` is one, `/no-such-page` is not. A producer that builds its destination
+ * from code - a notification's, a deep link's - returns this, so a route renamed or deleted under
+ * it fails `bun run check` instead of a tap at runtime. SvelteKit 3's `goto` REJECTS a URL that
+ * matches no route (`navigation_route_missing`), where 2 navigated natively; a path of unknown
+ * origin, which no type can vouch for, goes through `gotoAppPath` instead.
+ */
+export type AppPath = `/${PathnameWithSearchOrHash}`;
 
 /** The one backslash, spelt by code point: a literal one in a string or template is an escape. */
 const BACKSLASH = String.fromCharCode(92);
@@ -16,25 +27,79 @@ const BACKSLASH = String.fromCharCode(92);
  * the base. A producer that reads `location.pathname` / `url.pathname` (which include the base) must
  * go through `appPathFromPathname` first, or `resolve` would prefix the base a second time.
  *
- * WHY THE TYPE IS `'/'`: `resolve`'s parameter type is a distributed union over every route, which
- * no single union-typed value satisfies, so the assertion names one member - the root, which has
- * no parameters, so `resolve` treats the value as a plain pathname. It asserts and does not check:
- * `resolve` throws on a path that does not start with `/`, so a value of unknown origin goes through
- * `safeInternalPath` first.
+ * WHY THE TYPE IS `''` AND THE LEADING SLASH IS DROPPED (SvelteKit 3): `resolve` reads a string that starts
+ * with `/` as a ROUTE ID - it strips `(groups)` and demands parameters for every `[segment]` - and
+ * anything else as a plain PATHNAME. A computed path is a pathname, so it must go in the second
+ * form, or a value carrying a `[` would throw. `resolve`'s parameter type is a union over every
+ * route, which no single union-typed value satisfies, so the assertion names one member - the root
+ * `''`, which has no parameters. It asserts and does not check: a value of unknown origin goes
+ * through `safeInternalPath` first.
  */
-export function internalPath(path: string): '/' {
-  return path as '/';
+export function internalPath(path: string): '' {
+  return (path.startsWith('/') ? path.slice(1) : path) as '';
+}
+
+/**
+ * The origin a candidate path is resolved against to learn where a browser would send it. Reserved
+ * (`.invalid`, RFC 2606), so no real page can ever share it.
+ */
+const PROBE_ORIGIN = 'https://internal-path.invalid';
+
+/**
+ * Whether `value` holds, at any position, a control character - C0 (below U+0020), DEL (U+007F) or
+ * C1 (U+0080-U+009F) - a line or paragraph separator (U+2028, U+2029), or a backslash. None belongs
+ * in an in-app path written by this app, which percent-encodes anything of the kind.
+ */
+function hasControlOrBackslash(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) {
+      return true;
+    }
+    if (value[i] === BACKSLASH) return true;
+  }
+  return false;
 }
 
 /**
  * Validates a path of UNKNOWN origin (a query parameter, a stored value) as an in-app path.
  *
- * Returns it when it starts with a single `/`, and `fallback` otherwise - an empty value, a relative
- * one, a protocol-relative `//host` or `/\host` (both leave the app), or an absolute URL. Decided
- * here, at the source, as a value: `resolve` would otherwise THROW on a non-absolute path.
+ * Returns it when it is a string that starts with `/`, carries no control character, line separator
+ * or backslash anywhere, and - resolved against a fixed reserved origin (`PROBE_ORIGIN`) - keeps
+ * that origin; `fallback` otherwise, a non-string value included. For a value starting with `/`,
+ * keeping the probe's origin is keeping the page's: the result is relative to whatever origin it
+ * is resolved against. The verdict is the URL parser's own, not a reading of the first characters:
+ * what decides where a link goes is how a browser parses it, so that is what is asked. Decided
+ * here, at the source, as a value: `resolve` would otherwise THROW on a non-absolute path, and every
+ * consumer (a `goto`, an `href`, a stored sign-in return) receives a value already held to the
+ * page's origin.
  */
 export function safeInternalPath(raw: string | null | undefined, fallback: string): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw[1] === BACKSLASH) {
+  if (!raw) return fallback;
+  if (typeof raw !== 'string') {
+    console.warn(`[nav] safeInternalPath refused a target that is not a string (${typeof raw})`);
+    return fallback;
+  }
+  if (!raw.startsWith('/') || hasControlOrBackslash(raw)) {
+    console.warn(
+      `[nav] safeInternalPath refused a target (length ${raw.length}) - not an in-app path`
+    );
+    return fallback;
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, `${PROBE_ORIGIN}/`);
+  } catch (err) {
+    // The error's name only: a parser message may quote the value, and the value is not logged.
+    console.warn(
+      `[nav] safeInternalPath refused a target the URL parser rejects (${(err as Error).name})`
+    );
+    return fallback;
+  }
+  if (resolved.origin !== PROBE_ORIGIN) {
+    console.warn(
+      `[nav] safeInternalPath refused a target (length ${raw.length}) - it leaves the origin`
+    );
     return fallback;
   }
   return raw;
@@ -45,6 +110,8 @@ export function safeInternalPath(raw: string | null | undefined, fallback: strin
  * and `resolve` expects. At `base === ''` it is the identity.
  */
 export function appPathFromPathname(pathname: string): string {
+  // `$app/paths` no longer exports `base`; `resolve('')` is the base and a closing slash.
+  const base = resolve('').replace(/\/$/, '');
   if (base && (pathname === base || pathname.startsWith(`${base}/`))) {
     return pathname.slice(base.length) || '/';
   }

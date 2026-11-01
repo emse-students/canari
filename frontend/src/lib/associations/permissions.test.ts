@@ -153,4 +153,18 @@ describe('the role editor', () => {
       );
     }
   });
+
+  it('offers only the rights of the entity kind, and toggles a bit without touching the others', () => {
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../components/associations/AssociationMemberRow.svelte'
+      ),
+      'utf8'
+    );
+    // The filter is the one derived from the section table, never a list written here.
+    expect(source).toMatch(/kindOffersFlag\(kind, flag\)/);
+    // A toggle edits ITS bit: a hidden bit already held survives a save.
+    expect(source).toMatch(/permissions & ~flag : permissions \| flag/);
+  });
 });

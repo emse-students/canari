@@ -1,7 +1,9 @@
 import { Logger } from '@nestjs/common';
 import type { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import type { Association } from './entities/association.entity';
+import type { EntityManager } from 'typeorm';
+import { Association as AssociationEntity, type Association } from './entities/association.entity';
+import type { LydiaReadinessCause } from './lydia-readiness';
 import { coreUrl } from '../internal/service-urls';
 
 /** Mirrors core-service's PaymentProviderId - no shared lib crosses this service boundary. */
@@ -31,6 +33,11 @@ export interface PaymentTarget {
   ready: boolean;
   /** True when routing is delegated to a parent rather than served by the association itself. */
   delegated: boolean;
+  /**
+   * The target's last readiness cause (migration 118), so a refusal says WHY it is not ready
+   * (`paymentsNotReady`): blocked by Lydia, or not activated. Null when none was ever written.
+   */
+  readinessCause: LydiaReadinessCause | null;
 }
 
 /** True when this association has an approved, active delegation to a parent's account. */
@@ -40,12 +47,39 @@ export function isDelegating(
   return asso.paymentDelegationStatus === 'approved' && !!asso.paymentParentAssociationId;
 }
 
-/** Reads the Lydia account id + onboarding flag off an association row. */
-function accountFor(asso: Pick<Association, 'lydiaAccountId' | 'lydiaOnboardingComplete'>): {
+/** Reads the Lydia account id, onboarding flag and readiness cause off an association row. */
+function accountFor(
+  asso: Pick<Association, 'lydiaAccountId' | 'lydiaOnboardingComplete' | 'lydiaReadinessCause'>
+): {
   accountId: string | null;
   complete: boolean;
+  cause: LydiaReadinessCause | null;
 } {
-  return { accountId: asso.lydiaAccountId, complete: asso.lydiaOnboardingComplete };
+  return {
+    accountId: asso.lydiaAccountId,
+    complete: asso.lydiaOnboardingComplete,
+    cause: asso.lydiaReadinessCause ?? null,
+  };
+}
+
+/**
+ * THE DELEGATE PREDICATE: the associations whose payments `parentId`'s Business serves - an
+ * APPROVED delegation to it, nothing else (a pending request, or one revoked meanwhile, is not).
+ * The ONE definition shared by the release of withheld products
+ * (`ProductsService.releaseWithheldForAssociationAndDelegates`) and the withhold of a readiness
+ * revert (`AssociationsService.setLydiaReadiness`), so the two are exact inverses: a spec asserts
+ * both call this function. Reads through `manager`, so a caller inside a transaction reads its own
+ * snapshot.
+ */
+export async function approvedDelegateIds(
+  manager: Pick<EntityManager, 'find'>,
+  parentId: string
+): Promise<string[]> {
+  const children = await manager.find(AssociationEntity, {
+    where: { paymentParentAssociationId: parentId, paymentDelegationStatus: 'approved' },
+    select: { id: true },
+  });
+  return children.map((c) => c.id);
 }
 
 /**
@@ -71,6 +105,7 @@ export function resolvePaymentTarget(
       connectAccountId: null,
       ready: false,
       delegated,
+      readinessCause: null,
     };
   }
   if (isDelegating(asso)) {
@@ -82,24 +117,27 @@ export function resolvePaymentTarget(
         connectAccountId: null,
         ready: false,
         delegated: true,
+        readinessCause: null,
       };
     }
-    const { accountId, complete } = accountFor(parent);
+    const { accountId, complete, cause } = accountFor(parent);
     return {
       targetAssociationId: parent.id,
       provider,
       connectAccountId: accountId,
       ready: !!complete && !!accountId,
       delegated: true,
+      readinessCause: cause,
     };
   }
-  const { accountId, complete } = accountFor(asso);
+  const { accountId, complete, cause } = accountFor(asso);
   return {
     targetAssociationId: asso.id,
     provider,
     connectAccountId: accountId,
     ready: !!complete && !!accountId,
     delegated: false,
+    readinessCause: cause,
   };
 }
 

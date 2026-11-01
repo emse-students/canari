@@ -93,6 +93,7 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
   'no-devices': () => m.chat_invite_error_no_devices(),
   'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
+  'add-lock-unanswered': () => m.chat_invite_error_failed(),
   'no-device-added': () => m.chat_invite_error_no_device_added(),
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
   'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),

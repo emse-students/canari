@@ -79,6 +79,7 @@ type Answer = {
   currentEpoch?: number;
   duplicate?: boolean;
   refusedAdmits?: RefusedAdmit[];
+  userIds?: string[];
 };
 type Step = Answer | Error;
 
@@ -229,6 +230,7 @@ function ctx(
     'settleEach',
     'replanOwedInvitationsIn',
     'acquireAddLock',
+    'acquireAddLockAnswer',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
     'cancelAddLockExpiryWakes',
@@ -246,7 +248,7 @@ function ctx(
         g: string
       ) => Promise<
         | { acquired: true; token: string | undefined }
-        | { acquired: false; retryAfterMs: number | undefined }
+        | { acquired: false; retryAfterMs: number | undefined; answered?: boolean }
       >;
       releaseAddLock: (g: string, token: string | undefined) => Promise<boolean>;
     };
@@ -302,7 +304,8 @@ describe('runCommitTransaction - the record is written by the stage, never after
       undefined,
       BASE,
       undefined,
-      [{ userId: 'user-z' }]
+      [{ userId: 'user-z' }],
+      undefined
     );
   });
 
@@ -703,6 +706,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       ['u-b:d-b'],
       BASE,
       [{ userId: 'u-b', deviceId: 'd-b' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
@@ -904,6 +908,7 @@ describe('settleUnresolvedCommits - a stage a background engine wrote', () => {
       ['carol:dev-c'],
       BASE,
       [{ userId: 'carol', deviceId: 'dev-c' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommitOwingWelcome).toHaveBeenCalledExactlyOnceWith(gid, ['carol:dev-c']);
@@ -1170,6 +1175,11 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
       { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation: INVITATION },
       { welcome: new Uint8Array([3]), addedIndices: [0] }
     );
+  const keptWith = (invitation: { users: string[]; rostered: string[] }) =>
+    kept(
+      { excludeDeviceIds: ['w5:d-5'], keyPackageDevices: ['d-5'], invitation },
+      { welcome: new Uint8Array([3]), addedIndices: [0] }
+    );
   const raceLost = () => submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 5 });
   /** The drain runs on its own: wait for it the way the session would not. */
   const drained = async (c: ReturnType<typeof ctx>) => {
@@ -1231,6 +1241,36 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     await settled(c);
     expect(replanner).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ cause: 'refused', reason: 'http_400' })
+    );
+  });
+
+  it('a commit refused whole for the people it admits is re-planned WITHOUT them, as a race', async () => {
+    const c = ctx(
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w6'] }),
+      { state: keptWith({ users: ['w5', 'w6'], rostered: ['w6'] }) }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cause: 'race',
+        reason: 'admit_refused',
+        invitation: { users: ['w5'], rostered: [] },
+      })
+    );
+  });
+
+  it('a commit refused whole for EVERY person it admits is `refused` - told, never re-planned', async () => {
+    const c = ctx(
+      submitting({ accepted: false, reason: 'admit_refused', currentEpoch: 5, userIds: ['w5'] }),
+      { state: keptInvite() }
+    );
+    const replanner = vi.fn(async (): Promise<ReplanVerdict> => 'concluded');
+    register(c, replanner);
+    await settled(c);
+    expect(replanner).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cause: 'refused', reason: 'admit_refused', invitation: INVITATION })
     );
   });
 
@@ -1533,6 +1573,23 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     expect(replanner).toHaveBeenCalledTimes(1);
     return replanner;
   }
+
+  it('tells an ANSWERED refusal (`held`) from a lock request that got no answer (`unanswered`)', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    fakeLockServer(c);
+    const lock = c as unknown as {
+      acquireAddLockAnswer(g: string): Promise<'taken' | 'held' | 'unanswered'>;
+    };
+    c.delivery.acquireAddLock = vi
+      .fn()
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: 5_000, answered: true })
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: undefined, answered: false })
+      .mockResolvedValueOnce({ acquired: true, token: 'mine' });
+
+    expect(await lock.acquireAddLockAnswer(G)).toBe('held');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('unanswered');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('taken');
+  });
 
   it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

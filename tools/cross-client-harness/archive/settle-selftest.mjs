@@ -22,6 +22,7 @@ import {
   commitSequence,
   decidedAfter,
   decryptsDuringHold,
+  dup2DeferredJoinNarration,
   firedAtLeast,
   interveningOrder,
   nothingBefore,
@@ -239,6 +240,31 @@ r = forgivingProvoked(rep({ badHttp: [`POST ${URL_} -> 401`, `POST ${URL_} -> 40
 ok('control: a SECOND 401 on the commit stays dirt', !r.clean && r.badHttp.length === 1);
 r = forgivingProvoked(rep({ badHttp: ['POST https://dev.example/api/mls/messages/ack -> 401'] }), [r401]);
 ok('control: a 401 on another delivery request stays dirt', !r.clean && r.badHttp.length === 1);
+
+// ── DUP-2: the subject's add-lock wait, called a recovery ─────────────────────────────────────
+// Verbatim from W2 on alpha.5 DUP-2 (2026-10-26), stamps included.
+console.log('DUP-2 deferred join');
+const G8 = G.slice(0, 8);
+const W2_DUP2 = [
+  `[16:01:39.855] [PIPELINE] Out-of-sync for ${G8}\u2026 - requestReAdd`,
+  `[16:01:39.855] [READD] ${G8}... attempt starting`,
+  `[16:01:39.953] [READD] ${G8}... getGroupMeta -> ok`,
+  `[16:01:40.063] [READD] ${G8}... a member holds the add lock - waiting for it to settle, no member asked`,
+  `[16:01:40.063] [PIPELINE] Recovery attempt finished for ${G8}\u2026`,
+  `[16:01:44.466] [QUEUE] Processing Welcome group=${G8}\u2026 sender=f7a9bb80\u2026 qId=2859f04c\u2026`,
+  `[16:01:44.794] [WELCOME] Group ${G8}\u2026 ready`,
+];
+const SENT = W2_DUP2[4];
+const dupNarrated = (lines, line = SENT, g = G) =>
+  ignoringExpectedLog(rep({ unexplained: [`info: ${line}`], warnings: [] }), dup2DeferredJoinNarration(lines, g)).unexplained.length === 0;
+ok('a wait on the add lock that a Welcome ended is narrated', dupNarrated(W2_DUP2));
+ok('control: no Welcome after it - stays dirt', !dupNarrated(W2_DUP2.slice(0, 6)));
+ok('control: the Welcome came BEFORE it - stays dirt', !dupNarrated([...W2_DUP2.slice(0, 4), W2_DUP2[6], SENT]));
+ok('control: the last re-add step was not the add-lock wait - stays dirt', !dupNarrated([...W2_DUP2.slice(0, 3), SENT, W2_DUP2[6]]));
+ok('control: a second recovery after a re-add that went further - stays dirt', !dupNarrated([...W2_DUP2, `[16:02:00.000] [READD] ${G8}... asked a member to re-add`, SENT]));
+ok('control: another group\'s recovery is not narrated', !dupNarrated(W2_DUP2, SENT.replace(G8, 'abcdef01')));
+ok('control: the same words at error stay dirt', ignoringExpectedLog(rep({ unexplained: [], warnings: [], errors: [SENT] }), dup2DeferredJoinNarration(W2_DUP2, G)).errors.length === 1);
+ok('control: no other settle row forgives it (settleNarration)', ignoringExpectedLog(rep({ unexplained: [`info: ${SENT}`], warnings: [] }), settleNarration(G)).unexplained.length === 1);
 
 if (failures) {
   console.error(`\n${failures} settlement assertion(s) failed`);

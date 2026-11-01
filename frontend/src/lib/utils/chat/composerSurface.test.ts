@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   gifPanelHeight,
+  menuPressKeepsFocus,
   nextComposerSurface,
   panelSpacerPx,
   PANEL_MAX_PX,
@@ -142,5 +143,14 @@ describe('panelSpacerPx - the composer does not move', () => {
     expect(
       panelSpacerPx({ reserved: true, panelHeight: H, keyboardOverlap: 0, searchFocused: true })
     ).toBe(H);
+  });
+});
+
+describe('menuPressKeepsFocus', () => {
+  it('keeps the field focused only while the keyboard is up', () => {
+    // Down: a field kept focused makes Chromium raise the keyboard on the "+" tap instead of the menu.
+    expect(menuPressKeepsFocus(false)).toBe(false);
+    // Up: focus moving onto "+" would drop the keyboard under a menu that only floats.
+    expect(menuPressKeepsFocus(true)).toBe(true);
   });
 });

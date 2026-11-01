@@ -39,12 +39,14 @@ describe('PostPolls duplicate stored voter', () => {
       },
     });
     mounted.push(() => unmount(app));
-    target.querySelector<HTMLElement>('[role="button"][aria-label]')!.click();
+    target.querySelector<HTMLElement>('[data-testid="poll-voters-info"]')!.click();
     await new Promise<void>((r) => setTimeout(r, 0));
     flushSync();
-    expect(document.body.querySelectorAll('[role="tooltip"] li')).toHaveLength(1);
+    expect(document.body.querySelectorAll('[data-testid="poll-voters-list"] li')).toHaveLength(1);
     // The count agrees with the list: one voter, not the two stored rows.
-    expect(target.querySelector('[role="button"][aria-label]')!.textContent!.trim()).toBe('1');
+    expect(
+      target.querySelector('[data-testid="poll-voters-info"]')!.previousElementSibling!.textContent
+    ).toContain('1');
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });

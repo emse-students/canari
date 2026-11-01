@@ -8,13 +8,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository, type EntityManager } from 'typeorm';
+import { In, IsNull, MoreThan, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -24,12 +26,23 @@ import {
   type ConditionalItem,
 } from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
+import {
+  ReviewCohortBoundaryException,
+  reviewCohort,
+  sameSideOfReviewCohort,
+} from '../review-cohort';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
 import { BookingBlock } from './entities/booking-block.entity';
 import { BookingSlotsService, type SlotView } from './booking-slots.service';
-import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
+import {
+  availabilityWindows,
+  checkRangeShape,
+  datesAround,
+  rangeLengthRefusal,
+  type Range,
+} from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import {
   bookingView,
@@ -39,6 +52,7 @@ import {
   type BookingView,
 } from './booking-views';
 import { BookingFilesService } from './booking-files.service';
+import { BookingNotificationsService } from './booking-notifications.service';
 import { fileAnswersOf, type FileAnswer } from '../forms/form-files.service';
 import { bookingsWorkbook, type BookingExportLabels } from './booking-export';
 import {
@@ -141,7 +155,8 @@ export class BookingsService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly pricingFacts: PricingFactsService,
-    private readonly bookingFiles: BookingFilesService
+    private readonly bookingFiles: BookingFilesService,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -178,12 +193,80 @@ export class BookingsService {
   /**
    * Refuses an account the space is not open to (D6, D31): enforced on every read and write, never
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
+   * Before the audience, the CAMPUS (`assertSpaceVisible`): a space outside the reader's spaces
+   * answers 404 `space-not-found`, exactly like one that does not exist. `use` says whether the
+   * caller only READS the space (`getSpace`, `spaceSlots`) or WRITES to it (`book`, `uploadFile`):
+   * only a read lets the account linked to one of its resources across the campus.
    */
-  private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
-    if (canManage || !space.audience) return;
+  private async assertMayUse(
+    space: BookingSpace,
+    actor: Actor,
+    canManage: boolean,
+    use: 'read' | 'write'
+  ) {
+    this.assertSameSideAsSpace(space, [actor.userId]);
+    if (canManage) return;
+    await this.assertSpaceVisible(space, actor.userId, use);
+    if (!space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
     throw new ForbiddenException({ code: 'audience' });
+  }
+
+  /**
+   * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
+   * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
+   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
+   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
+   * manager - the owner of a personal space - never reaches here (`assertMayUse`).
+   *
+   * ON A READ ONLY, the account linked to one of its resources (D10) is not refused here: the
+   * organiser named it - an alumnus holding a column of an association space, a colleague on
+   * another campus - so `getSpace` and `spaceSlots` pass this check for it. That is ALL it is
+   * granted: the audience (D6) is still asked next, so a linked account outside the audience is
+   * still refused (403 `audience`) and reads nothing; the space is not LISTED to it; and a WRITE -
+   * booking (`book`) or uploading a file answer (`uploadFile`) - from outside the campus answers 404
+   * like any other reader's, since the space never opened its columns to that campus. The one write
+   * left open to it is `addBlock` on ITS OWN column (D10), which does not go through this check: the
+   * linked account marks its own resource "Indisponible", gated on that column alone
+   * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
+   */
+  private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
+    const visible =
+      space.associationId !== null
+        ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
+        : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
+    if (visible) return;
+    if (
+      use === 'read' &&
+      (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } }))
+    ) {
+      this.logger.debug(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} open to ${userId.slice(0, 8)} outside its campus: ` +
+          'a read by the account linked to one of its resources (D10)'
+      );
+      return;
+    }
+    this.logger.log(
+      `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
+        `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
+  }
+
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) anybody in `people` on the other side of the review
+   * cohort's boundary from the space's creator (`review-cohort.ts`): a review account uses only a
+   * review account's space, and nobody else uses one - a link reaches the space, never across. Asked
+   * before the audience and before management, both ways, on every read and write a use goes through.
+   */
+  private assertSameSideAsSpace(space: BookingSpace, people: readonly string[]) {
+    if (people.every((id) => sameSideOfReviewCohort(id, space.ownerId))) return;
+    this.logger.log(
+      `[REVIEW_COHORT] booking space=${space.id.slice(0, 8)} refused: across the review cohort's boundary`
+    );
+    throw new ReviewCohortBoundaryException();
   }
 
   // -- Reads -------------------------------------------------------------------------------------
@@ -193,7 +276,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] getSpace space=${spaceId}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const resources = await this.resources.find({
       where: { spaceId },
       order: { position: 'ASC', createdAt: 'ASC' },
@@ -223,6 +306,8 @@ export class BookingsService {
       maxPeople: space.maxPeople,
       // How long a file answer is kept after the slot (D8), said under the file picker.
       retentionDays: space.retentionDays,
+      // The space's default reminder delay (Q-R1), offered as the booker's own in the sheet.
+      reminderMinutes: space.reminderMinutes,
       poster: space.poster,
       canManage,
       resources: resources.map((r) => ({
@@ -239,7 +324,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] spaceSlots space=${spaceId} ${from}..${to}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const grid = await this.slots.spaceSlots(spaceId, from, to);
 
     const bookingIds = [
@@ -352,15 +437,18 @@ export class BookingsService {
       const space = resource && spaceById.get(resource.spaceId);
       if (!resource || !space) return [];
       const relation = relationTo(b, people, actor.userId, false, resource.linkedUserId);
-      const withdrawn = people.some(
-        (p) => p.bookingId === b.id && p.userId === actor.userId && p.withdrawnAt !== null
-      );
+      const own = people.find((p) => p.bookingId === b.id && p.userId === actor.userId);
+      const withdrawn = own !== undefined && own.withdrawnAt !== null;
       return [
         {
           ...bookingView(b, people, relation, space.nameVisibility, actor.userId),
           withdrawn: b.holderId !== actor.userId && withdrawn,
           holder: b.holderId === actor.userId,
           linked: resource.linkedUserId === actor.userId,
+          // THIS person's reminder delay (Q-R1): the holder's on the booking, a participant's on
+          // their own row; null = none. A linked account that is neither has none to set.
+          reminderMinutes:
+            b.holderId === actor.userId ? b.reminderMinutes : (own?.reminderMinutes ?? null),
           space: { id: space.id, name: space.name, timeZone: space.timeZone },
           resource: { id: resource.id, name: resource.name },
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
@@ -373,9 +461,14 @@ export class BookingsService {
    * The spaces a member may book from the Reservations page (D16, D31), by name, at most
    * {@link LISTED_SPACES_LIMIT} - the limit is the SQL's, so the page never reads more:
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
-   * - an association space only while its association is not ARCHIVED;
+   * - an association space only while its association is not ARCHIVED, and only when that
+   *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
+   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
-   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code.
+   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
+   * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
+   *   space (`review-cohort.ts`): a store reviewer and a member never list each other's spaces.
    *
    * The audience (D6) is judged here with the facts `assertMayUse` judges a read with, so a listed
    * space always opens - but built ONCE for the page, never per space: the rights in one bulk
@@ -390,18 +483,26 @@ export class BookingsService {
    */
   async listedSpaces(actor: Actor) {
     this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
-    const rows = await this.spaces
+    const listed = this.spaces
       .createQueryBuilder('s')
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
       .andWhere(
-        '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
+        `((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false
+          AND ${associationVisibleToViewerSql('"s"."associationId"', ':me')}))`,
         { me: actor.userId }
       )
       .orderBy('s.name', 'ASC')
       .addOrderBy('s.id', 'ASC')
-      .limit(LISTED_SPACES_LIMIT)
-      .getMany();
+      .limit(LISTED_SPACES_LIMIT);
+    const cohort = reviewCohort();
+    if (cohort.length > 0) {
+      const inCohort = cohort.includes(actor.userId);
+      listed.andWhere(`s.ownerId ${inCohort ? 'IN' : 'NOT IN'} (:...reviewCohort)`, {
+        reviewCohort: [...cohort],
+      });
+    }
+    const rows = await listed.getMany();
     if (rows.length === 0) return [];
 
     const associationIds = [
@@ -552,16 +653,21 @@ export class BookingsService {
    * D20). `offset` is the position in that order; `nextOffset` is null on the last page. `ids`
    * narrows it to those bookings - the ones a D29 refusal named, which the organiser's screen lists
    * with their cancel button; an id of another space is simply not found.
+   *
+   * `fromMs` (WP-R5, D50) narrows it to what is STILL TO COME: the LIVE bookings (never cancelled)
+   * that end after that instant - the one under way included - so the dashboard's first page is
+   * the next ones, not the oldest of the space's whole history.
    */
   async spaceBookings(
     spaceId: string,
     actor: Actor,
     offset = 0,
     limit = SPACE_BOOKINGS_PAGE,
-    ids?: readonly string[]
+    ids?: readonly string[],
+    fromMs?: number
   ) {
     this.logger.debug(
-      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'}`
+      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'} from=${fromMs ?? 'all'}`
     );
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
@@ -571,7 +677,13 @@ export class BookingsService {
     const resources = await this.resources.findBy({ spaceId });
     if (resources.length === 0 || ids?.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
-      where: { resourceId: In(resources.map((r) => r.id)), ...(ids ? { id: In([...ids]) } : {}) },
+      where: {
+        resourceId: In(resources.map((r) => r.id)),
+        ...(ids ? { id: In([...ids]) } : {}),
+        ...(fromMs !== undefined
+          ? { cancelledAt: IsNull(), endsAt: MoreThan(new Date(fromMs)) }
+          : {}),
+      },
       order: { startsAt: 'ASC', id: 'ASC' },
       skip: offset,
       take: take + 1,
@@ -753,7 +865,7 @@ export class BookingsService {
     const holderId = (dto.holderId ?? actor.userId).trim().toLowerCase();
     const onBehalf = holderId !== actor.userId;
     if (onBehalf && !canManage) throw new ForbiddenException({ code: 'not-manager' });
-    if (!onBehalf) await this.assertMayUse(before, actor, canManage);
+    if (!onBehalf) await this.assertMayUse(before, actor, canManage, 'write');
     const range = this.parseRange(dto.startsAt, dto.endsAt);
 
     const participantIds = [
@@ -762,12 +874,14 @@ export class BookingsService {
     if (participantIds.includes(holderId)) {
       throw new BadRequestException({ code: 'holder-is-participant' });
     }
+    const people = [holderId, ...participantIds];
+    // The holder a manager books for, and every participant, as much as the actor.
+    this.assertSameSideAsSpace(before, [actor.userId, ...people]);
     const answers = await this.validAnswers(before, holderId, dto.answers ?? {});
     const fileAnswers = this.fileAnswersIn(before, answers);
-    const people = [holderId, ...participantIds];
 
     try {
-      return await this.bookings.manager.transaction(async (m) => {
+      const booked = await this.bookings.manager.transaction(async (m) => {
         const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
         if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
           throw new ConflictException({ code: 'space-changed' });
@@ -776,7 +890,14 @@ export class BookingsService {
           throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
         }
 
-        // The shape (D3): one slot, or 1..maxSteps steps of one window.
+        // The shape (D3): one slot, or 1..maxSteps consecutive steps of one opening. The length
+        // bound comes first, from the settings alone: an over-long range is refused before any
+        // window is built.
+        const tooLong = rangeLengthRefusal(space, range);
+        if (tooLong) {
+          this.logger.debug(`[BOOKINGS] book refused before any window: ${tooLong}`);
+          throw new BadRequestException({ code: tooLong });
+        }
         const [from, to] = datesAround(range, space.timeZone);
         const [rules, exceptions] = await Promise.all([
           m.query(
@@ -836,9 +957,17 @@ export class BookingsService {
           }
         }
 
+        // Each person's reminder delay (Q-R1): the space's default, or the booker's own choice
+        // for themselves - never for an account booked on behalf of, who chooses theirs later.
+        // Chosen NOW, which is what Q-R6 reads: a booking made inside its delay gets no reminder.
+        const holderReminder =
+          !onBehalf && dto.reminderMinutes !== undefined
+            ? dto.reminderMinutes
+            : space.reminderMinutes;
         const [row]: { id: string }[] = await m.query(
-          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers,
+                                 "reminderMinutes", "reminderSetAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
           [
             resource.id,
             holderId,
@@ -847,13 +976,21 @@ export class BookingsService {
             new Date(range.startMs),
             new Date(range.endMs),
             answers === null ? null : JSON.stringify(answers),
+            holderReminder,
+            new Date(nowMs),
           ]
         );
         if (participantIds.length) {
           await m.query(
-            `INSERT INTO booking_participants ("bookingId", "userId", "userName")
-             SELECT $1, u, n FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
-            [row.id, participantIds, participantIds.map((p) => names.get(p))]
+            `INSERT INTO booking_participants ("bookingId", "userId", "userName", "reminderMinutes", "reminderSetAt")
+             SELECT $1, u, n, $4::int, $5::timestamptz FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
+            [
+              row.id,
+              participantIds,
+              participantIds.map((p) => names.get(p)),
+              space.reminderMinutes,
+              new Date(nowMs),
+            ]
           );
         }
         // D7: each file answer must be the ACTOR's own upload for this space and question; taken in
@@ -864,6 +1001,9 @@ export class BookingsService {
         );
         return { id: row.id };
       });
+      // After the commit, best-effort (`BookingNotificationsService`): the people added are told.
+      await this.notices.added(booked.id, actor.userId);
+      return booked;
     } catch (err) {
       if (isExclusionViolation(err)) {
         this.logger.log(`[BOOKINGS] slot taken resource=${dto.resourceId.slice(0, 8)}`);
@@ -902,10 +1042,13 @@ export class BookingsService {
    *
    * WHO is judged BEFORE the booking's state: booking ids are published in the grid, so a stranger
    * must learn nothing of a booking's state from the refusal - only `not-yours`.
+   *
+   * Once committed, its people are told (D53, Q-R2), the one who cancelled excepted; `message` is
+   * the organiser's optional word (Q-R3), quoted by the notice and stored nowhere.
    */
-  async cancel(bookingId: string, actor: Actor, nowMs: number) {
+  async cancel(bookingId: string, actor: Actor, nowMs: number, message?: string) {
     this.logger.debug(`[BOOKINGS] cancel booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    const done = await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const isHolder = booking.holderId === actor.userId;
       if (!isHolder && !(await this.mayManage(space, actor))) {
@@ -921,18 +1064,22 @@ export class BookingsService {
         actor.userId,
       ]);
       this.logger.log(`[BOOKINGS] cancelled id=${bookingId.slice(0, 8)} byHolder=${isHolder}`);
-      return { ok: true };
+      return { isHolder };
     });
+    // Only the organiser's word is Q-R3's: a holder cancelling their own booking sends none.
+    await this.notices.cancelled(bookingId, actor.userId, done.isHolder ? undefined : message);
+    return { ok: true };
   }
 
   /**
    * A participant leaves a coming booking alone (D4), until the space's minimum delay before the
    * start (D5 as the user decided on 2026-10-17); the row stays, marked (D15). Whether the actor is
-   * a participant still in is judged first, for the reason `cancel` gives.
+   * a participant still in is judged first, for the reason `cancel` gives. Once committed, the
+   * holder is told (Q-R2).
    */
   async withdraw(bookingId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] withdraw booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const mine: unknown[] = await m.query(
         `SELECT 1 FROM booking_participants
@@ -952,7 +1099,53 @@ export class BookingsService {
         [bookingId, actor.userId, new Date(nowMs)]
       );
       this.logger.log(`[BOOKINGS] withdrawn booking=${bookingId.slice(0, 8)}`);
-      return { ok: true };
+    });
+    await this.notices.withdrawn(bookingId, actor.userId);
+    return { ok: true };
+  }
+
+  /**
+   * Sets THIS person's reminder delay on a booking (Q-R1): its holder on the booking, a participant
+   * still in on their own row; `null` = no reminder. Refused on a cancelled or started booking -
+   * nothing is left to remind. Choosing re-arms: the claim is cleared and `reminderSetAt` is now, so
+   * an instant already past when chosen sends nothing (Q-R6), and one still to come sends once.
+   * WHO is judged before the booking's state, for the reason `cancel` gives.
+   */
+  async setReminder(bookingId: string, minutes: number | null, actor: Actor, nowMs: number) {
+    this.logger.debug(`[BOOKINGS] setReminder booking=${bookingId} minutes=${minutes}`);
+    return this.bookings.manager.transaction(async (m) => {
+      const { booking } = await this.lockBooking(m, bookingId);
+      const isHolder = booking.holderId === actor.userId;
+      if (!isHolder) {
+        const mine: unknown[] = await m.query(
+          `SELECT 1 FROM booking_participants
+            WHERE "bookingId" = $1 AND "userId" = $2 AND "withdrawnAt" IS NULL FOR UPDATE`,
+          [bookingId, actor.userId]
+        );
+        if (mine.length === 0) throw new ForbiddenException({ code: 'not-yours' });
+      }
+      if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+      if (new Date(booking.startsAt).getTime() <= nowMs) {
+        throw new ConflictException({ code: 'history-frozen' });
+      }
+      const set = `"reminderMinutes" = $2, "reminderSetAt" = $3, "reminderSentAt" = NULL`;
+      if (isHolder) {
+        await m.query(`UPDATE bookings SET ${set} WHERE id = $1`, [
+          bookingId,
+          minutes,
+          new Date(nowMs),
+        ]);
+      } else {
+        await m.query(
+          `UPDATE booking_participants SET ${set}
+            WHERE "bookingId" = $1 AND "userId" = $4 AND "withdrawnAt" IS NULL`,
+          [bookingId, minutes, new Date(nowMs), actor.userId]
+        );
+      }
+      this.logger.log(
+        `[BOOKINGS] reminder set booking=${bookingId.slice(0, 8)} holder=${isHolder} minutes=${minutes}`
+      );
+      return { ok: true, reminderMinutes: minutes };
     });
   }
 
@@ -1075,7 +1268,7 @@ export class BookingsService {
   ) {
     this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
     const space = await this.loadSpace(spaceId);
-    await this.assertMayUse(space, actor, await this.mayManage(space, actor));
+    await this.assertMayUse(space, actor, await this.mayManage(space, actor), 'write');
     return this.bookingFiles.upload(space, itemId, file, actor.userId);
   }
 

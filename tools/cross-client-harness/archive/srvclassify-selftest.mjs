@@ -559,8 +559,12 @@ const fcmCallers = [
   // A COMMIT ADMITTING A NEWCOMER, and a send queueing it before it has joined (user, 2026-09-28).
   ['a commit admitting a device added while dead', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMITS group=00000000-0000-4000-8000-000000000001 atEpoch=6 devices=aaaaaaaa:tauri-a-b`, 'notable'],
   ['a send queueing an admitted pending device', `${NEST}[MessagingService] [SEND][send-33f8f65a] PENDING_ADMITTED group=00000000-0000-4000-8000-000000000001 frameEpoch=6 devices=tauri-a-b@6`, 'notable'],
-  ['an invitee enrolled by the commit that adds it', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80`, 'notable'],
-  ['control: an ENROLLED line with more after it is read again', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80 and then failed`, 'unexplained'],
+  ['an invitee enrolled by the commit that adds it', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80 decidedBy=invitation`, 'notable'],
+  ['control: an ENROLLED line with more after it is read again', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80 decidedBy=invitation and then failed`, 'unexplained'],
+  // AN ENROLMENT DATED BY ITS BASE EPOCH ALONE IS NEVER BENIGN: it stays visible (the epoch rule), and
+  // ADM-3 and ADM-10 count it as a failure through `undatedAdmissions` (the ADM-3c rule).
+  ['control: an enrolment dated by its base epoch alone is not benign (ADM-3c)', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80 decidedBy=base_epoch`, 'notable'],
+  ['control: the pre-#2505 ENROLLED line, naming no decision, is read again', `${NEST}[MessagingService] [ADD_MEMBER][commit-1cb82c50] ENROLLED by commit group=00000000-0000-4000-8000-000000000001 user=c71e1a5b committer=f7a9bb80`, 'unexplained'],
   // A REMOVAL'S COMMIT QUEUED TO THE REMOVED DEVICE, and an addressed history answer (1.4.x).
   ['a removal commit queued to the parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 1 removed device(s): 223bc34e:web-223bc34e`, 'notable'],
   ['a removal commit that reached no parting device', `${NEST}[MessagingService] [COMMIT][commit-19b43467] PARTING group=2719fb2f removes=1 - commit also queued to 0 removed device(s)`, 'notable'],
@@ -572,11 +576,9 @@ const fcmCallers = [
   ['an admission the server refused is forgiven by nothing', `${NEST}[MessagingService] [COMMIT][commit-33f8f65a] ADMIT_REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b reason=no_key_package`, 'unexplained'],
   // A TOKEN BEING STORED IS NOT A NOTIFICATION BEING SENT. The handler 400s when the body carries
   // neither token, so this line always means a write happened and there is nothing to decide.
-  // THE HOURLY REPORTS AS THE SERVER SPELLS THEM (CC-3, alpha.4): the commit-rate line with its `; `
-  // separators, and the TURN meter under budget - each with the finding it must not swallow.
-  ['the hourly commit rate with no busy group', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 9 commit(s) in 3 group(s); per group p50=3 p90=4 max=4; busiest single committer per group p50=2 p90=3 max=3; 0 group(s) at >= 8 by one device`, 'notable'],
-  ['the hourly commit rate when nothing committed', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - no group committed`, 'notable'],
-  ['control: a busy group in the commit rate is a finding', `${NEST}[AppController] [CRON] reportCommitLogHealth: commit rate over the last hour - 40 commit(s) in 3 group(s); per group p50=3 p90=30 max=30; busiest single committer per group p50=2 p90=29 max=29; 1 group(s) at >= 8 by one device`, 'unexplained'],
+  // THE TURN METER'S HOURLY REPORT AS THE SERVER SPELLS IT, with the findings it must not swallow.
+  // (The commit-rate report is no row's: `srvReport` lifts it out, pinned below and in
+  // `archive/commitreport-selftest.mjs`.)
   ['the TURN meter under budget', `${NEST}[CallsService] [TURN-METER] 2026-10 (UTC calendar month): 0.62/950 GB metered egress (0.1%) - TURN available`, 'notable'],
   ['the TURN meter reading its dataset limits', `${NEST}[TurnUsageMeter] [ICE] TURN dataset limits: maxDuration=2764800s notOlderThan=2764800s`, 'notable'],
   ['control: unreadable cached TURN limits are a finding', `[Nest] 1  - 10/25/2026, 5:58:30 PM   ERROR [TurnUsageMeter] [ICE] cached TURN dataset limits are unreadable (x) - re-reading`, 'unexplained'],
@@ -773,6 +775,15 @@ const comm = [
   ['the standing of a new community creator', `${NEST}[ChannelService] [WORKSPACE] creator standing workspace=00000000-0000-4000-8000-000000000001 manage=true moderate=true manageChannels=true`, 'notable'],
   ['a role granted to a member', `${NEST}[ChannelService] [WORKSPACE] role set workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb role="Administrateur" by=aaaaaaaa`, 'notable'],
   ['control: a role set but not announced is a failure, not narration', `${NEST}[ChannelService] [WORKSPACE] role set but not announced workspace=00000000-0000-4000-8000-000000000001 target=bbbbbbbb: boom`, 'unexplained'],
+  // alpha.5's salon rows (RM-4..6, 2026-10-26): an entitlement's FIRST verdict of true, and a role's
+  // permission edited then announced. A false verdict, a flip, and holders left untold stay visible.
+  ['a first entitlement verdict', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['... for a salon too', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement channel=d4baea46-7971-4739-a2ad-de419dd462bc user=f7a9bb80 entitled=true (first evaluation)`, 'notable'],
+  ['control: a first verdict of false stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=false (first evaluation)`, 'unexplained'],
+  ['control: a flip stays visible', `${NEST}[InternalDistributionEntitlementController] [DISTRIBUTION_GROUP] entitlement workspace=eeb55c91-23a5-44e5-8f81-8c75f083610f user=f7a9bb80 entitled=true (was false)`, 'unexplained'],
+  ["a role's permission granted", `${NEST}[ChannelService] [ROLE] granted channel.manage role=72f19c26-9f8f-470c-9357-59acffa9efa6 by=f7a9bb80 perms=4`, 'notable'],
+  ['... and its holders told', `${NEST}[ChannelService] [ROLE] standing announced role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1 verdicts=1`, 'notable'],
+  ['control: holders left untold stay visible', `${NEST}[ChannelService] [ROLE] permissions saved but holders not told role=72f19c26-9f8f-470c-9357-59acffa9efa6 holders=1: boom`, 'unexplained'],
   ['a departure begun by its first eviction', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=1`, 'notable'],
   ['control: a cut that named no departure stays visible', `${NEST}[ChannelService] [KEY_DISTRIBUTION] key distribution cut scope=channel:00000000-0000-4000-8000-000000000003 user=bbbbbbbb reason=removed_from_channel memberships=1 routes=1 queued=0 departure=none`, 'unexplained'],
   ['the admission a key group commit asked for', `${NEST}[MessagingService] [COMMIT][commit-16f0f945] ADMITS_ASKED group=00000000-0000-4000-8000-000000000002 channel=00000000-0000-4000-8000-000000000003 people=1 entitled=1`, 'notable'],
@@ -837,6 +848,13 @@ check(
   settleFirstLooks([READ(G1).replace(' base=none active=1', '')]),
   []
 );
+// THE SALON'S SOCIAL-SERVICE TWIN (`[CHANNEL_GRAINE] served`, RM-4 alpha.6): counted apart from the
+// `read`, a singleton per group is narration and a pair is the race, exactly as above.
+const SERVED = (g) =>
+  `${NEST}[ChannelService] [CHANNEL_GRAINE] served channel=33333333-3333-4333-8333-333333333333 user=aaaaaaaa group=${g} published=false base=none active=0 devices=0`;
+check("a salon's one served first look, beside its read, is narration", settleFirstLooks([READ(G1), SERVED(G1)]), [READ(G1), SERVED(G1)]);
+check('control: two served first looks at the same salon group stay', settleFirstLooks([SERVED(G1), SERVED(G1)]), []);
+check('control: a served look that found devices is not its business', settleFirstLooks([SERVED(G1).replace('devices=0', 'devices=2')]), []);
 
 // --- namesOnlyOthers: WHOSE traffic a line is, which is what the gate is allowed to ignore -------
 //
@@ -925,11 +943,43 @@ check(
 
 // ── the scratch browser's previous device being deleted before a re-enrolment (NOTIF-20) ─────────
 check(
+  'a Welcome carried by reference is reported in every row - under the budget too (alpha.5 DUP-2)',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B') &&
+    rowVerdict('[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: 2184B, budget 3734B', 'DUP-2') === null,
+  true
+);
+check(
+  '... but not a lookalike with no sizes, nor key material',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][welcome-send-07084c98] welcome carried by reference: ?B') ||
+    matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [MessagingService] [PUSH_SEND][send-07084c98] key-material carried by reference: 9000B, budget 3734B'),
+  false
+);
+check(
+  'an avatar served or absent for a push is reported, a refused one is not',
+  matches(NOTABLE_RULES, '[Nest] 1  - LOG [PushController] [PUSH_AVATAR] outcome=absent status=404 ms=6 device=true target=223bc34e') &&
+    !matches(NOTABLE_RULES, '[Nest] 1  - WARN [PushController] [PUSH_AVATAR] outcome=rejected status=403 ms=6 device=true target=223bc34e'),
+  true
+);
+check(
   'a device deletion is reported',
   matches(
     NOTABLE_RULES,
-    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=true'
   ),
+  true
+);
+check(
+  '... but not one the server could not signal',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [DevicesController] [DELETE_DEVICE] user=abc device=web-abc reason=owner sessionsEnded=1 groupsCleaned=4 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=48 queuedMessagesDeleted=7 signalled=false'
+  ),
+  false
+);
+check(
+  'a session ended, its push binding read and its registrations deleted, is reported',
+  matches(NOTABLE_RULES, '[Nest] 1 - DEBUG [InternalController] [PUSH_SESSION_END] binding read user=f7a9bb80 device=web-abc registered=false session=none') &&
+    matches(NOTABLE_RULES, '[Nest] 1 - LOG [InternalController] [PUSH_SESSION_END] user=f7a9bb80 session=e4ab0cde device=unnamed ifBoundTo=n/a removedBySession=0 removedStale=0'),
   true
 );
 check(
@@ -1050,16 +1100,37 @@ check(
     ['the ask announced to the members', L('JoinAsk', `[JOIN_ASK] ANNOUNCED group=${G} asker=aaaaaaaa ask=c80e3db4 devices=5`), 'ADM-1', 'DEV-1'],
     ['the ask settled', L('JoinAsk', `[JOIN_ASK] SETTLED group=${G} asker=aaaaaaaa ask=c80e3db4 outcome=declined devices=5`), 'ADM-3', 'ADM-8'],
     ["ADM-4's call-initiate probe", D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'ADM-4', 'ADM-1'],
+    ["BIG-3's kick", L('ChannelService', `[WORKSPACE] kick workspace=${G} target=223bc34e by=f7a9bb80`), 'BIG-3-noI1', 'BIG-1-noI1'],
+    ['... and in RM-5 still', L('ChannelService', `[WORKSPACE] kick workspace=${G} target=223bc34e by=f7a9bb80`), 'RM-5', 'RM-4'],
+    ["BIG-3's kick cutting private salons", L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=${G} user=223bc34e reason=kicked salons=0/0`), 'BIG-3', 'BIG-2'],
+    ["BIG-3 sets its history to joined", L('ChannelService', `[WORKSPACE] historyVisibility=joined workspace=${G} by=f7a9bb80`), 'BIG-3-noI1', 'COMM-1'],
+    ["BIG-3's newcomer reads a short page", D('ChannelService', `[HISTORY] channel=${G} short page (4/50): silent rows below the oldest body included`), 'BIG-3', 'LIST-1'],
+    ['a real call initiated, in a CALL-WEB row', D('CallsService', `[calls] initiateCall user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-1', 'KILL-3'],
+    ["ADM-4's ring probe is not a CALL-WEB row's", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'CALL-WEB-1'],
+    ['a call invite', L('CallsService', `[call] invite room=${G} user=${'a'.repeat(64)} group=${G}`), 'CALL-WEB-4', 'ADM-4'],
+    ['a seat asking for ICE servers', D('CallsController', `[ICE] ice-servers request user=${'a'.repeat(64)} group=${G} call=${G}`), 'CALL-WEB-2', 'FLOOR-1'],
+    ['TURN credentials fetched', D('CallsService', '[ICE] Cloudflare returned 2 ICE server(s)'), 'CALL-WEB-8', 'ADM-4'],
+    ['a signalling session ended by its client', `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=client-close duration_ms=11489 paired_ms=10028 offer_in=1 answer_out=1`, 'CALL-WEB-1', 'DUP-1'],
+    ['... never paired (an unanswered ring)', `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=client-close duration_ms=61000 paired_ms=- offer_in=0`, 'CALL-WEB-6', 'ADM-4'],
+    ['a p2p pairing', `2026-10-26T22:31:25.146464Z  INFO call_service: [call] p2p paired room=${G} initiator=${'a'.repeat(64)}:${G} polite=${'b'.repeat(64)}:${G} resumed=false`, 'CALL-WEB-7', 'RM-5'],
     ["ADM-4's ring probe", D('CallsService', `[ring] ringGroup caller=${'a'.repeat(64)} group=${G} call=adm4-probe`), 'ADM-4', 'DUP-1'],
     ['a minted device before it is seated', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-4', 'ADM-1'],
-    ['a stale Add refused at the gate', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10', 'ADM-1'],
+    ['an Add refused whole: the person, Decline dated', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_decision decidedAtSeatGeneration=3 decidedBy=invitation seat=none committer=aaaaaaaa - the commit is refused whole`), 'ADM-10', 'ADM-1'],
+    ['... undated, an awaiting seat', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_decision decidedAtSeatGeneration=3 decidedBy=base_epoch seat=awaiting committer=aaaaaaaa - the commit is refused whole`), 'ADM-3', 'ADM-9'],
+    ['... departed and undated, the v1.4.0 member', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_and_undated decidedBy=base_epoch seat=awaiting committer=aaaaaaaa - the commit is refused whole`), 'ADM-6', 'ADM-5'],
+    ['an Add refused whole: the commit', W('MessagingService', `[COMMIT][commit-7be79bc7] REJECT admit_refused group=${G} baseEpoch=4 users=bbbbbbbb - the commit would give them a leaf no seat holds; nothing advanced`), 'ADM-10', 'ADM-2'],
+    ['... naming two people', W('MessagingService', `[COMMIT][commit-7be79bc7] REJECT admit_refused group=${G} baseEpoch=4 users=bbbbbbbb,cccccccc - the commit would give them a leaf no seat holds; nothing advanced`), 'ADM-6', 'ADM-1'],
+    ["the refused Add's Welcome", W('MessagingService', `[COMMIT][commit-7be79bc7] REJECT welcome_target_not_admitted group=${G} target=bbbbbbbb:${DEV} - the Welcome it carries is for a person this commit may not admit`), 'ADM-3', 'ADM-5'],
+    ["... the v1.4.0 member's, whose Add carries it inline too", W('MessagingService', `[COMMIT][commit-7be79bc7] REJECT welcome_target_not_admitted group=${G} target=bbbbbbbb:${DEV} - the Welcome it carries is for a person this commit may not admit`), 'ADM-6', 'ADM-9'],
+    ['an ask answered by an undated Add', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] ADMITTED_UNDATED group=${G} user=bbbbbbbb committer=aaaaaaaa decidedBy=base_epoch decidedAtSeatGeneration=2 seat=awaiting - an Add with no invitation generation answered an ask`), 'ADM-6', 'ADM-1'],
+    ['the member-add route refusing a person not admitted', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=no_seat caller=aaaaaaaa - no accepted commit admitted them; nothing written`), 'ADM-10', 'ADM-9'],
+    ['... an awaiting seat, no caller', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=awaiting_admission caller=none - no accepted commit admitted them; nothing written`), 'ADM-3', 'ADM-4'],
     ['a re-invited joiner declined then admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`), 'ADM-9', 'ADM-8'],
     ['... not in a row that never mints and seats one (DEV-7)', L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=false)'), 'DEV-6', 'DEV-7'],
     ["ADM-4's closing Decline answered already-admitted is not its own", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-4'],
     ["the base withheld is not ADM-6's (its joiner never asks)", L('MessagingService', `[GROUP_INFO] group=${G} user=${'a'.repeat(64)} awaits a member's admission - base withheld (repeat=1, said at 1, 10, 100...)`), 'ADM-10', 'ADM-6'],
     ['a Decline answered already-admitted', L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=already-admitted`), 'ADM-3', 'ADM-5'],
     ['a Decline refused to a non-member', W('MembersController', `[JOIN_DECLINE] REJECT group=${G} caller=none target=bbbbbbbb - not an admitted member, or their own ask`), 'ADM-4', 'ADM-2'],
-    ["KILL-1's own burst in the hourly commit rate (alpha.4)", L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 10 commit(s) in 1 group(s); per group p50=10 p90=10 max=10; busiest single committer per group p50=10 p90=10 max=10; 1 group(s) at >= 8 by one device'), 'KILL-1', 'DUP-1'],
     ["a member's Add admitted the joiner", L('MessagingService', `[COMMIT][commit-1234abcd] ADMITTED group=${G} users=1 door=admits - a member's Add answered their invitation-link ask`), 'ADM-1', 'FLOOR-2'],
     ['a stored Welcome admitted the joiner', L('MessagingService', `[BG_WELCOME][bg-wlc-1234abcd] ADMITTED group=${G} users=1 door=welcome - a member's Add answered their invitation-link ask`), 'ADM-6', 'DEV-7'],
     ["the waiting seat's own commit refused", W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external reason=awaiting_admission`), 'ADM-4', 'ADM-5'],
@@ -1082,6 +1153,15 @@ check(
     ['a departure cancelled before its roster write', W('ChannelService', `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=channel:c-1 user=bbbbbbbb departure=d-1 reason=access_removed - rolled back, retryable`), 'RM-4', 'RM-6'],
     ['a departure abandoned, settling what it began', W('ChannelService', `[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=1: The departure could not be completed, retry. - settling what it began`), 'RM-5', 'FLOOR-1'],
     ['a salon grant refused', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=not_allowed`), 'RM-5', 'RM-4'],
+    // RM-5's race, read on alpha.6 (2026-10-26): the grant the kick beat, the kick, its cut, the rejoin's cancel.
+    ['a grant refused because the kick landed first', W('ChannelService', `[CHANNEL_ACCESS] refused - the rewrite grants 1 non-member(s) channel=c-1 by=aaaaaaaa first=bbbbbbbb revision=5 locked=true`), 'RM-5', 'RM-4'],
+    ['a member kicked', L('ChannelService', `[WORKSPACE] kick workspace=w-1 target=bbbbbbbb by=aaaaaaaa`), 'RM-5', 'RM-6'],
+    ["a kick cutting the target's private salons", L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=w-1 user=bbbbbbbb reason=kicked salons=0/1`), 'RM-5', 'RM-4'],
+    ["a kick's departure cancelled (social)", L('ChannelService', `[KEY_DISTRIBUTION] departure outcome group=${G} user=bbbbbbbb departure=1 outcome=cancelled`), 'RM-5', 'RM-4'],
+    ['... its abandoned departure settled', L('ChannelService', `[KEY_DISTRIBUTION] abandoned departure settled scope=workspace:w-1 user=bbbbbbbb departure=1 reason=kicked outcome=cancelled settled=true`), 'RM-5', 'RM-6'],
+    ['... the distribution group cancel', L('DistributionGroup', `[DISTRIBUTION_GROUP] cancel workspace=w-1 user=bbbbbbbb departure=1 settled=true`), 'RM-5', 'RM-4'],
+    ['... and its chat-delivery face', L('MessagingService', `[DISTRIBUTION_GROUP] departure cancelled group=${G} user=bbbbbbbb departure=1 settled=true`), 'RM-5', 'DEV-6'],
+    ['the kicked member is not a reader of the salon', L('InternalDistributionEntitlementController', `[DISTRIBUTION_GROUP] entitlement channel=${G} user=bbbbbbbb entitled=false (first evaluation) - not a reader of the salon`), 'RM-5', 'RM-4'],
     ['a salon gone before its roster write', W('ChannelService', `[CHANNEL] salon gone before its roster write channel=c-1 user=bbbbbbbb`), null, 'RM-5'],
   ];
   for (const [name, line, row, other] of FAMILY) {
@@ -1101,14 +1181,52 @@ check(
     ['a background Welcome line nobody read', W('PushController', `[BG_WELCOME][bg-wlc-1234abcd] Welcome LOST group=${G}`), 'DEV-7'],
     ['a departure line of a new outcome', W('ChannelService', `[KEY_DISTRIBUTION] departure SUPERSEDED twice workspace=w-1`), 'RM-5'],
     ['a grant refused with an undeclared outcome', W('ChannelService', `[CHANNEL] grant refused channel=c-1 user=bbbbbbbb outcome=banned`), 'RM-5'],
-    ['TWO busy groups in the hourly commit rate: not one row\'s burst', L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 30 commit(s) in 2 group(s); per group p50=15 p90=15 max=15; busiest single committer per group p50=15 p90=15 max=15; 2 group(s) at >= 8 by one device'), 'KILL-1'],
+    ['a rewrite refused for TWO non-members is not the race RM-5 plays', W('ChannelService', `[CHANNEL_ACCESS] refused - the rewrite grants 2 non-member(s) channel=c-1 by=aaaaaaaa first=bbbbbbbb revision=5 locked=true`), 'RM-5'],
+    ['a departure outcome other than cancelled', L('ChannelService', `[KEY_DISTRIBUTION] departure outcome group=${G} user=bbbbbbbb departure=1 outcome=lost`), 'RM-5'],
+    ['salons cut for a reason RM-5 does not play', L('ChannelService', `[CHANNEL_GRAINE] private salons to cut workspace=w-1 user=bbbbbbbb reason=left salons=0/1`), 'RM-5'],
+    ['an abandoned departure settled for another reason', L('ChannelService', `[KEY_DISTRIBUTION] abandoned departure settled scope=workspace:w-1 user=bbbbbbbb departure=1 reason=left outcome=cancelled settled=true`), 'RM-5'],
+    ['a cancel not settled', L('DistributionGroup', `[DISTRIBUTION_GROUP] cancel workspace=w-1 user=bbbbbbbb departure=1 settled=false`), 'RM-5'],
     ["a Decline answered not-awaiting is no row's", L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=not-awaiting`), 'ADM-3'],
+    ['a person refused for a reason no row plays: blocked', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=blocked committer=aaaaaaaa - the commit is refused whole`), 'ADM-10'],
+    ['a person refused because the committer is off the roster', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=committer_not_on_roster committer=aaaaaaaa - the commit is refused whole`), 'ADM-3'],
+    ['a commit refused because its committer is off the roster', W('MessagingService', `[COMMIT][commit-7be79bc7] REJECT committer_not_on_roster group=${G} baseEpoch=4 users=bbbbbbbb - the commit would give them a leaf no seat holds; nothing advanced`), 'ADM-10'],
+    ['the pre-#2505 refusal that dropped admits and kept the commit', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] NOT_ENROLLED group=${G} user=bbbbbbbb reason=departed_since_base baseSeatGeneration=0 committer=aaaaaaaa - its admits dropped, the leaf has no seat`), 'ADM-10'],
+    ['an undated admission of a seat that was not awaiting', W('MessagingService', `[ADD_MEMBER][commit-7be79bc7] ADMITTED_UNDATED group=${G} user=bbbbbbbb committer=aaaaaaaa decidedBy=base_epoch decidedAtSeatGeneration=2 seat=none - an Add with no invitation generation answered an ask`), 'ADM-6'],
+    ['the member-add route refusing for an undeclared reason', W('MembersController', `[ADD_MEMBER][add-member-c3adcdfe] REFUSED not_admitted group=${G} user=bbbbbbbb reason=banned caller=aaaaaaaa - no accepted commit admitted them; nothing written`), 'ADM-10'],
   ];
   for (const [name, line, row] of LOOKALIKE) check(`R6 lookalike  ${name}`, verdictIn(line, row), 'unread-shape');
 
   // A MINTED DEVICE LINE WITH ONE GROUP BEING ADDED is not the all-pending starting state: no row rule
   // claims it, so it falls to the general classifier (stranded is not 0) and stays dirt in DEV-4 too.
   check('R6 unclaimed   a minted device line with one group being added (in DEV-4)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaa count=2 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),098bfb7f:pending(welcome=false,adding=true)'), 'DEV-4'), 'unclaimed');
+
+  // THE OTHER BY-REFERENCE REASONS ARE NOT THIS RULE'S: a key-material frame or a long text stays with
+  // the general classifier, in an admission row too.
+  check('R6 unclaimed   key material carried by reference (in ADM-3)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] key-material carried by reference: 9000B, budget 3734B'), 'ADM-3'), 'unclaimed');
+  check('R6 unclaimed   a long frame carried by reference (in DEV-2)', verdictIn(D('MessagingService', '[PUSH_SEND][send-9c1d2e3f] long frame carried by reference: 5000B, budget 3734B'), 'DEV-2'), 'unclaimed');
+  // A REVOKED SESSION'S TOKEN REFUSED: the revocation rows' own.
+  {
+    const refused = D('AuthController', 'Access refused again: session sid=e24f05df-47fc-4b42-92ed-627d08b86a5f has ended');
+    check('R6 expected   a revoked session refused (DEV-3)', verdictIn(refused, 'DEV-3'), 'expected');
+    check('R6 dirt       a revoked session refused (in ADM-1)', verdictIn(refused, 'ADM-1'), 'out-of-row');
+  }
+  // TWO RULES READ ONE LINE: the one naming the row judges it (ADM-3's Decline winning, alpha.5).
+  {
+    const withdrawn = L('MembersController', `[JOIN_DECLINE] group=${G} caller=aaaaaaaa target=bbbbbbbb outcome=withdrawn`);
+    check('R6 expected   a Decline that won the ADM-3 race (ADM-3)', verdictIn(withdrawn, 'ADM-3'), 'expected');
+    check('R6 expected   ... and the same line in ADM-2', verdictIn(withdrawn, 'ADM-2'), 'expected');
+    check('R6 dirt       ... and in a row no rule names (ADM-1)', verdictIn(withdrawn, 'ADM-1'), 'out-of-row');
+  }
+  // A MINTED DEVICE BEING SEATED (alpha.5 DEV-2): consistent mid-join lines are the DEV rows' own.
+  {
+    const seating = L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaaaaaa count=3 stranded=2 statuses=04ff59c8:pending(welcome=false,adding=false),10ddf2b7:active,1589de4c:pending(welcome=false,adding=false)');
+    check('R6 expected   a minted device being seated (DEV-2)', verdictIn(seating, 'DEV-2'), 'expected');
+    check('R6 dirt       a minted device being seated (in ADM-1)', verdictIn(seating, 'ADM-1'), 'out-of-row');
+    check('R6 unclaimed   a seating line whose stranded disagrees with its statuses (in DEV-2)', verdictIn(seating.replace('stranded=2', 'stranded=1'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   a seating line whose count disagrees (in DEV-2)', verdictIn(seating.replace('count=3', 'count=4'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   a seating line with a welcome queued (in DEV-2)', verdictIn(seating.replace('10ddf2b7:active', '10ddf2b7:pending(welcome=true,adding=false)').replace('stranded=2', 'stranded=3'), 'DEV-2'), 'unclaimed');
+    check('R6 unclaimed   every group active is stranded=0, the general rule (in DEV-2)', verdictIn(L('InvitationsController', '[DEVICE_MEMBERSHIPS] user=aaaaaaaa device=web-aaaaaaaa count=1 stranded=0 statuses=10ddf2b7:active'), 'DEV-2'), 'unclaimed');
+  }
 
   // NEVER JUDGED PER ROW: an ERROR line gates as it always did, in the row of its family too.
   check('R6 [ADMISSION] at ERROR is never a row line', verdictIn(E('MessagingService', `[ADMISSION] group=${G} user=aaaaaaaa holds 1 active device(s) under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`), 'ADM-1'), 'unclaimed');
@@ -1119,7 +1237,13 @@ check(
   check('R6 a non-member external commit is not a waiting seat', verdictIn(W('MessagingService', `[COMMIT][commit-1234abcd] REJECT committer_not_member group=${G} device=aaaaaaaa:${DEV} kind=external`), null), 'unclaimed');
   check('R6 FAMILY-* names a family, not a prefix of a longer word', rowNamed(['DUP-*'], 'DUPX-1'), false);
   check('R6 an exact id is exact', rowNamed(['ADM-5'], 'ADM-50'), false);
-  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+-(\d+|\*)$/.test(x))), true);
+  check('R6 every rule names its rows as ids or families', ROW_RULES.every((r) => r.rows.every((x) => /^[A-Z]+(-[A-Z]+)?-(\d+|\*)(-\*)?$/.test(x))), true);
+  check('R6 BIG-3-* names BIG-3-noI1, and not BIG-30', rowNamed(['BIG-3', 'BIG-3-*'], 'BIG-3-noI1') && !rowNamed(['BIG-3', 'BIG-3-*'], 'BIG-30'), true);
+  check('R6 BIG-3 sets shared: not forgiven', verdictIn(L('ChannelService', `[WORKSPACE] historyVisibility=shared workspace=${G} by=f7a9bb80`), 'BIG-3'), 'unread-shape');
+  check('R6 CALL-WEB-* names CALL-WEB-7', rowNamed(['CALL-WEB-*'], 'CALL-WEB-7'), true);
+  check('R6 CALL-WEB-* is not CALL-1', rowNamed(['CALL-WEB-*'], 'CALL-1'), false);
+  const serverEnded = `2026-10-26T22:31:35.175149Z  INFO call_service: [call] session end room=${G} peer=${'a'.repeat(64)}:${G} mode=p2p disposition=server-timeout duration_ms=61000 paired_ms=- offer_in=0`;
+  check('R6 a session the SERVICE ended is not forgiven in CALL-WEB-6', verdictIn(serverEnded, 'CALL-WEB-6'), 'unread-shape');
 
   // THE NEW NOTABLE LINES: narration in every row.
   for (const [name, line] of [
@@ -1138,6 +1262,16 @@ check(
   check('R6 srvReport: FLOOR-1 is NOT clean on the same line', [inFloor.clean, inFloor.outOfRowCount, inFloor.lines], [false, 1, 1]);
   check('R6 srvReport: the out-of-row line says which rows expect it', /expected only in DUP-\*/.test(inFloor.outOfRow[0]), true);
   check('R6 srvReport: no row named is not clean either', asRow(null).clean, false);
+  // THE HOURLY COMMIT REPORT IS LIFTED OUT OF EVERY ROW'S WINDOW (DEV-6, alpha.6): a busy group, a
+  // hole, even a failed report - none gates a row, and the count says they were there.
+  const hourly = [
+    L('AppController', '[CRON] reportCommitLogHealth: commit rate over the last hour - 248 commit(s) in 20 group(s); per group p50=4 p90=20 max=40; busiest single committer per group p50=2 p90=10 max=20; 1 group(s) at >= 8 by one device'),
+    W('AppController', `[CRON] reportCommitLogHealth: 1 group(s) have a HOLE in their commit log - 2 epoch(s) between the oldest retained commit and the head were accepted and never recorded, so no device below one can replay past it and only a re-Welcome reaches the head. Newest 1 of 1: ${G}(first hole at 4, 2 missing, log 1..9, after 2026-10-26T20:00:00.000Z)`),
+  ];
+  for (const row of ['DEV-6', 'KILL-1', null]) {
+    const r = srvReport((s) => (s === 'chat-delivery-service' ? hourly : []), '1m', { row })['chat-delivery-service'];
+    check(`R6 srvReport: the hourly commit report is no row's (${row ?? 'no row'})`, [r.clean, r.hourlyCommitReportCount, r.lines, r.outOfRowCount ?? 0, r.errorCount ?? 0], [true, 2, 0, 0, 0]);
+  }
   // WHICH ROW A PASS'S WINDOW IS JUDGED AS (`run.mjs`): the one row it recorded, else none.
   check('R6 windowRow: a single-row pass owns its window', windowRow([{ id: 'DUP-1' }]), 'DUP-1');
   check('R6 windowRow: the same row recorded twice is still one row', windowRow([{ id: 'CC-2' }, { id: 'CC-2' }]), 'CC-2');

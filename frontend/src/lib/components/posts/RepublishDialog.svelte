@@ -181,7 +181,13 @@
             onclick={() => (selected = a.id)}
             disabled={submitting}
           >
-            <AssociationAvatar name={a.name} logoUrl={a.logoUrl} size="sm" shape="circle" />
+            <AssociationAvatar
+              id={a.id}
+              name={a.name}
+              logoUrl={a.logoUrl}
+              size="sm"
+              shape="circle"
+            />
             <span class="truncate">{a.name}</span>
           </button>
         {/each}

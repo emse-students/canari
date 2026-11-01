@@ -214,12 +214,20 @@ function accepted(): SentFrame {
   return { sealed: new Uint8Array(), authorProof: new Uint8Array(), receivedAt: 1_700_000_000_000 };
 }
 
-function convoWith(id: string, messageIds: string[]): Conversation {
+/**
+ * A conversation row holding `messageIds`. `active` by default - the row of a group that can be sent
+ * into; `pending` is the row awaiting (re-)admission, which the outbox HOLDS rather than fails.
+ */
+function convoWith(
+  id: string,
+  messageIds: string[],
+  lifecycle: Conversation['lifecycle'] = 'active'
+): Conversation {
   return {
     id,
     name: id,
     contactName: id,
-    lifecycle: 'pending',
+    lifecycle,
     mlsStateHex: null,
     messages: messageIds.map((mid) => ({
       id: mid,
@@ -994,6 +1002,143 @@ describe('outbox flusher', () => {
 
     expect(markDeletedRemotely).not.toHaveBeenCalled();
     expect(storage._map.has('m1')).toBe(false);
+  });
+
+  /**
+   * THE RE-ADMISSION WINDOW (review, 2026-10-31; #2804 F1). A re-admission is a Remove and then an
+   * Add, about three seconds apart. The Remove half drops the evicted state and writes the row
+   * `pending` (`retireIfEvicted`), so a message sent in that window meets an UNSENDABLE group: it is
+   * held and the re-add asked - never failed as `evicted`, which retired the row and lost the message
+   * the Welcome would have let through. Both ends of the wait are answers, and neither is a clock.
+   */
+  it('HOLDS a message sent while the row awaits re-admission, then sends it the moment the Welcome lands, with no timer', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    let healthy = false;
+    const mlsService = makeMls();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const addMessageToChat = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['m1'], 'pending')],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        requestReAdd,
+        addMessageToChat,
+        isGroupHealthy: () => healthy,
+      })
+    );
+
+    await outbox.flush();
+
+    // Held: nothing on the wire, the entry kept with a clock, the row NOT retired, no notice.
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    expect(storage._map.get('m1')!.attempts).toBe(1);
+    expect(storage._map.get('m1')!.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(conversations.get('g1')!.lifecycle).toBe('pending');
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+    expect(addMessageToChat).not.toHaveBeenCalled();
+
+    // A plain flush respects the backoff - which is why the Welcome must RESUME, not flush.
+    await outbox.flush();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+
+    // The Welcome: the group installs, the row goes active (`upsertConversation`), and the group is
+    // announced ready - which resumes this entry at once, whatever its clock says.
+    healthy = true;
+    conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'active' });
+    await outbox.resumeGroup('g1');
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    outbox.dispose();
+  });
+
+  it('a re-admission whose Welcome never comes FAILS the held message visibly once the server proves no seat', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['m1'], 'pending')],
+    ]);
+    // The first pass finds a Welcome still owed; a later one reads no seat for this account and
+    // retires the row, as `stopRecovering` does on that proof.
+    let seat = true;
+    const requestReAdd = vi.fn(async () => {
+      if (!seat) conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'removed' });
+    });
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        requestReAdd,
+        isGroupHealthy: () => false,
+        log: (l: string) => lines.push(l),
+      })
+    );
+
+    await outbox.flush();
+    expect(storage._map.has('m1')).toBe(true);
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+
+    // The entry's own clock comes due (set, not waited for) and the next attempt asks again.
+    seat = false;
+    storage._map.get('m1')!.nextAttemptAt = 0;
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
+    expect(lines).toContainEqual(expect.stringContaining('removed - permanent failure'));
+    outbox.dispose();
+  });
+
+  it("a group becoming ready resumes only ITS held entries, and leaves another group's on their clock", async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 101)]);
+    let healthy = false;
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => healthy }));
+
+    await outbox.flush();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+
+    healthy = true;
+    await outbox.resumeGroup('g1');
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage.mock.calls[0][0]).toBe('g1');
+    expect(storage._map.has('m2')).toBe(true);
+    outbox.dispose();
+  });
+
+  it('a group that becomes ready DURING the attempt that holds it (an external join inside the re-add) is sent in the same drain', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    let healthy = false;
+    const mlsService = makeMls();
+    let outbox!: ReturnType<typeof createOutbox>;
+    // `requestReAdd` lands an external join, which raises the group-ready seam before it returns -
+    // before this attempt has written its hold, so the announcement finds nothing to resume.
+    const requestReAdd = vi.fn(async () => {
+      healthy = true;
+      void outbox.resumeGroup('g1');
+    });
+    outbox = createOutbox(
+      makeDeps({ mlsService, storage, requestReAdd, isGroupHealthy: () => healthy })
+    );
+
+    await outbox.flush();
+    await outboxIdle();
+
+    expect(requestReAdd).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.has('m1')).toBe(false);
+    outbox.dispose();
   });
 
   it('retries rather than destroying the message when membership cannot be read', async () => {
@@ -2057,6 +2202,12 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
         await outbox.flush();
       },
     },
+    {
+      name: "resumeGroup - one group became ready (sessionAuth's onGroupReady)",
+      run: async (outbox) => {
+        await outbox.resumeGroup('g1');
+      },
+    },
   ];
 
   beforeEach(() => {
@@ -2066,7 +2217,7 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     tabOutboxMock.requestLeaderOutboxFlush.mockClear();
   });
 
-  it('drives five distinct triggers, not one of them written five times', () => {
+  it('drives six distinct triggers, not one of them written six times', () => {
     expect(new Set(SITES.map((s) => s.run.toString())).size).toBe(SITES.length);
   });
 
@@ -2193,8 +2344,11 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
       if (rel === 'lib/utils/chat/outbox.ts') continue;
       // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
       // is the other door into the same flush, which a new site would reach for once the first
-      // one started failing here.
-      const calls = text.match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ?? [];
+      // one started failing here. `resumeOutboxGroup(id)` is the same door for ONE group.
+      const calls =
+        text.match(
+          /\bflushOutbox\(\)|\bresumeOutboxGroup\([^)]|getOutbox\(\)[^\n]*\.(flush|resumeGroup)\(/g
+        ) ?? [];
       if (calls.length) found[rel] = calls.length;
     }
 

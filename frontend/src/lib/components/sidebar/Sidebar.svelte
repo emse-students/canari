@@ -1,6 +1,7 @@
 <script lang="ts">
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { untrack } from 'svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flip } from 'svelte/animate';
@@ -417,7 +418,7 @@
       .filter(({ convo, resolved }) =>
         conversationMatchesQuery(
           resolved.displayName,
-          convo.messages.at(-1)?.content ?? '',
+          previewContentOf(convo.messages) ?? '',
           searchQuery
         )
       )
@@ -633,9 +634,9 @@
                 : workspace.name}
             >
               <GroupAvatar
+                id={workspace.id}
                 imageMediaId={workspace.imageMediaId}
                 name={workspace.name}
-                variant="community"
                 size="lg"
               />
             </button>
@@ -700,7 +701,7 @@
       />
     {:else}
       <div
-        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
+        class="glass-chrome sticky top-0 z-10 flex items-center justify-between rounded-none border-x-0 border-t-0 border-white/50 px-4 py-3 shadow-none dark:border-white/10"
       >
         <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
           <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />
@@ -762,9 +763,7 @@
               displayName={resolved.displayName}
               displayNameResolved={resolved.displayNameResolved}
               conversationType={convo.conversationType}
-              lastMessage={convo.messages.length > 0
-                ? convo.messages[convo.messages.length - 1].content
-                : undefined}
+              lastMessage={previewContentOf(convo.messages)}
               isReady={convo.lifecycle === 'active'}
               isRemoved={convo.lifecycle === 'removed'}
               awaitingAdmission={isNeverAdmitted(convo)}

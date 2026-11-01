@@ -16,6 +16,7 @@
  */
 import { activeSeats, onRoster } from './ccrows.mjs';
 import { commitsSince } from './rowkit.mjs';
+import { atLevels, stripStamp } from './watch.mjs';
 
 /**
  * The rows `archive/settle.mjs` plays. `subject` is the commit under test: W1 Adds `subject`'s user to
@@ -153,6 +154,43 @@ export function settleNarration(groupId) {
     // `delivered` spelling: `... NOT delivered ... still owed` is an error and stays dirt.
     new RegExp(`^\\[COMMIT\\] ${short}\\.\\.\\. owed Welcome of an Add delivered to \\S+$`),
   ];
+}
+
+/**
+ * DUP-2's SUBJECT CALLS ITS WAIT FOR ITS OWN WELCOME A RECOVERY - narrated, on that row only.
+ *
+ * The row is built to deliver W4's Remove to W2 BEFORE the Welcome of W1's held Add: W2 sees a commit
+ * for a group it is not in, asks to be re-added (`[PIPELINE] Out-of-sync ... requestReAdd`), finds a
+ * member holding the add lock (W1's own Add) and waits, logging `[PIPELINE] Recovery attempt
+ * finished` - then the Welcome arrives and W2 joins. Read on alpha.4 and alpha.5 (2026-10-26), the
+ * same each time. Nothing was recovered, and calling a designed deferral a recovery is a product
+ * wording item the coordinator records; the rig only stops reading it as a regression HERE.
+ *
+ * Narrated only when EVERY such line for the row's group was preceded, as its group's last `[READD]`
+ * line, by the add-lock wait, AND a `[WELCOME] Group <g>... ready` follows it. Otherwise this returns
+ * nothing and the sentinel stays dirt: a recovery that re-added, failed, or never saw its Welcome is
+ * the finding. A function of the subject's whole console, so the decision is taken after the
+ * invariant, when the Welcome has had its chance to arrive.
+ *
+ * @param {string[]} lines the subject's console, stamped or not (`consoleLines`)
+ * @param {string} groupId the row's group
+ * @returns {object[]} the needle forgiving that sentinel for that group, or none
+ */
+export function dup2DeferredJoinNarration(lines, groupId) {
+  const g = String(groupId).slice(0, 8);
+  const ell = '(?:\u2026|\\.\\.\\.)';
+  const sentinel = new RegExp(`^\\[PIPELINE\\] Recovery attempt finished for ${g}${ell}$`);
+  const readd = new RegExp(`^\\[READD\\] ${g}${ell} `);
+  const waiting = new RegExp(`^\\[READD\\] ${g}${ell} a member holds the add lock - waiting for it to settle`);
+  const ready = new RegExp(`^\\[WELCOME\\] Group ${g}${ell} ready$`);
+  const s = lines.map((l) => stripStamp(l));
+  const at = s.flatMap((l, i) => (sentinel.test(l) ? [i] : []));
+  if (!at.length) return [];
+  const explained = at.every((i) => {
+    const lastReadd = s.slice(0, i).findLast((l) => readd.test(l));
+    return !!lastReadd && waiting.test(lastReadd) && s.slice(i + 1).some((l) => ready.test(l));
+  });
+  return explained ? [atLevels(['log', 'info'], sentinel)] : [];
 }
 
 /** The needle `awaitLine` waits on for the client's own verdict on a resubmission of the commit from `fromEpoch`. */

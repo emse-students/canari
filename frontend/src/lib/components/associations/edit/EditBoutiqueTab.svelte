@@ -26,11 +26,13 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { fetchCotisationOptions, type MembershipTier } from '$lib/associations/api';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
+  import { membersOnlySaveRefusalMessage } from '$lib/associations/paymentRefusal';
   import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
@@ -141,7 +143,7 @@
       resetProductForm();
       await loadProducts();
     } catch (e) {
-      productsError = m.common_load_error();
+      productsError = membersOnlySaveRefusalMessage(e) ?? m.common_load_error();
     } finally {
       savingProduct = false;
     }
@@ -243,7 +245,7 @@
       expandedProductSettingsId = null;
       editingMatrix = null;
     } catch (e) {
-      productsError = m.common_save_error();
+      productsError = membersOnlySaveRefusalMessage(e) ?? m.common_save_error();
     } finally {
       savingProductSettings = null;
     }
@@ -546,15 +548,12 @@
                     {m.asso_boutique_grid_summary()}
                   {:else}
                     {product.amountCents != null
-                      ? `${(product.amountCents / 100).toFixed(2)} €`
+                      ? formatAmount(product.amountCents)
                       : m.asso_boutique_product_free()}
                   {/if}
-                  {product.grantedTagName
-                    ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}`
-                    : ''}
                   {#if !product.priceMatrix && product.amountCentsMember != null}
                     · {m.asso_boutique_product_member_price_label({
-                      price: (product.amountCentsMember / 100).toFixed(2),
+                      price: formatAmount(product.amountCentsMember),
                     })}
                   {/if}
                   {#if product.allowRepeatPurchase}

@@ -582,7 +582,7 @@ for f in android.yml ios.yml; do
 
   # THE DISPATCH MUST DEFAULT TO SHIPPING NOTHING. A compile check that reached a store would be
   # worse than no compile check, and the default is the whole guard: nobody types `publish: false`.
-  if grep -A3 -E "^      publish:" "$WF/$f" | grep -qE "^        default: false$"; then
+  if grep -A3 -E "^      publish:" "$WF/$f" | grep -E "^        default: false$" >/dev/null; then
     pass "$f's dispatch defaults publish to false, so a compile check ships nothing"
   else
     fail "$f's hand dispatch does not default publish to false - a compile check would reach a real store"
@@ -621,8 +621,8 @@ printf '\nthe store is served BEFORE the release asset, in both arms\n'
 # `grep -n` and not a parser: the line NUMBER is the ordering, and that is the whole property.
 order_ok() {
   local file="$1" store_step="$2" asset_step="$3" label="$4" store asset
-  store="$(grep -nF "      - name: $store_step" "$file" | head -1 | cut -d: -f1)"
-  asset="$(grep -nF "      - name: $asset_step" "$file" | head -1 | cut -d: -f1)"
+  store="$(grep -nF "      - name: $store_step" "$file" | sed -n 1p | cut -d: -f1)"
+  asset="$(grep -nF "      - name: $asset_step" "$file" | sed -n 1p | cut -d: -f1)"
   if [ -z "$store" ] || [ -z "$asset" ]; then
     fail "$label - one of the two steps is gone (store=${store:-missing} asset=${asset:-missing})"
   elif [ "$store" -lt "$asset" ]; then
@@ -642,7 +642,7 @@ order_ok "$WF/android.yml" 'Publish to Google Play' 'Upload to Release' \
 # AND NEITHER MAY BE MADE NON-FATAL INSTEAD. `continue-on-error` on the asset upload would pass the
 # ordering assertion above while re-introducing exactly the invisibility the ordering removes.
 for f in ios android; do
-  if sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml" | grep -qE '^ +continue-on-error:'; then
+  if sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml" | grep -E '^ +continue-on-error:' >/dev/null; then
     fail "$f.yml makes the release asset upload non-fatal - a swallowed refusal is worse than the skipped store it replaced"
   else
     pass "$f.yml still fails loudly if the release asset cannot be attached"
@@ -812,7 +812,7 @@ fi
 # BINDING MEANS `ci-passed` READS IT. `ci-passed` is the one check the branch ruleset requires, so a
 # ceiling job outside its `needs` is a red tick nothing enforces - strictly worse than the sweep it
 # replaced, because it LOOKS enforced.
-if sed -n '/^  ci-passed:$/,/^  [a-z][a-z-]*:$/p' "$PR_WF" | grep -q 'dependency-ceiling'; then
+if sed -n '/^  ci-passed:$/,/^  [a-z][a-z-]*:$/p' "$PR_WF" | grep 'dependency-ceiling' >/dev/null; then
   pass 'and ci-passed reads it, so an update with no gate cannot merge by ANY route'
 else
   fail 'ci-passed does not read dependency-ceiling - the refusal would be advisory, and a red tick nothing enforces is worse than none because it looks enforced'
@@ -878,7 +878,7 @@ OTHER_READERS=""
 for f in "$WF"/*.yml "$HERE"/../*.sh "$HERE"/../lib/*.sh; do
   [ -r "$f" ] || continue
   case "$(basename "$f")" in submit.mjs) continue ;; esac
-  if grep -n "$NOTES_SRC" "$f" 2>/dev/null | grep -vE '^[0-9]+: *(#|//|\*)' | grep -q .; then
+  if grep -n "$NOTES_SRC" "$f" 2>/dev/null | grep -vE '^[0-9]+: *(#|//|\*)' | grep . >/dev/null; then
     OTHER_READERS="$OTHER_READERS $(basename "$f")"
   fi
 done
@@ -945,10 +945,25 @@ if grep -q 'refs/heads/release/v' "$WF/release.yml" && grep -q 'refs/tags/v' "$W
 else
   fail 'the stable is not pushed to its release branch, or its tag does not move'
 fi
-if grep -qE '^  land:' "$WF/release.yml" && grep -q 'land-release-changelog.sh' "$WF/release.yml"; then
-  pass 'a land job carries the changelog onto main'
+if grep -qE '^  land:' "$WF/release.yml" && grep -q 'land-release.sh' "$WF/release.yml"; then
+  pass 'a land job carries the release onto main'
 else
   fail 'no land job - the stable changelog would never reach main and be folded twice'
+fi
+
+printf '\na pre-release is pinned on its release branch, so main may move on (2026-10-30)\n'
+# `v1.5.1-alpha.3` (gate 2) and `v1.5.1-alpha.5` (the push) died because the bump pushed to `main`
+# while pull requests merged. Nothing in the critical path may push there again.
+if grep -qE 'git push[^#]*HEAD:main' "$WF/release.yml"; then
+  fail 'release.yml pushes HEAD:main - a merge during the release would refuse or reject it again'
+else
+  pass 'no release step pushes HEAD:main'
+fi
+LAND_JOB="$(sed -n '/^  land:/,/^  [a-z][a-z-]*:$/p' "$WF/release.yml")"
+if printf '%s\n' "$LAND_JOB" | grep -qE '^    if:'; then
+  fail 'the land job is conditional - a pre-release version would never reach main'
+else
+  pass 'the land job runs for every release, pre-releases included'
 fi
 for f in serve-dev.yml serve-prod.yml; do
   if grep -q 'git fetch origin main' "$WF/$f"; then
@@ -962,8 +977,8 @@ printf '\nthe dev estate is asked what it serves before it counts as dev-deploye
 # `deployed-wasm-check.mjs` was written during the 2026-09-06 outage and called by nothing for a
 # month. The stable's fourth gate reads the `dev-deployed` marker, so the check only BLOCKS a stable
 # when it fails BEFORE the marker moves.
-CHECK_LINE="$(grep -n 'deployed-wasm-check.mjs "' "$WF/serve-dev.yml" | head -1 | cut -d: -f1)"
-MARK_LINE="$(grep -n 'tag -f dev-deployed' "$WF/serve-dev.yml" | head -1 | cut -d: -f1)"
+CHECK_LINE="$(grep -n 'deployed-wasm-check.mjs "' "$WF/serve-dev.yml" | sed -n 1p | cut -d: -f1)"
+MARK_LINE="$(grep -n 'tag -f dev-deployed' "$WF/serve-dev.yml" | sed -n 1p | cut -d: -f1)"
 if [ -z "$CHECK_LINE" ]; then
   fail 'serve-dev.yml never runs deployed-wasm-check.mjs - a wasm that panics reaches production through a green dev deploy'
 elif [ -z "$MARK_LINE" ] || [ "$CHECK_LINE" -gt "$MARK_LINE" ]; then

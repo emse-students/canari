@@ -93,6 +93,27 @@ describe('MessagingService - notification categories', () => {
       expect(pushTokenRepo.find).not.toHaveBeenCalled();
     });
 
+    it('skips a device KNOWN to run a build below the push floor, keeps an unknown one, and never forwards the floor', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        { id: 1, userId: 'u1', deviceId: 'old', token: 't-old', platform: 'android' },
+        { id: 2, userId: 'u1', deviceId: 'new', token: 't-new', platform: 'android' },
+        { id: 3, userId: 'u1', deviceId: 'blank', token: 't-blank', platform: 'android' },
+      ]);
+      unusedRepo.find.mockResolvedValue([
+        { userId: 'u1', deviceId: 'old', deviceAppVersion: '1.5.3' },
+        { userId: 'u1', deviceId: 'new', deviceAppVersion: '1.5.4-alpha.1' },
+      ]);
+      const r = await service.sendPushToUser('u1', 't', 'b', {
+        type: 'social',
+        contentKey: 'social_live_started',
+        minAppVersion: '1.5.4',
+      });
+      expect(r).toEqual({ sent: 2, failed: 0 });
+      const tokens = fcmSend.mock.calls.map((c) => (c[0] as { token: string }).token);
+      expect(tokens).toEqual(['t-new', 't-blank']);
+      expect(JSON.stringify(fcmSend.mock.calls)).not.toContain('minAppVersion');
+    });
+
     it('only mutes the category named: another category still goes out', async () => {
       disabledRow = { disabledCategories: ['posts'] };
       await service.sendPushToUser('u1', 't', 'b', { type: 'social', contentKey: 'event_updated' });

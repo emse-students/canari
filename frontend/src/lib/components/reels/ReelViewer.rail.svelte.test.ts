@@ -213,6 +213,16 @@ it("the send opens the post's share sheet on that reel", async () => {
   await vi.waitFor(() => expect(q('[data-share-sheet="a"]')).not.toBeNull());
 });
 
+it('a reel sent into a conversation closes the viewer, so the composer it waits in is seen', async () => {
+  // The share's landing no longer navigates, so nothing else would take the viewer off a
+  // conversation already open under it (review of #2609, 2026-10-27).
+  const { onClose } = await render(post('a'), 'alice');
+  await click('[data-reel-rail-send]');
+  await vi.waitFor(() => expect(q('[data-share-sent]')).not.toBeNull());
+  await click('[data-share-sent]');
+  await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+});
+
 it('the comments open in a sheet over the reel, as a history entry of their own', async () => {
   await render(post('a', { comments: [comment('c1')] }), 'alice');
   const pushedBefore = vi.mocked(pushHistoryOverlay).mock.calls.length;
@@ -451,4 +461,63 @@ it('the keyboard reaches the drawer: ArrowUp on the heart, and the context menu 
   await settle();
   expect(menu.defaultPrevented).toBe(true);
   expect(q('[data-reel-rail-drawer]')).not.toBeNull();
+});
+
+it('a tap outside the open drawer closes it and does nothing else: no playback toggle, no like, no close', async () => {
+  const { onClose } = await render(post('a'), 'alice');
+  await holdHeart();
+  const dismiss = q('[data-reel-rail-drawer-dismiss]')!;
+  // The layer is the SLIDE's, never the rail's: inside the viewer's transformed track a `fixed`
+  // layer is laid out against the wrong slide.
+  expect(dismiss.closest('[data-reel-rail]')).toBeNull();
+  expect(dismiss.closest('[data-reel-slide="a"]')).not.toBeNull();
+
+  const reached = vi.fn();
+  q('[data-post-media-stub]')!.addEventListener('click', reached);
+  await click('[data-reel-rail-drawer-dismiss]');
+
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+  expect(q('[data-reel-rail-drawer-dismiss]')).toBeNull();
+  // The tap landed on the layer, never on the player under it.
+  expect(reached).not.toHaveBeenCalled();
+  expect(addReaction).not.toHaveBeenCalled();
+  expect(removeReaction).not.toHaveBeenCalled();
+  expect(document.querySelectorAll('[data-double-tap-heart]').length).toBe(0);
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it('a tap inside the drawer, between its buttons, does not close it', async () => {
+  await render(post('a'), 'alice');
+  await holdHeart();
+
+  await click('[data-reel-rail-drawer]');
+
+  expect(q('[data-reel-rail-drawer]')).not.toBeNull();
+  expect(addReaction).not.toHaveBeenCalled();
+});
+
+it('Escape closes the drawer wherever the focus is, and the viewer stays open', async () => {
+  const { onClose } = await render(post('a'), 'alice');
+  await holdHeart();
+  (document.activeElement as HTMLElement | null)?.blur();
+
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+  await settle();
+
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it('Back closes the drawer as a history entry of its own, and leaves the viewer open', async () => {
+  const { onClose } = await render(post('a'), 'alice');
+  const pushedBefore = vi.mocked(pushHistoryOverlay).mock.calls.length;
+  await holdHeart();
+  expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushedBefore + 1);
+
+  const calls = vi.mocked(pushHistoryOverlay).mock.calls;
+  (calls[calls.length - 1][0] as () => void)();
+  await settle();
+
+  expect(q('[data-reel-rail-drawer]')).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
 });

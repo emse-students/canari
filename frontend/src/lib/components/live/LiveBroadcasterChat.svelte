@@ -34,6 +34,8 @@
      * component goes (off air, or a new live): none to show, never a stale or another live's number.
      */
     onViewers?: (count: number | null) => void;
+    /** Whether the lines and composer are drawn; the poll (and the viewer count) goes on when not. */
+    visible?: boolean;
     /** Replace the outside world - for tests. */
     chatDeps?: Partial<LiveChatDeps>;
     pollerDeps?: Partial<LiveBroadcasterChatPollerDeps>;
@@ -45,6 +47,7 @@
     keyHex,
     onEnded,
     onViewers,
+    visible = true,
     chatDeps,
     pollerDeps,
     fetchLimits = fetchLiveLimits,
@@ -110,14 +113,16 @@
 
 <div class="pointer-events-none absolute inset-0 flex items-end p-3" data-live-broadcaster-chat>
   <LiveReactionsLayer bind:this={reactions} />
-  <LiveChatPanel
-    {lines}
-    {canWrite}
-    {maxChars}
-    canModerate
-    {send}
-    retry={(id) => void session?.retry(id)}
-    discard={(id) => session?.discard(id)}
-    hide={(id) => void session?.hide(id)}
-  />
+  {#if visible}
+    <LiveChatPanel
+      {lines}
+      {canWrite}
+      {maxChars}
+      canModerate
+      {send}
+      retry={(id) => void session?.retry(id)}
+      discard={(id) => session?.discard(id)}
+      hide={(id) => void session?.hide(id)}
+    />
+  {/if}
 </div>

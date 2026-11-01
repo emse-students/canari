@@ -62,6 +62,23 @@ export function nextComposerSurface(
   }
 }
 
+/**
+ * WHETHER A PRESS ON "+" (OR ONE OF ITS ENTRIES) LEAVES FOCUS IN THE TEXT FIELD.
+ *
+ * Only while the soft keyboard is UP. Then focus must stay, or the keyboard falls under a menu that
+ * only floats (Mi 9T 2026-10-02: 532 -> 877 -> 532 px through "+" then "Envoyer un GIF").
+ *
+ * With the keyboard DOWN it must go. An Android WebView keeps the field focused when the keyboard is
+ * put away (Back, Gboard's arrow), and Chromium raises the keyboard again on ANY tap while an editable
+ * element holds focus - so a "+" that kept focus brought the keyboard back instead of its menu, and
+ * the rising keyboard then closed the menu (`keyboardOpened`). Mi 9T, 1.5.1-alpha.7, 2026-10-29: 5
+ * entries in the menu once the field was blurred, the keyboard and no menu while it was not; the
+ * owner's report on 1.5.0, since #1345 (first stable 1.0.1).
+ */
+export function menuPressKeepsFocus(keyboardOpen: boolean): boolean {
+  return keyboardOpen;
+}
+
 /** Whether a state keeps a history entry, so Back closes it (`historyOverlayStack`). */
 export function surfaceTakesBack(state: ComposerSurface): boolean {
   return state === 'menu' || state === 'gif';

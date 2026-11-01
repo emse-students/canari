@@ -18,7 +18,9 @@ use super::background::{
     parse_outbox_entries_json, process_welcome_background_with_key,
     send_messages_background_with_key, GrainePush, PushFrame,
 };
-use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
+use super::proto_fields::{
+    build_call_hangup_app_message, build_read_watermark_app_message, build_text_app_message,
+};
 use super::push_text::PushLanguage;
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
@@ -548,6 +550,33 @@ pub unsafe extern "C" fn canari_native_build_read_watermark_proto(at: i64) -> *m
         .into_raw()
 }
 
+/// Builds the call hangup (base64, heap-allocated C string) the CallKit Decline sends - the frame
+/// the in-app Decline sends, so the caller's ring ends at once ([`build_call_hangup_app_message`]).
+/// `end_reason` is the wire value of `CallEndReason` (DECLINED = 2). Empty on a null argument.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_build_call_hangup_proto(
+    message_id: *const c_char,
+    sent_at: i64,
+    call_id: *const c_char,
+    device_id: *const c_char,
+    end_reason: u32,
+) -> *mut c_char {
+    if message_id.is_null() || call_id.is_null() || device_id.is_null() {
+        log::error!("[CALL_DECLINE] canari_native_build_call_hangup_proto: null argument");
+        return CString::new("").unwrap().into_raw();
+    }
+    let bytes = build_call_hangup_app_message(
+        &str_from_c_str(message_id),
+        sent_at,
+        &str_from_c_str(call_id),
+        &str_from_c_str(device_id),
+        end_reason,
+    );
+    CString::new(STANDARD.encode(&bytes))
+        .unwrap_or_else(|_| CString::new("").expect("static empty"))
+        .into_raw()
+}
+
 /// Prunes `mls_pending.db`. Returns 1 on success.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_char) -> i32 {
@@ -569,6 +598,39 @@ pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_ch
 pub extern "C" fn canari_ios_on_resume() {
     mark_foreground_active();
     log::debug!("[iOS] canari_ios_on_resume: garde foreground rafraichie");
+}
+
+/// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
+/// CallKit ring of an app in front stands back only when this is true.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
+    crate::page_ring::page_rings_in_app()
+}
+
+/// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
+/// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
+/// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.
+///
+/// # Safety
+/// `call_id` must be null or a valid null-terminated C string for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_page_rings_call(call_id: *const c_char) -> bool {
+    if call_id.is_null() {
+        log::error!("[CALL_RING] canari_ios_page_rings_call: a null call id - rings no call");
+        return false;
+    }
+    crate::page_ring::page_rings_call(&str_from_c_str(call_id))
+}
+
+/// Registers the native listener told when the page STARTS ringing a call (`page_ring`): the
+/// iPhone ends that call's unanswered CallKit ring when the app is active. Registered by
+/// `CanariCallKitSetup` rather than linked, since this crate is linked into the notification
+/// extension too, where that function does not exist.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_page_ringing_listener(
+    listener: Option<crate::page_ring::PageRingingListener>,
+) {
+    crate::page_ring::set_page_ringing_listener(listener);
 }
 
 /// Signals the move to background (diagnostic log).

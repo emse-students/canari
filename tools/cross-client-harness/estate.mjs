@@ -91,6 +91,7 @@ export const psql = E.psql;
  *
  * @param {string} service the compose service name, e.g. `social-service`
  * @param {string} since a docker `--since` value: an ISO instant, or `900s`
+ * @param {{timestamps?: boolean}} [opts] `timestamps`: each line prefixed with docker's receive instant
  * @returns {string[]} the window's lines, trimmed, in order
  */
 export const srvLines = E.srvLines;

@@ -1,7 +1,7 @@
 /**
  * NO REQUEST BODY CAN EXCEED THE HOST WAF'S LIMIT (10 MiB, measured 2026-10-10).
  *
- * A 13.4 MB PDF went up as ONE body, the school-managed CrowdSec AppSec in front of production
+ * A 13.4 MB PDF went up as ONE body, the school-managed WAF in front of production
  * dropped it, and the client read a 403 ban page as "transient" and retried for ever. Every upload
  * body is now at most 8 MiB: a bigger file takes the chunked route. This test sends files around the
  * budget through the real `MediaService` and measures what each request carried.

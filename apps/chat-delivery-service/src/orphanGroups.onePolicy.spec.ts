@@ -16,6 +16,8 @@ import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
 import { SeatEviction } from './entities/seat-eviction.entity';
+import { JoinAskPush } from './entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -56,6 +58,8 @@ const SWEPT = [
   GroupInvite,
   GroupMembershipInterval,
   SeatEviction,
+  JoinAskPush,
+  RevokedDeviceGroup,
   UserDismissedGroup,
 ];
 
@@ -75,6 +79,8 @@ const FAKE_TABLE = new Map<unknown, string>([
   [GroupInvite, 'table_of_invite'],
   [GroupMembershipInterval, 'table_of_membership_interval'],
   [SeatEviction, 'table_of_seat_eviction'],
+  [JoinAskPush, 'table_of_join_ask_push'],
+  [RevokedDeviceGroup, 'table_of_revoked_device_group'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 

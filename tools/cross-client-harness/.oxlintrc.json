@@ -6,6 +6,9 @@
     "browser": false,
     "node": true
   },
+  "globals": {
+    "Bun": "readonly"
+  },
   "ignorePatterns": ["logs/**", "node_modules/**"],
   "rules": {
     "eslint/no-unused-vars": [
@@ -14,6 +17,7 @@
         "argsIgnorePattern": "^_",
         "varsIgnorePattern": "^_"
       }
-    ]
+    ],
+    "eslint/no-undef": "error"
   }
 }
