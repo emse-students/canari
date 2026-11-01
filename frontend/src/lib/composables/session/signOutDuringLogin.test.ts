@@ -195,6 +195,7 @@ function session(clients: IMlsService[], pin = '') {
     beginConversationSource: vi.fn(),
     endConversationSource: vi.fn(),
     loadAndRestoreConversations: vi.fn(async () => {}),
+    seedConversationRows: vi.fn(async () => {}),
     saveConversation: vi.fn(async () => {}),
     onLoginFailed: vi.fn(),
     onSessionExpired: vi.fn(),
@@ -360,6 +361,28 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.getIsLoginInProgress()).toBe(false);
     expectQuietStop(s);
     expect(logs(s.cb)).toContain('after open-gateway');
+  });
+
+  it('seeds the conversation rows before the inbound gate opens, and replays only after the gateway', async () => {
+    // A frame let in before its row exists is refused `absent-conversation` and read twice (iPhone
+    // 12, 2026-11-01): the rows must be in the map when the gate opens, the history after the socket.
+    const order: string[] = [];
+    const a = fakeClient();
+    a.known.markInboundReady.mockImplementation(async () => {
+      order.push('inbound-gate');
+    });
+    const s = session([a.client]);
+    (s.cb.seedConversationRows as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('seed');
+    });
+    (s.cb.loadAndRestoreConversations as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('history');
+    });
+    const login = loginImpl(s.ctx, s.cb);
+    await gatewayReached.promise;
+    order.push('gateway');
+    await login;
+    expect(order).toEqual(['seed', 'inbound-gate', 'gateway', 'history']);
   });
 
   it('an await that REJECTS after the sign-out is the sign-out, not a failed login', async () => {

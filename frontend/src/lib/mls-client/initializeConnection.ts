@@ -191,35 +191,21 @@ export async function openGatewayConnection(
     // Register the disconnect handler BEFORE fetching pending messages
     // to avoid missing a WebSocket close that happens during the fetch.
     mlsService.onDisconnect(scheduleReconnect);
-    const catchUp = async (): Promise<void> => {
-      // A COMMIT WHOSE OUTCOME IS UNKNOWN IS ANSWERED BEFORE ANYTHING IS READ: the pending frames
-      // may be sealed at the epoch it creates, readable only once it is merged (`commitSubmission.ts`).
-      try {
-        await mlsService.settleUnresolvedCommits();
-      } catch (e) {
-        log(`[WARN] Failed to settle unresolved commits: ${String(e)}`);
-      }
-      try {
-        await mlsService.fetchPendingMessages();
-      } catch (e) {
-        log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
-      }
-      // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
-      // server holds, so a call joined from here derives its keys and sends its notices there.
-      deps.onCaughtUp();
-    };
-    // A FRAME READ BEFORE ITS CONVERSATION ROW EXISTS IS REFUSED, so the pull waits for the rows. At
-    // a login the socket opens BEFORE the restore (see `sessionAuth`), and this pull used to drain
-    // the mailbox into an empty map: every frame `absent-conversation`, fetched a second time once
-    // the rows were seeded (iPhone 12, `1.5.4-alpha.1`, 2026-11-01). Held, it is run by the restore
-    // the moment its rows exist - an ORDER, not a delay - and a reconnect, whose rows exist, runs it
-    // here as it always did. NOT awaited when held: the login awaits this function BEFORE it starts
-    // the restore that will run it.
-    if (mlsService.deferUntilConversationRowsExist(catchUp)) {
-      log('[QUEUE] post-connect catch-up held until the conversation rows exist');
-    } else {
-      await catchUp();
+    // A COMMIT WHOSE OUTCOME IS UNKNOWN IS ANSWERED BEFORE ANYTHING IS READ: the pending frames may
+    // be sealed at the epoch it creates, readable only once it is merged (`commitSubmission.ts`).
+    try {
+      await mlsService.settleUnresolvedCommits();
+    } catch (e) {
+      log(`[WARN] Failed to settle unresolved commits: ${String(e)}`);
     }
+    try {
+      await mlsService.fetchPendingMessages();
+    } catch (e) {
+      log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
+    }
+    // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
+    // server holds, so a call joined from here derives its keys and sends its notices there.
+    deps.onCaughtUp();
 
     if (typeof window !== 'undefined') {
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the

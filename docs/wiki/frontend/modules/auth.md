@@ -103,8 +103,9 @@ bundle that wires its handler, and there is no interval in which it is visible b
 | Phase | What it does |
 |---|---|
 | `setup_handler` | registers the inbound pipeline, so nothing can arrive unhandled |
+| `seed_conversations` | one row per stored conversation, from the local store only, BEFORE `markInboundReady` lets any frame in (2026-11-01, [mobile](../mobile.md#the-ios-half-a-message-is-announced-once-by-id-2026-11-01)) |
 | `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler` |
-| `load_conversations` | the archive replay out of the local store, one conversation at a time |
+| `load_conversations` | the history half of the restore: each seeded conversation's stored page and archive replay |
 | `fcm_cache` | merges what a background notification decrypted while the app was dead |
 | `initialize_connection` | `syncConnectionAfterWsOpen` - KeyPackages, the group sweep, reconciliation |
 

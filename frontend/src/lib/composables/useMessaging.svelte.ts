@@ -709,16 +709,14 @@ export function useMessaging() {
     // every row this device never acknowledged - and a push the iOS extension decrypted and
     // presented acknowledges nothing - so the same message arrives a second time as an "arrival"
     // (iPhone 12, `1.5.4-alpha.1`, 2026-11-01: "K2 group killed 0724" presented twice). Asked by
-    // MESSAGE ID against a durable record, and claimed in the same tick, so two decisions about one
-    // message cannot both pass (`notifiedMessages.ts`).
-    const unannounced = unnotifiedOf(ctx.userId, messageIds);
-    if (messageIds.length > 0 && unannounced.length === 0) {
+    // MESSAGE ID against a durable record (`notifiedMessages.ts`) - here, and again after the push
+    // cache is read below, where the claim is made in the same tick as the last check.
+    if (messageIds.length > 0 && unnotifiedOf(ctx.userId, messageIds).length === 0) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already notified on this device; nothing raised.`
       );
       return;
     }
-    recordNotified(ctx.userId, unannounced);
     // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
     // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
     // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message
@@ -740,16 +738,32 @@ export function useMessaging() {
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
     void (async () => {
-      // WHAT THE iOS EXTENSION ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
+      // WHAT THE iOS SYSTEM ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
       // cache here, at the decision: the take that records it runs after this drain
       // (`pushCacheMessageIds`). Empty off iOS.
       const presented = await pushCacheMessageIds();
-      if (unannounced.length > 0 && unannounced.every((id) => presented.has(id))) {
+      // ASKED AGAIN AFTER THE AWAIT, AND CLAIMED IN THE SAME TICK: another decision about the same
+      // message (a live frame and the flush that follows it) may have claimed it meanwhile, and
+      // nothing between this check and the claim yields, so only one of them can pass.
+      const unannounced = unnotifiedOf(ctx.userId, messageIds);
+      recordNotified(ctx.userId, unannounced);
+      if (messageIds.length > 0 && unannounced.length === 0) {
+        console.log(
+          `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) claimed by another notification meanwhile; nothing raised.`
+        );
+        return;
+      }
+      // Recorded above WITH the presented ones - they were announced, by the extension.
+      const owed = unannounced.filter((id) => !presented.has(id));
+      if (messageIds.length > 0 && owed.length === 0) {
         console.log(
           `[NOTIF] Inbound in ${conversationKey} - the notification extension already presented it; nothing raised.`
         );
         return;
       }
+      // THE BANNER STANDS FOR WHAT IT ANNOUNCES, not for what the flush carried: a message already
+      // announced is not counted in it again.
+      const announced = messageIds.length > 0 ? owed.length : covers;
       // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
       const senderName = await resolveNotificationSenderName(senderId, convo);
       ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
@@ -763,9 +777,12 @@ export function useMessaging() {
         body: notificationBody,
         mentionsMe,
         sentAt,
-        covers,
+        covers: announced,
       });
-    })();
+    })().catch((e: unknown) => {
+      // EVERY SWALLOWED BRANCH LOGS: a rejection here is a banner owed and not raised.
+      console.error(`[NOTIF] Inbound in ${conversationKey} - the notification was not raised:`, e);
+    });
   }
 
   /**

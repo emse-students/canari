@@ -15,7 +15,7 @@ import {
 import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
-import type { IStorage, StoredMessage } from '$lib/db';
+import type { ConversationMeta, IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import { Log } from '$lib/utils/Log';
 import type {
@@ -85,6 +85,9 @@ import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer'
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
+  replayConversationHistories,
+  seedConversationRows,
+  type LoadConversationsContext,
   purgeConversation,
   retireConversation,
   toConversationMeta,
@@ -1146,6 +1149,12 @@ export function useConversations() {
     owedArchives: Set<string>;
     /** Unsubscribes the one reconnect listener that replays {@link owedArchives}; null when none is armed. */
     owedReconnectOff: (() => void) | null;
+    /**
+     * What {@link seedConversationRowsAhead} seeded and no restore has replayed yet. The next restore
+     * of this generation takes it and runs only its history phase: seeding again would rebuild every
+     * row and drop what a live frame wrote into it since.
+     */
+    seeded: ConversationMeta[] | null;
   }
 
   function newRestoreGeneration(id: number): RestoreGeneration {
@@ -1159,6 +1168,7 @@ export function useConversations() {
       // A `SvelteSet` only because the lint asks for one in a `.svelte.ts`; nothing renders it.
       owedArchives: new SvelteSet(),
       owedReconnectOff: null,
+      seeded: null,
     };
   }
 
@@ -1326,34 +1336,90 @@ export function useConversations() {
     return run;
   }
 
-  /** One restore pass - see {@link loadAndRestoreConversations} for why passes never overlap. */
-  async function restoreOnce(gen: RestoreGeneration, ctx: ConversationContext) {
-    if (!ctx.storage) return;
-    // The restore supersedes any local preview: from here the map is the session's.
+  /**
+   * The loader's context for one pass of `gen`, into the session's map. Also where a pass takes the
+   * map over from the local landing preview: from here the map is the session's.
+   */
+  function restoreLoadContext(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    storage: IStorage,
+    mlsService: IMlsService
+  ): LoadConversationsContext {
     landingPreviewKey = null;
     landingPreviewOwner = null;
+    return {
+      // The landing target stays pending while it is displayed, so this keeps the thread on
+      // screen through the rebuild - see `preserveMessagesOf`.
+      preserveMessagesOf: notifNav.pending,
+      userId: ctx.userId,
+      deviceKeyB64: ctx.deviceKeyB64,
+      storage,
+      mlsService,
+      conversations,
+      messageReactions: ctx.messageReactions,
+      archivedConversationIds: [],
+      historyBaseUrl: ctx.historyBaseUrl,
+      log: ctx.log,
+      onArchivedIdsChange: () => {},
+      onArchiveReplaysSkipped: (ids) => oweArchiveReplays(gen, ctx, ids),
+    };
+  }
+
+  /**
+   * Seeds one row per stored conversation NOW, and leaves the history phase to the next restore.
+   *
+   * THE LOGIN RUNS THIS BEFORE IT OPENS THE INBOUND GATE (`markInboundReady`), so no frame - live,
+   * held or pulled - can meet a map without its conversation. Until 2026-11-01 the rows were seeded
+   * by the restore, which runs after the gateway: on a cold start every queued frame met an empty
+   * map, was refused `absent-conversation`, and was fetched a second time once the rows existed
+   * (iPhone 12, `1.5.4-alpha.1`). The seed reads the local store only; the history phase, whose
+   * barriers need the socket, still runs after it (`loadAndRestoreConversations`, which takes what
+   * this seeded rather than seeding again).
+   *
+   * One restore at a time holds for it too: it runs as its generation's restore, so an ask made
+   * meanwhile queues behind it. Should a restore already be running, that restore seeds the rows
+   * itself, and this waits for it.
+   */
+  function seedConversationRowsAhead(ctx: ConversationContext): Promise<void> {
+    const gen = restoreGeneration;
+    const storage = ctx.storage;
+    if (!storage) {
+      ctx.log('[RESTORE] no store open - no conversation row to seed ahead of the inbound gate');
+      return Promise.resolve();
+    }
+    if (gen.running || gen.queued) {
+      ctx.log('[RESTORE] a restore is already running - its own seed is awaited instead');
+      return (gen.queued ?? gen.running) as Promise<void>;
+    }
+    const run = (async () => {
+      const mlsService = ctx.ensureMls();
+      const seeded = await seedConversationRows(restoreLoadContext(gen, ctx, storage, mlsService));
+      // A generation retired meanwhile keeps nothing for a restore that will never run in it.
+      if (!gen.retired) gen.seeded = seeded;
+    })().finally(() => {
+      if (gen.running === run) gen.running = null;
+    });
+    gen.running = run;
+    return run;
+  }
+
+  /** One restore pass - see {@link loadAndRestoreConversations} for why passes never overlap. */
+  async function restoreOnce(gen: RestoreGeneration, ctx: ConversationContext) {
+    const storage = ctx.storage;
+    if (!storage) return;
     // THE CLIENT THIS PASS RESTORED INTO, named once: asking `ensureMls()` again at the end would
     // CREATE a client if a sign-out retired this one meanwhile.
     let mlsService: IMlsService | null = null;
     let restored = false;
     try {
       mlsService = ctx.ensureMls();
-      await loadExistingConversations({
-        // The landing target stays pending while it is displayed, so this keeps the thread on
-        // screen through the rebuild - see `preserveMessagesOf`.
-        preserveMessagesOf: notifNav.pending,
-        userId: ctx.userId,
-        deviceKeyB64: ctx.deviceKeyB64,
-        storage: ctx.storage,
-        mlsService,
-        conversations,
-        messageReactions: ctx.messageReactions,
-        archivedConversationIds: [],
-        historyBaseUrl: ctx.historyBaseUrl,
-        log: ctx.log,
-        onArchivedIdsChange: () => {},
-        onArchiveReplaysSkipped: (ids) => oweArchiveReplays(gen, ctx, ids),
-      });
+      // What the login seeded ahead of the inbound gate is replayed, never seeded twice.
+      const seeded = gen.seeded;
+      gen.seeded = null;
+      const loadCtx = restoreLoadContext(gen, ctx, storage, mlsService);
+      if (seeded) await replayConversationHistories(loadCtx, seeded);
+      else await loadExistingConversations(loadCtx);
       restored = true;
     } finally {
       // A pass whose session ended speaks for nobody: the map is the next session's to mark, and
@@ -2635,6 +2701,7 @@ export function useConversations() {
     noteLiveStreamTransition,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
+    seedConversationRowsAhead,
     invalidateRestores,
     forgetUnconfirmedSalonDraws,
     /** Prepends an older page of messages from IndexedDB to the conversation. */

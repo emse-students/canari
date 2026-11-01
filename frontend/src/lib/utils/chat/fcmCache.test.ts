@@ -106,11 +106,26 @@ beforeEach(() => {
  * by the app after the cold start that followed).
  */
 describe('the push cache is the record of what the extension presented', () => {
-  it('records every taken id as notified on iOS, even one the injection drops', async () => {
+  it('records every taken id the extension presented on iOS, even one the injection drops', async () => {
     platform.ios = true;
+    taking([{ ...pushEntry(), presented: true }]);
     const { storage } = fakeStorage(envelopeRow());
     await consumeFcmCache(KEY, storage, SELF);
     expect(recordNotified).toHaveBeenCalledWith(SELF, [MESSAGE_ID]);
+  });
+
+  it('records no entry written in the foreground, nor one an older build wrote without the field', async () => {
+    // In the foreground the app's delegate shows no remote push: the page's banner is the only one,
+    // and recording the id would suppress it. A missing field is not proof of a banner either.
+    platform.ios = true;
+    taking([
+      { ...pushEntry(), messageId: 'fg', presented: false },
+      { ...pushEntry(), messageId: 'old' },
+      { ...pushEntry(), messageId: 'bg', presented: true },
+    ]);
+    const { storage } = fakeStorage(null);
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(recordNotified).toHaveBeenCalledWith(SELF, ['bg']);
   });
 
   it('records nothing off iOS, where an entry does not prove a banner', async () => {

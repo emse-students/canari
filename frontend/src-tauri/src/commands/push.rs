@@ -454,14 +454,19 @@ pub(crate) async fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
 /// `1.5.4-alpha.1`, 2026-11-01). It is read at the decision rather than learned from the take,
 /// because the take runs after the drain that decides, on a cold start and on a resume alike.
 ///
-/// A sealed line this key does not open, or any line with no key, names no id: the answer is then
-/// "not known presented", which costs a duplicate banner and never a missing one.
+/// ONLY AN ENTRY THE EXTENSION MARKED `"presented": true` NAMES AN ID. The extension writes an entry
+/// in the foreground too, where the app's notification delegate shows no remote push and the page
+/// raises its own banner - such an entry is a message nobody has seen announced, and counting it
+/// would suppress the only banner it gets. An entry without the field (written by an older build)
+/// is not known presented either. A sealed line this key does not open, or any line with no key,
+/// names no id. Every "not known" costs a duplicate banner and never a missing one.
 pub(crate) fn push_cache_message_ids_in(
     dirs: &[&std::path::Path],
     key: Option<&CacheKey>,
 ) -> Vec<String> {
     let mut ids = Vec::new();
     let mut unopened = 0usize;
+    let mut not_presented = 0usize;
     for dir in dirs {
         let mut names: Vec<String> = taken_files(dir).into_iter().map(|(_, n)| n).collect();
         names.push(FCM_CACHE_FILE.to_string());
@@ -491,19 +496,39 @@ pub(crate) fn push_cache_message_ids_in(
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&opened) else {
                     continue;
                 };
-                if let Some(id) = value["messageId"].as_str().filter(|s| !s.is_empty()) {
+                let Some(id) = value["messageId"].as_str().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                if value["presented"].as_bool() == Some(true) {
                     ids.push(id.to_string());
+                } else {
+                    not_presented += 1;
                 }
             }
         }
     }
-    if unopened > 0 {
+    if not_presented > 0 {
+        log::debug!(
+            "[FCM_CACHE] {not_presented} entr(ies) not marked presented (written in the foreground, or by an older build) - not counted"
+        );
+    }
+    // ONCE PER PROCESS: this is asked before every banner, and an install without its key would
+    // otherwise say the same thing for every message of the session.
+    if unopened > 0 && !UNOPENED_SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
         log::warn!(
-            "[FCM_CACHE] {unopened} sealed line(s) not opened - their messages are not known presented"
+            "[FCM_CACHE] {unopened} sealed line(s) not opened - their messages are not known presented (said once per process)"
         );
     }
     ids
 }
+
+/// Whether [`push_cache_message_ids_in`] already said, in this process, that it met sealed lines it
+/// could not open.
+static UNOPENED_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether [`push_cache_message_ids`] already said, in this process, that it has no cache key.
+#[cfg(mobile)]
+static NO_KEY_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// [`push_cache_message_ids_in`] on the app's data directory and, on iOS, the App Group container,
 /// where the extension writes and from where `CanariDrainAppGroupFcmCache` carries its lines over
@@ -519,7 +544,17 @@ pub(crate) async fn push_cache_message_ids(app: tauri::AppHandle) -> Vec<String>
             }
         };
         #[cfg(mobile)]
-        let key = crate::native_cache::app_cache_key(&app).ok();
+        let key = match crate::native_cache::app_cache_key(&app) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                if !NO_KEY_SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    log::warn!(
+                        "[FCM_CACHE] no native cache key - no sealed push-cache line is known presented (said once per process): {e}"
+                    );
+                }
+                None
+            }
+        };
         #[cfg(not(mobile))]
         let key: Option<CacheKey> = None;
         #[cfg(target_os = "ios")]
@@ -2644,6 +2679,17 @@ mod fcm_cache_take_tests {
         std::fs::write(d.join(FCM_CACHE_FILE), format!("{line}\n")).unwrap();
     }
 
+    /// One sealed entry the extension wrote, with its `presented` field as given (`None`: absent).
+    fn push_presented(d: &std::path::Path, id: &str, presented: Option<bool>) {
+        let field = presented.map_or(String::new(), |p| format!(",\"presented\":{p}"));
+        let line = seal_line(
+            &KEY,
+            Purpose::PushCache,
+            &format!("{{\"messageId\":\"{id}\"{field}}}"),
+        );
+        std::fs::write(d.join(FCM_CACHE_FILE), format!("{line}\n")).unwrap();
+    }
+
     /// THE UPGRADE: lines an older build wrote in the clear are still taken beside sealed ones,
     /// and the ack deletes the file - which is their migration.
     #[test]
@@ -2783,11 +2829,11 @@ mod fcm_cache_take_tests {
     fn the_ids_are_read_everywhere_and_nothing_is_taken() {
         let d = dir("ids-app");
         let group = dir("ids-group");
-        push(&d, "taken");
+        push_presented(&d, "taken", Some(true));
         let first = take_fcm_cache_in(&d, Some(&KEY));
         assert_eq!(first.files.len(), 1);
-        push(&d, "live");
-        push(&group, "extension");
+        push_presented(&d, "live", Some(true));
+        push_presented(&group, "extension", Some(true));
         let mut found =
             super::push_cache_message_ids_in(&[d.as_path(), group.as_path()], Some(&KEY));
         found.sort();
@@ -2805,10 +2851,14 @@ mod fcm_cache_take_tests {
     #[test]
     fn a_sealed_line_names_no_id_without_the_key() {
         let d = dir("ids-nokey");
-        let sealed = seal_line(&KEY, Purpose::PushCache, "{\"messageId\":\"sealed\"}");
+        let sealed = seal_line(
+            &KEY,
+            Purpose::PushCache,
+            "{\"messageId\":\"sealed\",\"presented\":true}",
+        );
         std::fs::write(
             d.join(FCM_CACHE_FILE),
-            format!("{{\"messageId\":\"plain\"}}\n{sealed}\n"),
+            format!("{{\"messageId\":\"plain\",\"presented\":true}}\n{sealed}\n"),
         )
         .unwrap();
         assert_eq!(
@@ -2816,6 +2866,25 @@ mod fcm_cache_take_tests {
             vec!["plain"]
         );
         std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// AN ENTRY WRITTEN IN THE FOREGROUND SUPPRESSES NOTHING: the app's delegate showed no banner for
+    /// it, so the page's own is the only one. Nor does an entry an older build wrote without the
+    /// field - a duplicate is acceptable, a missing banner is not.
+    #[test]
+    fn only_an_entry_marked_presented_names_its_id() {
+        let d = dir("ids-presented");
+        let group = dir("ids-presented-group");
+        push_presented(&d, "older-build", None);
+        let _ = take_fcm_cache_in(&d, Some(&KEY));
+        push_presented(&d, "background", Some(true));
+        push_presented(&group, "foreground", Some(false));
+        assert_eq!(
+            super::push_cache_message_ids_in(&[d.as_path(), group.as_path()], Some(&KEY)),
+            vec!["background"]
+        );
+        std::fs::remove_dir_all(&d).ok();
+        std::fs::remove_dir_all(&group).ok();
     }
 
     /// A line that will not parse costs only itself, as it did before.

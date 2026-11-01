@@ -77,10 +77,14 @@ describe('loginImpl and the landing preview', () => {
     expect(loginBody).toContain('cb.discardLandingPreview?.(reason, loginId);');
   });
 
-  it('lets the preview land before the restore rebuilds the map', () => {
-    expect(at(loginBody, 'if (landingPreview) await landingPreview;')).toBeLessThan(
-      at(loginBody, 'await cb.loadAndRestoreConversations();')
+  it('lets the preview land before the seed rebuilds the map', () => {
+    // The LAST wait on the preview is the session's; the first belongs to the revocation exit.
+    const seed = at(loginBody, 'await cb.seedConversationRows();');
+    const waits = [...loginBody.matchAll(/if \(landingPreview\) await landingPreview;/g)].map(
+      (m) => m.index ?? -1
     );
+    expect(waits.filter((i) => i < seed).length).toBeGreaterThan(1);
+    expect(waits.every((i) => i < seed)).toBe(true);
   });
 
   it('registers the outbox in the same synchronous run that sets isLoggedIn (held sends rely on it)', () => {

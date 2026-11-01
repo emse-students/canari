@@ -995,6 +995,7 @@
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
+      seedConversationRows: () => globalConvs.seedConversationRowsAhead(convCtx()),
       invalidateRestores: () => globalConvs.invalidateRestores(),
       forgetUnconfirmedSalonDraws: () => globalConvs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => globalConvs.beginConversationSource(),

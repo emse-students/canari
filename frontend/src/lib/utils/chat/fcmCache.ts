@@ -69,6 +69,13 @@ interface FcmCacheEntry {
    * guessing). Absent is NOT `false`.
    */
   isGroup?: boolean;
+  /**
+   * iOS only: whether the system PRESENTED this push, as the notification extension read it from
+   * the app's foreground flag when it wrote the entry. `false` in the foreground, where the app's
+   * delegate shows no remote push and the page raises its own banner. Absent on Android and on an
+   * entry an older build wrote - and absent is NOT presented (`notifiedMessages.ts`).
+   */
+  presented?: boolean;
   content: string;
   timestamp: number;
   type: string;
@@ -213,14 +220,15 @@ interface TakenFile {
 }
 
 /**
- * The ids of the messages the iOS notification extension decrypted for a banner and the app has
- * not taken yet - read from the cache files, nothing moved (`push_cache_message_ids`).
+ * The ids of the messages the iOS system PRESENTED from a push the notification extension decrypted
+ * and the app has not taken yet - read from the cache files, nothing moved
+ * (`push_cache_message_ids`). Only entries the extension marked `presented` count: one written while
+ * the app was in front was shown by nobody, since the app's delegate shows no remote push then.
  *
  * ASKED AT THE DECISION, NOT LEARNED FROM THE TAKE: on a cold start and on a resume alike the drain
  * that decides a banner runs before the take, so the ids the take records come too late for it.
  *
- * iOS ONLY, AND THAT IS NOT A SHORTCUT. On iOS the extension builds the banner for every alert push
- * it decrypts, so an entry is a banner shown. Android's native side writes an entry for a frame it
+ * iOS ONLY, AND THAT IS NOT A SHORTCUT. Android's native side writes an entry for a frame it
  * decrypts in the FOREGROUND too, where it suppresses its banner and the app's own decision is the
  * only one - an entry there proves nothing about a banner, and its builder de-duplicates on its own
  * (`canari_alerted_messages`). Empty elsewhere, and empty - said - when the native side does not
@@ -285,11 +293,15 @@ async function consumeFcmCacheOnce(
   // WHAT THE EXTENSION PRESENTED IS RECORDED AS NOTIFIED BEFORE ANYTHING ELSE, whatever the
   // injection then does with each entry: the take is the moment these ids stop being readable from
   // the cache (`pushCacheMessageIds`), and a redelivery after it must still find them
-  // (`notifiedMessages.ts`). iOS only - see `pushCacheMessageIds` for why Android is not.
+  // (`notifiedMessages.ts`). ONLY an entry marked `presented` - one written in the foreground was
+  // never shown. iOS only - see `pushCacheMessageIds` for why Android is not.
   if (isIosTauriRuntime()) {
     recordNotified(
       userId,
-      entries.map((e) => e.messageId).filter((id): id is string => typeof id === 'string')
+      entries
+        .filter((e) => e.presented === true)
+        .map((e) => e.messageId)
+        .filter((id): id is string => typeof id === 'string')
     );
   }
   /**

@@ -161,5 +161,23 @@ describe('a message is announced once on a device', () => {
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    // The one banner stands for the one message it announces, not for the two the flush carried.
+    expect(sendSystemNotification.mock.calls[0][4]).toMatchObject({ covers: 1 });
+  });
+
+  it('two decisions about one message racing across the cache read raise ONE banner', async () => {
+    // Both pass the first check before either reads the push cache; the claim made after that read,
+    // in the same tick as a second check, is what lets only one of them through.
+    const a = coldStart();
+    const b = coldStart();
+    await Promise.all([
+      a.messaging.addMessageToChat(PEER, 'twice', CONVO, a.ctx, { messageId: 'race' }),
+      b.messaging.addMessageToChat(PEER, 'twice', CONVO, b.ctx, { messageId: 'race' }),
+    ]);
+    await settle();
+    await settle();
+    expect(
+      a.sendSystemNotification.mock.calls.length + b.sendSystemNotification.mock.calls.length
+    ).toBe(1);
   });
 });

@@ -859,8 +859,28 @@ export function restoredConversationRow(
  *
  * The function also runs a one-time localStorage migration, deduplicates direct
  * conversations, prunes stale archived IDs, and reclassifies DMs via `getUserGroups`.
+ *
+ * The two phases are also exported apart ({@link seedConversationRows},
+ * {@link replayConversationHistories}): the login runs the first before it lets any frame in.
  */
-export async function loadExistingConversations(ctx: LoadConversationsContext) {
+export async function loadExistingConversations(ctx: LoadConversationsContext): Promise<void> {
+  const metas = await seedConversationRows(ctx);
+  await replayConversationHistories(ctx, metas);
+}
+
+/**
+ * Phase 1 of {@link loadExistingConversations}: one row per stored conversation, no messages.
+ *
+ * LOCAL ONLY - the store and the map; no socket, no mailbox. That is what lets the login run it
+ * BEFORE `markInboundReady` (`sessionAuth`), so neither a live frame nor the post-connect pull can
+ * meet a map without its conversation (`absent-conversation`). The one network call it may make,
+ * the server-side delete of a merged duplicate DM, is plain HTTP and best effort.
+ *
+ * @returns the conversations it seeded, which {@link replayConversationHistories} replays
+ */
+export async function seedConversationRows(
+  ctx: LoadConversationsContext
+): Promise<ConversationMeta[]> {
   await migrateFromLocalStorage(ctx.userId, ctx.deviceKeyB64, ctx.storage, ctx.log);
 
   // WHAT THE MAP HELD WHEN THE STORE WAS READ, so the prune below can tell a row the read could not
@@ -982,13 +1002,26 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // to wait for every conversation's history replay. Phase 2 is safe against what this delivers
   // because each of its writes below MERGES into the row instead of replacing it, and each archive
   // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
-  //
-  // AWAITED: at a login it returns the catch-up the socket held until these rows existed (settle,
-  // pull, drain - `deferUntilConversationRowsExist`), so phase 2 starts after that drain instead of
-  // pulling the mailbox from its own barrier first.
   ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
-  await ctx.mlsService.notifyConversationRowsSeeded();
+  ctx.mlsService.notifyConversationRowsSeeded();
+  return mergedConvMetas;
+}
 
+/**
+ * Phase 2 of {@link loadExistingConversations}: each seeded conversation's stored page, then its
+ * archive replay.
+ *
+ * Separate from {@link seedConversationRows} because the two need different things: the seed reads
+ * the local store only, while every archive replay takes the mailbox barrier, which trusts a pull
+ * only while the socket is open (`settleBarrier`). So the login seeds BEFORE it opens the inbound
+ * gate and replays only once the gateway is up (`sessionAuth`).
+ *
+ * @param mergedConvMetas what {@link seedConversationRows} seeded, in its order
+ */
+export async function replayConversationHistories(
+  ctx: LoadConversationsContext,
+  mergedConvMetas: ConversationMeta[]
+): Promise<void> {
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.

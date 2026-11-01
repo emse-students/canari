@@ -720,8 +720,8 @@ export function useNotifications() {
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
-          // ON iOS THIS BANNER STANDS BESIDE THE EXTENSION'S, so it is headed like it: the group or
-          // the salon as the title, the sender beside the text (`pluginMessageBanner`).
+          // ON iOS THIS BANNER TAKES THE EXTENSION'S PLACE IN FRONT, so it is headed like it: the
+          // group or the salon as the title, the sender beside the text (`pluginMessageBanner`).
           const shown =
             isIosTauriRuntime() && native
               ? pluginMessageBanner(native, title, (sender, line) =>
@@ -746,12 +746,14 @@ export function useNotifications() {
           //
           // ANDROID NO LONGER REACHES HERE: the branch above asks the native builder instead, which
           // is the answer the last paragraph of this comment filed. What is left below is iOS IN
-          // THE FOREGROUND - the extension builds every banner of an app in the background, and
-          // `CanariShowMessageNotification` returns early in front, so this plugin call is the one
-          // banner an iPhone gets for a frame the socket delivered (measured on an iPhone 12,
-          // `1.5.4-alpha.1`, 2026-11-01) - and WEB and DESKTOP, where the plugin is the only builder
-          // there is. Desktop is a different implementation again (notify-rust) that no session has
-          // measured.
+          // THE FOREGROUND - and there THE PAGE NOTIFIES AND THE NATIVE SIDE STAYS SILENT: Canari's
+          // notification delegate owns `willPresent` and shows no remote push while the app is in
+          // front (#2843), and `CanariShowMessageNotification` returns early there, so this plugin
+          // call is the one banner an iPhone in front gets for a message. The extension still writes
+          // its push-cache entry, marked `presented: false`, so that entry suppresses nothing
+          // (`notifiedMessages.ts`). In the background the extension builds every banner. Then WEB
+          // and DESKTOP, where the plugin is the only builder there is. Desktop is a different
+          // implementation again (notify-rust) that no session has measured.
           //
           // `tauri-plugin-notification` 2.3.3 puts THREE extras on the tap intent: the notification
           // id, the action id, and `notification.sourceJson`. On the way back,

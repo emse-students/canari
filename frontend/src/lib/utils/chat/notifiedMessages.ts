@@ -14,9 +14,16 @@
  * redelivery happens. Not a clock: a redelivery can come a second or a week later.
  *
  * TWO WRITERS, ONE SET. The app records every message it raises a banner for, and the push cache's
- * ids are recorded when the app takes it (`consumeFcmCache`) - each entry is a message the extension
- * decrypted for a banner. What the extension wrote and the app has not taken yet is read straight
- * from the cache at decision time (`pushCacheMessageIds`), so neither ordering can let one through.
+ * ids are recorded when the app takes it (`consumeFcmCache`) - but only the entries the extension
+ * marked `presented`: one written while the app was in front was shown by nobody. What the
+ * extension wrote and the app has not taken yet is read straight from the cache at decision time
+ * (`pushCacheMessageIds`), so neither ordering can let one through.
+ *
+ * ONLY AN ID WHOSE BANNER IS KNOWN SHOWN SUPPRESSES ONE. Every "not known" - an entry without the
+ * field, a line the cache key cannot open, a record storage refuses - costs a duplicate banner,
+ * never a missing one. The extension keeps at most 50 entries, so a night of more than 50 pushes
+ * can push the oldest out before the app reads them, and their redelivery is announced a second
+ * time: accepted (2026-11-01).
  *
  * Bounded to the {@link NOTIFIED_MESSAGES_CAP} most recent ids: a redelivery concerns a message
  * still queued for this device, which is recent by construction.
@@ -27,6 +34,13 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 /** How many ids are kept - far above any backlog a notification could still be owed for. */
 export const NOTIFIED_MESSAGES_CAP = 2000;
 
+/**
+ * What has already been said in this process about the record failing, so a storage that refuses
+ * is said ONCE rather than before every banner of the session. Its consequence does not change from
+ * one message to the next, so a line per message would only teach its reader to skip it.
+ */
+const said = { unreadable: false, unwritable: false };
+
 /** The recorded ids of `userId`, oldest first; empty when nothing is stored or storage refuses. */
 function readNotified(userId: string): string[] {
   try {
@@ -36,8 +50,14 @@ function readNotified(userId: string): string[] {
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
   } catch (e) {
     // EVERY SWALLOWED BRANCH LOGS: an unreadable record is a record that suppresses nothing, which
-    // is the next duplicate banner - said where it starts.
-    console.warn('[NOTIF] the notified-messages record is unreadable - nothing is suppressed:', e);
+    // is the next duplicate banner - said where it starts, once per process.
+    if (!said.unreadable) {
+      said.unreadable = true;
+      console.warn(
+        '[NOTIF] the notified-messages record is unreadable - nothing is suppressed (said once per process):',
+        e
+      );
+    }
     return [];
   }
 }
@@ -67,6 +87,12 @@ export function recordNotified(userId: string, ids: readonly string[]): void {
   try {
     localStorage.setItem(ACCOUNT_KEY.notifiedMessages(userId), JSON.stringify(bounded));
   } catch (e) {
-    console.warn(`[NOTIF] ${fresh.length} notified message id(s) not recorded:`, e);
+    if (!said.unwritable) {
+      said.unwritable = true;
+      console.warn(
+        `[NOTIF] ${fresh.length} notified message id(s) not recorded - the record cannot be written (said once per process):`,
+        e
+      );
+    }
   }
 }

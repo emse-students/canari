@@ -2160,9 +2160,11 @@ Three things the seam carries, each load-bearing:
 
 **The plain builder is not deleted - it serves the web, the desktop, and an iPhone in the
 foreground** (corrected 2026-11-01: this paragraph said web and desktop only, and an iPhone 12 on
-`1.5.4-alpha.1` showed plugin banners in front - the extension builds every banner of an app in the
-background, and `CanariShowMessageNotification` returns early in front, so the plugin is the one
-builder an iPhone in the foreground has for a socket frame). The web and the desktop need nothing
+`1.5.4-alpha.1` showed plugin banners in front). **On an iPhone in front, the page notifies and the
+native side stays silent**: Canari's notification delegate owns `willPresent` and shows no remote
+push while the app is in front (#2843), and `CanariShowMessageNotification` returns early there, so
+the page's plugin banner is the only one. In the background the extension builds every banner. The
+web and the desktop need nothing
 else: neither registers with a push service - every command in `commands/push.rs` is
 `#[cfg(any(target_os = "android", target_os = "ios"))]` and the frontend ships no service worker -
 so on both the socket frame is the only trigger there has ever been. **On iOS the plugin banner is
@@ -2215,32 +2217,46 @@ iOS had no equivalent, and the app's own decision had no memory at all - its onl
 the in-memory map, which a cold start empties.
 
 `notifiedMessages.ts` is that memory: **a durable set of message ids per account** (`localStorage`,
-`ACCOUNT_KEY.notifiedMessages`, the 2000 most recent), asked by `notifyInbound` on both inbound paths
-and claimed in the same tick, so two decisions about one message cannot both pass. Two writers:
+`ACCOUNT_KEY.notifiedMessages`, the 2000 most recent), asked by `notifyInbound` on both inbound
+paths. The decision checks it, reads the push cache, then checks it AGAIN and claims the ids in that
+same tick, so two decisions about one message cannot both pass; a flush's banner counts (`covers`)
+only the messages it actually announces. Two writers:
 
 - **The app**, for every banner it decides to raise.
-- **The extension, through the push cache.** Every entry the NSE writes to `fcm_message_cache.ndjson`
-  is a message it decrypted for a banner. `consumeFcmCache` records the ids it takes, before the
-  ack erases them; and because the take runs AFTER the drain that decides - at a cold start and at a
-  resume, where `CanariDrainAppGroupFcmCache` only carries the App Group's lines over at the app's
-  activation - the decision also reads the ids still in the cache, the App Group's included
-  (`push_cache_message_ids`, `commands/push.rs`, read-only). **iOS only**: Android's native side
-  writes an entry for a frame it decrypts in the foreground too, where it suppresses its banner and
-  the app's decision is the only one, so an entry there proves nothing about a banner.
+- **The extension, through the push cache - but only for a banner the system PRESENTED.** The NSE
+  writes an entry to `fcm_message_cache.ndjson` for every message it decrypts, in the foreground
+  too, where nothing native is shown (above) and the page's banner is the only one. So each entry
+  carries `presented`, which the NSE reads from the App Group's `app_in_foreground` flag
+  (`CanariSetAppGroupForegroundFlag`): `false` in front, `true` behind. **Only an entry marked
+  `presented: true` counts**; an entry without the field (an older build) does not - a duplicate is
+  acceptable, a missing banner is not. `consumeFcmCache` records the presented ids it takes, before
+  the ack erases them; and because the take runs AFTER the drain that decides - at a cold start and
+  at a resume, where `CanariDrainAppGroupFcmCache` only carries the App Group's lines over at the
+  app's activation - the decision also reads the presented ids still in the cache, the App Group's
+  included (`push_cache_message_ids`, `commands/push.rs`, read-only). **iOS only**: Android's native
+  side writes an entry for a frame it decrypts in the foreground too, where it suppresses its banner
+  and the app's decision is the only one, so an entry there proves nothing about a banner.
 
 Not the shade (`getDeliveredNotifications`): a tapped or swiped notification is gone from it, which
 is exactly the T1 case. Not `sentAt`: the sender's clock orders nothing in a group.
 
-**And the cold start's first pull now waits for the conversation rows.** The same run showed the
-drain BEFORE the restore: `Message for absent conversation ... - retry after restore` three times,
+**A known duplicate, accepted (2026-11-01).** The extension keeps at most 50 entries
+(`maxFcmCacheEntries`), dropping the oldest. After a night of more than 50 pushes the oldest are gone
+before the app reads them, and when their rows are redelivered they are announced a second time.
+Every other "not known presented" is the same trade: a line the cache key cannot open, a record
+storage refuses (said once per process, not per message).
+
+**And the conversation rows exist before any frame is let in.** The same run showed the drain
+BEFORE the restore: `Message for absent conversation ... - retry after restore` three times,
 `3 frame(s) left unacknowledged ... absent-conversation: 3`, then `[RESTORE] 8 conversation row(s)
 seeded` and a second pull. The login opens the socket before the restore (the barrier needs it -
-see `sessionAuth`), and `openGatewayConnection` pulled the mailbox right after it. The post-connect
-catch-up (settle, pull, `onCaughtUp`) is now handed to `IMlsService.deferUntilConversationRowsExist`
-while no row exists, and run by the restore's `notifyConversationRowsSeeded` - which returns it, so
-the history phase starts after that drain instead of pulling from its own barrier first - or by
-`notifyConversationsRestored` when a restore failed before its rows. An order, not a delay; a
-reconnect, whose rows exist, runs it where it always did.
+see `sessionAuth`), and the restore seeded the rows only after the gateway, so the post-connect pull
+- like any held or live frame - met an empty map. The restore is now split
+(`seedConversationRows` / `replayConversationHistories`, `conversations.ts`): the login seeds the
+rows from the local store BEFORE `markInboundReady` (`useConversations.seedConversationRowsAhead`,
+phase `seed_conversations`), and the history phase, whose barriers need the socket, still runs after
+the gateway and replays what the seed returned instead of seeding again. No frame, held, live or
+pulled, can meet a map without its conversation, and nothing is held or delayed to get there.
 
 #### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 
