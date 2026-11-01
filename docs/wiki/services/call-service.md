@@ -338,6 +338,59 @@ contract, and `apps/chat-delivery-service/src/services/calls.service.spec.ts`
 (`the server-side call record`) for the invite half. Neither asserts a wall clock — only whether a
 duration is present or absent.
 
+## The end-to-end call in CI
+
+**Decided by the owner on 2026-11-01 (D3):** the SFU is kept working for the day the School opens
+UDP to it (D2, [group calls](../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)),
+and what proves it works is a CALL, run in CI on every change that touches it - never a compile, and
+never a by-hand session nobody repeats.
+
+`apps/call-service/e2e/run.mjs` (bun) is that call. The CI job `test-call-service-e2e`
+([cicd](../cicd.md#package-1-opening-a-pull-request-ciyml)) builds the binary, starts a throwaway
+coturn on the runner's own address (`docker run --network host`, a fresh credential per run) and
+runs:
+
+```sh
+bun apps/call-service/e2e/run.mjs --turn "turn:<ip>:3478?transport=udp" --turn-user e2e --turn-credential <pw>
+bun apps/call-service/e2e/run.mjs                 # a dev box, no TURN: host candidates, ~15 s
+```
+
+| Part | What it is |
+| --- | --- |
+| The service | the crate's own binary on `PORT=0`, its port read from its `listening on` line; `JWT_SECRET` and `CALL_ROOM_SECRET` random per run, `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` set, Cloudflare's variables EMPTY - the env path is the one under test |
+| The browsers | two headless Chromes (`tools/headless-chrome/chrome.mjs`, shared with the call audio rig) with Chrome's fake microphone, each with ONE peer connection - to the SFU - relay-only when a TURN server is given |
+| The E2E transform | the app's `frontend/src/lib/workers/encryption.worker.ts`, BUILT FROM SOURCE, keyed per direction with crossed test keys; transforms assigned in the task that created the sender, and in `ontrack` for a transceiver the SFU's offer created ([the rule](../durable-rules.md#calls-and-their-record---call-service)) |
+| The signalling | the service's real SFU protocol (`page.ts`): `Join { mode: "sfu" }`, `Joined`, the client's `Offer`, the SFU's `Answer`, the SFU's renegotiation `Offer` once the other participant publishes, trickled candidates both ways. The client has no SFU path since the 1:1 calls went peer to peer, so this page is the reference SFU client until WP-C11 writes the app's |
+| Stand-ins | the keys (fixed bytes, not an MLS export), the tokens (minted by the driver with the service's secrets, not by chat-delivery-service), no ring |
+
+**It passes only on proof** - each browser's worker DECRYPTED at least 250 audio frames under its
+receive key, which is the other browser's send key, with no decrypt failure; the sender encrypted as
+many; at least 250 inbound packets; with TURN, the selected candidate pair is `relay` on both
+browsers and the SFU logged `SFU using TURN_URL env` (so it ran relay-only too). A frame that opens
+was encrypted by the other participant and reached this one through the SFU, and through nothing
+else. Then the SFU's own record: `ice connected` and an audio `track published` for both peers, and,
+after both hang up, two `session end ... disposition=client-close` lines whose `connected_ms` is a
+number.
+
+**No clock decides it.** Every wait ends on a proof of success or of failure: the service or a
+Chrome exiting, `Refused`, a signalling socket closing before the hangup, a peer connection
+`failed`, the SFU's `ice Failed|Disconnected` for the room, a refused TURN allocation
+(`icecandidateerror` under a relay-only policy with one server), a frame that does not decrypt. A
+run in which NOTHING happens hangs, and the job's `timeout-minutes` is the only bound.
+
+**What it covers that nothing did before:** a browser peer, DTLS-SRTP between Chrome and webrtc-rs
+0.17, the SFU's forwarding loop carrying E2E-encrypted Opus untouched, the renegotiation path
+(`schedule_renegotiate`: the first participant receives the second's track by an SFU offer -
+`offer_out=1 answer_in=1` on its record), the ledger end to end, and a TURN relay on both legs.
+**What it does not:** video and the PLI relay, Cloudflare's TURN (production's provider; the
+School drops the UDP the SFU needs to reach it, [feasibility](../infrastructure/realtime-media-feasibility.md)),
+a phone, more than two participants. First measured on a Windows dev box (Chrome 156, no TURN,
+2026-11-01): PASS, ~250 frames each way decrypted, 0 failed.
+
+**No upgrade was needed to make it work**: webrtc-rs 0.17 places the call. The 0.20 port stays a
+separate decision ([calls](../frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)),
+and this call is what any port would have to pass.
+
 ## Environment variables
 
 | Variable | Required | Default | Description |

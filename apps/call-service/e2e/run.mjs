@@ -5,7 +5,7 @@
  * encrypted audio crossed the SFU in both directions.
  *
  *   bun apps/call-service/e2e/run.mjs                       # STUN-less, host candidates (a dev box)
- *   bun apps/call-service/e2e/run.mjs --turn turn:10.1.0.4:3478 --turn-user u --turn-credential p
+ *   bun apps/call-service/e2e/run.mjs --turn "turn:<ip>:3478?transport=udp" --turn-user u --turn-credential p
  *
  * `--bin <path>` (default: the crate's debug build), `--chrome <path>` (default: this machine's
  * Chrome), `--frames <n>` (default 250, five seconds of 20 ms Opus), `--keep` (keep the profiles
