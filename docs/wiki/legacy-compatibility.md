@@ -429,6 +429,21 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
 
+### No date yet - `push-now` answered 404, by a server older than the call (2026-11-01)
+
+**Site:** `MlsDeliveryApi.pushQueuedNow` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`
+(`pushNowLegacySaid`).
+**Shim (2026-11-01):** an iPhone page that is not active leaves its queued frames unconsumed and asks
+`POST /api/mls/messages/push-now` to bring their deferred push forward. An older chat-delivery has no
+such route and answers 404. The capability is read from that ANSWER, never guessed from a message:
+the 404 is said ONCE per session, and nothing else changes, because the call was only ever an
+acceleration - the rows are still queued, so the server's deferred push announces them ten seconds
+after it sent them, exactly as before. The client-side rule (leave the frame queued) needs nothing
+from the server at all.
+**Removal condition:** every estate's chat-delivery serves `push-now` (dev and production deployed
+past this change, no rollback below it planned); then a 404 there is a routing defect and the
+once-per-session line becomes an accusation. A server version, not a client floor.
+
 ### No date yet - the presence ids in a URL
 
 **Two halves, two conditions** ([chat-gateway](services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).

@@ -22,11 +22,18 @@ import type { IStorage, StoredMessage } from '$lib/db/types';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
+/** Which native platform the run is on - the extension's ids are recorded on iOS only. */
+const platform = { ios: false };
+vi.mock('$lib/utils/appVersion', () => ({ isIosTauriRuntime: () => platform.ios }));
+const recordNotified = vi.fn();
+vi.mock('$lib/utils/chat/notifiedMessages', () => ({
+  recordNotified: (...a: unknown[]) => recordNotified(...a),
+}));
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
-import { consumeFcmCache, placeholderIdentityForPushEntry } from './fcmCache';
+import { consumeFcmCache, placeholderIdentityForPushEntry, pushCacheMessageIds } from './fcmCache';
 
 const KEY = 'device-key-b64';
 const SELF = 'me-0000-0000';
@@ -89,7 +96,52 @@ const acks = () => invoke.mock.calls.filter(([cmd]) => cmd === 'ack_fcm_cache');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  platform.ios = false;
   taking([pushEntry()]);
+});
+
+/**
+ * WHAT THE iOS EXTENSION PRESENTED IS A MESSAGE ALREADY NOTIFIED - by id, and before the take erases
+ * it (iPhone 12, `1.5.4-alpha.1`, 2026-11-01: a message the extension had shown was announced again
+ * by the app after the cold start that followed).
+ */
+describe('the push cache is the record of what the extension presented', () => {
+  it('records every taken id the extension presented on iOS, even one the injection drops', async () => {
+    platform.ios = true;
+    taking([{ ...pushEntry(), presented: true }]);
+    const { storage } = fakeStorage(envelopeRow());
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(recordNotified).toHaveBeenCalledWith(SELF, [MESSAGE_ID]);
+  });
+
+  it('records no entry written in the foreground, nor one an older build wrote without the field', async () => {
+    // In the foreground the app's delegate shows no remote push: the page's banner is the only one,
+    // and recording the id would suppress it. A missing field is not proof of a banner either.
+    platform.ios = true;
+    taking([
+      { ...pushEntry(), messageId: 'fg', presented: false },
+      { ...pushEntry(), messageId: 'old' },
+      { ...pushEntry(), messageId: 'bg', presented: true },
+    ]);
+    const { storage } = fakeStorage(null);
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(recordNotified).toHaveBeenCalledWith(SELF, ['bg']);
+  });
+
+  it('records nothing off iOS, where an entry does not prove a banner', async () => {
+    const { storage } = fakeStorage(null);
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(recordNotified).not.toHaveBeenCalled();
+  });
+
+  it('reads the ids still in the cache on iOS, and asks nothing elsewhere', async () => {
+    invoke.mockResolvedValue(['a', 'b']);
+    expect([...(await pushCacheMessageIds())]).toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
+    platform.ios = true;
+    expect([...(await pushCacheMessageIds())]).toEqual(['a', 'b']);
+    expect(invoke).toHaveBeenCalledWith('push_cache_message_ids');
+  });
 });
 
 describe('consumeFcmCache never downgrades a row it did not write', () => {

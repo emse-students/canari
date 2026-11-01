@@ -29,6 +29,9 @@ static NSString *const kPendingPushSecretFileName = @"pending_push_secret.txt";
 static NSString *const kPushContextFileName = @"push_context.json";
 static NSString *const kMlsBinFileName = @"mls.bin";
 static NSString *const kFcmCacheFileName = @"fcm_message_cache.ndjson";
+/// What the drain renames the App Group's file to before copying it. MIRRORED BY
+/// `FCM_CACHE_DRAINING_FILE` in `commands/push.rs`, which reads it too.
+static NSString *const kFcmCacheDrainingFileName = @"fcm_message_cache.ndjson.draining";
 /// Cross-process hand-off: what the notification shade acknowledged while the app was not running.
 /// Read and cleared by the `read_and_clear_read_watermarks` Tauri command. Android twin: the same
 /// name in CanariFirebaseMessagingService.appendReadWatermark.
@@ -1296,20 +1299,36 @@ void CanariDrainAppGroupFcmCache(void) {
     return;
   }
   NSURL *srcUrl = [container URLByAppendingPathComponent:kFcmCacheFileName];
-  NSString *incoming = [NSString stringWithContentsOfURL:srcUrl
-                                                encoding:NSUTF8StringEncoding
-                                                   error:nil];
-  if (incoming.length == 0) {
-    return;
-  }
-  // Delete first: an NSE invocation racing this drain would otherwise have its entry read and
-  // then deleted anyway. Losing one costs latency only - the message is still in the pending
-  // queue, since a push decrypt acknowledges nothing.
-  [[NSFileManager defaultManager] removeItemAtURL:srcUrl error:nil];
+  NSURL *drainingUrl = [container URLByAppendingPathComponent:kFcmCacheDrainingFileName];
+  NSFileManager *fm = [NSFileManager defaultManager];
 
   NSString *path = [dst stringByAppendingPathComponent:kFcmCacheFileName];
   [g_cacheLock lock];
   @try {
+    // RENAMED FIRST, THEN READ: the rename is atomic, so every line the extension wrote before it is
+    // in the draining file, and every line it writes after it starts a NEW App Group file that this
+    // drain never touches - nothing the extension writes can be deleted unread. (An extension that
+    // read the old file before the rename re-creates it with those lines too: a line carried twice
+    // is injected once, by message id.) A draining file a previous drain could not copy is taken
+    // again as it is, before anything new is renamed onto it.
+    if (![fm fileExistsAtPath:drainingUrl.path]) {
+      NSError *renameError = nil;
+      if (![fm moveItemAtURL:srcUrl toURL:drainingUrl error:&renameError]) {
+        if (renameError.code != NSFileNoSuchFileError) {
+          NSLog(@"[CanariPush] drainAppGroupFcmCache: App Group file not renamed - left for the next "
+                @"activation: %@",
+                renameError);
+        }
+        return;
+      }
+    }
+    NSString *incoming = [NSString stringWithContentsOfURL:drainingUrl
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:nil];
+    if (incoming.length == 0) {
+      [fm removeItemAtURL:drainingUrl error:nil];
+      return;
+    }
     NSMutableArray<NSString *> *lines = [NSMutableArray array];
     NSString *existing = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
     for (NSString *line in [existing componentsSeparatedByString:@"\n"]) {
@@ -1326,8 +1345,23 @@ void CanariDrainAppGroupFcmCache(void) {
       [lines removeObjectAtIndex:0];
     }
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-    [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    // THE COPY LANDS BEFORE THE DRAINING FILE GOES, so a reader between the two
+    // (`push_cache_message_ids` reads both directories, the draining file included) sees the entries
+    // in one place or the other, never in neither.
+    NSError *writeError = nil;
+    if (![body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeError]) {
+      NSLog(@"[CanariPush] drainAppGroupFcmCache: copy NOT written - the draining file is kept: %@",
+            writeError);
+      return;
+    }
     CanariExcludeNativeCacheFilesFromBackup(dst);
+    // Only the extension's OWN file is ever written by it, and this one is no longer that file.
+    NSError *removeError = nil;
+    if (![fm removeItemAtURL:drainingUrl error:&removeError]) {
+      NSLog(@"[CanariPush] drainAppGroupFcmCache: draining file not removed - carried again next "
+            @"time: %@",
+            removeError);
+    }
     NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];

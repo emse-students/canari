@@ -1345,6 +1345,18 @@ export class MessagingService {
   }
 
   /**
+   * The deferred pushes still waiting for their ten seconds, by queued row - what
+   * {@link pushQueuedNow} brings forward. An entry lives at most those ten seconds: whichever of the
+   * timer and the early ask runs it removes it first, so a row is pushed once at most and a second
+   * ask finds nothing. In memory and per process, on purpose: it is the timer's own state, and an
+   * ask that reaches a process not holding the timer simply waits for the timer.
+   */
+  private readonly deferredPushes = new Map<
+    string,
+    { timer: NodeJS.Timeout; run: () => void; recipientId: string; deviceId: string }
+  >();
+
+  /**
    * Schedule a deferred FCM fallback for an "online" device.
    *
    * Android keeps the WebSocket TCP connection alive even when the app is
@@ -1363,11 +1375,21 @@ export class MessagingService {
     const DELAY_MS = 10_000;
     // setTimeout expects () => void; extract the async work into a separate
     // method to satisfy @typescript-eslint/no-misused-promises.
-    const timer = setTimeout(() => {
+    const run = () => {
+      // TAKEN BEFORE IT RUNS, by whichever of the timer and `pushQueuedNow` gets there first, so the
+      // push is sent once at most.
+      this.deferredPushes.delete(queued.id);
       void this.runDeferredPush(queued, traceId, groupId, senderId, silent).catch((e) =>
         this.logger.warn(`[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`)
       );
-    }, DELAY_MS);
+    };
+    const timer = setTimeout(run, DELAY_MS);
+    this.deferredPushes.set(queued.id, {
+      timer,
+      run,
+      recipientId: queued.recipientId,
+      deviceId: queued.deviceId,
+    });
     // UNREFERENCED, because this timer must never be the reason a process stays alive. In the
     // service the HTTP server holds the loop open, so the delay elapses exactly as before; at
     // shutdown the pending fallback is simply dropped, which is the guarantee this path already
@@ -6933,6 +6955,46 @@ export class MessagingService {
     );
 
     return { status: 'deleted', count: result.affected || 0 };
+  }
+
+  /**
+   * Sends NOW the deferred push of each named row, instead of at the end of its ten seconds - asked
+   * by an iPhone page that left those rows unconsumed because the app is inactive
+   * (docs/wiki/frontend/mobile.md, "out of front, the server announces"). Deletes nothing and
+   * pushes nothing that was not already going to be pushed: a row with no waiting deferred push
+   * (already pushed, pushed at once to an offline device, acknowledged, another device's, or held
+   * by another process) is left alone, so a repeated ask is a no-op. The push itself still checks
+   * that the row is queued (`runDeferredPush`).
+   */
+  pushQueuedNow(
+    body: AckMessagesBody,
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined
+  ): { status: string; count: number } {
+    const traceId = this.makeTraceId('pushnow');
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    const safeMessageIds = sanitizeStringIdList(body.messageIds);
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot ask a push for another user'
+    );
+    let count = 0;
+    for (const id of safeMessageIds) {
+      const waiting = this.deferredPushes.get(id);
+      if (!waiting || waiting.recipientId !== safeUserId || waiting.deviceId !== safeDeviceId) {
+        continue;
+      }
+      clearTimeout(waiting.timer);
+      waiting.run();
+      count++;
+    }
+    this.logger.log(
+      `[PUSH_NOW][${traceId}] user=${safeUserId} device=${safeDeviceId} asked=${safeMessageIds.length} brought-forward=${count}`
+    );
+    return { status: 'ok', count };
   }
 
   /**

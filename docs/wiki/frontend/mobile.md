@@ -2381,11 +2381,22 @@ Three things the seam carries, each load-bearing:
   strictly finer question (`canSeeArrival`: can this reader see THIS conversation), so re-asking
   "is the app in front" in the builder would silence a foregrounded app showing another conversation.
 
-**The plain builder is not deleted - it is now web-only** (and desktop, which reaches
-`tauri-plugin-notification` through the same composable). They have nothing else, and they need
-nothing else: neither registers with a push service - every command in `commands/push.rs` is
+**The plain builder is not deleted - it serves the web, the desktop, and an iPhone in the
+foreground** (corrected 2026-11-01: this paragraph said web and desktop only, and an iPhone 12 on
+`1.5.4-alpha.1` showed plugin banners in front). **On an iPhone in front, the page notifies and the
+native side stays silent**: Canari's notification delegate owns `willPresent` and shows no remote
+push while the app is in front (#2843), and `CanariShowMessageNotification` returns early there, so
+the page's plugin banner is the only one. In the background the extension builds every banner. The
+web and the desktop need nothing
+else: neither registers with a push service - every command in `commands/push.rs` is
 `#[cfg(any(target_os = "android", target_os = "ios"))]` and the frontend ships no service worker -
-so on both the socket frame is the only trigger there has ever been. (This paragraph named a
+so on both the socket frame is the only trigger there has ever been. **On iOS the plugin banner is
+headed like the extension's** (`pluginMessageBanner`, `nativeNotification.ts`): the group or the
+salon is the title, a direct message is titled by its sender. `tauri-plugin-notification` 2.7.0
+carries no subtitle on iOS (its `Notification` reaches `UNMutableNotificationContent` as title, body,
+thread and summary only), so the sender opens the body (`notif_group_message_line`) where the
+extension writes a subtitle; a true subtitle needs a native builder for the foreground, which this
+path does not have. (This paragraph named a
 `desktop.rs` until 2026-09-22; the only file of that name in the tree is a vendored keystore plugin
 patch, and no desktop notification code has ever lived in one.)
 
@@ -2417,6 +2428,190 @@ dismissed came back every time they opened the app (`G2`, 2026-09-18).
 peer's ARCHIVE being merged into an empty store, which `batchAddMessages` counted as arrivals; the
 caller now says which it is (`MessageBatchOrigin`, required). Two mechanisms because the two paths
 know different things - only the native side ever saw the push.
+
+#### The iOS half: a message is announced once, by id (2026-11-01)
+
+**Measured on an iPhone 12, `1.5.4-alpha.1`.** A tap on a banner from the killed state launched the
+app; the cold start drained three frames the extension had already decrypted and presented (a push
+acknowledges nothing, so the rows were still queued), and `notifyInbound` - an app on `/posts`,
+showing the list - raised a second banner for each: "K2 group killed 0724" twice. A background tap
+did the same to "T1 group bg tap" on the resume after it. Android was spared by the record above;
+iOS had no equivalent, and the app's own decision had no memory at all - its only "seen" test was
+the in-memory map, which a cold start empties.
+
+`notifiedMessages.ts` is that memory: **a durable set of message ids per account** (`localStorage`,
+`ACCOUNT_KEY.notifiedMessages`, the 2000 most recent), asked by `notifyInbound` on both inbound
+paths. The decision checks it, reads the push cache, then checks it AGAIN and claims the ids in that
+same tick, so two decisions about one message cannot both pass; a flush's banner counts (`covers`)
+only the messages it actually announces. Two writers:
+
+- **The app**, for every banner it decides to raise.
+- **The extension, through the push cache - but only for a banner the system PRESENTED.** The NSE
+  writes an entry to `fcm_message_cache.ndjson` for every message it decrypts, in the foreground
+  too, where nothing native is shown (above) and the page's banner is the only one. So each entry
+  carries `presented`, which the NSE reads from the App Group's `app_in_foreground` flag
+  (`CanariSetAppGroupForegroundFlag`): `false` in front, `true` behind. **Only an entry marked
+  `presented: true` counts**; an entry without the field (an older build) does not - a duplicate is
+  acceptable, a missing banner is not. `consumeFcmCache` records the presented ids it takes, before
+  the ack erases them; and because the take runs AFTER the drain that decides - at a cold start and
+  at a resume, where `CanariDrainAppGroupFcmCache` only carries the App Group's lines over at the
+  app's activation - the decision also reads the presented ids still in the cache, the App Group's
+  included (`push_cache_message_ids`, `commands/push.rs`, read-only). **iOS only**: Android's native
+  side writes an entry for a frame it decrypts in the foreground too, where it suppresses its banner
+  and the app's decision is the only one, so an entry there proves nothing about a banner.
+
+Not the shade (`getDeliveredNotifications`): a tapped or swiped notification is gone from it, which
+is exactly the T1 case. Not `sentAt`: the sender's clock orders nothing in a group.
+
+**A known duplicate, accepted (2026-11-01).** The extension keeps at most 50 entries
+(`maxFcmCacheEntries`), dropping the oldest. After a night of more than 50 pushes the oldest are gone
+before the app reads them, and when their rows are redelivered they are announced a second time.
+Every other "not known presented" is the same trade: a line the cache key cannot open, a record
+storage refuses (said once per process, not per message).
+
+**And the conversation rows exist before any frame is let in.** The same run showed the drain
+BEFORE the restore: `Message for absent conversation ... - retry after restore` three times,
+`3 frame(s) left unacknowledged ... absent-conversation: 3`, then `[RESTORE] 8 conversation row(s)
+seeded` and a second pull. The login opens the socket before the restore (the barrier needs it -
+see `sessionAuth`), and the restore seeded the rows only after the gateway, so the post-connect pull
+- like any held or live frame - met an empty map. The restore is now split
+(`seedConversationRows` / `replayConversationHistories`, `conversations.ts`): the login seeds the
+rows from the local store BEFORE `markInboundReady` (`useConversations.seedConversationRowsAhead`,
+phase `seed_conversations`), and the history phase, whose barriers need the socket, still runs after
+the gateway and replays what the seed returned instead of seeding again. No frame, held, live or
+pulled, can meet a map without its conversation, and nothing is held or delayed to get there. The
+seed touches no network: a merged duplicate 1:1 is only NAMED there (`owedServerDeletes`), and the
+history phase sends those deletes AFTER its replay without waiting on them (best effort, each
+failure logged; the next server GC repeats them).
+
+**Round-2 review fixes (2026-11-01).** A message is recorded as announced only once its banner was
+actually posted (`sendSystemNotification` answers whether it was; a throttle, a refused permission or
+a throw leaves the message announceable). A new process clears the App Group's foreground flag at
+launch, because a process that died in front never ran `willResignActive` and every push after it
+was written `presented: false`. `CanariDrainAppGroupFcmCache` RENAMES the App Group file to
+`fcm_message_cache.ndjson.draining` before reading it, writes the app's copy, and only then removes
+the renamed file: whatever the extension writes during the drain starts a new App Group file the
+drain never touches, and a failed copy leaves the draining file for the next activation.
+`push_cache_message_ids` reads the draining file too.
+
+#### Out of front, the server announces (2026-11-01)
+
+**The page knows when the app is ACTIVE**, through a signal of its own: iOS writes
+`window.__canariActive` and a `canari:active` event from `didBecomeActive` / `willResignActive` and
+after every page load (`CanariPushActiveToPage`), read by `appActive.ts` only. NOT
+`__canariForeground`: `isAppInForeground()` keeps its meaning for the ten other iOS consumers (calls,
+tones, playback, the checkpoint flush, reconnects, read-marking).
+
+**Told AND asked.** A push can be lost (`evaluateJavaScript` failed), and a page left on "inactive"
+in front would withhold everything. So the page also ASKS, on load, on every `visibilitychange`
+(background and back) and on every window `focus` (an inactive-only return - Control Center, a
+system prompt, the app switcher - changes no visibility; WebKit's window activation is what moves
+then, and its `focus` is the page event that follows it). `ios_app_active` (`commands/app_active.rs`)
+answers from UIKit's own `applicationState`, read on the main thread - NOT from the App Group flag
+the extension reads: that flag is a write, and a write that failed would hand back a stale value
+that overrides a correct told one. An answer overtaken by a told transition is dropped (the push is
+newer); a page that held the other value logs an ERROR, as does the native failure to tell it. No
+timer.
+
+**Why the page must not consume a frame while inactive.** The extension decrypts read-only from
+`mls.bin`. A frame the page has already consumed has spent its secret (and the page persists its
+state), so the extension's decrypt of the same frame is refused (`SecretReuse`, read as
+`mls-refused-for-good` by `refused_by_mls`) and its banner falls back to "Nouveau message" with no
+content. And the ACK deletes the row, so a long payload carried by reference could no longer be
+fetched by `queuedMessageId`. Every design where the page consumes first and a push follows loses
+the content.
+
+**So, while the iPhone app is inactive, the page consumes NO queued frame** - application, commit
+and Welcome alike (`BaseMlsService.processQueue`). The frame is not decrypted, not ACKed, forgotten
+by the delivery dedup so the pull on return is admitted, and nothing else of it is recorded; a later
+frame of a group that has one left is left too, whatever the state now, so the order is never
+inverted. The check is made in the same synchronous stretch as the start of decryption, so a frame
+either starts while active - and completes, banner and ACK, as before - or never starts. The page
+then asks the server to push the rows still left NOW (`POST /api/mls/messages/push-now`): it brings
+the deferred push forward, deletes nothing, and a repeated or foreign ask is a no-op (the waiting
+timer is taken once, in memory, `MessagingService.deferredPushes`).
+
+**The release is decided once, and never during a drain** (`pullWhatTheGateReleases`). When the app
+becomes active, or a call's group goes live, every withheld group the gate now lets through is
+released whole and pulled back in one pull. A release that arrives mid-drain is deferred to the
+drain's end: that drain is still withholding the group's later frames, and a pull started then had
+its copy of those frames refused by the dedup while the drain held the originals - stranded, and the
+group's order inverted (review of #2844, 2026-11-01; the test is "ACTIVE MID-DRAIN" in
+`BaseMlsService.inactiveQueue.test.ts`).
+
+**A released group's live frames wait behind its release pull** (`releasing`). The scheduler keeps
+arrival order only, and on a return with the socket still open (the app switcher, Control Center) a
+live frame of the group lands before the pull's copies of the withheld ones: applied first, it
+overtakes them, and a withheld commit leaves the live next-epoch frame unreadable. So, from the
+release until a pull that STARTED after it has listed the whole mailbox, a live frame of the group is
+parked - not decrypted, not ACKed, forgotten by the dedup - and the pull's own copies go through.
+Then the parked frames are handed back in arrival order, behind the pull's rows; a parked frame the
+pull itself brought is not handed back (its pull copy took its place, in the server's order; the
+release keeps the ids a pull brought for its whole life, because the delivery memory is bounded and
+may have evicted them). A pull that fails lists nothing, so the group stays parked until a pull
+completes - never a live frame ahead of an unapplied pull.
+
+- **Termination of a failed release pull** (`pullForUnlistedRelease`). A release no pull has listed,
+  with none in flight, is pulled for by the next EVENT that needs it: a live frame parked behind it,
+  or a WAIT on the group (`whenGroupDrained`, `waitForGroupQueueIdle` - the admission gate, the
+  parked seed asks, the key-group epoch check, a history answer). A pull's own end, failed or not,
+  never starts one, and none starts while one is in flight: the pulls are bounded by the frames
+  delivered plus the waits made, and the first that lists the mailbox ends the release. With the
+  server failing, nobody waiting and the socket silent, nothing pulls until the reconnect - and
+  nothing needs it to.
+- **No push asked while the app is in front.** A group whose release is deferred (frames still
+  queued here) stays withheld while the app is active; its frames are not pushed (`push-now` is
+  asked only out of front), because a banner would announce a message the open app shows.
+- **A destroyed client decides nothing.** The two waits that outlive a drain (the key-group epoch
+  check, a history answer) stop on `GroupDrainAbandonedError` - typed, never read off a message -
+  instead of answering from a service that has ended.
+- **A group with frames still queued here is not released** (one held behind this device's own
+  commit, say): released then, a frame of it would be applied when the commit ends, ahead of the
+  withheld ones the pull brings back. The drain that empties it decides at its end.
+- **"Drained" counts the frames held back.** `groupDrainedNow` (the admission gate, the parked seed
+  asks) reads a group that has frames withheld or parked as NOT drained, whatever the mailbox listing
+  said - a withheld key-group commit would otherwise leave them deciding on the old epoch - and
+  `waitForGroupQueueIdle` (the key-group epoch check, a history answer) waits for the release to
+  complete. The release is listed BEFORE the pull's end wakes the drained readers, and its completion
+  wakes them again.
+- **The call's signalling waits too.** A live call's group is exempt from WITHHOLDING, but once its
+  group was withheld and released, the call's frames are parked behind the release pull like any
+  other: they are newer than the withheld ones and would fail to read before them. The cost is one
+  pull's latency on the call's signalling after a return, the price of reading it at all.
+- A live frame with NO queued row is neither withheld nor parked (no pull could bring it back) and
+  is logged at warn when its group holds frames back: the server publishes every live frame from its
+  row (`publishQueued`), so the expected rate is zero.
+
+Tests: "a released group holds its live frames behind the release pull" and "\"drained\" counts the
+frames held back" in `BaseMlsService.inactiveQueue.test.ts`, each failing with its fix removed.
+
+**The live call's group is exempt** (`setIosLiveCallGroup`, written by `CallService` from its own
+state: ringing, calling or connected). A call runs with the app in the background, and its hangup,
+answer and renegotiation are MLS frames of its group; withheld, the call would go deaf. The fact is
+the call's typed state, never read off a frame: the server cannot tell a call frame from any other
+silent frame, and teaching it would hand it a plaintext fact. A frame of that group withheld before
+the call went live is pulled back when it does. An invite that arrives while no call is live is
+withheld like any frame - the native ring and its answer join on the ring's own facts, never on the
+invite ([pendingCallAccept.ts](../../../frontend/src/lib/stores/pendingCallAccept.ts)).
+
+| Case | Who announces |
+| --- | --- |
+| Active | the page, as before |
+| Inactive, a private conversation's frame | the extension, from the server's push - decrypted FIRST, with its content |
+| Inactive, a frame that began decrypting while active | the page (it was ACKed, no push follows) |
+| Inactive, a salon message | the extension, from the salon's push to every member; the page is silent |
+| Inactive, a frame of the live call's group | the page, as when active (the call needs it) |
+| `push-now` refused or a server without it | the extension, from the deferred push ten seconds later ([legacy-compatibility](../legacy-compatibility.md)) |
+| Back to active | nobody again: the pull brings the rows, the push cache says they were presented |
+
+**What the extension may write** (checked 2026-11-01): it calls only `canari_native_decrypt_message`
+and `canari_native_decrypt_message_with_commits` (read-only - "These never persist `mls.bin`",
+`mobile/background.rs`, and the catch-up's commits are "applied to the loaded manager only ... never
+written back"), plus the epoch read, the device-notice ledger, the cache-line seal, the media
+decrypt and the salon seed store, none of which is `mls.bin`. The two background writers of
+`mls.bin` - a Welcome (`canari_native_process_welcome_background`) and an outbox send - run in the
+APP process (`canari_push.mm`), behind `g_mlsStateLock` and `write_over_loaded_state`, as they did
+before this change.
 
 #### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 

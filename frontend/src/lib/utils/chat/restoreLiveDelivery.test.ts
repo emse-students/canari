@@ -22,7 +22,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
-import { loadExistingConversations } from './conversations';
+import {
+  loadExistingConversations,
+  replayConversationHistories,
+  seedConversationRows,
+} from './conversations';
 
 /** What a live delivery puts on the row: newer than anything stored. */
 const LIVE: ChatMessage = {
@@ -157,5 +161,51 @@ describe('the restore and a live delivery', () => {
     expect(row?.directPeerId).toBe('bob');
     expect(row?.conversationType).toBe('direct');
     expect(row?.messages.map((m) => m.id)).toEqual(['live-1']);
+  });
+});
+
+describe('the seed waits on no network', () => {
+  /** Two DMs with the same peer: the older is merged away and owes a server-side delete. */
+  const duplicates = () =>
+    storage({
+      getConversations: vi.fn(async () => [
+        { id: 'dm-old', name: 'u1::bob', lifecycle: 'active', updatedAt: 1 },
+        { id: 'dm-new', name: 'u1::bob', lifecycle: 'active', updatedAt: 2 },
+      ]),
+    });
+  const ctxOf = (
+    conversations: SvelteMap<string, Conversation>,
+    mlsService: ReturnType<typeof mls>,
+    store: ReturnType<typeof storage>
+  ) =>
+    ({
+      storage: store,
+      mlsService,
+      conversations,
+      messageReactions: new SvelteMap(),
+      userId: 'u1',
+      deviceKeyB64: 'k',
+      archivedConversationIds: [],
+      historyBaseUrl: '',
+      onArchivedIdsChange: vi.fn(),
+      log: vi.fn(),
+    }) as never;
+
+  it("owes a merged duplicate's server delete to the history phase instead of awaiting it before the gate", async () => {
+    // A captive portal answers nothing: awaited in the seed, this delete held `markInboundReady`.
+    const deleteGroupOnServer = vi.fn(() => new Promise<void>(() => {}));
+    const service = mls({ deleteGroupOnServer });
+    const conversations = new SvelteMap<string, Conversation>();
+    const ctx = ctxOf(conversations, service, duplicates());
+
+    const seeded = await seedConversationRows(ctx);
+    expect(deleteGroupOnServer).not.toHaveBeenCalled();
+    expect(seeded.owedServerDeletes).toEqual(['dm-old']);
+    expect([...conversations.keys()]).toEqual(['dm-new']);
+
+    // The history phase sends it AFTER its replay and does not wait on it either: the delete still
+    // never answers, and the replay resolves.
+    await replayConversationHistories(ctx, seeded);
+    expect(deleteGroupOnServer).toHaveBeenCalledWith('dm-old');
   });
 });

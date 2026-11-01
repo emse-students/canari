@@ -508,6 +508,17 @@ export class MessagingController {
     return this.messagingService.acknowledgeMessages(body, headerUserId, headerGlobalAdmin);
   }
 
+  /** Brings forward the deferred push of rows an inactive iPhone left queued - see the service. */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/messages/push-now')
+  pushQueuedNow(
+    @Body() body: AckMessagesBody,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
+    return this.messagingService.pushQueuedNow(body, headerUserId, headerGlobalAdmin);
+  }
+
   /**
    * Notifies the author of a message that someone reacted to it.
    *

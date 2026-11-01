@@ -379,13 +379,10 @@ export interface ChannelPollDraft {
   endsAt: string | null;
 }
 
-/** The prefix of every salon conversation id (`channel_<uuid>`). */
-export const CHANNEL_CONVERSATION_PREFIX = 'channel_';
-
-/** True for community channel conversations (`channel_<uuid>`). */
-export function isChannelConversationId(conversationId: string): boolean {
-  return String(conversationId).startsWith(CHANNEL_CONVERSATION_PREFIX);
-}
+export {
+  CHANNEL_CONVERSATION_PREFIX,
+  isChannelConversationId,
+} from '$lib/utils/chat/channelConversationId';
 
 /**
  * Seals `payloadBytes` under this device's Graine session for the channel and POSTs it.

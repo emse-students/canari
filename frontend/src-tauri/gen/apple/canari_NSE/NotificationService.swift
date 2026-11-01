@@ -1331,6 +1331,16 @@ class NotificationService: UNNotificationServiceExtension {
     if let mediaKind = result.mediaKind, !mediaKind.isEmpty {
       entry["mediaKind"] = mediaKind
     }
+    // WHETHER THIS PUSH IS SHOWN BY THE SYSTEM, read from the flag the app keeps in the App Group
+    // (`CanariSetAppGroupForegroundFlag`). In the foreground the app's notification delegate shows no
+    // remote push - the page raises its own banner - so an entry written then is a message NOBODY
+    // has seen announced, and the app must not count it as one (`push_cache_message_ids`). In the
+    // background the content this extension returns is what iOS presents (a `mentions`-level
+    // passive one included: it is filed in the notification centre). A flag a crash left behind
+    // reads as foreground and costs, at worst, a second banner - never a missing one.
+    let appInFront = FileManager.default.fileExists(
+      atPath: dir.appendingPathComponent(Self.appInForegroundFile).path)
+    entry["presented"] = !appInFront
 
     guard let entryData = try? JSONSerialization.data(withJSONObject: entry, options: []),
       let plainLine = String(data: entryData, encoding: .utf8)

@@ -42,6 +42,18 @@ describe('the login sequence', () => {
     expect(markerIndex('open_gateway')).toBeLessThan(markerIndex('load_conversations'));
   });
 
+  it('seeds the conversation rows BEFORE the inbound gate opens, and the gate before the gateway', () => {
+    // A frame that meets no row is refused `absent-conversation` and read twice (iPhone 12,
+    // 2026-11-01). The gate is what lets frames in - held, live and pulled alike - so the rows must
+    // exist when it opens, not merely before the restore's history phase.
+    const seed = markerIndex('seed_conversations');
+    const gate = source.indexOf('await mlsService.markInboundReady();');
+    expect(gate).toBeGreaterThan(-1);
+    expect(seed).toBeLessThan(gate);
+    expect(source.indexOf('await cb.seedConversationRows();')).toBeLessThan(gate);
+    expect(gate).toBeLessThan(markerIndex('open_gateway'));
+  });
+
   it('reconciles the groups AFTER the restore, because that half reads the conversations', () => {
     // `syncConnectionAfterWsOpen` publishes KeyPackages, sweeps the server's group list and
     // reconciles history - all of it against the conversations this device holds. Only the socket

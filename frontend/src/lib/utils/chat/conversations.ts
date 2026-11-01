@@ -632,6 +632,11 @@ export function resolveConversationListPresentation(
  * `"userId::peer"` canonical format for consistent future detection.
  *
  * Returns the deduplicated, normalised list of `ConversationMeta` objects.
+ *
+ * @param owedServerDeletes receives each merged duplicate whose server-side delete is OWED: the
+ *   merge never sends it, because the login's seed runs before the inbound gate and must wait on no
+ *   network (`seedConversationRows`); the history phase sends them once its replay is done
+ *   ({@link deleteMergedDuplicatesOnServer}).
  */
 export async function mergeDirectConversationDuplicates(
   convMetas: ConversationMeta[],
@@ -639,7 +644,7 @@ export async function mergeDirectConversationDuplicates(
   deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
-  mlsService?: IMlsService
+  owedServerDeletes: string[]
 ): Promise<ConversationMeta[]> {
   const directByPeer = new Map<string, ConversationMeta[]>();
   for (const meta of convMetas) {
@@ -715,14 +720,7 @@ export async function mergeDirectConversationDuplicates(
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
-      if (mlsService) {
-        try {
-          await mlsService.deleteGroupOnServer(duplicate.id);
-        } catch (e) {
-          // Non-blocking: cleaned up at the next server GC
-          logBestEffortGroupDeleteFailure(duplicate.id, e, 'merged duplicate 1:1');
-        }
-      }
+      owedServerDeletes.push(duplicate.id);
       log(`Merged duplicate 1:1 conversation: ${duplicate.id} -> ${canonical.id}`);
     } catch (error) {
       log(`Direct-conversation merge error: ${String(error)}`);
@@ -864,21 +862,43 @@ export function restoredConversationRow(
  *
  * The function also runs a one-time localStorage migration, deduplicates direct
  * conversations, prunes stale archived IDs, and reclassifies DMs via `getUserGroups`.
+ *
+ * The two phases are also exported apart ({@link seedConversationRows},
+ * {@link replayConversationHistories}): the login runs the first before it lets any frame in.
  */
-export async function loadExistingConversations(ctx: LoadConversationsContext) {
+export async function loadExistingConversations(ctx: LoadConversationsContext): Promise<void> {
+  const seeded = await seedConversationRows(ctx);
+  await replayConversationHistories(ctx, seeded);
+}
+
+/**
+ * Phase 1 of {@link loadExistingConversations}: one row per stored conversation, no messages.
+ *
+ * LOCAL ONLY - the store and the map; no socket, no mailbox. That is what lets the login run it
+ * BEFORE `markInboundReady` (`sessionAuth`), so neither a live frame nor the post-connect pull can
+ * meet a map without its conversation (`absent-conversation`). NOTHING HERE WAITS ON THE NETWORK:
+ * the server-side delete of a merged duplicate DM is owed to the history phase, so a captive portal
+ * cannot hold the inbound gate shut.
+ *
+ * @returns what it seeded, which {@link replayConversationHistories} replays
+ */
+export async function seedConversationRows(
+  ctx: LoadConversationsContext
+): Promise<SeededConversations> {
   await migrateFromLocalStorage(ctx.userId, ctx.deviceKeyB64, ctx.storage, ctx.log);
 
   // WHAT THE MAP HELD WHEN THE STORE WAS READ, so the prune below can tell a row the read could not
   // have seen from one storage no longer holds. Taken before the read, in the same tick as its call.
   const rowsBeforeRead = new Set(ctx.conversations.keys());
   const convMetas = await ctx.storage.getConversations();
+  const owedServerDeletes: string[] = [];
   const mergedConvMetas = await mergeDirectConversationDuplicates(
     convMetas,
     ctx.userId,
     ctx.deviceKeyB64,
     ctx.storage,
     ctx.log,
-    ctx.mlsService
+    owedServerDeletes
   );
 
   const validConversationIds = new Set(mergedConvMetas.map((meta) => meta.id.toLowerCase()));
@@ -991,7 +1011,50 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
   ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
   ctx.mlsService.notifyConversationRowsSeeded();
+  return { metas: mergedConvMetas, owedServerDeletes };
+}
 
+/** What {@link seedConversationRows} leaves to {@link replayConversationHistories}. */
+export interface SeededConversations {
+  /** The conversations seeded, in their order. */
+  metas: ConversationMeta[];
+  /** Merged duplicate DMs whose server-side delete the seed owed rather than sent. */
+  owedServerDeletes: string[];
+}
+
+/**
+ * Sends the server-side deletes {@link seedConversationRows} owed, one at a time, each failure said
+ * on its own - best effort, as it was when the merge sent them (the next server GC cleans up).
+ */
+async function deleteMergedDuplicatesOnServer(
+  mlsService: IMlsService,
+  groupIds: readonly string[]
+): Promise<void> {
+  for (const groupId of groupIds) {
+    try {
+      await mlsService.deleteGroupOnServer(groupId);
+    } catch (e) {
+      logBestEffortGroupDeleteFailure(groupId, e, 'merged duplicate 1:1');
+    }
+  }
+}
+
+/**
+ * Phase 2 of {@link loadExistingConversations}: each seeded conversation's stored page, then its
+ * archive replay.
+ *
+ * Separate from {@link seedConversationRows} because the two need different things: the seed reads
+ * the local store only, while every archive replay takes the mailbox barrier, which trusts a pull
+ * only while the socket is open (`settleBarrier`). So the login seeds BEFORE it opens the inbound
+ * gate and replays only once the gateway is up (`sessionAuth`).
+ *
+ * @param seeded what {@link seedConversationRows} seeded, and the server deletes it owed
+ */
+export async function replayConversationHistories(
+  ctx: LoadConversationsContext,
+  seeded: SeededConversations
+): Promise<void> {
+  const mergedConvMetas = seeded.metas;
   // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
@@ -1231,6 +1294,12 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     (commits) => {
       for (const commit of commits) commit();
     }
+  );
+  // AFTER THE REPLAY, AND NOT AWAITED: a best-effort cleanup the next server GC repeats, so the
+  // login does not wait on it. Each failure is said by `deleteMergedDuplicatesOnServer`; the
+  // `catch` is only there so a rejection can never be unhandled.
+  void deleteMergedDuplicatesOnServer(ctx.mlsService, seeded.owedServerDeletes).catch(
+    (e: unknown) => ctx.log(`[WARN] merged duplicate 1:1 server deletes stopped: ${String(e)}`)
   );
 }
 

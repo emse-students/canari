@@ -1112,6 +1112,55 @@ export class MlsDeliveryApi {
     );
   }
 
+  /**
+   * Asks the server to push now the queued rows this page left unconsumed while the iPhone app was
+   * inactive (`BaseMlsService.processQueue`) - it brings the deferred push forward and deletes
+   * nothing. Best effort with no retry: whatever happens, the row is still queued and the server
+   * pushes it ten seconds after sending it. Never rejects.
+   *
+   * A server older than the call answers 404 (docs/wiki/legacy-compatibility.md): said once per
+   * session, and the deferred push then announces the row ten seconds later, as before.
+   */
+  async pushQueuedNow(queuedIds: string[]): Promise<void> {
+    if (queuedIds.length === 0) return;
+    try {
+      const res = await this.f(`${this.historyUrl}/api/mls/messages/push-now`, {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          userId: this.userId,
+          deviceId: this.deviceId,
+          messageIds: queuedIds,
+        }),
+        keepalive: true,
+      });
+      if (res.status === 404) {
+        if (!MlsDeliveryApi.pushNowLegacySaid) {
+          MlsDeliveryApi.pushNowLegacySaid = true;
+          console.warn(
+            '[PUSH_NOW] the server has no push-now (a server older than the call) - the rows are pushed by the deferred push, ten seconds after they were sent (said once per session)'
+          );
+        }
+        return;
+      }
+      if (!res.ok) {
+        console.warn(
+          `[PUSH_NOW] HTTP ${res.status} for ${queuedIds.length} row(s) - the deferred push covers them`
+        );
+        return;
+      }
+      console.log(`[PUSH_NOW] ${queuedIds.length} row(s) asked to be pushed now`);
+    } catch (e) {
+      console.warn(
+        `[PUSH_NOW] ${queuedIds.length} row(s) not asked - the deferred push covers them:`,
+        e
+      );
+    }
+  }
+
+  /** A server without push-now is said once per session - its consequence never changes. */
+  private static pushNowLegacySaid = false;
+
   /** ACKs queue message ids with retry/backoff and sessionStorage persistence. */
   async ackMessages(messageIds: string[]): Promise<void> {
     await ackMessagesWithRetry(

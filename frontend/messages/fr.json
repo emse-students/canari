@@ -1461,6 +1461,7 @@
   "notif_call_body_named": "{caller} vous appelle",
   "notif_call_body_unknown": "Un contact vous appelle",
   "notif_new_message": "Nouveau message",
+  "notif_group_message_line": "{sender} : {body}",
   "chat_forward_error_conversation_missing": "Conversation introuvable.",
   "chat_forward_error_nothing_to_forward": "Rien à transférer.",
   "chat_forward_error_reel": "Une CanaReel ne peut pas être transférée.",

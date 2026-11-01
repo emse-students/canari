@@ -2138,7 +2138,23 @@ export async function loginImpl(
      * Only the SOCKET moved, twice. `syncConnectionAfterWsOpen` - KeyPackage publication, the group
      * sweep, reconciliation - stays where it was, below the restore, because it reasons about the
      * conversations this device holds and must not run before they are loaded.
+     *
+     * THE ROWS GO IN FIRST, AND THAT IS WHAT MAKES THE GATE SAFE TO OPEN (2026-11-01). A frame for a
+     * conversation the map does not hold is refused `absent-conversation` and fetched again later,
+     * and before this the map was empty here: the restore seeded it only after the gateway, so on a
+     * cold start every queued frame - held, live, or drained by the post-connect pull - met no row
+     * and was read twice (iPhone 12, `1.5.4-alpha.1`). The seed is the restore's LOCAL half: the
+     * store and the map, no socket. Its history half, whose barriers need the socket, stays below
+     * the gateway and replays what this seeded rather than seeding again. The landing preview lands
+     * before it: a row the preview added after the seed would be a stale copy the restore no longer
+     * knows about, and the seed's rebuild is the one that keeps the previewed page.
      */
+    if (landingPreview) await landingPreview;
+    stopIfSignedOut('landing-preview');
+    beginStartupCatchupPhase('seed_conversations');
+    await cb.seedConversationRows();
+    endStartupCatchupPhase({ conversationCount: cb.conversations.size });
+    stopIfSignedOut('seed-conversations');
     await mlsService.markInboundReady();
     stopIfSignedOut('inbound-ready');
 
@@ -2175,13 +2191,9 @@ export async function loginImpl(
     // awaits, and a gap between them is the whole defect in miniature.
     cb.beginConversationSource();
     try {
-      // The local preview's write lands BEFORE the rebuild, never after it: a row it added after
-      // the restore would be a stale copy the restore no longer knows about. Long settled by now
-      // on every path - it is one store read, and the gateway was awaited since.
-      if (landingPreview) await landingPreview;
-      stopIfSignedOut('landing-preview');
-      // Load conversations first: consumeFcmCache can access
-      // the conversations Map via addMessageToChat once it is populated.
+      // The history half of the restore: the rows were seeded above the inbound gate, and the
+      // landing preview landed before that seed. consumeFcmCache below reaches the map through
+      // addMessageToChat, so this comes first.
       beginStartupCatchupPhase('load_conversations');
       await cb.loadAndRestoreConversations();
       stopIfSignedOut('load-conversations');

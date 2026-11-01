@@ -134,3 +134,36 @@ export function notificationGroupName(
   if (conversationType === 'channel') return name || contactName;
   return contactName || name;
 }
+
+/**
+ * The title and the line a PLUGIN-built message banner shows on iOS - the app in the foreground,
+ * where the notification extension is not the builder.
+ *
+ * THE EXTENSION'S RULE, WRITTEN ONCE MORE HERE BECAUSE THIS IS THE OTHER BUILDER
+ * (`NotificationService.swift`, `applyMessageContent`): a group or a salon is the TITLE and its
+ * sender the subtitle; a direct message is titled by its sender. The plugin titled every banner
+ * with the sender alone, so a group banner lost its group ("Canari Test Delta / F1 group fg tap",
+ * iPhone 12, `1.5.4-alpha.1`, 2026-11-01).
+ *
+ * `tauri-plugin-notification` 2.7.0 carries NO subtitle on iOS (its `Notification` is title, body,
+ * group, summary - nothing else reaches `UNMutableNotificationContent`), so the sender opens the
+ * body instead (`notif_group_message_line`). `fallbackTitle` is what the caller would have titled
+ * it with, for a message that names neither a group nor a sender.
+ */
+export function pluginMessageBanner(
+  notification: Pick<NativeMessageNotification, 'senderName' | 'groupName' | 'body'>,
+  fallbackTitle: string,
+  senderLine: (sender: string, body: string) => string
+): { title: string; body: string } {
+  const isGroup =
+    notification.groupName !== '' && notification.groupName !== notification.senderName;
+  if (!isGroup) {
+    return { title: notification.senderName || fallbackTitle, body: notification.body };
+  }
+  return {
+    title: notification.groupName,
+    body: notification.senderName
+      ? senderLine(notification.senderName, notification.body)
+      : notification.body,
+  };
+}

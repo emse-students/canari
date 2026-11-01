@@ -411,6 +411,7 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      seedConversationRows: () => convs.seedConversationRowsAhead(convCtx()),
       invalidateRestores: () => convs.invalidateRestores(),
       forgetUnconfirmedSalonDraws: () => convs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => convs.beginConversationSource(),
