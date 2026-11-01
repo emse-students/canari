@@ -588,6 +588,9 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
 | `kCanariCallsEnabled` | `canari_push.mm` | installs the `PKPushRegistry` and the `CXProvider` at process start; `CanariReportIncomingCall` reports to CallKit instead of returning |
 | `voip` | `Info.plist` + `project.yml` `UIBackgroundModes` | the only way PushKit hands out a token; App Review checks it is used |
 
+**Owner, 2026-11-01:** the incoming-call screen is in-app plus Android full screen, with the same
+design; the live end keeps its red X, since a confirmation modal exists.
+
 **What moved with them.**
 - **Android's full-screen intent opens a SCREEN, never the answer.** Android launches a full-screen
   intent BY ITSELF on a locked or idle phone, and it used to be the answer deep link - every call to
