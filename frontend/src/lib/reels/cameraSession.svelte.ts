@@ -59,6 +59,7 @@ export class CameraSession {
    * been opened or the session was told another lens. Only an open still carrying it may fall back
    * to the other lens: an explicit flip that cannot open is the member's to see.
    */
+  /** Cleared only when an open settles in its own generation (a superseded or suspended one keeps it). */
   #unprovenLens: CameraFacing | null = this.facing === DEFAULT_LENS ? null : this.facing;
   stream = $state.raw<MediaStream | null>(null);
   torchOn = $state(false);
@@ -190,7 +191,6 @@ export class CameraSession {
     this.phase = 'starting';
     this.fault = null;
     const unproven = this.#unprovenLens === facing && !switching ? facing : null;
-    this.#unprovenLens = null;
     try {
       let stream: MediaStream;
       try {
@@ -233,6 +233,9 @@ export class CameraSession {
       this.stream = stream;
       this.#install(stream, generation);
       this.phase = 'live';
+      // Settled in its own generation: the lens is proven, and a flip that got here is the member's.
+      this.#unprovenLens = null;
+      if (switching) rememberLens(facing);
       this.#watchCameras();
     } catch (err) {
       if (generation !== this.#generation) return;
@@ -255,6 +258,7 @@ export class CameraSession {
       }
       this.fault = fault;
       this.phase = 'error';
+      this.#unprovenLens = null;
     }
   }
 
@@ -280,7 +284,6 @@ export class CameraSession {
   switchFacing(): Promise<void> {
     const next = otherFacing(this.facing);
     console.debug(`[camera-session] switch to ${next}`);
-    rememberLens(next);
     return this.start(next, true);
   }
 
@@ -317,7 +320,6 @@ export class CameraSession {
     for (const track of current.getVideoTracks()) track.stop();
     this.flipping = true;
     this.facing = next;
-    rememberLens(next);
     this.torchOn = false;
     this.torchAvailable = false;
     try {
@@ -331,6 +333,8 @@ export class CameraSession {
       this.stream = stream;
       this.flipping = false;
       this.#install(stream, generation);
+      // Only a lens that OPENED is remembered: a device that refused it must not be asked again.
+      rememberLens(next);
     } catch (err) {
       if (generation !== this.#generation) return;
       const fault = err instanceof CameraAccessError ? err.fault : 'unavailable';

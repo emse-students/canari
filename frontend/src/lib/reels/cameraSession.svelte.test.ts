@@ -586,14 +586,60 @@ describe('CameraSession lens memory', () => {
     await vi.waitFor(() => expect(session.phase).toBe('live'));
 
     void session.switchFacing();
-    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('environment');
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBeNull(); // not before the lens opened
     calls[1].resolve(fakeStream().stream);
     await vi.waitFor(() => expect(session.phase).toBe('live'));
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('environment');
 
     const flipped = session.flipDuringTake();
-    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('user');
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('environment');
     calls[2].resolve(fakeStream().stream);
     await flipped;
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('user');
+  });
+
+  it('never remembers a lens that failed to open, outside or during a take', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open, open);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+
+    const switched = session.switchFacing();
+    calls[1].reject(new CameraAccessError('unavailable', 'no rear camera'));
+    await switched;
+    expect(session.phase).toBe('error');
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBeNull();
+
+    const again = new CameraSession(open, open);
+    void again.start();
+    calls[2].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(again.phase).toBe('live'));
+    const flipped = again.flipDuringTake();
+    calls[3].reject(new CameraAccessError('unavailable', 'no rear camera'));
+    await flipped;
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBeNull();
+  });
+
+  it('keeps the remembered lens unproven when its first open is suspended, for the return', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(CAMERA_LENS_KEY, 'environment');
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const first = session.start();
+    session.suspend();
+    calls[0].resolve(fakeStream().stream); // granted while the app was away: released, stopped
+    await first;
+    expect(session.phase).toBe('stopped');
+
+    const back = session.start();
+    calls[1].reject(new CameraAccessError('unavailable', 'no rear camera'));
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls[2].facing).toBe('user'); // the fallback still applies after the suspension
+    calls[2].resolve(withFacing('user').stream);
+    await back;
+    expect(session.facing).toBe('user');
   });
 
   it('a camera built after a flip opens on the flipped lens', async () => {
@@ -602,7 +648,9 @@ describe('CameraSession lens memory', () => {
     void a.start();
     first.calls[0].resolve(fakeStream().stream);
     await vi.waitFor(() => expect(a.phase).toBe('live'));
-    void a.switchFacing();
+    const flip = a.switchFacing();
+    first.calls[1].resolve(fakeStream().stream);
+    await flip;
 
     const second = deferredOpener();
     void new CameraSession(second.open).start();
