@@ -5,6 +5,7 @@
  * never by a clock: each test resolves the opener's promises in the order it wants.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CAMERA_LENS_KEY } from './cameraLens';
 import { CameraSession } from './cameraSession.svelte';
 import { CameraAccessError, type CameraFacing } from './cameraAccess';
 import { giveMediaStreamGetTracks } from './mediaStreamTracks.test-helper';
@@ -41,7 +42,10 @@ function deferredOpener() {
   return { open, calls };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
 
 describe('CameraSession lens request', () => {
   it('the first open is not a switch, the flip button is', async () => {
@@ -545,5 +549,104 @@ describe('CameraSession - the switch needs a second camera (owner, 2026-10-31)',
     await Promise.resolve();
     await Promise.resolve();
     expect(session.cameraCount).toBeNull();
+  });
+});
+
+describe('CameraSession lens memory', () => {
+  function withFacing(facingMode: string | undefined) {
+    const made = fakeStream();
+    (made.video as Record<string, unknown>).getSettings = () => ({ facingMode });
+    return made;
+  }
+
+  it('opens on the remembered lens, for any session of any camera', async () => {
+    localStorage.setItem(CAMERA_LENS_KEY, 'environment');
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    void session.start();
+    expect(calls[0]).toMatchObject({ facing: 'environment', switching: false });
+    calls[0].resolve(withFacing('environment').stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    expect(session.facing).toBe('environment');
+  });
+
+  it('opens on the front lens when the stored value is no lens', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(CAMERA_LENS_KEY, 'wide');
+    const { open, calls } = deferredOpener();
+    void new CameraSession(open).start();
+    expect(calls[0].facing).toBe('user');
+  });
+
+  it('saves the lens when the member flips it, outside and during a take', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open, open);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+
+    void session.switchFacing();
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('environment');
+    calls[1].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+
+    const flipped = session.flipDuringTake();
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('user');
+    calls[2].resolve(fakeStream().stream);
+    await flipped;
+  });
+
+  it('a camera built after a flip opens on the flipped lens', async () => {
+    const first = deferredOpener();
+    const a = new CameraSession(first.open);
+    void a.start();
+    first.calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(a.phase).toBe('live'));
+    void a.switchFacing();
+
+    const second = deferredOpener();
+    void new CameraSession(second.open).start();
+    expect(second.calls[0].facing).toBe('environment');
+  });
+
+  it('opens the available lens when the remembered one is unavailable, and keeps the memory', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(CAMERA_LENS_KEY, 'environment');
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    calls[0].reject(new CameraAccessError('unavailable', 'no rear camera'));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1].facing).toBe('user');
+    calls[1].resolve(withFacing('user').stream);
+    await started;
+
+    expect(session.phase).toBe('live');
+    expect(session.facing).toBe('user');
+    expect(localStorage.getItem(CAMERA_LENS_KEY)).toBe('environment');
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it('reads a webcam with no facing as the front lens even when the rear was remembered', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem(CAMERA_LENS_KEY, 'environment');
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    calls[0].resolve(withFacing(undefined).stream);
+    await started;
+    expect(session.facing).toBe('user');
+  });
+
+  it('does not hide a refusal behind the other lens: denied stays an error', async () => {
+    localStorage.setItem(CAMERA_LENS_KEY, 'environment');
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    calls[0].reject(new CameraAccessError('denied', 'no'));
+    await started;
+    expect(calls).toHaveLength(1);
+    expect(session.phase).toBe('error');
+    expect(session.fault).toBe('denied');
   });
 });

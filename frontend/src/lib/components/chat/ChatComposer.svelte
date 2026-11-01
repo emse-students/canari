@@ -18,11 +18,7 @@
     Plus,
     Check,
     Camera,
-    Clapperboard,
   } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
-  import { resolve } from '$app/paths';
-  import { CAMERA_PLACE } from '$lib/navigation/places';
   import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
   import { chatReelAllowed } from '$lib/reels/chatReelWriter';
   import GlassMenuButton, {
@@ -390,19 +386,8 @@
 
   const addMenuItems = $derived.by((): GlassMenuItem[] => {
     const items: GlassMenuItem[] = [...attachMenuItems];
-    // The CanaReels camera is a PLACE, not a picker: the tab is otherwise reached only by a swipe
-    // right of the leftmost tab, which nothing says (user, 2026-10-18, WP-REELS-MENU). A draft left
-    // in this composer is kept by the composer's own draft store, so leaving loses nothing.
-    items.push({
-      id: 'canareels',
-      label: m.chat_attach_menu_canareels(),
-      icon: Clapperboard,
-      onSelect: () => {
-        Log.d('ChatComposer', 'menu: CanaReels camera tab');
-        dispatchSurface({ type: 'pick', target: 'away' });
-        void goto(resolve(CAMERA_PLACE.href));
-      },
-    });
+    // ONE camera entry (owner, 2026-11-01): the CanaReels TAB entry of WP-REELS-MENU is gone from this
+    // list; the tab stays in the navigation, and "Ouvrir la camera" above is the conversation's way in.
     if (onSendGif) {
       items.push({
         id: 'gif',
