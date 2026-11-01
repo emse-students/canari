@@ -318,6 +318,13 @@ export function memberRepostReachesUserSql(post: string, user: string): string {
  */
 export interface FollowerOpts {
   followers?: boolean;
+  /**
+   * WP-F6: whether a MEMBER REPOST opens the post (on by default, with `followers`). OFF to ask
+   * "does this reader see it FIRST-HAND" - through its own audience, the author's followers or an
+   * association that carries it - which is what may repost it (decided 2026-11-01: no chain; the
+   * author's consent covers one step of reach).
+   */
+  memberReposts?: boolean;
 }
 
 /**
@@ -363,7 +370,7 @@ export function postVisibleToUserSql(
   // WP-F6: a member repost reaches the reposter's accepted followers - a follow-based door, so it
   // is left out exactly where the author's own followers are (`followers: false`, decision 5).
   const repostClause =
-    opts.followers === false
+    opts.followers === false || opts.memberReposts === false
       ? ''
       : `
       OR ${memberRepostReachesUserSql(post, user)}`;

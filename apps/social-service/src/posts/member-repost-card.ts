@@ -1,6 +1,6 @@
 import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { acceptedFollowSql } from '../follows/follow-status';
-import { repostConsentSql, type RepostConsent } from './member-reposts.service';
+import { FIRST_HAND, repostConsentSql, type RepostConsent } from './member-reposts.service';
 
 /** A person named on a card as having reposted it (WP-F6). */
 export interface Reposter {
@@ -61,7 +61,7 @@ export async function memberRepostContext(
                 AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
                 AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
                 AND NOT (posts."associationId" IS NULL AND posts."authorId" = $2)
-                AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}
+                AND ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)}
                 AND NOT (posts."associationId" IS NULL AND EXISTS (SELECT 1 FROM user_blocks mc_block
                   WHERE (mc_block."blockerId" = $2 AND mc_block."blockedId" = posts."authorId")
                      OR (mc_block."blockerId" = posts."authorId" AND mc_block."blockedId" = $2)))

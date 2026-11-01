@@ -168,22 +168,23 @@
       <div>
         <dt>Republications par les membres</dt>
         <dd>
-          Vous pouvez republier une publication que vous voyez pour vos propres abonnés, réels
-          compris. Elle devient alors visible de vos abonnés acceptés (jamais d'une demande en
-          attente), quels que soient leur campus, leur formation ou leur espace, dans leur onglet «
-          Suivis » à la date de votre republication et dans la recherche, jamais dans « Tout » ;
-          ceux qui ne la voyaient pas encore reçoivent une notification à votre nom. Ils voient que
-          vous l'avez republiée ; une personne qui ne vous suit pas ne le voit pas. Une publication
-          personnelle n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes
-          abonnés à republier mes posts » est activé par défaut, et l'auteur peut le changer pour
-          tout son compte ou publication par publication ; le désactiver retire aussitôt les
-          republications qu'il ne couvre plus. Une publication d'une association, d'une liste ou
-          d'une institution est republiée sans accord, mais n'atteint que vos abonnés acceptés. Une
-          publication anonyme n'est jamais republiée. Un blocage, dans un sens ou dans l'autre,
-          empêche la republication et la retire aussitôt entre les personnes concernées, et un
-          lecteur bloqué par l'auteur ou par vous ne la voit pas. Sont conservés : la republication
-          (la publication, votre compte et sa date), le réglage de chaque auteur et le choix fait
-          pour chaque publication.
+          Vous pouvez republier une publication que vous voyez directement pour vos propres abonnés,
+          réels compris ; une publication que vous ne voyez que parce qu'une personne que vous
+          suivez l'a republiée ne peut pas être republiée à nouveau. Elle devient alors visible de
+          vos abonnés acceptés (jamais d'une demande en attente), quels que soient leur campus, leur
+          formation ou leur espace, dans leur onglet « Suivis » à la date de votre republication et
+          dans la recherche, jamais dans « Tout » ; ceux qui ne la voyaient pas encore reçoivent une
+          notification à votre nom. Ils voient que vous l'avez republiée ; une personne qui ne vous
+          suit pas ne le voit pas. Une publication personnelle n'est republiée qu'avec l'accord de
+          son auteur : le réglage « Autoriser mes abonnés à republier mes posts » est activé par
+          défaut, et l'auteur peut le changer pour tout son compte ou publication par publication ;
+          le désactiver retire aussitôt les republications qu'il ne couvre plus. Une publication
+          d'une association, d'une liste ou d'une institution est republiée sans accord, mais
+          n'atteint que vos abonnés acceptés. Une publication anonyme n'est jamais republiée. Un
+          blocage, dans un sens ou dans l'autre, empêche la republication et la retire aussitôt
+          entre les personnes concernées, et un lecteur bloqué par l'auteur ou par vous ne la voit
+          pas. Sont conservés : la republication (la publication, votre compte et sa date), le
+          réglage de chaque auteur et le choix fait pour chaque publication.
         </dd>
       </div>
       <div>

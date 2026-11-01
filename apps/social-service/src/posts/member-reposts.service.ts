@@ -40,6 +40,18 @@ export const MEMBER_REPOST_CODES = {
   notAuthor: 'MEMBER_REPOST_NOT_AUTHOR',
 } as const;
 
+/**
+ * What may be reposted: a post the reposter sees FIRST-HAND - its own audience, the author's
+ * accepted followers, an association carrying it - never only through another member's repost
+ * (decided 2026-11-01: no chain, the author's consent covers one step of reach). Grant-free and
+ * without the administrator's by-id reach, as D38b's request.
+ */
+export const FIRST_HAND = {
+  adminSeesAll: false,
+  readGrants: false,
+  memberReposts: false,
+} as const;
+
 /** The notification type of a repost reaching a reader for the first time. */
 export const MEMBER_REPOST_NOTIFICATION = 'member_repost';
 
@@ -324,7 +336,7 @@ export class MemberRepostsService {
     actorId: string
   ): Promise<void> {
     const rows: { visible: boolean }[] = await manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );

@@ -309,6 +309,19 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
       expect(forAu.consent.get(P(8))).toEqual({ override: false, effective: false });
     });
 
+    it('NO CHAIN: a reader who sees it only through a repost may not repost it, and the card offers none', async () => {
+      // fo sees P(1) only because rp, whom fo follows, reposted it.
+      expect(await sees(P(1), 'fo')).toBe(true);
+      const err = await refusedWith(reposts.repost(P(1), 'fo'));
+      expect(err.getStatus()).toBe(404);
+      expect(await repostRows(P(1))).toEqual(['rp']);
+      const forFo = await memberRepostContext(ds.manager, [P(1)], 'fo');
+      expect(forFo.repostable.has(P(1))).toBe(false);
+      // fa sees it first-hand (fa follows its author): the repost stays open to fa.
+      const forFa = await memberRepostContext(ds.manager, [P(1)], 'fa');
+      expect(forFa.repostable.has(P(1))).toBe(true);
+    });
+
     it('HIDING THE ORIGINAL REMOVES EVERY REPOST, and the followers lose it', async () => {
       await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'fa')`, [P(1)]);
       await q(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [P(1)]);

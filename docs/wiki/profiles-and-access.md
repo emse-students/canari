@@ -1538,9 +1538,15 @@ security review before arming.
   lock (`member-repost:author:<id>`), then the post row; turning the setting off, or an override
   that leaves a post without consent, deletes the rows it no longer covers under the SAME lock in
   the same transaction. No repost outlives a "no", and none can read "yes" while a "no" commits.
+- **NO CHAIN (decided 2026-11-01 by the lead, holding the owner's autonomy)**: only a reader who
+  sees the post FIRST-HAND may repost it - through its own audience (a shared space, the author's
+  accepted followers, an association that carries it, membership or the rules of its entity). A
+  reader who sees it ONLY through another member's repost may not: the author's consent covers one
+  step of reach, not an unbounded chain. The write and the card ask the predicate with
+  `memberReposts: false` (`FIRST_HAND`, `member-reposts.service.ts`).
 - **Refusals, in order, each a typed `MEMBER_REPOST_*` code and an integration case**: absent,
-  hidden, scheduled or expired (404); not seen without a grant and without the admin's by-id reach
-  (404, nothing confirmed); anonymous (400); the reposter's own personal post (400); a block either
+  hidden, scheduled or expired (404); not seen FIRST-HAND without a grant and without the admin's
+  by-id reach (404, nothing confirmed - a reader who sees it only through a repost included); anonymous (400); the reposter's own personal post (400); a block either
   way with a personal post's author (403); no consent (403); already reposted (409, the key). A
   muted account is refused at the route. An entity post the reposter wrote is NOT refused as "own":
   the refusal would tell them whose it is.
@@ -1570,9 +1576,13 @@ security review before arming.
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
   "Republié par" line names reposters after associations; the bell row `member_repost`.
 - **Not built**: no list of who reposted for the author; the author cannot remove ONE repost (they
-  withdraw consent on the post instead); a live is never reposted.
+  withdraw consent on the post instead) - both accepted for `1.6.0` and owed
+  ([backlog](backlog.d/p3-member-reposts-the-author-sees-and-removes-one-repost.md)); a live is
+  never reposted (accepted); an officer may repost their own association's post (accepted: refusing
+  it would name them).
 - **Proof**: `posts/member-reposts.integration.spec.ts` (PostgreSQL, 121 applied twice): the D38b
-  refusal list re-run for a member reposter, accepted vs pending vs none, Tout untouched, a block
+  refusal list re-run for a member reposter, no chain (a reader reached only by a repost is refused
+  and offered nothing), accepted vs pending vs none, Tout untouched, a block
   either way and a left-over row, the newly reached only (announced or not, personal or entity),
   hide, delete and severing, the setting OFF and the override both ways, the card against the
   write. The six PostgreSQL specs that share the predicate apply 121.
