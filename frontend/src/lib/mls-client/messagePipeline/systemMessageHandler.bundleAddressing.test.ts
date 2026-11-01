@@ -150,14 +150,33 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     serverTimestamp: 25_000,
   };
 
-  function ctxWithWindows(windows: Map<string, unknown>) {
+  function ctxWithWindows(windows: Map<string, unknown>, queuedCreatedAt = 1_000_000) {
     return makeCtx({
       mlsService: {
         getDeviceId: () => MY_DEVICE,
         getGroupWithheld: vi.fn().mockResolvedValue(windows),
       },
+      // The server's own time for the bundle frame: what a relayed server time must lie below.
+      deliveryMeta: { queuedCreatedAt },
     });
   }
+
+  // A relayed server time AFTER the bundle frame's own is a claim the server never made: the row
+  // loses it and is placed by its sentAt (`vettedBundleServerTime`), so it cannot be the order key
+  // or the read-mark key of a time that has not come.
+  it("drops a row's server time dated after the bundle frame itself", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = ctxWithWindows(new Map([[ME, []]]), 20_000);
+
+    await handleSystemEvent('history_bundle', { messages: [before, after] }, ctx as any);
+
+    const added = ctx.batchAddMessages.mock.calls[0][0] as Array<{
+      messageId: string;
+      serverTimestamp?: number;
+    }>;
+    expect(added.find((m) => m.messageId === 'before')?.serverTimestamp).toBe(5_000);
+    expect(added.find((m) => m.messageId === 'after')?.serverTimestamp).toBeUndefined();
+  });
 
   it('drops what was sent while we were out, keeps what preceded and followed it', async () => {
     const ctx = ctxWithWindows(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]]));
@@ -215,6 +234,7 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
           .fn()
           .mockResolvedValue(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]])),
       },
+      deliveryMeta: { queuedCreatedAt: 1_000_000 },
     });
 
     await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);

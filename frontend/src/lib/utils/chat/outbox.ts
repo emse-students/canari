@@ -77,7 +77,9 @@ import {
   publishOutboxEntryFailed,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
-import { replaceMessageOrdered } from './messageOrder';
+import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
+import { mapStoredMessagesToChatMessages } from './messageUtils';
+import { noteServerTime } from './serverClock';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -902,6 +904,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * accepted before (`messageOrder.ts`, owner 2026-10-31).
    */
   function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    noteServerTime(serverTimestamp);
     const found = findMessage(messageId);
     if (!found) return;
     const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
@@ -1743,6 +1746,45 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Draws a text failed on 5xx: status `error`, and the `failed` view that is how the bubble knows a
    * Retry exists for it (`retryUpload` is the one handler). ONE place for the three tabs' paths.
    */
+  /**
+   * Puts a queued message the screen does not hold back on it, read by id from the store.
+   *
+   * A page read holds the newest page only, and an own message still queued is ordered BELOW every
+   * dated row while it is unsent (`awaitsServerTime`) - by its `sentAt` on disk, so one older than a
+   * page was in no page after a reload: the send went on, or stayed failed, invisibly, until it
+   * landed (review of #2824, P2-3). Its conversation must be on screen; one that is not loads it
+   * with its page later, and this runs again then. Status is applied by the caller.
+   */
+  async function restoreQueuedRow(entry: OutboxEntry): Promise<void> {
+    if (!storage) return;
+    const holder = [...conversations].find(([, convo]) => convo.id === entry.conversationId);
+    if (!holder) return;
+    let stored: Awaited<ReturnType<IStorage['getMessage']>>;
+    try {
+      stored = await storage.getMessage(entry.id, deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued row not read back: ${String(e)}`);
+      return;
+    }
+    if (!stored) {
+      console.error(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message - the send has nothing to show`
+      );
+      return;
+    }
+    // Read again after the await: a page or a live echo may have put the row there meanwhile.
+    if (findMessage(entry.id)) return;
+    const [key] = holder;
+    const convo = conversations.get(key);
+    if (!convo) return;
+    const [row] = mapStoredMessagesToChatMessages([stored], deps.userId);
+    conversations.set(key, {
+      ...convo,
+      messages: insertMessageOrdered(convo.messages, { ...row, status: 'pending' }),
+    });
+    log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued, older than the page held - put back on screen`);
+  }
+
   function showServerFailure(messageId: string, serverErrors: number): void {
     patchStatus(messageId, 'error');
     patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
@@ -3086,6 +3128,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!storage) return;
       const entries = await readQueue('pending statuses');
       for (const entry of entries) {
+        if (!findMessage(entry.id)) await restoreQueuedRow(entry);
         const found = findMessage(entry.id);
         // A text failed on 5xx stays FAILED across a reload: its durable count says so.
         if (found && isServerFailureTerminal(entry)) {

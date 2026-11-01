@@ -992,11 +992,17 @@ function readWatermarkFrame(at: number): [Uint8Array, LatestWins] {
  * @returns how many marks the outbox took.
  */
 export function flushOwedDmReadMarks(userId: string): Promise<number> {
-  return flushDmReadMarks(userId, (conversationId, at) =>
-    Number.isFinite(at) && at > 0
+  return flushDmReadMarks(userId, (conversationId, at, clock) => {
+    if (!(Number.isFinite(at) && at > 0)) return Promise.resolve();
+    // A mark owed from before 2026-10-31 is on the authors' `sentAt` clock: it leaves as the older
+    // `{at}` frame, which every reader takes into its stamped map - never as `serverAt`.
+    return clock === 'server'
       ? queueControlEvent(conversationId, ...readWatermarkFrame(at))
-      : Promise.resolve()
-  );
+      : queueControlEvent(
+          conversationId,
+          encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at })))
+        );
+  });
 }
 
 /**
@@ -1029,8 +1035,11 @@ export function queuedReadWatermarkAt(entry: OutboxEntry): number | null {
   const system = decodeAppMessage(entry.controlProto)?.system;
   if (system?.event !== 'read_watermark') return null;
   try {
-    // The mark under whichever name it was queued with: a frame queued before 2026-10-31 says `at`.
-    return readWatermarkFrameMark(JSON.parse(system.data ?? '') as object)?.at ?? null;
+    // ONLY A SERVER-CLOCK MARK TAKES PART in latest-wins: a stamped `{at}` (queued before 2026-10-31,
+    // or flushed from the stamped ledger) is on another clock, and comparing the two numbers would
+    // let one supersede the other on a meaningless order. Each stamped frame is simply sent.
+    const mark = readWatermarkFrameMark(JSON.parse(system.data ?? '') as object);
+    return mark?.clock === 'server' ? mark.at : null;
   } catch (e) {
     console.warn(
       `[OUTBOX] queued read_watermark ${entry.id.slice(0, 8)}… has unreadable data, left alone:`,

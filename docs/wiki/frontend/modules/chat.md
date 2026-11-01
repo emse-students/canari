@@ -3305,8 +3305,23 @@ shade's, and is compared against the row's `timestamp`. **A row is read when eit
 Salons keep their marks in the stamped map, where a salon row's stamp IS its server time. The frame
 says `{ at, serverAt }` (the same value); a frame with no `serverAt` lands in the stamped map
 ([legacy-compatibility](../../legacy-compatibility.md)). Bundles carry both maps; SQLite schema v16
-adds `server_read_watermarks`. `seenByAnchors` scans from the bottom (a stamped mark is not monotone
-in a server-sorted list, so the binary search went).
+adds `server_read_watermarks`. `seenByAnchors` places every reader with two binary searches over
+SUFFIX MINIMA of the two keys plus a last-row-written lookup, built in one pass - neither key is
+monotone in display order (an unsent own row sits below every dated one on its `sentAt`, and stamps
+skew), and the last index whose suffix minimum is under a mark is exactly the last row under it.
+
+**Which server times may become a key or a mark** (review of #2824, P1-1 and P2-6). A row's server time
+is trusted from the server only: the delivery's `createdAt`, the send's `receivedAt`, a salon row's
+`createdAt`. A HISTORY BUNDLE is written by a peer, so a server time it relays is kept only inside
+`[sentAt - 24 h, the bundle frame's own server time]` (`vettedBundleServerTime`, `messageTime.ts`) and
+dropped otherwise (logged `[HISTORY_BUNDLE]`); the bundle's server read marks and a received
+`read_watermark`'s `serverAt` are refused above their frame's own server time
+(`boundedServerMarks`, `receivedReadWatermarkMark`). And the target of this device's own server mark is
+clamped to the newest server time HELD in the conversation, and below the newest one this session
+received from the server (`serverMarkCeiling`, `serverClock.ts`): no row, however it arrived, can lift
+the mark past what the server has said. DM marks owed in `localStorage` are kept per clock - the key
+written before the upgrade (`canari.dmReadMarks.*`) is now the STAMPED ledger and goes out as `{ at }`
+alone; the server ledger is `canari.dmServerReadMarks.*` (`salonReadMarkQueue.ts`).
 
 **What a late message does now**: it sorts where it arrived, counts as unread and notifies - unless a
 STAMPED mark newer than its `sentAt` covers it, which only an older client, the iOS shade's "mark as
@@ -3325,23 +3340,41 @@ read" (still `sentAt`-keyed, see below) or a mark from before the change can pro
   slice of the ID SPACE" below) - no clock enters it, so it needs nothing.
 - **Local pages are cut on the same key** (owner's decision, same day: it must work for conversations
   of every size). Each stored row carries its order key in the clear beside the ciphertext -
-  `order_at` in SQLite (schema v16, index `idx_messages_conv_order`, which replaces
-  `idx_messages_conv_time`), `orderAt` in IndexedDB (v12, index `byConversationOrder`) - written by
-  every save as `storedOrderAt` (= `messageTime`, one function in `messageTime.ts`). The server time is
-  INSIDE the ciphertext, so the migration cannot derive it: a row stored before, or imported from a
-  backup, is unkeyed (`NULL` / absent) and `deriveOrderKeys` keys a conversation's unkeyed rows on its
-  first page read - once, since every save writes the key; after that it is one index probe (SQLite) or
-  two index counts (IndexedDB) that find nothing. An undecryptable row is keyed on its `timestamp`. The
-  scrollback cursor is the smallest `messageTime` held (`loadOlderMessages`), the key the store pages
-  on, so a message delivered many pages late is on the first page after a reload, and the page below
-  neither skips nor repeats a row (`messagesPage.test.ts`, "a late message more than a page deep").
-  An own row still awaiting its server time is stored under its `sentAt` until the answer re-saves it.
+  `order_at` in SQLite (schema v16, index `idx_messages_conv_order` on `(conversation_id, order_at,
+  id)`, which replaces `idx_messages_conv_time`), `orderAt` in IndexedDB (v12, index
+  `byConversationOrder` on `[conversationId, orderAt, id]`) - written by every save as `storedOrderAt`
+  (= `messageTime`, one function in `messageTime.ts`). A page is cut on the PAIR `(orderAt, id)`, so rows
+  tied with the boundary are neither lost nor read twice, and every row a page returns carries its
+  `pageKey`.
+- **A row the migration cannot key is keyed PROVISIONALLY, and nothing waits for it** (review of
+  #2824, P1-2). The server time is INSIDE the ciphertext, so the v16 step (one `UPDATE`) and the v12
+  upgrade (one cursor, after the v11 repair) key every stored row on its `timestamp` and flag it
+  (`order_pending` / `orderPending`, each with its own index that holds the flagged rows only); a
+  backup import (`importEncryptedRow`) does the same. A page read walks the index as it stands -
+  keyed and provisional rows together, so the first page costs a page whatever the conversation
+  holds - and starts the derivation behind it (`$lib/db/orderKeyDerivation`): 500 rows per chunk, in
+  id order, each chunk WRITTEN before the next is read, one run per conversation; the flag is the
+  durable progress, so a kill loses one chunk and the next run reads only what is still flagged. A
+  row this key can never read (`PayloadUnreadableError`, a type thrown by `decryptData`) is keyed on
+  its `timestamp` for good; any other failure leaves it flagged for the next run. Only the store's
+  BOUNDARY was provisional - the screen sorts on the decrypted `messageTime` - so a page's `pageKey`
+  says `provisional`, and a load-older below such a boundary waits for the derivation and re-reads
+  what lies above it too: a row whose real key rose past the boundary is in neither page otherwise.
+- **The scrollback pages below where the STORE's pages stop**: the lowest `pageKey` held
+  (`oldestPageKey`, `loadOlderMessages`), never the oldest row in memory - a row that arrived another
+  way (live, from a bundle, an own send the outbox put back) may sit far below the last stored page,
+  and a cursor taken from it skipped every stored row in between (P2-4). A message delivered many pages
+  late is on the first page after a reload (`messagesPage.test.ts`, "a late message more than a page
+  deep"; `useConversations.loadOlder.svelte.test.ts`). An own row still awaiting its server time is
+  stored under its `sentAt` until the answer re-saves it, and one older than the page held is put back
+  on screen from the store by the outbox (`applyPendingStatuses`, P2-3).
 - **A background send** (a drain while the app was shut) writes `id<TAB>receivedAt` to
   `outbox_sent.ndjson` on both platforms; `reconcileOutboxSent` dates the stored and the in-memory row.
-  The Android quick reply's own cache row carries the `receivedAt` its POST answered
-  (`writeSentMessageToCache`, `serverTimestamp` in `fcm_message_cache.ndjson`), and so does an inbound
-  push's (the push's `createdAt`). The iOS quick reply's cache row does not: it is injected after
-  `reconcileOutboxSent` ran, so it keeps its `sentAt` until the real frame replaces it.
+  The quick reply's own cache row carries the `receivedAt` its POST answered on both platforms
+  (`writeSentMessageToCache` / `CanariWriteSentMessageToCache`, which `CanariDrainOutboxBackground`
+  hands the receive times it collected; `serverTimestamp` in `fcm_message_cache.ndjson`), and so does
+  an inbound push's (the push's `createdAt`). A reply another drain delivered has none and keeps its
+  `sentAt` until the app dates it, said in the native log.
 
 **Logs**: `[ADD_MSG] ✓ Message added` carries `sentAt=… serverAt=… gap=…ms`, and a batch line the
 largest gap of the batch (`clockGapNote`). A gap of minutes on a positive sign is delay; a negative
@@ -3349,7 +3382,8 @@ gap, or one constant per sender, is a clock.
 
 **The Android shade states the server clock too**: the push's `createdAt` (and, on the WebSocket
 trigger, the frame's server time, `notifier_message_natif`'s `server_at`) rides the notification as
-`EXTRA_SERVER_AT` beside `EXTRA_SENT_AT`. "Mark as read" and the quick reply's mark then send
+`EXTRA_SERVER_AT` beside `EXTRA_SENT_AT`. The banner a shade read already covers is compared on that
+clock when both the message and the mark carry it (`coveredByShadeMark`), on the stamps otherwise. "Mark as read" and the quick reply's mark then send
 `{ at, serverAt }` (`build_read_watermark_app_message(at, server_at)`, the shape the app sends) and
 write `serverAt` into `read_watermarks.ndjson`, which `applyNativeReadWatermarks` merges into the
 server map. A notification without it (an older build's, a push with no readable `createdAt`) sends

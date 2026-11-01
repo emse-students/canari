@@ -14,14 +14,14 @@ import {
 } from './sqliteBatch';
 
 describe('orderAtFillStatement', () => {
-  it('keys only the rows still unkeyed, placeholders in the order they appear', () => {
+  it('keys only the rows still pending and clears their flag, placeholders in the order they appear', () => {
     const { sql, params } = orderAtFillStatement([
       { id: 'a', orderAt: 10 },
       { id: 'b', orderAt: 20 },
     ]);
     expect(sql).toBe(
-      'UPDATE messages SET order_at = CASE id WHEN $1 THEN $2 WHEN $3 THEN $4 END ' +
-        'WHERE order_at IS NULL AND id IN ($5, $6)'
+      'UPDATE messages SET order_at = CASE id WHEN $1 THEN $2 WHEN $3 THEN $4 END, order_pending = NULL ' +
+        'WHERE order_pending = 1 AND id IN ($5, $6)'
     );
     expect(params).toEqual(['a', 10, 'b', 20, 'a', 'b']);
   });
@@ -89,8 +89,8 @@ describe('sealedSwapStatement', () => {
 describe('messageInsertSql', () => {
   it('numbers placeholders across the whole statement, not per tuple', () => {
     expect(messageInsertSql(2)).toBe(
-      'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at) VALUES ' +
-        '($1, $2, $3, $4, $5, $6), ($7, $8, $9, $10, $11, $12)'
+      'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
+        '($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)'
     );
   });
 

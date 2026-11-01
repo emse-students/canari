@@ -10,13 +10,15 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   mergeReadWatermark,
   parseReadWatermarks,
-  readWatermarkFrameMark,
+  boundedServerMarks,
+  receivedReadWatermarkMark,
   watermarkAfterReading,
   type ReadClock,
 } from '$lib/utils/chat/readState';
@@ -314,8 +316,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const getName = await resolveDisplayNames([senderNorm]);
       systemContent = chat_system_conversation_deleted({ sender: getName(senderNorm) });
     } else if (parsed.system.event === 'read_watermark') {
-      const mark = readWatermarkFrameMark(data);
-      if (mark) noteReadUpTo(senderNorm, mark.at, mark.clock);
+      // Bounded by the server's own time for this frame, the history row's (readState.ts).
+      const received = receivedReadWatermarkMark(data, parseServerTimestampMs(msg.timestamp));
+      if (received.refused) {
+        console.error(
+          `[HISTORY_REPLAY] REFUSED a read mark from ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: ${received.refused}`
+        );
+      }
+      if (received.mark) noteReadUpTo(senderNorm, received.mark.at, received.mark.clock);
     } else if (parsed.system.event === 'read_receipt') {
       // The pre-watermark shape, which names message ids instead of an instant. Translated using
       // the messages we hold: an id we do not have says nothing this could act on.
@@ -449,7 +457,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           noteReadUpTo(userNorm, at, 'stamped');
         }
       }
-      const bundleServerWatermarks = parseReadWatermarks(data.serverReadWatermarks);
+      const bundleServerMarks = boundedServerMarks(
+        parseReadWatermarks(data.serverReadWatermarks),
+        parseServerTimestampMs(msg.timestamp)
+      );
+      if (bundleServerMarks.dropped > 0) {
+        console.error(
+          `[HISTORY_REPLAY] ${bundleServerMarks.dropped} server-clock read mark(s) relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}… lie after the bundle's own server time - dropped`
+        );
+      }
+      const bundleServerWatermarks = bundleServerMarks.kept;
       if (bundleServerWatermarks) {
         for (const [userNorm, at] of Object.entries(bundleServerWatermarks)) {
           noteReadUpTo(userNorm, at, 'server');
@@ -471,7 +488,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         // applies: a durable bundle an older build wrote keeps restoring history - MARKED when
         // nothing proves its author - and nothing in it is taken on its relayer's word about
         // somebody else. Only the writes differ: they go to this page's accumulators.
-        const entries = (bundleData as Array<Record<string, unknown>>).filter(
+        const wellFormed = (bundleData as Array<Record<string, unknown>>).filter(
           (m) =>
             typeof m?.id === 'string' &&
             m.id !== '' &&
@@ -480,6 +497,17 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             typeof m.content === 'string' &&
             m.content !== ''
         ) as unknown as BundleEntry[];
+        // A relayed server time is believed only inside the bundle frame's own (`messageTime.ts`).
+        const vettedTimes = withVettedBundleServerTimes(
+          wellFormed,
+          parseServerTimestampMs(msg.timestamp)
+        );
+        if (vettedTimes.dropped > 0) {
+          console.error(
+            `[HISTORY_REPLAY] ${vettedTimes.dropped} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}… lie outside the bundle's own server time - dropped, those rows keep their sentAt`
+          );
+        }
+        const entries = vettedTimes.rows;
         // HELD = what memory holds AND what this page already queued. A row queued earlier in the
         // page - a decrypted original, or another bundle's copy - is held like a stored one: it is
         // upgraded by a proof and never queued twice, so a later copy cannot overwrite it.

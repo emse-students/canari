@@ -93,10 +93,23 @@ export async function sealBytes(
 }
 
 /**
+ * THE BYTES CANNOT BE READ WITH THIS KEY, AND NEVER WILL BE: the AES-GCM tag did not verify (another
+ * key, or corrupted bytes) or the plaintext is not the JSON this module writes. A type, so a caller
+ * can tell this permanent answer from a failure that may pass (the key could not be imported, the
+ * engine threw for another reason) without reading a message.
+ */
+export class PayloadUnreadableError extends Error {
+  constructor() {
+    super('Decryption failed. Wrong device key?');
+    this.name = 'PayloadUnreadableError';
+  }
+}
+
+/**
  * Decrypt a ciphertext blob produced by {@link encryptData}.
  *
- * Throws with "Decryption failed. Wrong device key?" if the authentication
- * tag does not verify (wrong key or data corruption).
+ * Throws {@link PayloadUnreadableError} if the authentication tag does not verify (wrong key or
+ * data corruption) or the plaintext is not JSON; anything else (the key import) propagates as is.
  */
 export async function decryptData(
   cipherText: Uint8Array,
@@ -112,6 +125,6 @@ export async function decryptData(
     );
     return JSON.parse(new TextDecoder().decode(plainBuf));
   } catch {
-    throw new Error('Decryption failed. Wrong device key?');
+    throw new PayloadUnreadableError();
   }
 }

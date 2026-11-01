@@ -1024,20 +1024,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notification without the reply line. Once the app has merged the file its own
          * conversation row carries the watermark, and `notifyInbound` asks the same question there.
          */
-        internal fun shadeReadWatermark(context: Context, groupId: String): Long {
-            if (groupId.isEmpty()) return 0L
+        internal fun shadeReadWatermark(context: Context, groupId: String): ShadeReadMark {
+            val none = ShadeReadMark(0L, 0L)
+            if (groupId.isEmpty()) return none
             return try {
                 CACHE_LOCK.lock()
                 try {
-                    parseReadWatermarks(readWatermarksFile(context))[groupId]?.at ?: 0L
+                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: none
                 } finally {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
-                0L
+                none
             }
         }
+
+        /**
+         * Whether a message is covered by what the user read from the shade. ON THE SERVER'S CLOCK
+         * when both sides carry it - the message's `serverAt` and the mark's - because that is the
+         * clock the conversation is ordered and read by (owner 2026-10-31): a sender whose phone
+         * runs late stamps a NEW message below a mark taken on a newer one, and the stamped
+         * comparison swallowed its banner. On the sender's stamps otherwise, as before: a mark
+         * written by a build that did not record `serverAt`, or a message whose push carried none.
+         */
+        internal fun coveredByShadeMark(sentAt: Long, serverAt: Long, mark: ShadeReadMark): Boolean =
+            if (serverAt > 0L && mark.serverAt > 0L) serverAt <= mark.serverAt else sentAt <= mark.at
 
         /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
         private fun callNotifId(callId: String): Int =
@@ -2358,13 +2370,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
                 return 0L
             }
-            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark]. Only where the
-            // sender's stamp exists, the same condition the de-duplication below carries, and never
-            // against a supersede, which redraws a line that is already there.
+            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
+            // [coveredByShadeMark]. Only where the sender's stamp exists, the same condition the
+            // de-duplication below carries, and never against a supersede, which redraws a line
+            // that is already there.
             if (sentAt > 0L && supersedes == 0L) {
                 val readUpTo = shadeReadWatermark(this, groupId)
-                if (sentAt <= readUpTo) {
-                    Log.d(TAG, "showMessageNotification: read from the shade up to $readUpTo -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
+                    Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
                     return 0L
                 }
             }

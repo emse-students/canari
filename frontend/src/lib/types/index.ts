@@ -7,7 +7,7 @@
  *               stays until MANUAL DELETION (rules 2 & 4).
  * Predicates and transition logic: `$lib/utils/chat/groupLifecycle`.
  */
-import type { OutboxEntry } from '$lib/db/types';
+import type { OutboxEntry, PageKey } from '$lib/db/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
 export type ConversationLifecycle = 'active' | 'pending' | 'removed';
@@ -183,6 +183,8 @@ export interface ChatMessage {
   awaitingServerId?: boolean;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
+  /** Where the store's page read found this row (`StoredMessage.pageKey`); absent on a row that did not come from one. */
+  pageKey?: PageKey;
 }
 
 /**

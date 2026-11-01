@@ -1,4 +1,5 @@
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
+import { compareMessageOrder } from './messageOrder';
 import {
   countUnreadForUser,
   hasRead,
@@ -6,6 +7,7 @@ import {
   mergeReadWatermark,
   mergeReadWatermarks,
   readMarkTarget,
+  serverMarkCeiling,
   readWatermarkFrameData,
   readWatermarkFrameMark,
   readersOf,
@@ -246,6 +248,54 @@ describe('where each head sits in a group (seen by)', () => {
     expect(anchors.has('a')).toBe(false);
   });
 
+  it('places every reader where a scan from the end would, by search (review of #2824, P3-7)', () => {
+    // Dated rows whose sentAt runs out of order (clocks skew both ways), an unsent own row below
+    // them all, and readers on either clock: the display order is monotone in neither key.
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const writers = [PEER, ALICE, BOB, 'carol'];
+    const rows: ChatMessage[] = Array.from({ length: 300 }, (_, i) =>
+      dated(
+        `m-${i}`,
+        10_000 + i * 100 + Math.round((next() - 0.5) * 5_000),
+        10_000 + i * 100,
+        writers[Math.floor(next() * writers.length)]
+      )
+    );
+    rows.push(msg('unsent', 12_000, ME, { status: 'pending' }));
+    rows.sort(compareMessageOrder);
+    const stamped: ReadWatermarks = {};
+    const server: ReadWatermarks = {};
+    for (let r = 0; r < 40; r++) {
+      const reader = `reader-${r}`;
+      if (next() < 0.7) stamped[reader] = 9_000 + Math.round(next() * 32_000);
+      if (next() < 0.7) server[reader] = 9_000 + Math.round(next() * 32_000);
+    }
+    stamped[ALICE] = 20_000;
+    server[BOB] = 15_000;
+
+    const reference = new Map<string, string[]>();
+    const all = new Set([...Object.keys(stamped), ...Object.keys(server)]);
+    for (const reader of all) {
+      let found = -1;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        const serverKey = row.serverTimestamp ?? row.timestamp.getTime();
+        const covered =
+          ((server[reader] ?? 0) > 0 && (server[reader] ?? 0) >= serverKey) ||
+          (stamped[reader] ?? 0) >= row.timestamp.getTime();
+        if (row.senderId === reader || covered) {
+          found = i;
+          break;
+        }
+      }
+      if (found < 0 || rows[found].senderId === reader) continue;
+      reference.set(rows[found].id, [...(reference.get(rows[found].id) ?? []), reader].sort());
+    }
+
+    expect(seenByAnchors(rows, stamped, ME, server)).toEqual(reference);
+  });
+
   it('never draws the viewer', () => {
     const anchors = seenByAnchors([msg('a', 1000, PEER)], { [ME]: 1000 }, 'ME');
 
@@ -370,13 +420,13 @@ describe('readMarkTarget - the sender says only what is new', () => {
   });
 
   it("still moves a DM mark over a foreign message that arrives after the reader's own", () => {
-    const msgs = [msg('mine', 3000, ME), msg('late', 2500)];
+    const msgs = [dated('mine', 3000, 3000, ME), dated('late', 2500, 2500)];
     expect(readMarkTarget(msgs, 2000, false)).toBe(2500);
   });
 
   it('counts unread exactly as before: an own message never was unread', () => {
-    const msgs = [msg('a', 1000), msg('mine', 3000, ME)];
-    expect(countUnreadForUser(msgs, readMarkTarget(msgs, 0, false))).toBe(0);
+    const msgs = [dated('a', 1000, 1000), dated('mine', 3000, 3000, ME)];
+    expect(countUnreadForUser(msgs, 0, readMarkTarget(msgs, 0, false))).toBe(0);
   });
 
   it('leaves a salon unchanged - own and system rows still move its server mark (#1619, #1820)', () => {
@@ -406,6 +456,31 @@ type HeldConvo = {
   serverReadWatermarks?: ReadWatermarks;
   unreadCount: number;
 };
+
+/**
+ * THE CEILING (review of #2824, 2026-11-01). A DM or group mark is the newest key read, and a key
+ * falls back on the AUTHOR's clock for an undated row while a bundle row's server time was written by
+ * its relayer: unbounded, one row dated 2100 would mark every later message read, for good.
+ */
+describe('readMarkTarget - bounded by the server times held and seen', () => {
+  it('a row claiming 2100 moves no mark past the newest server time held', () => {
+    const y2100 = Date.UTC(2100, 0, 1);
+    const msgs = [dated('a', 1000, 1_500), msg('forged', y2100)];
+    expect(readMarkTarget(msgs, 0, false)).toBe(1_500);
+  });
+
+  it('never above what the server said this session, even over a held time', () => {
+    const msgs = [dated('a', 1000, 1_500), dated('relayed', 1000, 9_000)];
+    expect(readMarkTarget(msgs, 0, false, 2_000)).toBe(2_000);
+    expect(serverMarkCeiling(msgs, 0)).toBe(9_000);
+  });
+
+  it('a conversation with no dated row moves only once the server has said something', () => {
+    const msgs = [msg('a', 1000), msg('b', 2000)];
+    expect(readMarkTarget(msgs, 0, false, 0)).toBe(0);
+    expect(readMarkTarget(msgs, 0, false, 5_000)).toBe(2000);
+  });
+});
 
 describe('read marks on the server clock', () => {
   it('a LATE message - written before the mark, accepted after it - is unread and notifies', () => {

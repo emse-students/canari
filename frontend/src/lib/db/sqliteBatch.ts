@@ -35,7 +35,7 @@ import type { SealedStore } from './types';
 export const MAX_BOUND_PARAMETERS = 999;
 
 /** Columns bound per message row in {@link messageInsertSql}. */
-export const MESSAGE_COLUMNS = 6;
+export const MESSAGE_COLUMNS = 7;
 
 /** Rows per INSERT statement: the largest batch that cannot exceed the parameter ceiling. */
 export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESSAGE_COLUMNS);
@@ -60,7 +60,7 @@ export function messageInsertSql(rows: number): string {
     return `(${placeholders.join(', ')})`;
   });
   return (
-    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at) VALUES ' +
+    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
     tuples.join(', ')
   );
 }
@@ -135,10 +135,11 @@ export const ORDER_AT_FILL_ROWS_PER_STATEMENT = Math.floor(
 );
 
 /**
- * ONE statement that writes the derived `order_at` of `rows.length` messages, and only of those
- * still NULL: a row the app rewrote between the read and this write already carries the key its
- * own save computed, and the fill must not replace a fresher value with the one it derived from the
- * older ciphertext. Placeholders numbered in the order they appear, like {@link sealedSwapStatement}.
+ * ONE statement that writes the derived `order_at` of `rows.length` messages and clears their
+ * `order_pending`, touching only the rows STILL pending: a row the app rewrote between the read and
+ * this write already carries the key its own save computed, and the fill must not replace a fresher
+ * value with the one it derived from the older ciphertext. Placeholders numbered in the order they
+ * appear, like {@link sealedSwapStatement}.
  */
 export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: number }>): {
   sql: string;
@@ -153,7 +154,7 @@ export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: 
   const cases = rows.map((r) => `WHEN ${next(r.id)} THEN ${next(r.orderAt)}`).join(' ');
   const ids = rows.map((r) => next(r.id)).join(', ');
   return {
-    sql: `UPDATE messages SET order_at = CASE id ${cases} END WHERE order_at IS NULL AND id IN (${ids})`,
+    sql: `UPDATE messages SET order_at = CASE id ${cases} END, order_pending = NULL WHERE order_pending = 1 AND id IN (${ids})`,
     params,
   };
 }

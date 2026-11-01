@@ -210,22 +210,24 @@ export function seenByAnchors(
   const anchors = new Map<string, string[]>();
   const viewerNorm = viewerId.trim().toLowerCase();
   const rows = messages.filter((msg) => !msg.isSystem && msg.senderId !== 'system');
+  // ONE pass over the conversation, whatever the number of readers: each reader is then placed by
+  // two binary searches and a lookup (review of #2824, P3-7) - never a scan per reader.
+  const serverKeys = suffixMinima(rows.map(readOrderKey));
+  const stampedKeys = suffixMinima(rows.map(stampedTime));
+  const lastWritten = new Map<string, number>();
+  rows.forEach((row, i) => lastWritten.set(row.senderId.toLowerCase(), i));
 
   for (const userNorm of participantsOf(watermarks, serverWatermarks)) {
     if (userNorm === viewerNorm) continue;
     const stamped = watermarkFor(watermarks, userNorm);
     const server = watermarkFor(serverWatermarks, userNorm);
-    // The LAST row, in display order, this reader has read or wrote. Scanned from the end: a stamped
-    // mark is not monotone in a list sorted by server time, so a binary search over it would answer
-    // wrong, and a reader's anchor is nearly always a few rows from the bottom.
-    let found = -1;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const row = rows[i];
-      if (row.senderId.toLowerCase() === userNorm || isCoveredBy(row, stamped, server)) {
-        found = i;
-        break;
-      }
-    }
+    // The LAST row, in display order, this reader has read ({@link isCoveredBy}: either mark) or
+    // wrote.
+    const found = Math.max(
+      server > 0 ? lastAtOrBelow(serverKeys, server) : -1,
+      lastAtOrBelow(stampedKeys, stamped),
+      lastWritten.get(userNorm) ?? -1
+    );
     if (found < 0) continue;
     const anchor = rows[found];
     if (anchor.senderId.toLowerCase() === userNorm) continue;
@@ -235,6 +237,43 @@ export function seenByAnchors(
   }
   for (const heads of anchors.values()) heads.sort();
   return anchors;
+}
+
+/**
+ * `out[i]` = the smallest of `keys[i..]`: non-decreasing, whatever order `keys` is in. The display
+ * order is the server key's order for every dated row, but not for an unsent own row (ordered below
+ * them all, on its `sentAt`) nor for the stamped key at all - so the anchors search THIS, never the
+ * keys themselves.
+ */
+function suffixMinima(keys: readonly number[]): number[] {
+  const out: number[] = Array.from({ length: keys.length }, () => 0);
+  let min = Infinity;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    min = Math.min(min, keys[i]);
+    out[i] = min;
+  }
+  return out;
+}
+
+/**
+ * The last index whose key is `<= mark`, or -1, by binary search over {@link suffixMinima}: the last
+ * `i` with `suffixMin[i] <= mark` IS the last `j` with `keys[j] <= mark` - some key at or after `i`
+ * is under the mark, and every key after the last such `j` is above it.
+ */
+function lastAtOrBelow(suffixMin: readonly number[], mark: number): number {
+  let lo = 0;
+  let hi = suffixMin.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (suffixMin[mid] <= mark) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
 }
 
 /**
@@ -378,13 +417,43 @@ export function readMarkTarget(
     >
   >,
   current: number,
-  isSalon: boolean
+  isSalon: boolean,
+  serverSeen = 0
 ): number {
   if (isSalon) return watermarkAfterReading(msgs, current, true);
-  return watermarkAfterReading(
+  const target = watermarkAfterReading(
     msgs.filter((msg) => !msg.isOwn),
     current
   );
+  return Math.max(current, Math.min(target, serverMarkCeiling(msgs, serverSeen)));
+}
+
+/**
+ * THE HIGHEST A SERVER-CLOCK MARK MAY GO: the newest `serverTimestamp` the conversation holds, and
+ * never above what the server itself said this session (`serverSeen`, serverClock.ts) when it has
+ * said anything.
+ *
+ * WHY. The target is the newest key read, and a row's key falls back on its `sentAt` - the AUTHOR's
+ * clock - when the row has no server time, while a bundle row's server time was written by the
+ * member who relayed it. Unbounded, a phone running fast or a relayer writing 2100 would push the
+ * reader's server mark past every message not yet received, and the merge is `max`: read for good,
+ * before they arrive. An undated row newer than every server time held therefore stays unread until
+ * a dated row catches up with it, which is the cost of never over-reading.
+ *
+ * A conversation holding no dated row at all is bounded by `serverSeen` alone, and does not move
+ * while the server has said nothing this session.
+ */
+export function serverMarkCeiling(
+  msgs: ReadonlyArray<Pick<ChatMessage, 'serverTimestamp'>>,
+  serverSeen: number
+): number {
+  let held = 0;
+  for (const msg of msgs) {
+    const at = msg.serverTimestamp;
+    if (typeof at === 'number' && Number.isFinite(at) && at > held) held = at;
+  }
+  if (held === 0) return serverSeen > 0 ? serverSeen : 0;
+  return serverSeen > 0 ? Math.min(held, serverSeen) : held;
 }
 
 /**
@@ -404,6 +473,53 @@ export function readWatermarkFrameMark(data: {
   const stamped = Number(data.at);
   if (Number.isFinite(stamped) && stamped > 0) return { at: stamped, clock: 'stamped' };
   return null;
+}
+
+/**
+ * The mark a `read_watermark` frame RECEIVED from a member states, bounded by the server's own time
+ * for that frame: an honest sender's server-clock mark is the server time of a row it holds, which
+ * the server accepted before it accepted this frame. A server mark above `frameServerAt` - or any
+ * server mark when the frame's server time is unknown - is REFUSED, with the reason: written by a
+ * member, unbounded, it would mark every later message read before it arrives, for good (the merge
+ * is `max`). A stamped mark (an older client's `{at}`) is on the author's clock and is passed through
+ * as it always was.
+ */
+export function receivedReadWatermarkMark(
+  data: { at?: unknown; serverAt?: unknown },
+  frameServerAt: number | undefined
+): { mark: { at: number; clock: ReadClock } | null; refused?: string } {
+  const mark = readWatermarkFrameMark(data);
+  if (!mark || mark.clock !== 'server') return { mark };
+  if (!(typeof frameServerAt === 'number' && frameServerAt > 0)) {
+    return { mark: null, refused: 'the frame carries no server time to bound it' };
+  }
+  if (mark.at > frameServerAt) {
+    return {
+      mark: null,
+      refused: `serverAt ${mark.at} is after the server accepted the frame (${frameServerAt})`,
+    };
+  }
+  return { mark };
+}
+
+/**
+ * The server-clock marks a HISTORY BUNDLE restates, without any above the server's own time for the
+ * bundle frame (see {@link receivedReadWatermarkMark}); `dropped` counts the refused ones. With no
+ * server time for the frame, every server mark is refused.
+ */
+export function boundedServerMarks(
+  marks: ReadWatermarks | null | undefined,
+  frameServerAt: number | undefined
+): { kept: ReadWatermarks | null; dropped: number } {
+  if (!marks) return { kept: null, dropped: 0 };
+  const bound = typeof frameServerAt === 'number' && frameServerAt > 0 ? frameServerAt : 0;
+  const kept: ReadWatermarks = {};
+  let dropped = 0;
+  for (const [user, at] of Object.entries(marks)) {
+    if (bound > 0 && at <= bound) kept[user] = at;
+    else dropped++;
+  }
+  return { kept: Object.keys(kept).length > 0 ? kept : null, dropped };
 }
 
 /** The `data` of a `read_watermark` frame this build sends: the mark under both names (see above). */

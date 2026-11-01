@@ -21,6 +21,7 @@
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+  import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
@@ -740,7 +741,8 @@
     );
     // A DM or group mark moves over FOREIGN messages only: one moved over this reader's own send
     // told nobody anything and cost every member a decrypt and a checkpoint (`readMarkTarget`).
-    const target = readMarkTarget(convo.messages, held, isSelectedChannel);
+    // Bounded by what the server itself said this session (`serverMarkCeiling`).
+    const target = readMarkTarget(convo.messages, held, isSelectedChannel, serverTimeSeen());
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;

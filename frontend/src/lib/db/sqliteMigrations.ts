@@ -96,21 +96,54 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
  */
 /**
  * The v15 -> v16 step, second half: the message row gains `order_at`, the key a page is read on
- * (`storedOrderAt`). NULL on arrival, and NULL MEANS "NOT DERIVED YET": the server time it is
- * derived from is inside the ciphertext, which a migration run before the device key is known cannot
- * read, so the first page read of each conversation derives its rows (`SqliteStorage`).
+ * (`storedOrderAt`), and `order_pending`, set while that key is only PROVISIONAL. The server time the
+ * key is derived from is inside the ciphertext, which a migration run before the device key is known
+ * cannot read, so the rows already stored are keyed on their `timestamp` and flagged
+ * ({@link MESSAGE_PROVISIONAL_ORDER_FILL}); a page read derives the real key behind it
+ * (`$lib/db/orderKeyDerivation`). Only the columns the file lacks are added.
  */
-export function messageOrderAtStatement(columns: readonly string[]): string | null {
-  return columns.includes('order_at') ? null : 'ALTER TABLE messages ADD COLUMN order_at INTEGER';
+export function messageOrderColumnsStatements(columns: readonly string[]): string[] {
+  return [
+    ...(columns.includes('order_at') ? [] : ['ALTER TABLE messages ADD COLUMN order_at INTEGER']),
+    ...(columns.includes('order_pending')
+      ? []
+      : ['ALTER TABLE messages ADD COLUMN order_pending INTEGER']),
+  ];
 }
 
 /**
- * The page read's index (`getMessagesPage`) on the order key. Created where the column is known to
- * exist - the fresh schema and the v16 step - never with the unconditional statements that run
- * before the migrations, where an older file has no `order_at` yet.
+ * Keys every row the v16 step finds unkeyed on its `timestamp`, PROVISIONALLY: one statement, no
+ * decryption, so the step costs the same whatever the store holds, and every row is in the page
+ * index from the first read on.
+ */
+export const MESSAGE_PROVISIONAL_ORDER_FILL =
+  'UPDATE messages SET order_at = timestamp, order_pending = 1 WHERE order_at IS NULL';
+
+/**
+ * The page read's index (`getMessagesPage`) on the order key, ties broken by id - the pair a page
+ * boundary is drawn on. Created where the columns are known to exist - the fresh schema and the v16
+ * step - never with the unconditional statements that run before the migrations.
  */
 export const MESSAGE_ORDER_INDEX_STATEMENT =
-  'CREATE INDEX IF NOT EXISTS idx_messages_conv_order ON messages(conversation_id, order_at)';
+  'CREATE INDEX IF NOT EXISTS idx_messages_conv_order ON messages(conversation_id, order_at, id)';
+
+/**
+ * The rows with NO order key at all - PARTIAL, so it is empty in the ordinary case. Only a build older
+ * than v16 writes one: it can still open this file (it runs no migration above its own version) and
+ * its insert names no `order_at`. Every open of a v16 file re-keys them provisionally through this
+ * index ({@link MESSAGE_PROVISIONAL_ORDER_FILL}), so a downgrade and an upgrade back cannot leave a
+ * row that no page reaches (legacy-compatibility.md, "a downgrade below the server-time order").
+ */
+export const MESSAGE_ORDER_MISSING_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_order_missing ON messages(id) WHERE order_at IS NULL';
+
+/**
+ * The provisional rows of each conversation, by id - what a derivation reads, chunk after chunk.
+ * PARTIAL: it holds the pending rows only, so it is empty once a store is derived and costs nothing
+ * on a save.
+ */
+export const MESSAGE_ORDER_PENDING_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_order_pending ON messages(conversation_id, id) WHERE order_pending = 1';
 
 /** The `[conversation_id, timestamp]` index the page read used before v16; nothing reads it since. */
 export const LEGACY_MESSAGE_TIME_INDEX_DROP = 'DROP INDEX IF EXISTS idx_messages_conv_time';

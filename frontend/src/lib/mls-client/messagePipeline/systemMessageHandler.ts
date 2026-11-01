@@ -52,11 +52,13 @@ import {
   mergeReadWatermarks,
   parseReadWatermarks,
   readPointFor,
-  readWatermarkFrameMark,
+  boundedServerMarks,
+  receivedReadWatermarkMark,
   watermarkAfterReading,
   withOwnReadAdvanced,
   withReadMark,
 } from '$lib/utils/chat/readState';
+import { withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -735,9 +737,18 @@ export async function handleSystemEvent(
       // directly, and ids we do not hold say nothing we could act on anyway.
       // A `read_watermark` says which clock it is on (`serverAt` from this build, a bare `at` from an
       // older one); ids translate through the rows we hold, whose key is the server's clock.
+      const received =
+        event === 'read_watermark'
+          ? receivedReadWatermarkMark(data, deliveryMeta?.queuedCreatedAt)
+          : null;
+      if (received?.refused) {
+        console.error(
+          `[READ] REFUSED a read mark from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: ${received.refused}`
+        );
+      }
       const mark =
         event === 'read_watermark'
-          ? readWatermarkFrameMark(data)
+          ? (received?.mark ?? null)
           : {
               at: watermarkAfterReading(
                 c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
@@ -958,7 +969,15 @@ export async function handleSystemEvent(
       );
     }
     try {
-      const msgs: BundleMsg[] = incoming;
+      // A RELAYED SERVER TIME IS BELIEVED ONLY INSIDE WHAT THE SERVER ITSELF SAYS (`messageTime.ts`):
+      // it is the order key and the read-mark key, and this member wrote it, not the server.
+      const vettedTimes = withVettedBundleServerTimes(incoming, deliveryMeta?.queuedCreatedAt);
+      if (vettedTimes.dropped > 0) {
+        console.error(
+          `[HISTORY_BUNDLE] ${vettedTimes.dropped} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie outside the bundle's own server time (${deliveryMeta?.queuedCreatedAt ?? 'unknown'}) - dropped, those rows keep their sentAt`
+        );
+      }
+      const msgs: BundleMsg[] = vettedTimes.rows;
       // EVERY REFUSAL BELOW IS ONE OF THESE: a proof that does not hold is a member forging
       // history, which is logged at ERROR and reported - never merely skipped.
       const refuseForged = (what: string, id: string, why: string): void => {
@@ -987,9 +1006,19 @@ export async function handleSystemEvent(
           parseReadWatermarks(data.readWatermarks)
         );
         // The server-clock marks travel beside the stamped ones; an older sender has none.
+        // Bounded like a read_watermark frame: none above the server's time for this bundle.
+        const bundleServerMarks = boundedServerMarks(
+          parseReadWatermarks(data.serverReadWatermarks),
+          deliveryMeta?.queuedCreatedAt
+        );
+        if (bundleServerMarks.dropped > 0) {
+          console.error(
+            `[HISTORY_BUNDLE] ${bundleServerMarks.dropped} server-clock read mark(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie after the bundle's own server time - dropped`
+          );
+        }
         const mergedServerWatermarks = mergeReadWatermarks(
           beforeMerge.serverReadWatermarks,
-          parseReadWatermarks(data.serverReadWatermarks)
+          bundleServerMarks.kept ?? undefined
         );
         const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {

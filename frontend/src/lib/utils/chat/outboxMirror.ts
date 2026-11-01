@@ -44,6 +44,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
 import type { Conversation } from '$lib/types';
 import { replaceMessageOrdered } from './messageOrder';
+import { noteServerTime } from './serverClock';
 
 /** One line of `outbox_pending.ndjson`, consumed natively. `proto` is base64(plaintext AppMessage). */
 export interface OutboxMirrorEntry {
@@ -157,6 +158,7 @@ export async function reconcileOutboxSent(
     `[OUTBOX_MIRROR] ${sent.length} message(s) sent in the background to reconcile, ${dated} with the server's receive time`
   );
   for (const { id, receivedAt } of sent) {
+    noteServerTime(receivedAt);
     await storage
       .deleteOutboxEntry(id)
       .catch((e) =>

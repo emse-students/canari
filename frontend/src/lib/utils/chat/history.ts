@@ -24,6 +24,7 @@ import {
   appMsgToEnvelope,
   isOwnMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -37,7 +38,6 @@ import {
 import { freezeForAdmissionRefusal } from './admissionFreeze';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
-import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
@@ -651,34 +651,9 @@ export function provenRowsIntoMemory(
   return next;
 }
 
-/**
- * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
- * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
- *
- * `isSystem` is derived here and not read, because there is nothing to read: `StoredMessage` has no
- * such column and neither does the encrypted payload. A group notice is recognised by its sentinel
- * sender and by nothing else, so a read path that waited to be told would render every restored
- * notice as an ordinary bubble from an unresolvable author.
- */
-export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
-  return storedMessages.map((m) => {
-    return {
-      id: m.id,
-      senderId: m.senderId,
-      content: m.content,
-      timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
-      isOwn: isOwnMessage(m.senderId, userId),
-      isSystem: isSystemSender(m.senderId),
-      reactions: m.reactions,
-      serverTimestamp: m.serverTimestamp,
-      ...(m.isDeleted ? { isDeleted: true } : {}),
-      ...(m.isEdited ? { isEdited: true } : {}),
-      ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
-      ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
-      ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
-    } satisfies ChatMessage;
-  });
-}
+// Lives with the other message helpers so the outbox can map a stored row without this module;
+// re-exported so every existing import keeps one name.
+export { mapStoredMessagesToChatMessages };
 
 /**
  * Makes a replay's durable progress markers (Redis stream cursor + retry counters) persistent -

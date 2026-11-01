@@ -106,6 +106,25 @@ export interface StoredMessage {
   deleteProof?: RecordedAuthorship;
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
+  /**
+   * Where the page read that returned this row found it on the store's order key. Set by
+   * `getMessagesPage` only, never persisted (the payload projection names its fields), and carried
+   * onto the screen row so "load older" pages below what the STORE handed back - never below a row
+   * that reached memory another way.
+   */
+  pageKey?: PageKey;
+}
+
+/**
+ * A position on the store's order key: the pair a page is read on, ties broken by id. `provisional`
+ * is true when the conversation still held a row keyed provisionally on its `sentAt` at the read
+ * (`$lib/db/orderKeyDerivation`): such a row may rise above this position once keyed, so a page read
+ * below a provisional position re-reads what lies above it as well.
+ */
+export interface PageKey {
+  orderAt: number;
+  id: string;
+  provisional: boolean;
 }
 
 /**
@@ -611,14 +630,20 @@ export interface IStorage {
   /**
    * Return the most recent `limit` messages on the ORDER key (`storedOrderAt`: the server's receive
    * time when the row knows it, `sentAt` otherwise - the key the timeline sorts on), optionally
-   * those strictly below `beforeOrderAt`, oldest first. Paging on any other key loses a late
-   * message: older by `sentAt` than the page boundary, newer by the key the screen sorts on.
+   * those strictly below `before` on the pair `(orderAt, id)`, oldest first, each carrying its
+   * {@link PageKey}. Paging on any other key loses a late message: older by `sentAt` than the page
+   * boundary, newer by the key the screen sorts on. A `before` that is `provisional` also returns
+   * every row at or above it, read once the conversation's keys are derived: a row whose real key
+   * rose past the boundary is in neither page otherwise.
+   *
+   * Never waits for the derivation of provisional keys on a first page (`before` absent): it walks
+   * the index as it stands and starts the derivation behind it.
    */
   getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeOrderAt?: number
+    before?: PageKey
   ): Promise<StoredMessage[]>;
 
   // Garbage collection - delete messages older than the given threshold.

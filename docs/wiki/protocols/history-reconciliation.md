@@ -934,9 +934,12 @@ answer path can forget it.
   every recipient's `queued_message.createdAt` - and the outbox stores it as that message's
   `serverTimestamp`, in memory and on disk (`outbox.ts`, `patchServerTimestamp`). A control entry
   (reaction, edit, delete) is not stamped: it mutates a message whose own date must not move. A
-  message the native background sender delivered (`/api/mls/push/send`) is not stamped: that route
-  answers `receivedAt` too, but the native senders (Android, iOS) do not store it yet, so those copies
-  stay undated and fall under the legacy rule below - the undated residue SHRINKS, it does not vanish.
+  message the native background sender delivered (`/api/mls/push/send`) is stamped too since
+  2026-11-01: that route answers `receivedAt`, the native drains write it beside the id in
+  `outbox_sent.ndjson` and the quick reply's cache row
+  ([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+  A copy sent by an older build, or whose answer carried none, stays undated and falls under the
+  legacy rule below - the undated residue SHRINKS, it does not vanish.
 - **Rows ingested by the OLD replay path are TRUSTED as dated, deliberately.** Before this change the
   Redis-stream replay dated an undated message by the bundle FRAME's time. Those rows are now
   indistinguishable from a real `serverTimestamp`, and they are not re-dated or distrusted: a bundle

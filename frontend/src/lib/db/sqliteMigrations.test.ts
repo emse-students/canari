@@ -4,7 +4,7 @@ import {
   conversationServerReadWatermarksStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
-  messageOrderAtStatement,
+  messageOrderColumnsStatements,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
 
@@ -168,10 +168,16 @@ describe('conversationServerReadWatermarksStatement (v16)', () => {
     expect(SCHEMA_VERSION).toBe(16);
   });
 
-  it('adds the order key to an existing messages table, NULL ("not derived yet") on every row', () => {
-    expect(messageOrderAtStatement(CURRENT_MESSAGE_COLUMNS)).toBe(
-      'ALTER TABLE messages ADD COLUMN order_at INTEGER'
-    );
-    expect(messageOrderAtStatement([...CURRENT_MESSAGE_COLUMNS, 'order_at'])).toBeNull();
+  it('adds the order key and its pending flag to an existing messages table, only the ones it lacks', () => {
+    expect(messageOrderColumnsStatements(CURRENT_MESSAGE_COLUMNS)).toEqual([
+      'ALTER TABLE messages ADD COLUMN order_at INTEGER',
+      'ALTER TABLE messages ADD COLUMN order_pending INTEGER',
+    ]);
+    expect(messageOrderColumnsStatements([...CURRENT_MESSAGE_COLUMNS, 'order_at'])).toEqual([
+      'ALTER TABLE messages ADD COLUMN order_pending INTEGER',
+    ]);
+    expect(
+      messageOrderColumnsStatements([...CURRENT_MESSAGE_COLUMNS, 'order_at', 'order_pending'])
+    ).toEqual([]);
   });
 });

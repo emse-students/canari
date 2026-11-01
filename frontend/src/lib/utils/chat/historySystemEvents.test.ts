@@ -5,6 +5,7 @@ import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { keySource } from '$lib/crypto/messageAuthorship.testKit';
+import { readMarkTarget } from './readState';
 
 /** A signature as mls-core left it on a replayed frame - opaque here, only carried. */
 const SIGNED: RecordedAuthorship = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'group-1' };
@@ -388,6 +389,79 @@ describe('replaying read state', () => {
     );
 
     expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 4_000 });
+  });
+});
+
+/**
+ * A RELAYED SERVER TIME IS BELIEVED ONLY INSIDE THE SERVER'S OWN (review of #2824, 2026-11-01). The
+ * history row this frame replays from was accepted at 2026-08-12T10:00Z; a member's claim after that
+ * is a claim the server never made, and as the order key and the read-mark key it would do lasting harm.
+ */
+describe('replaying a frame that claims a server time after its own', () => {
+  const ROW_AT = Date.parse('2026-08-12T10:00:00.000Z');
+  const Y2100 = Date.UTC(2100, 0, 1);
+
+  it('refuses a read mark dated after the frame that carries it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await replay(
+      systemEvent('read_watermark', { at: Y2100, serverAt: Y2100 }),
+      OTHER,
+      []
+    );
+    expect(result.serverReadWatermarkUpdates).toEqual({});
+    expect(result.readWatermarkUpdates).toEqual({});
+  });
+
+  it("drops a bundle's server-clock mark dated after the bundle, keeps the rest", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await replay(
+      systemEvent('history_bundle', {
+        messages: [],
+        serverReadWatermarks: { [OTHER]: Y2100, [OWNER]: ROW_AT - 1 },
+      }),
+      OTHER,
+      []
+    );
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OWNER]: ROW_AT - 1 });
+  });
+
+  it('a future-dated bundle row keeps its sentAt, so it moves no mark', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pushed } = await replay(
+      systemEvent('history_bundle', {
+        messages: [
+          {
+            id: 'honest',
+            senderId: OTHER,
+            content: 'a',
+            timestamp: ROW_AT - 60_000,
+            serverTimestamp: ROW_AT - 59_000,
+          },
+          {
+            id: 'forged',
+            senderId: OTHER,
+            content: 'b',
+            timestamp: ROW_AT - 30_000,
+            serverTimestamp: Y2100,
+          },
+        ],
+      }),
+      OTHER,
+      []
+    );
+    const rows = pushed as Array<{ messageId: string; serverTimestamp?: number; timestamp?: Date }>;
+    expect(rows.find((r) => r.messageId === 'honest')?.serverTimestamp).toBe(ROW_AT - 59_000);
+    expect(rows.find((r) => r.messageId === 'forged')?.serverTimestamp).toBeUndefined();
+    // And read, the conversation's mark goes no further than the honest server time.
+    const asChat = rows.map((r) => ({
+      id: r.messageId,
+      senderId: OTHER,
+      isOwn: false,
+      isSystem: false,
+      timestamp: r.timestamp ?? new Date(0),
+      ...(r.serverTimestamp ? { serverTimestamp: r.serverTimestamp } : {}),
+    }));
+    expect(readMarkTarget(asChat, 0, false)).toBeLessThanOrEqual(ROW_AT);
   });
 });
 
