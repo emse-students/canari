@@ -151,9 +151,8 @@ describe('apiFetch under a deadline', () => {
     await p;
     expect(connectivity.isOffline).toBe(true);
 
-    globalThis.fetch = vi.fn(
-      async () => new Response('{}', { status: 200 })
-    ) as unknown as typeof fetch;
+    // The API's answer (its JSON type): only that proves the server is there.
+    globalThis.fetch = vi.fn(async () => Response.json({})) as unknown as typeof fetch;
     await apiFetch('https://x.test/api/things');
     expect(connectivity.isOffline).toBe(false);
   });

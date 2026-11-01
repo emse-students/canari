@@ -9,14 +9,34 @@ describe('the reachability probe', () => {
     globalThis.fetch = realFetch;
   });
 
-  it('counts ANY HTTP answer as reachable: a 502 is a server that is there and unhappy', async () => {
-    globalThis.fetch = vi.fn(
-      async () => new Response('', { status: 502 })
+  it('counts ANY answer of our API as reachable: its JSON 502 is a server there and unhappy', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({ statusCode: 502, message: 'Bad Gateway' }, { status: 502 })
     ) as unknown as typeof fetch;
     connectivity.notifyServerUnreachable();
     expect(await probeReachability()).toBe(true);
     expect(connectivity.isOffline).toBe(false);
   });
+
+  it.each([
+    ["a captive portal's 511", 511, '<html>Network Authentication Required</html>'],
+    ["the WAF's HTML 403", 403, '<html>Access denied (Ban)</html>'],
+    ["an edge's 5xx page", 502, '<html><h1>502 Bad Gateway</h1></html>'],
+  ])(
+    '%s is no answer from the server: the probe goes on and offline holds',
+    async (_n, status, body) => {
+      vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      globalThis.fetch = vi.fn(
+        async () => new Response(body, { status, headers: { 'content-type': 'text/html' } })
+      ) as unknown as typeof fetch;
+      connectivity.notifyServerUnreachable();
+      expect(await probeReachability()).toBe(false);
+      expect(connectivity.isOffline).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('NotFromApiError'))).toBe(true);
+      vi.restoreAllMocks();
+    }
+  );
 
   it('is false only for the ABSENCE of an answer, and asks the unauthenticated version route', async () => {
     const fetchMock = vi.fn(async () => {

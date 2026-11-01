@@ -531,8 +531,9 @@ bound belongs to a design of its own (open).
 - **The store asks, it does not wait to be told.** On the browser's `online` event while
   `serverReachable` is false it probes at once; on a transport failure with the browser still online
   it probes after ~1 s (no `online` event will ever announce that return). The probe is `GET
-  /api/version` (unauthenticated, so an expired token cannot keep the device "offline"; any HTTP
-  answer is "reachable", a 502 included) through the same `trackedFetch`, so its answer fires the
+  /api/version` (unauthenticated, so an expired token cannot keep the device "offline"; any answer
+  of OUR API is "reachable", a JSON 502 included, and an edge page is not - [section 22](#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01))
+  through the same `trackedFetch`, so its answer fires the
   ordinary reconnect listeners - the outbox flush rides that, no second path. **Bounded and
   single-flight**: four probes at most per event (0/1/2/4 s after `online`, 1/2/4/8 s after a failure,
   each jittered +-25 %), a flapping link joins the running probe, and after the last one the store
@@ -988,7 +989,7 @@ The ordering is the join condition. Each caller still runs its own `settleOwedMa
 - `loadExistingConversations` (`utils/chat/conversations.ts`) stops on the first transport failure of the pass - the group list's, which also means the batch is never sent, then the batch's - **only while the link is KNOWN down** (`connectivity.isOffline`). It then **skips every archive replay** of the pass with ONE line, `[CATCHUP] the server got no answer - the archive replay of N conversation(s) is skipped this pass`. The local half (stored page, DM repair) still runs. A transport failure on a link NOT known down (one deadline on a slow but working link) keeps the per-group path, with one `warn`: skipping on it would be a regression.
 - **The skipped archives are replayed on the NEXT RECONNECT, once** (`useConversations`, `oweArchiveReplays`). The restore runs only at boot and on a Welcome, so without this a skipped archive waited for the conversation's next open: days on a phone, against a mailbox that keeps 14. The ids go to one `connectivity.onReconnect` listener per session generation; an edge that comes while `isOffline` still holds (an `online` event before the server answered) leaves it armed. It replays each through `loadHistoryForConversation`, serialised, with ONE line (`[CATCHUP] link back - replaying N archive(s) skipped while it was down`). Idempotent by the durable stream cursor (an archive replayed meanwhile costs a `limit=1` probe). A sign-out drops it. The queued frames themselves come with the reconnect's pull (`initializeConnection` pulls after every connect).
 - **The barrier holds its pull while the link is KNOWN down** (`BaseMlsService.settleBarrier`): socket closed AND `connectivity.isOffline`. Said once per spell (`[PENDING] mailbox barrier: no pull while the link is down`).
-- **Both delivery routes now keep the connectivity store true, in BOTH directions.** The pull and the history batch read the raw fetch, which reaches no `trackedFetch`: each calls `notifyServerUnreachable` on a `TransportFailureError` and `notifyServerReachable` on the GATEWAY'S answer, whatever its status. WHO ANSWERED comes first: the batch reads `responseOrigin(res) === 'gateway'`, and the pull reads the `origin` that `ProgressDeadlineResult` now carries on a non-2xx (its 2xx reader throws `NotFromApiError` on a page that is not the API's). So an edge page - a captive portal's `511` or 2xx HTML, a WAF's HTML `403` - does not clear `isOffline`. A NON-2xx edge page does not SET it either: it is the edge's answer, typed as one everywhere else (`SendEdgeRefusedError`, the origin a `SendServerError` carries), and `trackedFetch` - the reachability probe included - counts any HTTP answer as reachable, so marking the server down on it would only be undone by the next probe answered by the same edge. Only a 2xx edge page is a transport failure (`NotFromApiError`), because only that one could be misread as data. A pull page refused by either party is now logged once (`[PENDING] page answered N by the gateway|edge - the pull stops here`); it used to stop silently. A one-way flag would have stayed set after a long outage - the barrier holding, the outbox refusing, a real gateway fault demoted. A `RequestDeadlineError` (a token refresh's, say) does NOT mark the server unreachable: `trackedFetch` already counts those towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow moment. An ANSWERED failure (a 5xx) leaves the link up and the next barrier pulls as before.
+- **Both delivery routes now keep the connectivity store true, in BOTH directions.** The pull and the history batch read the raw fetch, which reaches no `trackedFetch`: each calls `notifyServerUnreachable` on a `TransportFailureError` and `notifyServerReachable` on the GATEWAY'S answer, whatever its status. WHO ANSWERED comes first: the batch reads `responseOrigin(res) === 'gateway'`, and the pull reads the `origin` that `ProgressDeadlineResult` now carries on a non-2xx (its 2xx reader throws `NotFromApiError` on a page that is not the API's). So an edge page - a captive portal's `511` or 2xx HTML, a WAF's HTML `403` - does not clear `isOffline`. A NON-2xx edge page does not SET it either: it is the edge's answer, typed as one everywhere else (`SendEdgeRefusedError`, the origin a `SendServerError` carries), and marking the server down on it would only be undone by the next answer: `trackedFetch` used to count any HTTP answer as reachable, and since [section 22](#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01) it counts an edge page as neither, so the pull and the batch read it the same way it does. Only a 2xx edge page is a transport failure (`NotFromApiError`), because only that one could be misread as data. A pull page refused by either party is now logged once (`[PENDING] page answered N by the gateway|edge - the pull stops here`); it used to stop silently. A one-way flag would have stayed set after a long outage - the barrier holding, the outbox refusing, a real gateway fault demoted. A `RequestDeadlineError` (a token refresh's, say) does NOT mark the server unreachable: `trackedFetch` already counts those towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow moment. An ANSWERED failure (a 5xx) leaves the link up and the next barrier pulls as before.
 
 **Expected after, on the same sequence:** one `[CATCHUP] the server got no answer` line and one `[PENDING] ... got no answer` per pull actually made, instead of ~630 lines. **Owed:** that reading on the phone.
 
@@ -1008,3 +1009,47 @@ Read in the owner's Android `1.5.3` log of nine calls: reachability probes (`[CO
 - **The count leads to ONE verdict.** Once `notifyServerUnreachable` holds, a further deadline is not a step towards it: it is said as `(server already unreachable)` and not counted. The count restarts at 0 whenever the server is back, by whichever answer (`notifyServerReachable` resets it, not only `trackRequest().answered`), so a server restored by a socket is not marked down again by ONE stall.
 
 Tests: `connectivity.test.ts` (five stalls read `1/2`, `2/2`, then three `server already unreachable`, never `3/2`; a fresh count of two after a reachable answer outside `trackRequest`; on a phone no probe while off screen, a fresh one at the return; a hidden web tab probes on; a resume already probing stops when the app leaves the screen, and owes nothing once the server answered meanwhile).
+
+## 22. Only our API's answer proves the server is there (2026-11-01)
+
+`trackedFetch` called `answered()` on ANY response, so a captive portal's `511`, the WAF's HTML `403`
+or an edge's 5xx page cleared `isOffline`, fired the reconnect listeners (outbox flush, owed archive
+replays) and ended the reachability probe, all on the say-so of something that is not the server.
+
+- **WHO ANSWERED is read by the one helper** the refusal paths and `assertAnsweredByApi` already use,
+  `responseOrigin` (`utils/apiJson.ts`): a JSON content type is the gateway's, anything else the
+  edge's. No second proof was written.
+- **`trackedFetch` settles a non-JSON answer with `tracked.unproven(...)`** (`connectivity.svelte.ts`).
+  A non-JSON answer is NOT always an edge page: our own gateway sends some too - a binary live
+  segment (`fetchLiveSegment`), a `204`, a void Nest handler, nginx's HTML `401` from `auth_request`.
+  The header cannot tell those from a portal's page, so the answer is UNPROVEN, not foreign:
+  reachability does not move either way (never reachable, never unreachable), no latency sample is
+  taken, one `console.debug` line. The reader that knows what it asked for throws `NotFromApiError`
+  itself. But SOMETHING answered, so the link is not stalled: the stall count restarts and
+  `lastAnswerAt` moves, and slow / segment / slow is never read as two stalls in a row (which would
+  mark a working network unreachable), nor a slow route beside a segment as a quiet link. This is also why the pull and the history batch neither clear nor
+  set the store on an edge page (section 20): every route now reads an edge page the same way.
+- **The probe asserts the API answered** (`assertAnsweredByApi(res, 'GET /api/version')`, a JSON
+  route): an edge page throws `NotFromApiError`, the probe returns `false`, and the bounded ladder
+  goes on instead of ending.
+- **The writes that trusted a bare 2xx carry the same guard** (`assertAnsweredByApi` after `res.ok`):
+  `renameGroup`, `setGroupImage` (`mlsDeliveryApi.ts`, so a portal's `200` is never followed by the
+  MLS broadcast of a name the server never stored), the three notification-preference writes
+  (`saveGroupCallsAllowed`, `saveGroupNotificationLevel`, `saveDisabledCategories` in
+  `notifications/preferencesApi.ts`, whose callers already roll the toggle back on a throw), and
+  `registerMember`, which still swallows every outcome but its typed refusals
+  ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---registermember-after-an-accepted-add-for-a-server-older-than-2026-10-25))
+  but now logs a portal's `200` as no answer instead of reading it as an enrolment. Every route named
+  answers JSON (`{ status: 'renamed' }`, `{ status: 'updated', imageMediaId }`, `{ groupId, allowed }`,
+  `{ groupId, level }`, `{ disabled }`, `{ status: 'added' }`).
+
+**Still open:** under a portal nothing MARKS the server down, so the store stays "reachable" and the
+portal's end brings no reconnect edge ([backlog](../backlog.md#p3---connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for-the-ladder-review-of-2428-2026-10-25)).
+**Owed:** one dev reading behind a portal, because this changes reachability for every REST call.
+
+Tests: `trackedFetch.test.ts` (a portal `511`, an HTML `403`, an edge `502` page neither clear offline
+nor fire a reconnect nor mark a reachable server down; a `204` and an empty `200` end a stall streak
+without moving reachability; the API's JSON `200`, `403` and `502` do clear it), `connectivity.test.ts`
+(stall, unproven, stall stays reachable; an unproven answer keeps the in-flight hint quiet), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
+`mlsDeliveryApi.notFromApi.test.ts` (a portal `200` on each write is `NotFromApiError`, the service's
+JSON is done).

@@ -253,6 +253,40 @@ describe("a leave and a dismiss are done only on the delivery service's answer",
   });
 });
 
+describe("a rename, a group image and a member registration are done only on the service's answer", () => {
+  it('a portal 200 renamed nothing: no answer, so the caller never broadcasts the new name', async () => {
+    const { api } = makeApi(portal);
+    const failure = await api.renameGroup('g1', 'New name').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(NotFromApiError);
+    expect(isTransportFailure(failure)).toBe(true);
+  });
+
+  it('a portal 200 set no image', async () => {
+    const { api } = makeApi(portal);
+    await expect(api.setGroupImage('g1', 'm1')).rejects.toBeInstanceOf(NotFromApiError);
+  });
+
+  it("the service's JSON 200 is done, for both", async () => {
+    const { api } = makeApi(
+      () => Response.json({ status: 'renamed' }),
+      () => Response.json({ status: 'updated', imageMediaId: null })
+    );
+    await expect(api.renameGroup('g1', 'New name')).resolves.toBeUndefined();
+    await expect(api.setGroupImage('g1', null)).resolves.toBeUndefined();
+  });
+
+  it('a portal 200 on registerMember is logged as no answer, never read as an enrolment', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { api } = makeApi(portal, () => Response.json({ status: 'added' }));
+    await expect(api.registerMember('g1', 'u2')).resolves.toBeUndefined();
+    expect(errors.mock.calls.some((c) => c[1] instanceof NotFromApiError)).toBe(true);
+    errors.mockClear();
+    await expect(api.registerMember('g1', 'u2')).resolves.toBeUndefined();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+});
+
 describe('an ACK a portal answered acknowledged nothing', () => {
   const body = { userId: 'user-a', deviceId: 'device-a', messageIds: ['row-1'] };
 
