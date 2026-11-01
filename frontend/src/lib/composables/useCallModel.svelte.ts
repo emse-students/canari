@@ -2,7 +2,10 @@ import type { CallService, CallState } from '$lib/services/CallService';
 import type { CameraFacing } from '$lib/utils/callVideo';
 import { callStatusKind, type CallStatusKind } from '$lib/stores/callView.svelte';
 import { callElapsedMs, formatCallDuration } from '$lib/utils/callClock';
-import type { NoiseSuppressionView } from '$lib/utils/callNoiseSuppression';
+import {
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
 
 /**
  * The call as the two call surfaces read it (`CallOverlay`, `CallBanner`): the service's stores
@@ -29,7 +32,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let localMicSuspended = $state(false);
   let peerMicSuspended = $state(false);
   let videoSendReduced = $state(false);
-  let noiseSuppression = $state<NoiseSuppressionView>({ enabled: true, state: 'pending' });
+  let noiseSuppression = $state<NoiseSuppressionView>(initialNoiseSuppressionView());
   let localStream = $state<MediaStream | null>(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());

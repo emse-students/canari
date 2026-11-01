@@ -78,7 +78,7 @@ sender, as the app does) and must PASS; `fault-reuse-bare-sender` leaves that se
 
 ## The noise-suppression rows (2026-10-31)
 
-`app-ns` (GATED: RNNoise is ON by default since owner decision D-B) runs the app with its RNNoise
+`app-ns` (GATED: the condition for turning RNNoise ON by default, owner 2026-11-01) runs the app with its RNNoise
 pipeline on the clean reference; `raw-ns` without the browser's voice processing in front of it;
 `app-browser-ns-off-ns` with the browser's own suppressor off (AEC and AGC kept); `app-noisy` and
 `app-ns-noisy` / `app-browser-ns-off-ns-noisy` on `noisy.wav`. `APP` alone is the in-call switch

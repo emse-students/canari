@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildCallAudioConstraints } from './callAudio';
 import {
   buildCallMicPipeline,
+  CALL_NOISE_SUPPRESSION_DEFAULT,
   CALL_NOISE_SUPPRESSOR_PROCESSOR,
   CallMicSwitch,
   describeNoiseSuppressionCost,
+  initialNoiseSuppressionView,
   micTrackToSend,
   noiseSuppressionUnsupported,
   type CallMicPipeline,
@@ -268,7 +270,57 @@ function fakePipeline(processed: MediaStreamTrack) {
 describe('CallMicSwitch - the per-call switch', () => {
   const ok = (pipeline: CallMicPipeline): CallMicPipelineResult => ({ ok: true, pipeline });
 
-  it('starts ON, moves the SAME sender to the processed track once ready, and keeps its transform', async () => {
+  it('ships OFF (owner, 2026-11-01): a call starts raw, reports ns=off and builds nothing', () => {
+    expect(CALL_NOISE_SUPPRESSION_DEFAULT).toBe(false);
+    expect(initialNoiseSuppressionView()).toEqual({ enabled: false, state: 'off' });
+    const raw = track('raw');
+    const sw = new CallMicSwitch(
+      raw,
+      CALL_NOISE_SUPPRESSION_DEFAULT,
+      () => {},
+      () => {}
+    );
+    const build = vi.fn(async (): Promise<CallMicPipelineResult> => ({
+      ok: true,
+      pipeline: fakePipeline(track('processed')).pipeline,
+    }));
+    sw.ensurePipeline(build);
+    expect(build).not.toHaveBeenCalled();
+    expect(sw.trackToSend()).toBe(raw);
+    expect(sw.reportState()).toBe('off');
+  });
+
+  it('builds the pipeline on the first ON of the call, once, and then sends it', async () => {
+    const raw = track('raw');
+    const sw = new CallMicSwitch(
+      raw,
+      false,
+      () => {},
+      () => {}
+    );
+    const sender = fakeSender(sw.trackToSend());
+    sw.attachSender(sender as unknown as RTCRtpSender);
+    const { pipeline } = fakePipeline(track('processed'));
+    let settle: (r: CallMicPipelineResult) => void = () => {};
+    const build = vi.fn(() => new Promise<CallMicPipelineResult>((resolve) => (settle = resolve)));
+
+    sw.setEnabled(true);
+    sw.ensurePipeline(build);
+    expect(sw.reportState()).toBe('pending');
+    sw.setEnabled(false);
+    sw.setEnabled(true);
+    sw.ensurePipeline(build);
+    expect(build).toHaveBeenCalledTimes(1);
+
+    settle(ok(pipeline));
+    await vi.waitFor(() => expect(sw.reportState()).toBe('on'));
+    await sw.settled();
+    expect(sender.track).toBe(pipeline.processed);
+    sw.ensurePipeline(build);
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it('switched ON, moves the SAME sender to the processed track once ready, and keeps its transform', async () => {
     const raw = track('raw');
     const logs: string[] = [];
     const views: unknown[] = [];

@@ -1,6 +1,6 @@
 /**
  * THE CALL MICROPHONE'S NOISE SUPPRESSION (owner decision D-B, 2026-10-31): RNNoise on the captured
- * track, ON by default, with a per-call switch to send the raw capture instead (music, say).
+ * track, with a per-call switch - OFF by default since 2026-11-01 (`CALL_NOISE_SUPPRESSION_DEFAULT`).
  *
  * The pipeline is `raw capture -> MediaStreamSource -> AudioWorkletNode (workers/rnnoise.worklet.ts)
  * -> MediaStreamDestination`, in a 48 kHz `AudioContext`. The raw capture keeps the browser's echo
@@ -23,6 +23,13 @@ export const CALL_NOISE_SUPPRESSOR_PROCESSOR = 'canari-rnnoise';
 
 /** RNNoise's frame: 10 ms at 48 kHz. */
 export const RNNOISE_FRAME_SAMPLES = 480;
+
+/**
+ * Where every call's switch starts: OFF (owner, 2026-11-01). Built ON (D-B, 2026-10-31), the
+ * gated clean-speech rig row failed, so it ships OFF until a REAL call on the bench phones sounds
+ * good with it on. OFF builds nothing - no AudioContext, no worklet - until the user turns it on.
+ */
+export const CALL_NOISE_SUPPRESSION_DEFAULT = false;
 
 /** Why the primary path did not build: one value per cause, so the log line names it. */
 export type NoiseSuppressionFailure =
@@ -309,6 +316,19 @@ export interface NoiseSuppressionView {
   state: NoiseSuppressionReportState;
 }
 
+/** The call screen's view before a microphone opens: the default switch, nothing built yet. */
+export function initialNoiseSuppressionView(): NoiseSuppressionView {
+  return noiseSuppressionView(CALL_NOISE_SUPPRESSION_DEFAULT, null, false);
+}
+
+function noiseSuppressionView(
+  enabled: boolean,
+  pipeline: CallMicPipeline | null,
+  failed: boolean
+): NoiseSuppressionView {
+  return { enabled, state: noiseSuppressionReportState(enabled, pipeline, failed) };
+}
+
 /**
  * ONE CALL'S MICROPHONE SENDER: which track it carries, changed only through
  * {@link micTrackToSend} and `replaceTrack` on the same sender. Owns the pipeline once it is
@@ -323,6 +343,7 @@ export interface NoiseSuppressionView {
 export class CallMicSwitch {
   private pipeline: CallMicPipeline | null = null;
   private failed = false;
+  private building = false;
   private fallbacks = 0;
   private sender: RTCRtpSender | null = null;
   private closed = false;
@@ -332,7 +353,7 @@ export class CallMicSwitch {
 
   /**
    * @param raw The capture track (echo-cancelled by the engine), kept in the call's local stream.
-   * @param enabled The switch's starting position: ON by default (owner decision D-B).
+   * @param enabled The switch's starting position ({@link CALL_NOISE_SUPPRESSION_DEFAULT} in a call).
    * @param log The call's log sink.
    * @param publish Told every change of {@link view}, for the call screen.
    */
@@ -379,6 +400,21 @@ export class CallMicSwitch {
     this.sync('the pipeline is ready');
   }
 
+  /**
+   * Builds the pipeline the first time the switch is ON, and only then: with the switch OFF a
+   * call pays for no AudioContext and no worklet. One build per call - a build in flight, a
+   * pipeline held or a build that failed (`ns=unavailable`, the switch hidden) is not retried.
+   */
+  ensurePipeline(build: () => Promise<CallMicPipelineResult>): void {
+    if (!this.enabled || this.closed || this.building || this.pipeline || this.failed) return;
+    this.building = true;
+    this.log('[Call] noise suppression: building the pipeline (the switch is on)');
+    void build().then((result) => {
+      this.building = false;
+      this.adopt(result);
+    });
+  }
+
   /** The user's switch, for THIS call only. */
   setEnabled(enabled: boolean): void {
     if (enabled === this.enabled) return;
@@ -402,7 +438,7 @@ export class CallMicSwitch {
   }
 
   view(): NoiseSuppressionView {
-    return { enabled: this.enabled, state: this.reportState() };
+    return noiseSuppressionView(this.enabled, this.pipeline, this.failed);
   }
 
   /** The worklet's last counts (frames, time spent), or `null`: what the end line is made of. */

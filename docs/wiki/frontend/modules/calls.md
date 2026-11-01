@@ -1887,8 +1887,16 @@ with the SFU choice (WP-C4), per-sender keys and the TURN volume of a relayed me
 
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
 
-**The decision (owner, D-B).** The call microphone goes through RNNoise, ON by default, with an
-in-call switch to send the raw capture instead (music). Per call: every call starts ON.
+**The decision (owner, D-B, 2026-10-31).** The call microphone goes through RNNoise, ON by
+default, with an in-call switch to send the raw capture instead (music).
+
+**Amended (owner, 2026-11-01): it ships OFF by default.** The in-call switch stays; every call
+starts OFF (`CALL_NOISE_SUPPRESSION_DEFAULT = false`), and the switch turns it ON for that call.
+It goes back to ON by default only after a REAL call on the bench phones sounds good with it on -
+the gated clean-speech row below failed. OFF builds nothing: no AudioContext, no worklet, no wasm
+fetched until the first ON of the call (`CallMicSwitch.ensurePipeline`, one build per call, inside
+the tap). `[CALL_REPORT] ns=off` is therefore the ordinary value; `ns=on`, `pending` or
+`unavailable` appear only in a call where someone turned it on.
 
 **The mechanism.** `utils/callNoiseSuppression.ts` builds `raw capture -> MediaStreamSource ->
 AudioWorkletNode (workers/rnnoise.worklet.ts) -> MediaStreamDestination` in a 48 kHz
@@ -1946,11 +1954,12 @@ the CLEAN reference; `noisy` = the reference under steady band noise + hum 10 dB
    the Mi 9T's number is owed.
 
 **Owed** ([backlog](../../backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)):
-the owner's call on the default given row 3, and the bench readings - `ns=` and the end line on
-the Mi 9T (Android WebView) and the iPhone 12 (WKWebView, AudioWorklet since iOS 14.5; whether its
-worklet scope has WebAssembly, and whether a second AudioContext moves the call's audio route), a
-call answered from the native ring (no page gesture: does the context run?), a real voice with the
-switch on and off.
+the owner took the call on row 3 (OFF by default, 2026-11-01, above); what turns it back ON by
+default is a real call on the bench phones that sounds good with the switch on. The readings, each
+in a call where the switch was turned ON - `ns=on` and the end line on the Mi 9T (Android WebView)
+and the iPhone 12 (WKWebView, AudioWorklet since iOS 14.5; whether its worklet scope has
+WebAssembly, and whether a second AudioContext moves the call's audio route), the switch turned on
+in a call answered from the native ring, a real voice and music with the switch on and off.
 
 ## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
 
