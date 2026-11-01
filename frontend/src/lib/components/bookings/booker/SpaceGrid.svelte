@@ -90,6 +90,12 @@
      * is never offered again; `null` while none was refused.
      */
     lastRefusedStart?: number | null;
+    /**
+     * The grid's vertical scroll, kept by the PARENT: a week with nothing offered unmounts the grid,
+     * and the reader must come back to where they were. `null` = never opened: it opens on the first
+     * useful hour (`firstUsefulMin`).
+     */
+    scrollTop?: number | null;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
@@ -101,19 +107,26 @@
     blockMode = false,
     nowMs,
     lastRefusedStart = null,
+    scrollTop = $bindable(null),
     onPick,
   }: Props = $props();
 
   /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
   let coarse = $state(isCoarsePointerDevice());
-  /** The scrolling box of the grid: it opens on the first useful hour, once, when it appears. */
+  /** The scrolling box of the grid. */
   let scroller = $state<HTMLElement | null>(null);
   onMount(() => {
     if (scroller) {
-      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      const at = remOf(firstUsefulMin(layout, space, nowMs) - layout.startMin);
-      // Half an hour of the hour before stays in view, so the first free unit is not under the edge.
-      scroller.scrollTop = Math.max(0, (at - 0.5) * rem);
+      if (scrollTop !== null) {
+        // Back from a week that unmounted the grid: the reader's place, not the opening hour.
+        scroller.scrollTop = scrollTop;
+      } else {
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        const at = remOf(firstUsefulMin(layout, space, nowMs, blockMode) - layout.startMin);
+        // The box opens half a rem above the first useful hour, so that hour's unit is not under the top edge.
+        scroller.scrollTop = Math.max(0, (at - 0.5) * rem);
+        scrollTop = scroller.scrollTop;
+      }
     }
     coarse = isCoarsePointerDevice();
     return onCoarsePointerChange((value) => (coarse = value));
@@ -123,6 +136,10 @@
   const HOLD_MS = 250;
   /** Finger travel (px) before the hold has elapsed that means "scroll", not "draw". */
   const SCROLL_SLOP_PX = 8;
+  /** Within this distance (px) of the scrolling box's top or bottom a drag scrolls the box. */
+  const EDGE_PX = 32;
+  /** How far (px) the box scrolls per pointer move while a drag is at its edge. */
+  const EDGE_STEP_PX = 12;
   /** Pointer travel (px) that turns a mouse press into a drag. */
   const DRAG_SLOP_PX = 4;
 
@@ -222,6 +239,13 @@
       }
       if (travelled <= DRAG_SLOP_PX) return;
       beginSelection(press);
+    }
+    // A range drawn near the top or bottom edge of the scrolling box carries the box with it, so a
+    // range can start at the edge and still reach the units beyond it.
+    if (scroller) {
+      const box = scroller.getBoundingClientRect();
+      if (e.clientY > box.bottom - EDGE_PX) scroller.scrollTop += EDGE_STEP_PX;
+      else if (e.clientY < box.top + EDGE_PX) scroller.scrollTop -= EDGE_STEP_PX;
     }
     // The pointer is captured, so the unit under it is found by position, not by event target.
     const hit = cellAt(document.elementFromPoint(e.clientX, e.clientY));
@@ -361,9 +385,10 @@
 
 <!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
 <div
-  class="border-cn-border bg-cn-surface relative max-h-[75vh] overflow-auto rounded-2xl border"
+  class="border-cn-border bg-cn-surface relative max-h-[75dvh] overflow-auto rounded-2xl border"
   data-swipe-nav-ignore
   bind:this={scroller}
+  onscroll={() => scroller && (scrollTop = scroller.scrollTop)}
 >
   {#if selected && selectedReading}
     <p
