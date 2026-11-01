@@ -346,17 +346,49 @@ $1 == "sl" { hdr = 1; next }
 END {
   if (!hdr) { print "?"; exit }
   for (i = 1; i <= k; i++) {
-    if (P[i] in listen) { c[W[i]]++; C++ }
-    else if (R[i] in sk) S++
+    if (P[i] in listen) { c[W[i]]++; C++; continue }
+    d[R[i] "." ST[i]]++
+    if (R[i] in sk) S++
     else if (ST[i] == "01") { u[W[i]]++; U++ }
   }
   bad = 0
   for (w in c) if (c[w] > u[w] + 0) bad += c[w] - u[w]
-  # The verdict, then its evidence: client connections, upstreams counted, subrequest ones left out.
-  print bad + 0, C + 0, U + 0, S + 0
+  # The verdict, then its evidence: client connections, upstreams counted, subrequest ones left out,
+  # and every non-client socket by remote port (hex) and TCP state, so a count that looks wrong
+  # names what it counted.
+  det = ""
+  for (x in d) det = det (det == "" ? "" : ",") x "x" d[x]
+  print bad + 0, C + 0, U + 0, S + 0, (det == "" ? "-" : det)
 }'
 
-# rotation_subrequest_ports <proxy> - reads `nginx -T` on stdin and prints, one per line, the port of
+# rotation_sockets_said <detail> - the pairing read's non-client sockets, `<hex port>.<hex state>x<n>`
+# comma-joined, said as `<port>/<TCP state>x<n>` for a human.
+rotation_sockets_said() {
+  local item said="" port state n
+  if [ -z "$1" ] || [ "$1" = - ]; then
+    printf 'none'
+    return 0
+  fi
+  for item in ${1//,/ }; do
+    port="${item%%.*}"
+    state="${item#*.}"
+    n="${state#*x}"
+    state="${state%%x*}"
+    case "$state" in
+    01) state=ESTABLISHED ;;
+    02) state=SYN_SENT ;;
+    04) state=FIN_WAIT1 ;;
+    05) state=FIN_WAIT2 ;;
+    06) state=TIME_WAIT ;;
+    08) state=CLOSE_WAIT ;;
+    09) state=LAST_ACK ;;
+    esac
+    said="$said${said:+, }$((16#$port))/${state}x$n"
+  done
+  printf '%s' "$said"
+}
+
+# rotation_subrequest_ports <proxy> -reads `nginx -T` on stdin and prints, one per line, the port of
 # every service an `auth_request` location proxies to: a `host:port` as written, a bare name through
 # the proxy's own route. Fails, rather than guessing, on a target it cannot place.
 rotation_subrequest_ports() {
@@ -436,7 +468,7 @@ rotation_reload() {
     # held vacuously. nginx keeps its workers dumpable, so their own uid reads them with no
     # capability at all. A worker whose fds still read as nothing makes the read `?` (unknown).
     out="$($DOCKER_CLI exec -u "$uid" "$pid" sh -c "$ROTATION_READ_SCRIPT" sh "$before" "$ROTATION_PAIRS_AWK" "$hex")" || out=""
-    read -r fresh alive unpaired clients ups skipped <<<"$out"
+    read -r fresh alive unpaired clients ups skipped sockets <<<"$out"
     case "$fresh:$unpaired" in
     0:*)
       # No new worker yet: either the master has not got to the signal, or it refused the files.
@@ -449,16 +481,16 @@ rotation_reload() {
       if [ "$mode" != retiring ] || [ "$unpaired" = 0 ]; then
         printf '  %s: %s reloaded; ' "$proxy" "${pid:0:12}"
         if [ "$mode" = retiring ]; then
-          printf 'paired after %s read(s) (%s old worker(s) still finishing proxied requests; %s client connection(s), %s upstream(s), %s subrequest connection(s) not counted)\n' \
-            "$read" "$alive" "$clients" "$ups" "$skipped"
+          printf 'paired after %s read(s) (%s old worker(s) still finishing proxied requests; %s client connection(s), %s upstream(s), %s subrequest connection(s) not counted; other sockets: %s)\n' \
+            "$read" "$alive" "$clients" "$ups" "$skipped" "$(rotation_sockets_said "$sockets")"
         else
           printf 'a new worker runs on the list\n'
         fi
         return 0
       fi
       if [ "$waited" = 0 ]; then
-        printf '  %s: %s waiting for %s request(s) of the old workers to choose an upstream (%s client connection(s), %s upstream(s), %s subrequest connection(s) not counted)\n' \
-          "$proxy" "${pid:0:12}" "$unpaired" "$clients" "$ups" "$skipped"
+        printf '  %s: %s waiting for %s request(s) of the old workers to choose an upstream (%s client connection(s), %s upstream(s), %s subrequest connection(s) not counted; other sockets: %s)\n' \
+          "$proxy" "${pid:0:12}" "$unpaired" "$clients" "$ups" "$skipped" "$(rotation_sockets_said "$sockets")"
         waited=1
       fi
       ;;
