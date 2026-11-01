@@ -43,13 +43,13 @@ export function encodeFollowCursor(at: string, id: string): string {
 
 /**
  * Reads a cursor back. `undefined` or empty is "the first page" (`null`); anything else this file
- * did not write is a 400.
+ * did not write is a 400 - a repeated `?after=` arrives as an array, and is refused like any other.
  */
-export function decodeFollowCursor(raw: string | undefined): FollowCursor | null {
+export function decodeFollowCursor(raw: unknown): FollowCursor | null {
   if (raw === undefined || raw === '') return null;
   const refuse = () =>
     new BadRequestException({ code: FOLLOW_CURSOR_INVALID, message: 'Invalid list cursor' });
-  if (raw.length > CURSOR_MAX_LENGTH) throw refuse();
+  if (typeof raw !== 'string' || raw.length > CURSOR_MAX_LENGTH) throw refuse();
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));

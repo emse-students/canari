@@ -31,7 +31,9 @@ describe('the follow list cursor', () => {
       Buffer.from(JSON.stringify(['2026-10-01 12:00:00', 'x'])).toString('base64url'),
     ],
     ['an overlong value', 'a'.repeat(500)],
-  ])('refuses %s with a 400 FOLLOW_CURSOR_INVALID', (_label, raw) => {
+    ['a repeated parameter (an array)', ['a', 'b']],
+    ['a number', 42],
+  ] as [string, unknown][])('refuses %s with a 400 FOLLOW_CURSOR_INVALID', (_label, raw) => {
     let thrown: unknown;
     try {
       decodeFollowCursor(raw);
