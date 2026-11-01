@@ -115,7 +115,7 @@
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 - [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed
-- [Real-time media feasibility](infrastructure/realtime-media-feasibility.md) - measured 2026-10-15: what calls and livestreams can do on the production host; inbound is 443 only and is enough, but the host cannot send UDP out, so the SFU cannot reach Cloudflare TURN - the minimal DSI ask is one OUTBOUND rule; segmented live over 443 works, ~90-107 Mb/s measured
+- [Real-time media feasibility](infrastructure/realtime-media-feasibility.md) - measured 2026-10-15: what calls and livestreams can do on the production host; inbound is 443 only and is enough, but the host cannot send UDP out, so the SFU cannot reach Cloudflare TURN - the minimal DSI ask is one OUTBOUND rule, never granted - 1:1 calls are peer to peer by design, so production carries them without it; segmented live over 443 works, ~90-107 Mb/s measured
 - [Estate migration](infrastructure/estate-migration.md) - the three VMs moving onto the Portail-etu host and then onto `emse.fr`: the two phases and why they are separate, the decisions taken 2026-09-23, the bun blocker that is REFUTED, and the certificate renewal nothing would reload
 
 ### Features
