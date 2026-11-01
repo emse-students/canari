@@ -184,7 +184,7 @@
       if (lastIncomingRingCallId !== callId) {
         lastIncomingRingCallId = callId;
         const callerName = getUserDisplayNameSync(callerId ?? '');
-        globalNotifs.startIncomingCallRingtone();
+        globalNotifs.startIncomingCallRingtone(callId);
         globalNotifs.startBlinkingTitle();
         void globalNotifs.notifyIncomingCall(callerName, groupId);
       }
@@ -194,7 +194,7 @@
     if (lastIncomingRingCallId !== null) {
       lastIncomingRingCallId = null;
     }
-    globalNotifs.stopIncomingCallRingtone();
+    globalNotifs.stopIncomingCallRingtone(`the call left the incoming state (${state})`);
     globalNotifs.stopBlinkingTitle();
     // Call left the "incoming" state (answered on any device, declined, or ended):
     // dismiss the lingering incoming-call OS notification.

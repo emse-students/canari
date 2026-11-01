@@ -85,6 +85,10 @@ export interface AndroidCallBridge {
   update(json: string): void;
   stop(callId: string, reason: string): void;
   pageLoaded(): void;
+  /** Rings the incoming call natively, Canari's ring on the RINGTONE stream (`utils/callRing.ts`). */
+  ringStart(callId: string, appSounds: boolean): void;
+  /** Stops that ring. */
+  ringStop(callId: string, reason: string): void;
 }
 
 /**

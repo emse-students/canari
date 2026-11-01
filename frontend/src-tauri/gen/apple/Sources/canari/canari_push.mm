@@ -1399,6 +1399,9 @@ static void CanariUpdateAppBadge(void) {
 static NSString *const kCanariSoundMessage = @"canari_gazouillis_message.wav";
 static NSString *const kCanariSoundMention = @"canari_gazouillis_mention.wav";
 static NSString *const kCanariSoundReaction = @"canari_gazouillis_reaction.wav";
+// Canari's incoming-call ring for CallKit (`CXProviderConfiguration.ringtoneSound`), rendered from
+// `soundPalette.RING_PHRASE` into `gen/apple/CallSounds/`, bundled in the app only.
+static NSString *const kCanariRingtoneSound = @"canari_ring_callkit.wav";
 
 /// `sentAt` is the SENDER's instant for the message this notification is about, in ms, and it is
 /// stamped into `userInfo` so the quick actions can acknowledge the conversation without looking
@@ -3566,7 +3569,17 @@ static void CanariEnsureCallProvider(void) {
   config.maximumCallGroups = 1;
   config.maximumCallsPerCallGroup = 1;
   config.supportedHandleTypes = [NSSet setWithObject:@(CXHandleTypeGeneric)];
-  g_callProvider = [[CXProvider alloc] initWithConfiguration:config];
+  // Canari's own ring (owner, 2026-11-01): 25 s of the 5 s loop, rendered from
+  // `soundPalette.RING_PHRASE` by tools/notification-sounds/render.mjs into gen/apple/CallSounds/
+  // and bundled in the app's Resources (iosNotificationSounds.test.ts). CallKit repeats it. A name
+  // the bundle lacks makes CallKit ring the system tone without a word, so the absence is logged.
+  if ([[NSBundle mainBundle] pathForResource:@"canari_ring_callkit" ofType:@"wav"] != nil) {
+    config.ringtoneSound = kCanariRingtoneSound;
+  } else {
+    NSLog(@"[CanariCallKit] ERROR %@ is not in the bundle - CallKit rings the system tone",
+          kCanariRingtoneSound);
+  }
+  g_callProvider =[[CXProvider alloc] initWithConfiguration:config];
   g_callProviderDelegate = [[CanariCallProviderDelegate alloc] init];
   [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
 }

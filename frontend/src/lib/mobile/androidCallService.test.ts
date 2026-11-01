@@ -28,6 +28,8 @@ function host(withBridge = true) {
     update: (arg) => calls.push({ method: 'update', arg }),
     stop: (callId, arg) => calls.push({ method: 'stop', arg, callId }),
     pageLoaded: () => calls.push({ method: 'pageLoaded', arg: '' }),
+    ringStart: (callId) => calls.push({ method: 'ringStart', arg: '', callId }),
+    ringStop: (callId, arg) => calls.push({ method: 'ringStop', arg, callId }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
     canariCall: withBridge ? bridge : undefined,

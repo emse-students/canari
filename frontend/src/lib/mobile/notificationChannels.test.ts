@@ -46,6 +46,11 @@ const applicationKt = readFileSync(
   resolve(ANDROID_MAIN, 'java/fr/emse/canari/CanariApplication.kt'),
   'utf8'
 );
+/** The incoming ring's pure facts: the calls channel id lives here (`IncomingRingTest.kt`). */
+const incomingRingKt = readFileSync(
+  resolve(ANDROID_MAIN, 'java/fr/emse/canari/call/IncomingRing.kt'),
+  'utf8'
+);
 
 /** The five density buckets a raster notification icon has to cover to render on every phone. */
 const DENSITIES = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
@@ -90,7 +95,11 @@ describe('notifications posted from the WebView (anti-régression)', () => {
 
   it('les canaux envoyés par le TypeScript sont ceux que le Kotlin crée', () => {
     const ktMessages = fcmServiceKt.match(/CHANNEL_MESSAGES\s*=\s*"([^"]+)"/)?.[1];
-    const ktCalls = fcmServiceKt.match(/CHANNEL_CALLS\s*=\s*"([^"]+)"/)?.[1];
+    // The calls id lives in the pure `call/IncomingRing.kt`, which the FCM constant names.
+    expect(fcmServiceKt).toMatch(
+      /CHANNEL_CALLS\s*=\s*fr\.emse\.canari\.call\.IncomingRing\.CHANNEL_ID/
+    );
+    const ktCalls = incomingRingKt.match(/CHANNEL_ID = "([^"]+)"/)?.[1];
     expect(ktMessages, 'CHANNEL_MESSAGES introuvable dans le Kotlin').toBeDefined();
     expect(ktCalls, 'CHANNEL_CALLS introuvable dans le Kotlin').toBeDefined();
     expect(CHANNEL_MESSAGES).toBe(ktMessages);
@@ -214,7 +223,7 @@ describe('the palette-A notification channels (2026-10-09)', () => {
   });
 
   it('the old ids are deleted at startup, and never equal a current id', () => {
-    const list = applicationKt.match(/SUPERSEDED_CHANNELS = listOf\(([^)]*)\)/)?.[1] ?? '';
+    const list = applicationKt.match(/SUPERSEDED_CHANNELS =\s*listOf\(([^)]*)\)/)?.[1] ?? '';
     const old = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     expect(old.sort()).toEqual(['canari_mentions', 'canari_messages', 'canari_reactions']);
     for (const c of ['CHANNEL_MESSAGES', 'CHANNEL_MENTIONS', 'CHANNEL_REACTIONS']) {
@@ -230,6 +239,23 @@ describe('the palette-A notification channels (2026-10-09)', () => {
       expect(existsSync(resolve(ANDROID_MAIN, `res/raw/canari_gazouillis_${name}.wav`))).toBe(true);
     }
   );
+
+  it('the calls channel moved to canari_calls_v2 with Canari ring, the old id deleted', () => {
+    // The same id in the pure Kotlin (held by IncomingRingTest), the FCM service and TypeScript.
+    expect(incomingRingKt).toContain('const val CHANNEL_ID = "canari_calls_v2"');
+    expect(incomingRingKt).toContain(
+      'SUPERSEDED_CHANNEL_IDS: List<String> = listOf("canari_calls")'
+    );
+    expect(CHANNEL_CALLS).toBe('canari_calls_v2');
+    expect(applicationKt).toContain('+ IncomingRing.SUPERSEDED_CHANNEL_IDS');
+    // The channel plays the rendered ring, never the system default any more.
+    expect(applicationKt).toContain(
+      'setSound(gazouillisUri(context, R.raw.canari_ring), ringAttrs)'
+    );
+    expect(applicationKt).toContain('AudioAttributes.USAGE_NOTIFICATION_RINGTONE');
+    expect(applicationKt).not.toContain('RingtoneManager');
+    expect(existsSync(resolve(ANDROID_MAIN, 'res/raw/canari_ring.wav'))).toBe(true);
+  });
 
   it('the group summary stays silent: alert only on children, only once', () => {
     expect(fcmServiceKt).toContain('GROUP_ALERT_CHILDREN');

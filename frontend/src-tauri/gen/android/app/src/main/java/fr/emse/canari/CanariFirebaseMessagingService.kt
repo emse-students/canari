@@ -145,8 +145,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Normal-priority channel: form reminders (silent). */
         const val CHANNEL_FORMS    = "canari_forms"
 
-        /** Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request). */
-        const val CHANNEL_CALLS    = "canari_calls"
+        /**
+         * Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request), with
+         * Canari's own ring since 2026-11-01 - a new id, because a channel's sound is immutable. The
+         * id lives in the pure [fr.emse.canari.call.IncomingRing], where its JVM test holds it.
+         */
+        const val CHANNEL_CALLS    = fr.emse.canari.call.IncomingRing.CHANNEL_ID
 
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
         const val CHANNEL_MENTIONS = "canari_mentions_v2"
@@ -1106,7 +1110,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
          */
         internal fun callHoldsSound(): Boolean =
-            CallSoundHold.held(CallForegroundService.running, activeCallRings.size)
+            CallSoundHold.held(CallForegroundService.running, activeCallRings.size, CallRingPlayer.ringingCallId != null)
 
         /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+

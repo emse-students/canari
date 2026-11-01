@@ -213,6 +213,95 @@ export const RINGBACK_PHRASE: VoiceSpec[] = [
 /** One loop of the ringback, phrase and pause together, in seconds: the rendered file's length. */
 export const RINGBACK_PERIOD_S = 4;
 
+/** One beat of the incoming ring: 96 beats per minute. */
+const RING_BEAT_S = 0.625;
+
+/** A whistled note of the ring's lead canary: an upward scoop, a flutter, an octave partial. */
+function ringNote(t: number, hz: number, beats: number, peak: number): VoiceSpec[] {
+  return voice(t, {
+    path: [
+      [0, hz * 0.93],
+      [0.045, hz],
+      [beats * RING_BEAT_S * 0.85, hz * 0.985],
+    ],
+    dur: beats * RING_BEAT_S * 0.95,
+    vib: 14,
+    vibHz: 22,
+    peak,
+    partial: 2,
+  });
+}
+
+/** A note of the second canary: the same whistle, softer, a slower flutter, no partial. */
+function ringHarmony(t: number, hz: number, beats: number): VoiceSpec[] {
+  return voice(t, {
+    path: [
+      [0, hz * 0.95],
+      [0.05, hz],
+      [beats * RING_BEAT_S * 0.85, hz * 0.99],
+    ],
+    dur: beats * RING_BEAT_S * 0.95,
+    vib: 12,
+    vibHz: 20,
+    peak: 0.085,
+  });
+}
+
+/**
+ * The ring's melody, on the G major pentatonic: `[beat, lead hertz, harmony hertz, beats, peak]`.
+ * The harmony is a diatonic third below, closing on the sixth below (B5 under G6) so the cadence
+ * lands on a plain G chord.
+ */
+const RING_MELODY: [number, number, number, number, number][] = [
+  [0, 1568, 1319, 0.5, 0.14], // G6 over E6
+  [0.5, 1976, 1568, 0.5, 0.14], // B6 over G6
+  [1, 2349, 1976, 1, 0.15], // D7 over B6
+  [2, 1976, 1568, 0.5, 0.14], // B6 over G6
+  [2.5, 1760, 1480, 1.25, 0.14], // A6 over F#6
+  [4, 1568, 1319, 0.5, 0.14], // G6 over E6
+  [4.5, 1976, 1568, 0.5, 0.14], // B6 over G6
+  [5, 1760, 1480, 0.5, 0.14], // A6 over F#6
+  [5.5, 1319, 1047, 0.5, 0.15], // E6 over C6
+  [6, 1568, 988, 1.4, 0.14], // G6 over B5: the cadence
+];
+
+/**
+ * THE INCOMING-CALL RING - "C1", two canaries singing (owner's choice, 2026-11-01, among five
+ * candidates heard as renders): a melody on the G major pentatonic that rises to D7 through a little
+ * grace trill and settles back on G6, and a second, softer canary a third below it, 15 ms late like
+ * a real second bird, the pair resolving on a G chord. 96 BPM, 8 beats: ONE loop of exactly
+ * {@link RING_PERIOD_S} seconds.
+ *
+ * Rendered offline by `tools/notification-sounds/render.mjs`, never hand-copied: the 5 s loop to
+ * `res/raw/canari_ring.wav` (the Android `canari_calls_v2` channel and the native in-app ring) and
+ * `static/sounds/canari_ring.wav` (the web in-app ring, looped on the tone output), and a 30 s
+ * stretch of the same loop for CallKit's `ringtoneSound` on the iPhone. The render folds every
+ * sample past the loop's end - the cadence's room tail - back onto its start, so `loop` playback
+ * has no seam.
+ */
+export const RING_PHRASE: VoiceSpec[] = [
+  ...RING_MELODY.flatMap(([beat, hz, , beats, peak]) =>
+    ringNote(beat * RING_BEAT_S, hz, beats, peak)
+  ),
+  // The grace trill into D7: three tiny chirps just before the beat.
+  ...[0, 0.04, 0.08].flatMap((d) =>
+    voice(RING_BEAT_S - 0.12 + d, {
+      path: [
+        [0, 2200],
+        [0.025, 2500],
+      ],
+      dur: 0.035,
+      peak: 0.08,
+    })
+  ),
+  ...RING_MELODY.flatMap(([beat, , hz, beats]) =>
+    ringHarmony(beat * RING_BEAT_S + 0.015, hz, beats)
+  ),
+];
+
+/** One loop of the incoming ring, in seconds: 8 beats at 96 BPM, the rendered loop's length. */
+export const RING_PERIOD_S = 8 * RING_BEAT_S;
+
 /**
  * Schedules one palette sound on `ctx` (dry) and returns EVERY oscillator it started - the vibrato
  * ones included, because `toneOutput` suspends the output on the `ended` of the last one counted.

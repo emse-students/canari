@@ -15,17 +15,22 @@ class CallSoundHoldTest {
 
     @Test
     fun `no call, no native ring - nothing is held`() {
-        assertFalse(CallSoundHold.held(callInForeground = false, nativeRings = 0))
+        assertFalse(CallSoundHold.held(callInForeground = false, nativeRings = 0, appRings = false))
     }
 
     @Test
     fun `the ongoing-call service holds a call - held`() {
-        assertTrue(CallSoundHold.held(callInForeground = true, nativeRings = 0))
+        assertTrue(CallSoundHold.held(callInForeground = true, nativeRings = 0, appRings = false))
     }
 
     @Test
     fun `a call rings natively - held`() {
-        assertTrue(CallSoundHold.held(callInForeground = false, nativeRings = 1))
+        assertTrue(CallSoundHold.held(callInForeground = false, nativeRings = 1, appRings = false))
+    }
+
+    @Test
+    fun `the open app rings a call before the answer - held`() {
+        assertTrue(CallSoundHold.held(callInForeground = false, nativeRings = 0, appRings = true))
     }
 
     @Test

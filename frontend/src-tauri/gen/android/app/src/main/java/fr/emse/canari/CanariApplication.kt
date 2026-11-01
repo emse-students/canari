@@ -8,9 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
+import fr.emse.canari.call.IncomingRing
 import java.io.File
 
 /**
@@ -240,7 +240,8 @@ class CanariApplication : Application() {
          * second, dead "Messages" entry. Deleting is idempotent and cheap, and the user's per-channel
          * choices on the old ids are NOT carried - the sound is the thing that changed.
          */
-        private val SUPERSEDED_CHANNELS = listOf("canari_messages", "canari_mentions", "canari_reactions")
+        private val SUPERSEDED_CHANNELS =
+            listOf("canari_messages", "canari_mentions", "canari_reactions") + IncomingRing.SUPERSEDED_CHANNEL_IDS
 
         private fun deleteSupersededChannels(manager: NotificationManager) {
             for (id in SUPERSEDED_CHANNELS) {
@@ -261,8 +262,10 @@ class CanariApplication : Application() {
          *  - canari_messages_v2 : DMs and group messages (IMPORTANCE_HIGH, vibration, palette-A "message" trill)
          *  - canari_social   : reactions/comments on posts (IMPORTANCE_DEFAULT, silent)
          *  - canari_forms    : form reminders (IMPORTANCE_DEFAULT, silent)
-         *  - canari_calls    : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE sound,
-         *                      bypass-DND requested - the user can confirm it in channel settings)
+         *  - canari_calls_v2 : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE usage,
+         *                      bypass-DND requested - the user can confirm it in channel settings;
+         *                      Canari's own ring `res/raw/canari_ring.wav` since 2026-11-01, which
+         *                      the user may still change there)
          *  - canari_mentions_v2 : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
          *                      bypass-DND requested)
          *
@@ -322,8 +325,8 @@ class CanariApplication : Application() {
                 )
             }
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_CALLS) == null) {
-                // Ringtone-class audio so an incoming call sounds like a call, not a message.
-                // setBypassDnd is a REQUEST: the system honors it only if the user grants the
+                // Ringtone-class audio so an incoming call sounds like a call, not a message, and
+                // Canari's own ring (`IncomingRing`, owner 2026-11-01). setBypassDnd is a REQUEST: the system honors it only if the user grants the
                 // channel "override Do Not Disturb" (surfaced in the channel settings).
                 val ringAttrs = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -337,8 +340,8 @@ class CanariApplication : Application() {
                     ).apply {
                         description = res.getString(R.string.notif_channel_calls_desc)
                         enableVibration(true)
-                        vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
-                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), ringAttrs)
+                        vibrationPattern = IncomingRing.VIBRATION_PATTERN
+                        setSound(gazouillisUri(context, R.raw.canari_ring), ringAttrs)
                         setBypassDnd(true)
                     }
                 )

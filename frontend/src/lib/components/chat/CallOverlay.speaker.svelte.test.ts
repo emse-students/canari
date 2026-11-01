@@ -123,6 +123,8 @@ beforeEach(() => {
     update: record,
     stop: () => {},
     pageLoaded: () => {},
+    ringStart: () => {},
+    ringStop: () => {},
   };
 });
 

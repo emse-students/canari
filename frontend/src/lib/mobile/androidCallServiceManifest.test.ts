@@ -98,12 +98,14 @@ describe('the bridge, both sides of the WebView', () => {
     expect(bridgeTs).toContain('canariCall?: AndroidCallBridge');
   });
 
-  it('the four methods the page calls are the four the interface exposes', () => {
+  it('the six methods the page calls are the six the interface exposes', () => {
     for (const method of [
       'start(json: String)',
       'update(json: String)',
       'stop(callId: String, reason: String)',
       'pageLoaded()',
+      'ringStart(callId: String, appSounds: Boolean)',
+      'ringStop(callId: String, reason: String)',
     ]) {
       expect(bridgeKt).toMatch(
         // Every metacharacter, backslash included, so the signature is matched as literal text.
@@ -115,6 +117,8 @@ describe('the bridge, both sides of the WebView', () => {
       'update(json: string): void;',
       'stop(callId: string, reason: string): void;',
       'pageLoaded(): void;',
+      'ringStart(callId: string, appSounds: boolean): void;',
+      'ringStop(callId: string, reason: string): void;',
     ]) {
       expect(bridgeTs).toContain(method);
     }
