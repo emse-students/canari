@@ -4,7 +4,13 @@
  * the throw carries - status and ORIGIN (the Content-Type), never the message.
  */
 import { describe, expect, it } from 'vitest';
-import { MediaUploadError, uploadRefusalCause, uploadRefusalFrom } from './mediaErrors';
+import {
+  CHAT_REEL_OVER_BUDGET,
+  isOverBudgetBody,
+  MediaUploadError,
+  uploadRefusalCause,
+  uploadRefusalFrom,
+} from './mediaErrors';
 
 const html = (status: number) =>
   new Response('<!DOCTYPE html><title>CrowdSec Ban</title>' + 'x'.repeat(5000), {
@@ -21,6 +27,20 @@ describe('uploadRefusalFrom', () => {
     expect(err.status).toBe(403);
     expect(err.message.length).toBeLessThan(200);
     expect(err.message).not.toContain('CrowdSec');
+  });
+
+  it("reads media-service's daily chat-reel budget from the CODE its 429 carries, never the message", async () => {
+    const budget = new Response(
+      JSON.stringify({ statusCode: 429, message: 'anything', code: CHAT_REEL_OVER_BUDGET }),
+      { status: 429, headers: { 'Content-Type': 'application/json' } }
+    );
+    const err = await uploadRefusalFrom(budget, 'chunked upload init failed');
+    expect(err.overBudget).toBe(true);
+    expect(uploadRefusalCause(err)).toBe('over-budget');
+    // A 429 with no code (an open-session limit) and an edge 429 stay transient.
+    expect((await uploadRefusalFrom(json(429), 'x')).overBudget).toBe(false);
+    expect(uploadRefusalCause(await uploadRefusalFrom(html(429), 'x'))).toBeNull();
+    expect(isOverBudgetBody('Daily chat-reel upload budget reached.')).toBe(false);
   });
 
   it('keeps a short excerpt of the application own JSON answer', async () => {
@@ -44,6 +64,7 @@ describe('uploadRefusalCause', () => {
     [new MediaUploadError(404, 'x'), 'refused'],
     [new MediaUploadError(422, 'x'), 'refused'],
     [new MediaUploadError(429, 'x'), null],
+    [new MediaUploadError(429, 'x', 'gateway', false, true), 'over-budget'],
     [new MediaUploadError(429, 'x', 'edge'), null],
     [new MediaUploadError(408, 'x'), null],
     [new MediaUploadError(401, 'x'), null],

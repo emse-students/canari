@@ -26,11 +26,13 @@ import { postIdentityFields } from '$lib/posts/postIdentity';
 import { getToken } from '$lib/stores/auth';
 import {
   prepareVideoForUpload,
+  VideoPrepareError,
   type PrepareVideoOptions,
   type PreparedVideo,
 } from '$lib/video/prepareVideoForUpload';
 import type { ReelClip } from './reelCapture';
 import { firstFramePlaceholder } from './reelFirstFrame';
+import { EncoderLeaseAbortedError, withEncoderLease } from '$lib/video/encoderLease';
 
 /** What the publish step needs from the outside world. */
 export interface PublishReelDeps {
@@ -101,6 +103,20 @@ export interface PublishReelInput {
   video: Pick<PrepareVideoOptions, 'onProgress' | 'signal'>;
   /** Told each step as it starts, so the screen can name it. */
   onStage?: (stage: PublishStage) => void;
+  /**
+   * The take is ALSO sent to conversations (reels-in-chat 15.5, D-onefile): called with the upload
+   * right after it lands and BEFORE `POST /api/posts`, so the chats adopt THIS file (the outbox's
+   * `adoptPublishedUpload`) and a post refused or cancelled afterwards still leaves them their file.
+   * Its failure never fails the publish: the take then uploads its own, and that is logged.
+   */
+  onUploaded?: (uploaded: PublishedReelUpload) => Promise<void>;
+}
+
+/** What the publish step uploaded, as the chat sends of the same take adopt it (15.5). */
+export interface PublishedReelUpload {
+  ref: MediaRef;
+  /** The declared duration of the published reel (whole ms). */
+  durationMs: number;
 }
 
 /** Input for publishing a camera photo without pretending it is a time-based reel. */
@@ -162,14 +178,25 @@ export async function publishReel(
     const limits = await deps.uploadLimits();
 
     enter('mediaPrepare');
-    const prepared = await deps.prepare(clip.blob, {
-      maxSeconds: maxDurationMs / 1000,
-      maxBytes: limits?.maxPlaintextBytes,
-      // The member's "remove the sound": the published file carries no audio track at all.
-      removeAudio: clip.soundRemoved === true,
-      // A reel loops: sound outside the picture would be a still frame on every pass.
-      trimToVideo: true,
-      ...video,
+    // THE ENCODER LEASE IS SHARED WITH THE OUTBOX'S TAKE PREPARATION (RC-13, reels-in-chat 15.2):
+    // whoever started first encodes, the other waits. A cancel while waiting is the member's cancel.
+    const prepared = await withEncoderLease('publish', video.signal, () =>
+      deps.prepare(clip.blob, {
+        maxSeconds: maxDurationMs / 1000,
+        maxBytes: limits?.maxPlaintextBytes,
+        // The member's "remove the sound": the published file carries no audio track at all.
+        removeAudio: clip.soundRemoved === true,
+        // A reel loops: sound outside the picture would be a still frame on every pass.
+        trimToVideo: true,
+        ...video,
+      })
+    ).catch((e: unknown) => {
+      if (e instanceof EncoderLeaseAbortedError) {
+        throw new VideoPrepareError('aborted', 'cancelled while waiting for the encoder', {
+          cause: e,
+        });
+      }
+      throw e;
     });
 
     // Decoded from the very file uploaded, so the blur is of the frame every reader will see first.
@@ -182,11 +209,22 @@ export async function publishReel(
       height: prepared.height,
     });
     const ref: MediaRef = placeholder ? { ...uploaded, placeholder } : uploaded;
+    const durationMs = declaredReelDurationMs(prepared.durationSeconds, maxDurationMs);
+    // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the
+    // post's fate, the conversations of the same take have their file.
+    if (input.onUploaded) {
+      await input.onUploaded({ ref, durationMs }).catch((e: unknown) => {
+        console.error(
+          `[reel-publish] the chat sends could not adopt upload ${ref.mediaId} - the take uploads its own:`,
+          e
+        );
+      });
+    }
 
     enter('createPost');
     const post = await deps.createPost({
       kind: 'reel',
-      durationMs: declaredReelDurationMs(prepared.durationSeconds, maxDurationMs),
+      durationMs,
       markdown: caption,
       media: [ref],
       ...postIdentityFields(identity),

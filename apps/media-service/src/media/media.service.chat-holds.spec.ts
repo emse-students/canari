@@ -14,7 +14,7 @@
  *  - the salon purge's allowlist: the row's author must be the uploader, and a chat hold must exist.
  */
 import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
-import { MediaService } from './media.service';
+import { CHAT_REEL_OVER_BUDGET, MediaService } from './media.service';
 
 const ALICE = 'alice';
 const BOB = 'bob';
@@ -205,6 +205,8 @@ describe('the chat hold route: owner-only, idempotent, charged once', () => {
     const refusal = await service.holdForChat(PENDING, ALICE, NOW).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(HttpException);
     expect((refusal as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    // The discriminator the client fails the take on (RC-13), never the sentence.
+    expect((refusal as HttpException).getResponse()).toMatchObject({ code: CHAT_REEL_OVER_BUDGET });
     expect(items[PENDING].holds).toBeUndefined();
     expect(items[PENDING].retentionClass).toBe('reel-pending');
   });

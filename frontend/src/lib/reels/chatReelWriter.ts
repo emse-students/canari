@@ -1,5 +1,6 @@
 import type { ReelLimits } from '$lib/posts/api';
 import type { CaptureDestination } from './reelCapture';
+import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 /**
  * THE WRITER OF A CANAREEL IN A CONVERSATION - `false` UNTIL RC-5 AND RC-7 HAVE SHIPPED (user,
@@ -16,7 +17,8 @@ import type { CaptureDestination } from './reelCapture';
  * - RC-5 shipped (the upload survives a weak network and a kill);
  * - RC-7 shipped (a push says "CanaReel", not "video"), and the readers are the `minClientVersion` floor;
  * - and the rest of the section-7 list (re-ordered 2026-10-30): the durable release of a leaked upload
- *   session, RC-14 then RC-13, RC-6's `410` amendment, RC-8 or salons kept out.
+ *   session and RC-14 - DONE; RC-13 (one take, its sends, the file adopted or uploaded once) -
+ *   BUILT; RC-6's `410` amendment, RC-8 or salons kept out.
  *
  * Salons are NOT written by this switch even when it is `true`: their send path is RC-8's.
  */
@@ -86,6 +88,18 @@ export function captureCapMs(
   destination: CaptureDestination
 ): number | null {
   return destination === 'chat' ? servedChatCapMs(limits) : limits.maxDurationMs;
+}
+
+/**
+ * How many conversations RC-12's sheet may tick for one take: the SMALLER of the server's
+ * `chatReelMaxTargets` and what one take may carry on this client (`REEL_TAKE_MAX_SENDS`, which the
+ * outbox refuses past with a typed error). `null` when the server served no usable count - the sheet
+ * then offers no multi-send, never a guessed number. Pure.
+ */
+export function chatReelTargetCap(limits: Pick<ReelLimits, 'chatReelMaxTargets'>): number | null {
+  const served: unknown = limits.chatReelMaxTargets;
+  if (typeof served !== 'number' || !Number.isInteger(served) || served < 1) return null;
+  return Math.min(served, REEL_TAKE_MAX_SENDS);
 }
 
 /** The server's reel-limits answer carried no usable chat cap: the take is parked, never prepared. */

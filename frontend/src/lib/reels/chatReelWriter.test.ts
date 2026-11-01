@@ -8,11 +8,13 @@ import {
   servedChatCapMs,
   chatReelPendingDeclaration,
   chatReelPrepareOptions,
+  chatReelTargetCap,
   isChatReelTake,
   markChatReelTake,
   uploadClassFor,
 } from './chatReelWriter';
 import { destinationRules } from './reelCapture';
+import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 describe('the chat reel writer', () => {
   it('is OFF in the shipped code: nothing reaches a member until RC-5 and RC-7', () => {
@@ -83,5 +85,13 @@ describe('the chat reel writer', () => {
       maxSeconds: 60,
       maxBytes: 50_000_000,
     });
+  });
+
+  it("caps RC-12's targets at the SMALLER of the server's count and what one take may carry, and offers none without a count", () => {
+    expect(chatReelTargetCap({ chatReelMaxTargets: 15 })).toBe(15);
+    expect(chatReelTargetCap({ chatReelMaxTargets: 500 })).toBe(REEL_TAKE_MAX_SENDS);
+    for (const bad of [undefined, 0, -1, 2.5, Number.NaN, '15']) {
+      expect(chatReelTargetCap({ chatReelMaxTargets: bad as unknown as number })).toBeNull();
+    }
   });
 });

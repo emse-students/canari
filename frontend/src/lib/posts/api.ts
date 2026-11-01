@@ -293,6 +293,12 @@ export interface ReelLimits {
    * 90 s reel cap instead (`servedChatCapMs` checks the answer at run time).
    */
   chatMaxDurationMs: number;
+  /**
+   * The most conversations one "Envoyer à..." press may reach (15, `CHAT_REEL_MAX_TARGETS`), served
+   * since RC-14 and absent from an older server: read through `chatReelTargetCap`, which also holds
+   * it to what one take may carry on this client.
+   */
+  chatReelMaxTargets?: number;
   retentionDays: number;
   warningWindowDays: number;
 }

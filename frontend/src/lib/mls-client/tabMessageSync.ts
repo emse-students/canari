@@ -1,6 +1,7 @@
 import type { ChatMessage } from '$lib/types';
 import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import type { PublishedReelUpload } from '$lib/reels/publishReel';
 
 const TAB_MESSAGES_CHANNEL = 'canari-tab-messages';
 
@@ -83,7 +84,10 @@ export type TabOutboxEvent =
   | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
   | { type: 'outbox_entry_cancelled'; messageId: string }
   | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number }
-  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason };
+  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason }
+  /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
+  | { type: 'outbox_reel_send_deleted'; messageId: string }
+  | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
@@ -91,6 +95,8 @@ const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_entry_cancelled',
   'outbox_entry_failed',
   'outbox_entry_retired',
+  'outbox_reel_send_deleted',
+  'outbox_reel_take_adopt',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -165,6 +171,22 @@ export function subscribeTabMessageUpdates(handler: (event: TabMessageEvent) => 
 export function requestLeaderOutboxFlush(): void {
   if (getIsTabLeader()) return;
   ensureChannel()?.postMessage({ type: 'outbox_flush_request' } satisfies TabOutboxEvent);
+}
+
+/**
+ * From a follower tab: hands a write to a chat-reel TAKE ROW (RC-13) to the leader, which does it.
+ *
+ * ONLY THE LEADER WRITES A TAKE ROW: its sends are marked sent there, under a lock that lives in
+ * that tab's memory, so a follower writing the same row would overwrite a `sent` mark it never saw
+ * (and could give back a file recipients still cite). The row is shared (IndexedDB), the lock is
+ * not - so the follower forwards the INSTRUCTION, as {@link requestLeaderOutboxFlush} does. A no-op
+ * in the leader, which writes for itself.
+ */
+export function forwardReelTakeWrite(
+  event: Extract<TabOutboxEvent, { type: 'outbox_reel_send_deleted' | 'outbox_reel_take_adopt' }>
+): void {
+  if (getIsTabLeader()) return;
+  ensureChannel()?.postMessage(event satisfies TabOutboxEvent);
 }
 
 /**

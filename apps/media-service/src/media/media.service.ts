@@ -53,6 +53,12 @@ const CHAT_REEL_RETENTION_MS = positiveIntEnv(
   CHAT_REEL_RETENTION_DAYS * 24 * 60 * 60 * 1000
 );
 /**
+ * The `code` of the ONE 429 that is a verdict, the daily `chat-reel` budget (RC-13): the client's
+ * `CHAT_REEL_OVER_BUDGET` in `frontend/src/lib/utils/mediaErrors.ts` is the other copy of this string.
+ */
+export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
+
+/**
  * What one member may upload as `chat-reel` per rolling 24 hours, so a single account cannot fill
  * the store (user, 2026-10-09: 500 MB). Counted from the metadata - `ownerId` is the only
  * attribution this service has - and refused with a 429, an ANSWER the client must not retry blindly.
@@ -1794,8 +1800,16 @@ export class MediaService {
       this.logger.warn(
         `Chat-reel upload refused for ${ownerId}: ${used} bytes already today or in flight, ${incomingBytes} more over the ${CHAT_REEL_DAILY_BYTES} cap`
       );
+      // THE CODE IS THE DISCRIMINATOR (RC-13): this 429 is an ANSWER - the member is over today's
+      // budget, and the client fails the take for good instead of retrying it all day. Every other
+      // 429 of this service (open-session limits, a full staging area) carries no code and stays
+      // transient. Never the message: the client reads `code` only.
       throw new HttpException(
-        'Daily chat-reel upload budget reached. Try again tomorrow.',
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Daily chat-reel upload budget reached. Try again tomorrow.',
+          code: CHAT_REEL_OVER_BUDGET,
+        },
         HttpStatus.TOO_MANY_REQUESTS
       );
     }
