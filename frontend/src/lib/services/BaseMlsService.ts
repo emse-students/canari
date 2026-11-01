@@ -449,6 +449,23 @@ function oneDeviceAddResult(
     : { welcome: result.welcome, ratchetTree: result.ratchetTree };
 }
 
+/** One RELEASED group's state - see `BaseMlsService.releasing`. */
+interface GroupRelease {
+  /** The release a completed pull must have started at or after to list this group. */
+  generation: number;
+  /** The newest release generation a completed pull has listed for this group (0: none). */
+  listed: number;
+  /** Live frames that arrived while the group waited, in arrival order. */
+  parked: MlsQueuedMessage[];
+  /** Parked frames handed back to the queue and not yet reached: their turn, in order. */
+  handedBack: Set<string>;
+  /**
+   * Rows a pull brought for this group during the release - the hand-back's dedup, kept for the
+   * release's whole life: the delivery memory is bounded and may have evicted them.
+   */
+  pulled: Set<string>;
+}
+
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
   protected readonly platform: 'web' | 'tauri';
@@ -804,13 +821,34 @@ export abstract class BaseMlsService implements IMlsService {
     }
     const generation = this.releaseGeneration + 1;
     let count = 0;
+    let deferred = 0;
     for (const [group, ids] of this.withheldFrames) {
       if (withholdsQueuedFrame(group === '' ? undefined : group)) continue;
+      // A GROUP WITH FRAMES STILL QUEUED HERE IS NOT RELEASED NOW: a frame of it held behind a
+      // commit would be applied when the commit ends, ahead of the withheld ones the pull is about
+      // to bring back. The drain that empties it decides at its end (`processQueue`).
+      if (group !== '' && !this.messageScheduler.isGroupIdle(group)) {
+        deferred += 1;
+        continue;
+      }
       count += ids.size;
       this.withheldFrames.delete(group);
       const existing = this.releasing.get(group);
       if (existing) existing.generation = generation;
-      else this.releasing.set(group, { generation, parked: [], handedBack: new Set() });
+      else {
+        this.releasing.set(group, {
+          generation,
+          listed: 0,
+          parked: [],
+          handedBack: new Set(),
+          pulled: new Set(),
+        });
+      }
+    }
+    if (deferred > 0) {
+      console.log(
+        `[QUEUE] gate release (${why}) - ${deferred} group(s) still have frames queued here; decided at the drain that empties them`
+      );
     }
     if (count === 0) return;
     this.releaseGeneration = generation;
@@ -830,38 +868,73 @@ export abstract class BaseMlsService implements IMlsService {
    * unreadable. So until a pull that started after the release has listed the whole mailbox, a live
    * frame of the group is PARKED here (not decrypted, not ACKed, forgotten by the dedup), and once it
    * has, the parked frames are handed back in their arrival order, behind the pull's rows. A pull
-   * that fails lists nothing: the group stays parked until one completes ({@link releasesListed}).
+   * that fails lists nothing: the group stays parked until one completes ({@link releasesListed}),
+   * and the next live frame parked with no pull in flight starts one ({@link parkLiveFrame}).
    */
-  private readonly releasing = new Map<
-    string,
-    {
-      /** The release a completed pull must have started at or after to list this group. */
-      generation: number;
-      /** Live frames that arrived while the group waited, in arrival order. */
-      parked: MlsQueuedMessage[];
-      /** Parked frames handed back to the queue and not yet reached: their turn, in order. */
-      handedBack: Set<string>;
-    }
-  >();
+  private readonly releasing = new Map<string, GroupRelease>();
 
   /** Counts releases, so a pull knows which ones it started after (see {@link releasing}). */
   private releaseGeneration = 0;
 
+  /** Whether `groupId` has frames this page left queued or holds parked - it is not drained. */
+  private holdsFramesBack(groupId: string): boolean {
+    return this.withheldFrames.has(groupId) || this.releasing.has(groupId);
+  }
+
+  /** Waiters for a group's withheld and parked frames to be back in the queue, by group. */
+  private readonly framesReturnedWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
+
+  /** Resolves once `groupId` holds no frame back ({@link holdsFramesBack}). */
+  private whenFramesReturned(groupId: string): Promise<void> {
+    if (!this.holdsFramesBack(groupId)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiters = this.framesReturnedWaiters.get(groupId) ?? [];
+      waiters.push({ resolve, reject });
+      this.framesReturnedWaiters.set(groupId, waiters);
+    });
+  }
+
+  /**
+   * Parks a live frame of a released group ({@link releasing}). THE TERMINATION OF A FAILED RELEASE
+   * PULL: if no pull that covers this release has completed and none is in flight, this frame starts
+   * one. Only an ARRIVING frame starts a pull - never a pull's own end, failed or not - and only
+   * while none is in flight, so the pulls are bounded by the frames the socket delivers; the first
+   * one that lists the mailbox ends the release.
+   */
+  private parkLiveFrame(release: GroupRelease, msg: MlsQueuedMessage): void {
+    this.settleDelivery(msg.queuedMessageId, false);
+    release.parked.push(msg);
+    if (release.listed < release.generation && !this.pendingPullInFlight) {
+      console.warn(
+        `[QUEUE] a live frame parked behind a release no pull has listed, and none is in flight - pulling`
+      );
+      void this.fetchPendingMessages();
+    }
+  }
+
   /**
    * A pull that started at `covered` has listed the whole mailbox: every group released at or
-   * before it has its withheld frames enqueued, so its parked live frames are handed back now.
+   * before it has its withheld frames enqueued, so its parked live frames are handed back now - or,
+   * for a group whose previous hand-back is still being reached, when that one ends.
    */
   private releasesListed(covered: number): void {
     for (const [group, release] of this.releasing) {
-      if (release.generation > covered || release.handedBack.size > 0) continue;
-      this.handBackParked(group);
+      if (release.generation > covered) continue;
+      release.listed = Math.max(release.listed, covered);
+      if (release.handedBack.size === 0) this.handBackParked(group);
     }
   }
 
   /**
    * Hands a released group's parked live frames back to the queue, in arrival order, and ends the
-   * release once nothing is parked. A parked frame whose row a pull already brought (the dedup knows
-   * it) is not handed back: that copy took its place, in the server's order.
+   * release once nothing is parked. Called only once a pull has listed the release: by
+   * {@link releasesListed}, or at the end of a round that one started - and a group is never
+   * re-released mid-round, because a group with frames queued here is not released
+   * (`pullWhatTheGateReleases`). A parked frame whose row a pull already brought is not handed
+   * back: that copy took its place, in the server's order.
    */
   private handBackParked(group: string): void {
     const release = this.releasing.get(group);
@@ -869,7 +942,7 @@ export abstract class BaseMlsService implements IMlsService {
     const parked = release.parked.splice(0);
     for (const msg of parked) {
       const id = msg.queuedMessageId;
-      if (!id || this.deliveries.has(id)) continue;
+      if (!id || release.pulled.has(id) || this.deliveries.has(id)) continue;
       release.handedBack.add(id);
     }
     if (release.handedBack.size === 0) {
@@ -877,6 +950,13 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(
         `[QUEUE] release of ${group ? `${group.slice(0, 8)}...` : 'ungrouped frames'} complete`
       );
+      // AN EVENT FOR EVERY "DRAINED" READER: the group held frames back until now.
+      if (!this.withheldFrames.has(group)) {
+        const waiters = this.framesReturnedWaiters.get(group) ?? [];
+        this.framesReturnedWaiters.delete(group);
+        for (const { resolve } of waiters) resolve();
+      }
+      this.wakeGroupDrainedWaiters('release complete');
       return;
     }
     console.log(
@@ -2172,6 +2252,14 @@ export abstract class BaseMlsService implements IMlsService {
     // printed once per conversation per answer. What a reader needs is the OUTCOME, and
     // `[HISTORY_REQ] ... diff with <them>` is it.
     await this.messageScheduler.waitUntilGroupIdle(groupId);
+    // AN IDLE GROUP THAT HOLDS FRAMES BACK IS NOT IDLE: what it left queued on an inactive iPhone,
+    // or parked behind its release, is still to be applied (`holdsFramesBack`). Waited for by its
+    // event - the release's end - and then the pull and the scheduler again.
+    while (this.holdsFramesBack(groupId)) {
+      await this.whenFramesReturned(groupId);
+      await this.pendingPullInFlight?.catch(() => {});
+      await this.messageScheduler.waitUntilGroupIdle(groupId);
+    }
   }
 
   /** @inheritdoc */
@@ -2191,7 +2279,10 @@ export abstract class BaseMlsService implements IMlsService {
       this.mailboxEmptiedByAPull &&
       !this.pendingPullInFlight &&
       this.isWsOpen() &&
-      this.messageScheduler.isGroupIdle(groupId)
+      this.messageScheduler.isGroupIdle(groupId) &&
+      // A group holding frames back has not applied them, whatever the mailbox listing said: a
+      // withheld key-group commit would leave every reader deciding on the old epoch.
+      !this.holdsFramesBack(groupId)
     );
   }
 
@@ -2269,6 +2360,12 @@ export abstract class BaseMlsService implements IMlsService {
     }
     this.groupDrainedWaiters.clear();
     this.groupDrainedArmed.clear();
+    // The same for a wait on frames held back (`waitForGroupQueueIdle`): nothing will return them.
+    // (Optional: a test harness may build the service without its field initialisers.)
+    for (const [groupId, waiters] of this.framesReturnedWaiters ?? []) {
+      for (const { reject } of waiters) reject(new GroupDrainAbandonedError(groupId));
+    }
+    this.framesReturnedWaiters?.clear();
   }
 
   private async settleMailbox(): Promise<void> {
@@ -2565,6 +2662,10 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
     if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
+    // A pull's copy of a released group's row is what the hand-back must not repeat (`pulled`).
+    if (channel === 'pull' && msg.queuedMessageId) {
+      this.releasing.get(msg.groupId ?? '')?.pulled.add(msg.queuedMessageId);
+    }
     // Stamped HERE, after the dedup: the copy that was admitted is the one whose route is a fact.
     this.messageScheduler.enqueue({ ...msg, channel });
     if (!this.messageScheduler.draining) {
@@ -2677,15 +2778,22 @@ export abstract class BaseMlsService implements IMlsService {
         // A RELEASED GROUP'S LIVE FRAMES WAIT BEHIND ITS RELEASE PULL ({@link releasing}): parked,
         // then handed back in order. A pull's copy goes through - it IS the release - and so does a
         // frame handed back, whose turn this is; the last of a round hands back the next.
-        const release = msg.queuedMessageId ? this.releasing.get(withheldKey) : undefined;
+        const release = this.releasing.get(withheldKey);
         if (release && msg.queuedMessageId) {
           if (release.handedBack.delete(msg.queuedMessageId)) {
+            // The last of a round hands back what was parked during it, behind itself.
             if (release.handedBack.size === 0) this.handBackParked(withheldKey);
           } else if (msg.channel !== 'pull') {
-            this.settleDelivery(msg.queuedMessageId, false);
-            release.parked.push(msg);
+            this.parkLiveFrame(release, msg);
             return;
           }
+        } else if (!msg.queuedMessageId && this.holdsFramesBack(withheldKey)) {
+          // NOT EXPECTED: the server publishes every live frame from its queued row, with its id
+          // (`publishQueued`). With no row, no pull could bring it back, so it is neither withheld
+          // nor parked - counted here so a rate above zero is seen.
+          console.warn(
+            `[QUEUE] a frame with no queued row in ${withheldKey ? `${withheldKey.slice(0, 8)}...` : 'an unknown group'}, which holds frames back - applied now, out of their order`
+          );
         }
         if (
           msg.queuedMessageId &&
@@ -3050,6 +3158,16 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
+    // A released group ({@link releasing}) is listed BEFORE the drained readers are woken: its
+    // withheld frames are enqueued, so its parked live frames go back behind them, and the group
+    // reads "not drained" until they are applied. A pull that died half-way keeps them parked; the
+    // next live frame parked with no pull in flight starts one (`parkLiveFrame`).
+    if (emptied) this.releasesListed(releasesCovered);
+    else if (this.releasing.size > 0) {
+      console.warn(
+        `[QUEUE] ${this.releasing.size} released group(s) stay parked - their pull did not list the mailbox; the next live frame of one starts another`
+      );
+    }
     // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
     // was listed whole reads drained only now (the start-up sync runs before the first full pull).
     this.wakeGroupDrainedWaiters('pull ended');
@@ -3061,14 +3179,6 @@ export abstract class BaseMlsService implements IMlsService {
     // ...and it leaves the backlog OWED A PULL, which its start took off the work list: re-armed, so
     // the next event asking for that backlog (`notifyConversationAvailable`) pulls again.
     else rearmRefusedBacklog(refusalsCovered);
-    // The same proof for a released group ({@link releasing}): its withheld frames are enqueued, so
-    // its parked live frames go back behind them. A pull that died half-way keeps them parked.
-    if (emptied) this.releasesListed(releasesCovered);
-    else if (this.releasing.size > 0) {
-      console.warn(
-        `[QUEUE] ${this.releasing.size} released group(s) stay parked - their pull did not list the mailbox; the next pull that does releases them`
-      );
-    }
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.

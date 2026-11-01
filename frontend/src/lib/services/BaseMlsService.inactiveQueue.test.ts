@@ -232,7 +232,27 @@ describe('a queued frame while the iPhone app is inactive', () => {
       expect(refused).toEqual([]);
     });
 
-    it('a FAILED release pull keeps the group parked: a live frame waits for the next pull that completes', async () => {
+    it('a FAILED release pull keeps the group parked: a live frame waits, and starts ONE pull, which fails too', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      const serve = vi.fn(async () => {
+        throw new Error('server error');
+      });
+      realPull(serve);
+      active(true);
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
+      await tick();
+      await deliver(row('q-live'));
+      await tick();
+      expect(applied).toEqual([]);
+      // The arriving frame started one pull; that pull's own failure starts none.
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
+      await tick();
+      await tick();
+      expect(serve).toHaveBeenCalledTimes(2);
+    });
+
+    it('TERMINATION: after a failed release pull, the next live frame pulls, and nothing is called by hand', async () => {
       active(false);
       await deliver(row('q-w1'));
       realPull(async () => {
@@ -241,13 +261,103 @@ describe('a queued frame while the iPhone app is inactive', () => {
       active(true);
       await tick();
       await tick();
-      await deliver(row('q-live'));
-      expect(applied).toEqual([]);
       realPull(async () => {
         inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-live'), 'pull');
       });
-      await svc.fetchPendingMessages();
+      await deliver(row('q-live'));
       await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+    });
+
+    it('a parked frame the pull brought is not handed back, even once the delivery memory forgot it', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      realPull(async () => {
+        inner(svc).enqueueMessage(row('q-live'), 'live');
+        await tick();
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-live'), 'pull');
+        await inner(svc).messageScheduler.waitUntilIdle();
+        // The bounded delivery memory evicted both (`DELIVERY_MEMORY`).
+        (svc as unknown as { deliveries: Map<string, string> }).deliveries.clear();
+      });
+      active(true);
+      await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+      await inner(svc).messageScheduler.waitUntilIdle();
+      await tick();
+      expect(applied).toEqual(['q-w1', 'q-live']);
+    });
+
+    it('a group with frames still queued here is not released now: the drain that empties it decides', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      const idle = vi
+        .spyOn(inner(svc).messageScheduler, 'isGroupIdle')
+        .mockImplementation(() => false);
+      active(true);
+      expect(pull).not.toHaveBeenCalled();
+      idle.mockRestore();
+      // The drain of any frame ends, and decides then.
+      await deliver({ ...row('', 'group-z'), queuedMessageId: undefined });
+      expect(pull).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('"drained" counts the frames held back', () => {
+    const drainedInner = () =>
+      svc as unknown as {
+        mailboxEmptiedByAPull: boolean;
+        isWsOpen(): boolean;
+      };
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const releaseBy = (serve: () => Promise<void>) =>
+      Object.assign(svc, {
+        fetchPendingMessages: BaseMlsService.prototype.fetchPendingMessages,
+        delivery: {
+          ackMessages: ack,
+          pushQueuedNow: pushNow,
+          pullPendingMessagesJson: vi.fn(serve),
+        },
+      });
+
+    beforeEach(() => {
+      Object.assign(svc, { mailboxEmptiedByAPull: true, isWsOpen: () => true });
+    });
+
+    it('a withheld frame (a key-group commit) keeps its group NOT drained, though a pull emptied the mailbox', async () => {
+      active(false);
+      await deliver({ ...row('q-commit', 'key-group'), isCommit: true });
+      expect(drainedInner().mailboxEmptiedByAPull).toBe(true);
+      expect(svc.isGroupDrained('key-group')).toBe(false);
+    });
+
+    it('a drained waiter wakes only once the parked frames are applied - the release is listed before the wake', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      releaseBy(async () => {
+        inner(svc).enqueueMessage(row('q-live'), 'live');
+        await tick();
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      let seenAtWake: string[] | null = null;
+      void svc.whenGroupDrained('group-a').then(() => (seenAtWake = [...applied]));
+      active(true);
+      await vi.waitFor(() => expect(seenAtWake).toEqual(['q-w1', 'q-live']));
+    });
+
+    it('waitForGroupQueueIdle waits for the withheld frames to be back and applied', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      let done = false;
+      void svc.waitForGroupQueueIdle('test', 'group-a').then(() => (done = true));
+      await tick();
+      expect(done).toBe(false);
+      releaseBy(async () => {
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      active(true);
+      await vi.waitFor(() => expect(done).toBe(true));
+      expect(applied).toEqual(['q-w1']);
     });
   });
 

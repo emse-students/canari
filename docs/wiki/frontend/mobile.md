@@ -2323,11 +2323,36 @@ overtakes them, and a withheld commit leaves the live next-epoch frame unreadabl
 release until a pull that STARTED after it has listed the whole mailbox, a live frame of the group is
 parked - not decrypted, not ACKed, forgotten by the dedup - and the pull's own copies go through.
 Then the parked frames are handed back in arrival order, behind the pull's rows; a parked frame the
-pull itself brought is not handed back (its pull copy took its place, in the server's order). A pull
-that fails lists nothing, so the group stays parked until a pull completes - never a live frame
-ahead of an unapplied pull. Tests: "a released group holds its live frames behind the release
-pull" (pull then live, a withheld commit then a live next-epoch frame, a failed pull). A live frame
-with no queued row (none is expected on this path) is not parked: no pull could ever bring it.
+pull itself brought is not handed back (its pull copy took its place, in the server's order; the
+release keeps the ids a pull brought for its whole life, because the delivery memory is bounded and
+may have evicted them). A pull that fails lists nothing, so the group stays parked until a pull
+completes - never a live frame ahead of an unapplied pull.
+
+- **Termination of a failed release pull.** A live frame parked while no pull has listed the
+  release and none is in flight starts one (`parkLiveFrame`). Only an ARRIVING frame starts a pull,
+  never a pull's own end, and never while one is in flight: the pulls are bounded by the frames the
+  socket delivers, and the first that lists the mailbox ends the release. With the server failing
+  and the socket silent, the group waits for the reconnect's pull; meanwhile the server's deferred
+  push may announce the parked rows, which the open conversation does not show yet.
+- **A group with frames still queued here is not released** (one held behind this device's own
+  commit, say): released then, a frame of it would be applied when the commit ends, ahead of the
+  withheld ones the pull brings back. The drain that empties it decides at its end.
+- **"Drained" counts the frames held back.** `groupDrainedNow` (the admission gate, the parked seed
+  asks) reads a group that has frames withheld or parked as NOT drained, whatever the mailbox listing
+  said - a withheld key-group commit would otherwise leave them deciding on the old epoch - and
+  `waitForGroupQueueIdle` (the key-group epoch check, a history answer) waits for the release to
+  complete. The release is listed BEFORE the pull's end wakes the drained readers, and its completion
+  wakes them again.
+- **The call's signalling waits too.** A live call's group is exempt from WITHHOLDING, but once its
+  group was withheld and released, the call's frames are parked behind the release pull like any
+  other: they are newer than the withheld ones and would fail to read before them. The cost is one
+  pull's latency on the call's signalling after a return, the price of reading it at all.
+- A live frame with NO queued row is neither withheld nor parked (no pull could bring it back) and
+  is logged at warn when its group holds frames back: the server publishes every live frame from its
+  row (`publishQueued`), so the expected rate is zero.
+
+Tests: "a released group holds its live frames behind the release pull" and "\"drained\" counts the
+frames held back" in `BaseMlsService.inactiveQueue.test.ts`, each failing with its fix removed.
 
 **The live call's group is exempt** (`setIosLiveCallGroup`, written by `CallService` from its own
 state: ringing, calling or connected). A call runs with the app in the background, and its hangup,
