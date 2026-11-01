@@ -254,7 +254,7 @@ is proven is everything from the scheme onward.
   notification tap type=... deepLink=...`, then `openURL completed success=...`.
 - **SUPERSEDED 2026-11-01.** The real tap was read on `v1.5.4-alpha.1` and `canari_push.mm` never
   saw it: `tauri-plugin-notification` held the notification delegate slot and dropped every remote
-  push. The slot is now guarded and the tap no longer `openURL`s: it waits in
+  push. Canari takes the slot back at launch and the tap no longer `openURL`s: it waits in
   `pending_notification_tap.json` for the page ([mobile](frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)).
   A tap now reads `[CanariPush] notification tap type=... deepLink=...`, `notification tap queued
   for the page: ...`, then `the page was told` (or `waits before the WebView` on a cold start), and

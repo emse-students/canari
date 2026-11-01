@@ -67,9 +67,10 @@ use crate::commands::push::{
     forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
     get_voip_token, load_push_context, read_and_clear_outbox_sent,
     read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
-    read_and_clear_read_watermarks, read_outbox_mirror, set_push_context_locale,
-    store_device_identity, store_graine_seed, store_outbox_mirror, store_push_context,
-    store_push_secret, take_fcm_cache, take_key_group_push_joins,
+    read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
+    return_pending_quick_replies, set_push_context_locale, store_device_identity,
+    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    take_key_group_push_joins,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -1739,6 +1740,8 @@ pub fn run() {
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
             read_and_clear_pending_notification_tap,
+            read_and_clear_pending_quick_replies,
+            return_pending_quick_replies,
             read_and_clear_pending_share,
             advance_share_epoch,
             get_voip_token,

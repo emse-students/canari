@@ -607,6 +607,15 @@ pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
     crate::page_ring::page_rings_in_app()
 }
 
+/// Whether the page holds a loaded MLS manager in this process - the fact that makes it the one that
+/// sends. A notification quick reply is then handed to the page (`pending_quick_replies.ndjson`)
+/// instead of being encrypted natively, which the foreground guard would refuse and the page's next
+/// outbox mirror would erase.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_holds_mls() -> bool {
+    crate::concurrency::live_manager_in_process()
+}
+
 /// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
 /// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
 /// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.

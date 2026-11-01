@@ -1361,6 +1361,130 @@ pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> 
     )
 }
 
+/// The quick replies the iOS notification delegate hands to the page while it holds the MLS state
+/// (`canari_push.mm`, `CanariHandQuickReplyToPage`): one JSON object per line. The NAME is the
+/// contract (`iosNotificationDelegate.test.ts` reads it on both sides).
+pub(crate) const PENDING_QUICK_REPLIES_FILE: &str = "pending_quick_replies.ndjson";
+
+/// Claims `{dir}/pending_quick_replies.ndjson` and returns its non-empty lines; empty when none wait.
+pub(crate) fn take_quick_replies_in(dir: &std::path::Path) -> Vec<String> {
+    crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+        .map(|content| {
+            content
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Appends `lines` back to `{dir}/pending_quick_replies.ndjson`, ONE `O_APPEND` write per line, so a
+/// line the native side appends meanwhile is never overwritten or interleaved.
+pub(crate) fn append_quick_replies_in(
+    dir: &std::path::Path,
+    lines: &[String],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(PENDING_QUICK_REPLIES_FILE))?;
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        file.write_all(format!("{line}\n").as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Takes the quick replies waiting for the page - each line acted on once: the page sends it, or
+/// hands it back through [`return_pending_quick_replies`] when it cannot yet.
+#[tauri::command]
+pub(crate) fn read_and_clear_pending_quick_replies(app: tauri::AppHandle) -> Vec<String> {
+    match app.path().app_data_dir() {
+        Ok(dir) => take_quick_replies_in(&dir),
+        Err(e) => {
+            log::warn!("[QUICK_REPLY] app_data_dir() failed: {e}");
+            vec![]
+        }
+    }
+}
+
+/// Puts back the quick replies the page took and could not send, so none is lost: the next take
+/// hands them over again.
+#[tauri::command]
+pub(crate) fn return_pending_quick_replies(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir() failed: {e}"))?;
+    append_quick_replies_in(&dir, &lines).map_err(|e| {
+        log::error!("[QUICK_REPLY] {} reply(ies) not put back: {e}", lines.len());
+        e.to_string()
+    })?;
+    log::info!(
+        "[QUICK_REPLY] {} reply(ies) put back for a later take",
+        lines.len()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod quick_reply_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("quick-reply-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn nothing_waits_reads_as_empty() {
+        assert!(take_quick_replies_in(&temp_dir("empty")).is_empty());
+    }
+
+    #[test]
+    fn each_line_is_taken_once() {
+        let dir = temp_dir("once");
+        std::fs::write(
+            dir.join(PENDING_QUICK_REPLIES_FILE),
+            "{\"groupId\":\"a\"}\n\n{\"groupId\":\"b\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir),
+            vec!["{\"groupId\":\"a\"}", "{\"groupId\":\"b\"}"]
+        );
+        assert!(take_quick_replies_in(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_reply_put_back_is_taken_again_beside_a_newer_one() {
+        let dir = temp_dir("back");
+        append_quick_replies_in(&dir, &["{\"groupId\":\"old\"}".to_string()]).unwrap();
+        // The native side appends a newer reply after the put-back: both survive, in order.
+        append_quick_replies_in(
+            &dir,
+            &["{\"groupId\":\"new\"}".to_string(), "  ".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir),
+            vec!["{\"groupId\":\"old\"}", "{\"groupId\":\"new\"}"]
+        );
+    }
+}
+
 /// Writes the session context to `{app_data_dir}/push_context.json` so the native background
 /// handlers (Android `CanariFirebaseMessagingService`, iOS NSE) can decrypt push notifications.
 /// `push_token` is a long-lived Bearer token (empty on desktop) the native side uses to fetch

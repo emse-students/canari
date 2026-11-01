@@ -2559,6 +2559,25 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Sends `text` to a conversation that is NOT necessarily the one on screen, through the same
+   * `sendChatMessage` the composer reaches (echo + durable outbox entry in one write). Used for a
+   * reply typed in a notification while the page holds the MLS state (`quickReplyDrain.ts`).
+   *
+   * `queued` is true once the message is the queue's or a visible failed row's: it is then owned by
+   * the page and must not be handed back. False means nothing was written.
+   */
+  async function sendTextTo(
+    text: string,
+    targetName: string,
+    ctx: MessagingContext
+  ): Promise<{ queued: boolean; error?: string }> {
+    const convo = ctx.conversations.get(targetName);
+    if (!convo) return { queued: false, error: 'conversation not loaded' };
+    const result = await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
+    return { queued: result.success || result.echoed === true, error: result.error };
+  }
+
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
@@ -2621,6 +2640,8 @@ export function useMessaging() {
     takeBackSend,
     resumeUnsentSends,
     forwardMessage,
+    /** Sends a text to any conversation through the composer's send path (a notification reply). */
+    sendTextTo,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
