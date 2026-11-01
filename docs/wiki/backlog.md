@@ -121,7 +121,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 BUILT as a draft (2026-10-31), WP-F6 planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -267,7 +267,7 @@ ordinary review.
   - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
     one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
-  arming). BUILT 2026-10-31, draft pull request, target `1.5.5`** (owner reconfirmed 2026-10-31):
+  arming). MERGED as #2827, ships in `1.5.4`** (owner reconfirmed 2026-10-31):
   [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
   the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
   WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
