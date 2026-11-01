@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { handleOidcCallback, getOidcReturnTo, OidcSignInError } from '$lib/stores/auth';
@@ -41,16 +40,34 @@
       console.debug('[callback] handleOidcCallback resolved, user:', user?.id);
 
       status = m.auth_callback_success();
-      const returnTo = await getOidcReturnTo();
-      console.debug('[callback] goto ->', returnTo);
-      await goto(resolve(internalPath(returnTo)), { replaceState: true });
-      console.debug('[callback] goto resolved');
     } catch (e: unknown) {
       console.error('[callback] error:', e);
       error = e instanceof OidcSignInError ? e.message : m.auth_callback_exchange_failed();
+      return;
+    }
+
+    // OUTSIDE the exchange's `try`: the reader IS signed in by now, so a navigation that fails is
+    // a navigation failure, logged as one - never reported to them as a failed exchange.
+    try {
+      const returnTo = await getOidcReturnTo();
+      console.debug('[callback] goto ->', returnTo);
+      await gotoAppPath(returnTo, { replace: true });
+      console.debug('[callback] goto resolved');
+    } catch (e: unknown) {
+      console.error('[callback] signed in, but the navigation to the return target failed:', e);
     }
   });
 </script>
+
+<!--
+  The URL carries a one-time code, so the page sends only its origin as Referer (strict-origin:
+  no-referrer would outlive the page and make every same-origin POST carry `Origin: null`). The policy
+  is a HEADER of this page (`$capability_referrer_policy`, Dockerfile.frontend); this <meta> restates it
+  where no nginx answers - the Tauri app, a dev server - and for a client-side navigation here.
+-->
+<svelte:head>
+  <meta name="referrer" content="strict-origin" />
+</svelte:head>
 
 <div class="flex min-h-dvh items-center justify-center px-4">
   <div
@@ -65,7 +82,7 @@
         <h2 class="text-text-main text-lg font-bold">{m.auth_callback_error_title()}</h2>
         <p class="text-red-err text-sm">{error}</p>
         <button
-          onclick={() => goto('/login', { replaceState: true })}
+          onclick={() => goto('/login', { replace: true })}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
         >
           {m.auth_callback_retry()}

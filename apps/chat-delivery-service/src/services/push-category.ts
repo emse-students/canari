@@ -26,6 +26,13 @@ export const NOTIFICATION_CATEGORIES = [
   'events',
   /** Form openings and reminders, and a payment that landed on a full form (to its managers). */
   'forms',
+  /** Someone asks to follow the reader, or accepted the reader's request (WP-F4). */
+  'follows',
+  /**
+   * The reader's bookings (WP-N, Q-R15): a cancellation, a participant who left, being added to
+   * one, the reminder before a slot. Off, the bell still lists them - only the push is not sent.
+   */
+  'bookings',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -56,17 +63,36 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // A live started by a member or an association the reader follows (WP-L7): a publication of the
   // people the reader follows, so the switch that silences their posts silences their lives too.
   social_live_started: 'posts',
+  // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
+  // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
+  social_follow_request: 'follows',
+  social_follow_accepted: 'follows',
+  // A new person asks to join a conversation the reader is in (chat-delivery's own key, not
+  // social-service's): a conversation matter, so the switch for messages silences it.
+  chat_join_ask: 'messages',
   form_opening_soon: 'forms',
   form_open: 'forms',
   // A payment landed on a full form, told to its managers: a form matter, filed under the EXISTING
   // id on purpose - a new id would be a category older clients cannot draw a switch for.
   form_paid_over_capacity: 'forms',
+  // An association's Lydia payments became active or were paused, told to its payout managers: a
+  // money matter, filed under the same EXISTING id as the form payment above (a new id would be a
+  // category older clients cannot draw a switch for).
+  lydia_payments_active: 'forms',
+  lydia_payments_paused: 'forms',
+  // A payer refunded by an association (Lydia refunds, lot 4): a money matter, same EXISTING id.
+  lydia_refund_issued: 'forms',
   event_proposed: 'events',
   event_validated: 'events',
   event_rejected: 'events',
   event_updated: 'events',
   event_deleted: 'events',
   event_pending: 'events',
+  // The bookings' four (WP-N): a category of their own (Q-R15), drawn by the settings screen.
+  social_booking_cancelled: 'bookings',
+  social_booking_withdrawn: 'bookings',
+  social_booking_added: 'bookings',
+  social_booking_reminder: 'bookings',
 };
 
 /**

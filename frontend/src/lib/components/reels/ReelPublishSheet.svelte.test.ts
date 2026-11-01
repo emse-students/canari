@@ -47,6 +47,7 @@ function deps(): PublishReelDeps {
       sourceBytes: 8,
       outputBytes: 4,
     })),
+    placeholder: vi.fn(async () => null),
     upload: vi.fn(async () => ({
       type: 'video' as const,
       mediaId: 'm-1',
@@ -119,7 +120,7 @@ describe('ReelPublishSheet', () => {
     expect(d.createPost).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'reel', markdown: 'first reel', durationMs: 3000 })
     );
-    expect(goto).toHaveBeenCalledWith('/posts', { replaceState: true });
+    expect(goto).toHaveBeenCalledWith('/posts', { replace: true });
   });
 
   it('says why a publish was refused and stays', async () => {

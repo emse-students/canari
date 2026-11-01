@@ -6,7 +6,7 @@
  *      holding everything below except `STATE_DIR`. Put `test-accounts.json` beside them (see
  *      `test-accounts.example.json`), and let the Chrome profiles, the debug APK, the phone baseline
  *      and `results.ndjson` accumulate there too. **It moved one level further out on 2026-09-03**,
- *      when the campaign restarted from zero: the previous root still holds the LITHIUM rig's
+ *      when the campaign restarted from zero: the previous root still holds that earlier rig's
  *      account file and display names, and a root that cannot be reached by the old path cannot be
  *      half-inherited by accident. Two files were deliberately LEFT there - `play-console-sa.json`
  *      and `google-services.json` - because they are store and build credentials rather than rig

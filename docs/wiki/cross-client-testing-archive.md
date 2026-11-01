@@ -1,4 +1,4 @@
-# Cross-client testing - the LITHIUM board, archived 2026-09-03
+# Cross-client testing - the previous machine's board, archived 2026-09-03
 
 **EVERY VERDICT BELOW WAS TAKEN ON A RIG THAT NO LONGER EXISTS, AGAINST PRODUCTION, WITH A LEDGER
 THAT IS GONE.** This page is the record of what the campaign had measured between 2026-08-14 and
@@ -7,8 +7,8 @@ THAT IS GONE.** This page is the record of what the campaign had measured betwee
 
 **Why it was reset rather than carried over** (decision 12 of the
 [workflow migration](workflow-migration.md#2-the-twelve-decisions---decided-not-to-be-relitigated),
-taken with the user on 2026-09-02). The machine this repository now lives on, `OXYGEN`, was
-reconstituted from a handoff bundle collected on the previous machine, `LITHIUM`, **without
+taken with the user on 2026-09-02). The machine this repository now lives on was
+reconstituted from a handoff bundle collected on the previous machine **without
 `-WithRig`**: 131 KB, no `chrome-w1` / `chrome-w2` profiles, no `results.ndjson`, no `apk/`, no
 `a1-baseline/`. So every cell below has lost the ledger that justified it.
 

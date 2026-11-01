@@ -29,7 +29,10 @@ type StatsEntry = {
   packetsReceived?: number;
   /** Seconds. */
   jitter?: number;
-  audioLevel?: number;
+  /** Cumulative energy of the audio (sum of squared levels times sample duration). */
+  totalAudioEnergy?: number;
+  /** Seconds of audio the energy above was counted over. */
+  totalSamplesDuration?: number;
   codecId?: string;
   mimeType?: string;
   selectedCandidatePairId?: string;
@@ -214,6 +217,40 @@ export interface MediaSnapshot {
   atMs: number;
   bytesSent: number;
   bytesReceived: number;
+  /** `totalAudioEnergy` / `totalSamplesDuration` of the inbound audio; null when not reported. */
+  audioIn: AudioEnergy | null;
+  /** The same two counters of the microphone's `media-source`; null when not reported. */
+  audioOut: AudioEnergy | null;
+}
+
+/** The two cumulative counters an audio LEVEL over an interval is computed from. */
+export interface AudioEnergy {
+  energy: number;
+  seconds: number;
+}
+
+/** The counters of one stats entry, or null when the engine does not report both. */
+function audioEnergyOf(e: StatsEntry | undefined): AudioEnergy | null {
+  if (typeof e?.totalAudioEnergy !== 'number' || typeof e.totalSamplesDuration !== 'number') {
+    return null;
+  }
+  return { energy: e.totalAudioEnergy, seconds: e.totalSamplesDuration };
+}
+
+/**
+ * THE AUDIO LEVEL OVER THE INTERVAL, never one instant: `sqrt(dEnergy / dSeconds)`, the RMS level
+ * the WebRTC stats spec defines from the two cumulative counters. The instantaneous `audioLevel` this
+ * replaced is ONE sample per 10 s tick: in a conversation the listening side is silent most of the
+ * time, and the owner's first production call read `audio_level_in=0.000` on 4 ticks of 5 while
+ * 32-41 kbps of voice arrived. Since the call's start on the first reading (`previous` null); `-`
+ * when the engine reports no counters, or no audio was counted in the interval.
+ */
+function intervalLevel(now: AudioEnergy | null, before: AudioEnergy | null): string {
+  if (!now) return '-';
+  const seconds = now.seconds - (before?.seconds ?? 0);
+  const energy = now.energy - (before?.energy ?? 0);
+  if (seconds <= 0 || energy < 0) return '-';
+  return Math.sqrt(energy / seconds).toFixed(3);
 }
 
 /** Everything a `[CALL_REPORT]` line says that `getStats()` cannot. */
@@ -223,13 +260,26 @@ export interface CallReportContext {
   phase: 'tick' | 'end';
   /** Since the user's tap (call or answer), on `performance.now()`. */
   durMs: number;
-  /** Tap to the first unmuted remote audio track; `null` while no audio has arrived. */
-  setupMs: number | null;
+  /**
+   * The ring: its start (the caller's ring leaving, the callee's page ringing) to the answer; `null` before
+   * an answer. A HUMAN's time, kept apart from the app's so neither hides the other.
+   */
+  ringMs: number | null;
+  /** The answer to the first E2E proof of the call (`CallService.e2eProven`); `null` until then. */
+  connectMs: number | null;
   /** `callReportEngine`. */
   engine: string;
   ice: string;
   /** The worker's answer to `report`; `null` when it could not be asked or did not answer. */
   e2e: E2eWorkerReport | null;
+  /**
+   * What the microphone sender carries (`CallMicSwitch.reportState`): `on` = RNNoise's output,
+   * `off` = the user switched it off, `pending` = not proven running yet, `unavailable` = the
+   * pipeline could not be built. `null` when no microphone is open.
+   */
+  ns: string | null;
+  /** How many times this call's noise-suppression path failed (`CallMicSwitch.fallbackCount`). */
+  nsFallbacks: number | null;
 }
 
 /** What one reading measured, and the snapshot the next reading needs. */
@@ -251,9 +301,6 @@ function codecName(entries: Map<string, StatsEntry>, rtp: StatsEntry | undefined
   return mime ? (mime.split('/')[1] ?? mime).toLowerCase() : '-';
 }
 
-const fixed = (n: number | undefined, digits: number) =>
-  typeof n === 'number' && Number.isFinite(n) ? n.toFixed(digits) : '-';
-
 /**
  * Frames the receiver could not use: AES-GCM failures plus NON-empty frames too short to be one of
  * ours (a peer sending in clear). Empty frames are not counted - Chrome hands the receiver a few in
@@ -266,7 +313,7 @@ function decryptFailuresOf(r: E2eWorkerReport): number {
 /**
  * Builds THE `[CALL_REPORT]` line of the revival plan (section 6, WP-C2): one per device, every
  * 10 s while in a call and once at its end, carrying the numbers a "the call connected but nobody
- * heard anything" report needs - `setup_ms`, `audio_level_in`, and `dec_frames` against
+ * heard anything" report needs - `ring_ms` / `connect_ms`, `audio_level_in`, and `dec_frames` against
  * `dec_fail`, which separate a key mismatch from no media at all - and `relayed=`, the only field
  * that says whether a call cost TURN volume.
  *
@@ -300,6 +347,8 @@ export function buildCallReport(
     atMs,
     bytesSent: sum(outbound, 'bytesSent'),
     bytesReceived: sum(inbound, 'bytesReceived'),
+    audioIn: audioEnergyOf(inAudio),
+    audioOut: audioEnergyOf(outAudioSource),
   };
   const spanMs = previous ? atMs - previous.atMs : 0;
   // Never below 0: a byte total that went DOWN (a counter the engine reset) is no negative rate.
@@ -317,7 +366,8 @@ export function buildCallReport(
     `[CALL_REPORT] call=${ctx.callId}`,
     `phase=${ctx.phase}`,
     `dur_ms=${Math.round(ctx.durMs)}`,
-    `setup_ms=${ctx.setupMs === null ? '-' : Math.round(ctx.setupMs)}`,
+    `ring_ms=${ctx.ringMs === null ? '-' : Math.round(ctx.ringMs)}`,
+    `connect_ms=${ctx.connectMs === null ? '-' : Math.round(ctx.connectMs)}`,
     `engine=${ctx.engine}`,
     `ice=${ctx.ice}`,
     describeSelectedPair(stats),
@@ -326,8 +376,8 @@ export function buildCallReport(
     `in_kbps=${kbps(snapshot.bytesReceived, previous?.bytesReceived ?? 0)}`,
     `loss_in_pct=${lossPct}`,
     `jitter_ms=${typeof inAudio?.jitter === 'number' ? Math.round(inAudio.jitter * 1000) : '-'}`,
-    `audio_level_out=${fixed(outAudioSource?.audioLevel, 3)}`,
-    `audio_level_in=${fixed(inAudio?.audioLevel, 3)}`,
+    `audio_level_out=${intervalLevel(snapshot.audioOut, previous?.audioOut ?? null)}`,
+    `audio_level_in=${intervalLevel(snapshot.audioIn, previous?.audioIn ?? null)}`,
     // `on` only when the worker answered: without its counts this line cannot vouch for E2E.
     `e2e=${e2e ? 'on' : '-'}`,
     `enc_frames=${e2e ? e2e.encrypted.audio + e2e.encrypted.video : '-'}`,
@@ -336,6 +386,8 @@ export function buildCallReport(
     `keyframes_in=${e2e ? (e2e.videoKeyframesIn ?? '-') : '-'}`,
     `codec_a=${codecName(entries, inAudio)}`,
     `codec_v=${codecName(entries, inVideo)}`,
+    `ns=${ctx.ns ?? '-'}`,
+    `ns_fallbacks=${ctx.nsFallbacks ?? '-'}`,
   ];
   return { line: fields.join(' '), snapshot };
 }

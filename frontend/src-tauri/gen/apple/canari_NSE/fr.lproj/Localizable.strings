@@ -12,11 +12,6 @@
 /* A mention token in a decrypted body: the one user the extension can name, and everybody else. */
 "notif.mention.you" = "vous";
 "notif.mention.someone" = "quelqu'un";
-/* The legacy MLS call invite: only pre-WP-XP-5 callers send it as an alert push, and this process
-   is the one that renders it when the app is killed. The emoji stays in the code - it is not a
-   translation. */
-"notif.call.incoming" = "Appel entrant";
-"notif.call.incoming_video" = "Appel vidéo entrant";
 
 /* Server-composed pushes, moved here 2026-08-19: social-service sends a `contentKey` and at most a
    name and one fragment, and this process writes the sentence in the language chosen in the app. */
@@ -42,18 +37,39 @@
 "notif.social.coorganise_proposed.body" = "Événement à co-organiser";
 "notif.social.live_started.title" = "%@ est en live";
 "notif.social.live_started.body" = "Appuyez pour regarder";
+"notif.social.follow_request.title" = "%@ demande à vous suivre";
+"notif.social.follow_request.body" = "Appuyez pour répondre";
+"notif.social.join_ask.title" = "%@ veut rejoindre";
+"notif.social.join_ask.body" = "cette conversation";
+"notif.social.join_ask_anon.title" = "Quelqu'un veut rejoindre";
+"notif.social.follow_accepted.title" = "%@ a accepté votre demande";
+"notif.social.follow_accepted.body" = "Votre demande a été acceptée";
 "notif.social.live_cut.title" = "Votre live a été interrompu";
 "notif.social.live_cut.body" = "La modération a coupé votre live. Ceci est un avertissement.";
 "notif.social.live_suspended.title" = "Lives suspendus";
 "notif.social.live_suspended.body" = "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.";
 "notif.social.live_withdrawn.title" = "Droit de lancer un live retiré";
 "notif.social.live_withdrawn.body" = "La modération vous a retiré le droit de lancer un live.";
+"notif.social.booking_cancelled.title" = "%@ a annulé une réservation";
+"notif.social.booking_cancelled.body" = "Elle n'aura pas lieu";
+"notif.social.booking_withdrawn.title" = "%@ a quitté votre réservation";
+"notif.social.booking_withdrawn.body" = "Votre réservation est maintenue";
+"notif.social.booking_added.title" = "%@ vous a inscrit à une réservation";
+"notif.social.booking_added.body" = "Retrouvez-la dans Réservations";
+"notif.social.booking_reminder.title" = "Rappel de réservation";
+"notif.social.booking_reminder.body" = "Votre réservation commence bientôt";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
+"notif.lydia_payments_active.title" = "Paiements Lydia actifs";
+"notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
+"notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";
+"notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
+"notif.lydia_refund_issued.title" = "Remboursement";
+"notif.lydia_refund_issued.body" = "%1$@ vous a remboursé un paiement.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";

@@ -4,6 +4,12 @@ const apiFetch = vi.fn();
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://core.test' }));
 vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn() } }));
+const noteReaderSpaces = vi.fn();
+let savedUserId: string | null = 'admin-self';
+vi.mock('$lib/stores/user', () => ({
+  getSavedUserId: () => savedUserId,
+  noteReaderSpaces: (...a: unknown[]) => noteReaderSpaces(...a),
+}));
 
 import {
   PROFILE_ERROR_CODES,
@@ -39,6 +45,27 @@ describe('profile calls', () => {
     expect(direct[1].method).toBe('PUT');
     expect(JSON.parse(direct[1].body)).toEqual(input);
     expect(JSON.parse(answering[1].body)).toEqual({ ...input, requestId: 'req-1' });
+  });
+
+  /**
+   * An admin correcting THEIR OWN profile changes their own spaces: the campus and cursus written are
+   * handed to `noteReaderSpaces`, which forgets what is held about the reader only when they differ
+   * from the ones last recorded (`user.readerSpaces.test.ts`). Another person's profile is not the
+   * reader's, and a refused save wrote nothing.
+   */
+  it("records the reader's own campus and cursus after saving their own profile, and nobody else's", async () => {
+    noteReaderSpaces.mockReset();
+    apiFetch.mockImplementation(async () => reply(200, { changed: true }));
+    savedUserId = 'admin-self';
+    await saveProfile('someone-else', input);
+    expect(noteReaderSpaces).not.toHaveBeenCalled();
+    await saveProfile('admin-self', input);
+    expect(noteReaderSpaces).toHaveBeenCalledWith(input);
+
+    noteReaderSpaces.mockReset();
+    apiFetch.mockResolvedValue(reply(403, { code: 'PROFILE_EDIT_DEV_ESTATE' }));
+    await saveProfile('admin-self', input).catch(() => undefined);
+    expect(noteReaderSpaces).not.toHaveBeenCalled();
   });
 
   it('classifies a refusal by the typed CODE in the body, never by its message', async () => {

@@ -71,8 +71,24 @@ export interface MessageHandlerDeps {
     /** The user being removed. Compare with the local user id before touching any state. */
     kickedUserId: string;
     kickedBy?: string;
+    /** The actor's device that commits the key-group Remove itself, when the actor named one. */
+    actorDeviceId?: string;
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
+  }) => void;
+  /**
+   * The actor of a removal RELEASED the key-group Remove it claimed and did not commit
+   * (`channel.member.removal-released`): this scope's remaining members elect a committer. An empty
+   * `channelId` is the community's key group.
+   */
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+    /** The actor who released it - never elected for it. */
+    releasedBy: string;
+    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
+    releasedByDevice: string;
   }) => void;
   onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
@@ -123,11 +139,13 @@ export interface MessageHandlerDeps {
   onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
   /**
-   * Called when a Welcome is processed successfully and the group is ready.
-   * Lets processPendingInvitations re-run for invitations that were skipped
-   * because the conversation was not ready yet.
+   * Called when a Welcome is processed successfully and the group is ready: resumes what the outbox
+   * held for it and re-runs the invitations skipped while it was not (`sessionAuth`'s
+   * `announceGroupReady`, reached as `captureGroupReadyAnnouncer()` so a Welcome processed after the
+   * session ended announces nothing into the next). REQUIRED: these deps are also the pipeline's
+   * `RecoveryDeps`, whose external join raises the same seam.
    */
-  onGroupReady?: (groupId: string) => void;
+  onGroupReady: (groupId: string) => void;
   /**
    * Called on a fatal, unrecoverable MLS error requiring user action.
    * - `'oom'`: WASM OOM detected -> app reload recommended.

@@ -164,6 +164,7 @@ export async function attemptReconnectImpl(
       deviceKeyB64: ctx.getDeviceKey(),
       scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
       setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+      onCaughtUp: () => ctx.onConnectionCaughtUp(),
       setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
       processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
       log: cb.log,
@@ -198,7 +199,7 @@ export async function attemptReconnectImpl(
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');
-      void goto(resolve('/login'), { replaceState: true });
+      void goto(resolve('/login'), { replace: true });
       return;
     }
     if (err instanceof IdentitySplitError) {

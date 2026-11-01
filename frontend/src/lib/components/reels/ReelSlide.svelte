@@ -19,9 +19,10 @@
    *
    * ONLY THE CURRENT REEL MOUNTS A PLAYER. The video is `PostMedia`'s, in gallery mode - the same
    * download, stream (a segmented video plays as it arrives) and failure state as everywhere else,
-   * with `VideoPlayer`, its bar and the app's one sound answer. A neighbour draws Canari's poster
-   * instead, because every mounted player counts as an open viewer and claims playback
-   * (`followVideoSound`); the NEXT reel preloads its video meanwhile (`ReelPreload`), so its player
+   * with `VideoPlayer`, its bar and the app's one sound answer. A neighbour draws its FIRST FRAME as
+   * a picture instead (`reelPosters`, else the publisher's ThumbHash), because every mounted player
+   * counts as an open viewer and claims playback (`followVideoSound`); once the reel on screen has
+   * SETTLED (whole and playing) the NEXT reel preloads its video (`ReelPreload`), so its player
    * takes the warm path and shows the first frame the moment the swipe lands.
    *
    * THE SAVE BUTTON (`ReelSaveButton`) is in the player's bar next to the volume button, for every
@@ -32,6 +33,7 @@
    * (`reels/fullScreenPost.ts` says which page a row is). THE RAIL (`ReelActionRail`) is drawn
    * when the viewer hands its actions over - a post's reel, never a conversation's.
    */
+  import { untrack } from 'svelte';
   import PostMedia from '$lib/components/posts/PostMedia.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -49,6 +51,8 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { ReelPreload } from '$lib/reels/reelPreload';
+  import { captureReelPoster, reelPosterUrl } from '$lib/reels/reelPosters.svelte';
+  import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
   import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -77,9 +81,15 @@
     onLike?: () => boolean;
     /** The rail's actions (`ReelActionRail`); absent, no rail is drawn. */
     rail?: ReelRailActions;
+    /**
+     * The reel on screen is SETTLED: its whole file is in and, for a video, it is playing. Only
+     * then does the viewer start the next reel's preload, so a weak link spends itself on the reel
+     * being watched first.
+     */
+    onReady?: () => void;
   }
 
-  let { post, authToken, active, preload, onLike, rail }: Props = $props();
+  let { post, authToken, active, preload, onLike, rail, onReady }: Props = $props();
 
   /**
    * The page this row is drawn as. A row the CanaReels rule does not cover (the server chose it,
@@ -99,6 +109,64 @@
   /** The reel's one video, or the photo page's one picture. */
   const media = $derived(fullScreenMediaOf(post));
   const video = $derived(page === 'reel' ? media : undefined);
+  /**
+   * WHAT THE REEL SHOWS BEFORE ITS FIRST FRAME IS DECODED (owner, 2026-10-31: never a play glyph on
+   * a loading reel): the sharp first frame this device decoded (`reelPosters`), else the
+   * publisher's ThumbHash of it, else nothing - the frame's black.
+   */
+  const posterUrl = $derived(
+    video ? (reelPosterUrl(video.mediaId) ?? placeholderDataUrl(video.placeholder)) : null
+  );
+  /** The file is whole on this device (`PostMedia`'s `onLoaded`). */
+  let loaded = $state(false);
+  /** The player on this slide has started playing. */
+  let playing = $state(false);
+  /**
+   * The media will not show by itself (`PostMedia`'s `onPlaybackBlocked`: an autoplay refused or
+   * failed, bytes the engine refused, a download that failed). A decided failure SETTLES the reel
+   * too: waiting on it would withhold the next reel's preload for good.
+   */
+  let blocked = $state<string | null>(null);
+  /**
+   * The decrypted URL of the reel on screen, whole, whose first frame is still to be kept. Decoded
+   * only once the reel LEAVES the screen: a frame decode is a second WebCodecs decoder, and it
+   * must not run beside the player of the reel being watched (review of #2822).
+   */
+  let posterSource: string | null = null;
+
+  $effect(() => {
+    if (active) return;
+    loaded = false;
+    playing = false;
+    blocked = null;
+    const source = posterSource;
+    posterSource = null;
+    if (source && video) {
+      console.debug(`[reel-viewer] ${post.id} left the screen - keeping its first frame`);
+      void captureReelPoster(video.mediaId, source);
+    }
+  });
+
+  /** The whole file is in: its first frame is kept once the reel leaves, so a swipe back lands on it. */
+  function onMediaLoaded(url: string) {
+    loaded = true;
+    if (video) posterSource = url;
+  }
+
+  function onPlaybackBlocked(cause: string) {
+    console.debug(`[reel-viewer] ${post.id} will not play by itself (${cause})`);
+    blocked = cause;
+  }
+
+  $effect(() => {
+    if (!active) return;
+    const whole = loaded && (page !== 'reel' || playing);
+    if (!whole && !blocked) return;
+    console.debug(
+      `[reel-viewer] ${post.id} settled${blocked ? ` on a failure (${blocked})` : ''} - the next reel may preload`
+    );
+    untrack(() => onReady?.());
+  });
   /** The media's own shape when it was recorded, else the canonical frame. */
   const ratio = $derived(
     media?.width && media?.height ? media.width / media.height : REEL_FRAME_RATIO
@@ -110,6 +178,8 @@
   /** As on the post card: "Republie par X" beside the time (user, 2026-10-24). */
   const republished = $derived(republishedByText(post.republishedBy));
 
+  /** The rail's reaction drawer is open: the tap-outside layer below is drawn. */
+  let railDrawerOpen = $state(false);
   /** The caption unfolded in place ("Voir plus"); folded again when the reel leaves the screen. */
   let expanded = $state(false);
   let textEl = $state<HTMLDivElement | undefined>();
@@ -176,7 +246,12 @@
 
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
-    const ahead = new ReelPreload(video);
+    const ref = video;
+    const ahead = new ReelPreload(
+      ref,
+      undefined,
+      (url) => void captureReelPoster(ref.mediaId, url)
+    );
     return () => ahead.stop();
   });
 </script>
@@ -197,6 +272,9 @@
 <div
   class="relative h-full w-full overflow-hidden bg-black"
   data-reel-slide={post.id}
+  onplayingcapture={() => {
+    if (active && !playing) playing = true;
+  }}
   use:doubleTapLike={{ onDoubleTap: likeOnDoubleTap, enabled: active && !!onLike }}
 >
   <DoubleTapHeart bind:this={hearts} />
@@ -208,7 +286,13 @@
       {#if page === 'photo'}
         <!-- A picture has no player to claim playback, so the next page's mounts ahead too. -->
         {#if (active || preload) && media}
-          <PostMedia {media} {authToken} galleryMode />
+          <PostMedia
+            {media}
+            {authToken}
+            galleryMode
+            onLoaded={active ? onMediaLoaded : undefined}
+            onPlaybackBlocked={active ? onPlaybackBlocked : undefined}
+          />
         {/if}
       {:else if active && video}
         <PostMedia
@@ -217,7 +301,21 @@
           galleryMode
           minimalPlayer
           playerSafeBottom={frameReachesBottom}
+          poster={posterUrl}
+          onLoaded={onMediaLoaded}
+          {onPlaybackBlocked}
         />
+      {:else if video}
+        <!-- A NEIGHBOUR DRAWS ITS FIRST FRAME, NO PLAYER: a mounted player claims playback. -->
+        {#if posterUrl}
+          <img
+            src={posterUrl}
+            alt=""
+            aria-hidden="true"
+            class="pointer-events-none h-full w-full object-contain select-none"
+            data-video-first-frame-poster
+          />
+        {/if}
       {:else}
         <VideoPoster />
       {/if}
@@ -334,10 +432,30 @@
           onSend={rail?.onSend}
           tools={page === 'reel' ? railTools : undefined}
           sound={page === 'reel'}
+          bind:drawerOpen={railDrawerOpen}
         />
       </div>
     {/if}
   </ReelFrame>
+
+  {#if railDrawerOpen}
+    <!-- TAP OUTSIDE RETRACTS THE REACTION DRAWER, AND ONLY THAT (owner, 2026-10-30). Here and not
+         in the rail: `fixed` inside the viewer's transformed track is laid out against the track,
+         so it covered the first slide's place and a later reel's tap went to the video. A button,
+         so the viewer's swipe and the double tap leave it alone; above the caption (`z-20`), under
+         the rail (`z-30`) whose drawer must stay tappable. -->
+    <button
+      type="button"
+      class="absolute inset-0 z-25 cursor-default"
+      tabindex="-1"
+      aria-hidden="true"
+      onclick={() => {
+        console.debug('[reel-slide] tap outside the reaction drawer closes it');
+        railDrawerOpen = false;
+      }}
+      data-reel-rail-drawer-dismiss
+    ></button>
+  {/if}
 
   {#if expanded}
     <!-- TAP OUTSIDE FOLDS THE TEXT - anywhere on the slide, the letterbox bands included, not only

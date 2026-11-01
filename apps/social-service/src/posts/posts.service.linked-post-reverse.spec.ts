@@ -24,7 +24,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
         query: jest.fn((sql: string, params?: unknown[]) => {
           // The block lookup a named viewer triggers answers "nobody blocked"; only the post read
           // is recorded, which is what these assertions are about.
-          if (sql.includes('user_blocks')) return Promise.resolve([]);
+          // Matched on the lookup's own alias: the visibility predicate names `user_blocks` too.
+          if (sql.includes('AS "otherId" FROM user_blocks')) return Promise.resolve([]);
           // Nobody republished it (D38): the "Republie par" read answers empty, unrecorded.
           if (sql.includes('FROM post_republications pr')) return Promise.resolve([]);
           calls.push({ sql, params });

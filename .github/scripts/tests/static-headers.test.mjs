@@ -213,12 +213,17 @@ for (const block of locations) {
   }
 }
 
-// A PUBLIC FORM PAGE SENDS NO REFERER, AS A HEADER (2026-10-22, paid public forms WP-P2). The guest
-// receipt page carries its receipt in the query, and a <meta> in a page that boots on the client
-// applies only after its first chunk requests have left with the full URL. So both blocks that send
-// a page - the SSR answer and the degraded shell - send the policy, and the map that decides it,
-// run here on sample URIs, gives `no-referrer` to every `/f/` page and nothing to any other.
-const REFERRER_VARIABLE = 'public_form_referrer_policy';
+// A PAGE WHOSE URL CARRIES A CAPABILITY SENDS NO PATH IN ITS REFERER, AS A HEADER (2026-10-22 for the
+// public forms, paid public forms WP-P2; 2026-10-28 for the two join pages, the OIDC callback and
+// login). The guest receipt page carries its receipt in the query, a join page its invite in the path,
+// the callback a one-time code in the query, login an invite in its returnTo, and a <meta> in a page
+// that boots on the client applies only after its first chunk requests have left with the full URL.
+// So both blocks that send a page - the SSR answer and the degraded shell - send the policy, and the
+// map that decides it, run here on sample URIs, gives each of those pages its policy and nothing to
+// any other (each near-miss is a case). `no-referrer` for `/f/`, as shipped; `strict-origin` for the
+// 2026-10-28 pages, because the policy outlives the page in a document that never reloads, and under
+// no-referrer every later same-origin POST carries `Origin: null`.
+const REFERRER_VARIABLE = 'capability_referrer_policy';
 for (const name of ['@ssr', '@app_shell']) {
   const block = locations.find((l) => l.name === name);
   if (!block?.body.includes(`add_header Referrer-Policy $${REFERRER_VARIABLE} always;`)) {
@@ -242,6 +247,23 @@ if (!referrerMap) {
   for (const [uri, expected] of [
     ['/f/abc-123/receipt?receipt=SECRET', 'no-referrer'],
     ['/f/abc-123', 'no-referrer'],
+    ['/c/join/INVITE-SECRET', 'strict-origin'],
+    ['/g/join/INVITE-SECRET', 'strict-origin'],
+    ['/auth/callback?code=SECRET&state=s', 'strict-origin'],
+    ['/auth/callback', 'strict-origin'],
+    ['/auth/callback/?code=SECRET&state=s', 'strict-origin'],
+    ['/auth/callback/', 'strict-origin'],
+    ['/auth/callback//', ''],
+    ['/c/joinx/abc', ''],
+    ['/c/123', ''],
+    ['/x/c/join/abc', ''],
+    ['/auth/callbacks', ''],
+    ['/auth/login', ''],
+    ['/login?returnTo=%2Fc%2Fjoin%2FINVITE-SECRET', 'strict-origin'],
+    ['/login', 'strict-origin'],
+    ['/logins', ''],
+    ['/login-help', ''],
+    ['/x/login?returnTo=keep', ''],
     ['/forms/abc-123', ''],
     ['/', ''],
     ['/feed?f=1', ''],

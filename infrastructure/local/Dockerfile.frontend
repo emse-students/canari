@@ -88,28 +88,88 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # A GUEST RECEIPT IS NOT LOGGED (2026-10-22, paid public forms WP-P2): `/f/<id>/receipt?receipt=` is\n\
 # a guest'"'"'s proof of a paid answer, the only one it has, so the route keeps its path and drops its\n\
 # query. The page itself sends no Referer (`no-referrer`), so its own requests do not carry it either.\n\
-map $request_uri $logged_request_uri {\n\
+# A PRESENCE READ IS NOT LOGGED WITH ITS IDS (2026-10-28): the legacy `GET /api/presence?users=` names\n\
+# every user a member watches, 64 hex characters each, so its line lists who that member follows beside\n\
+# their address and grows past what a log scanner accepts. Current clients POST the ids; the query of\n\
+# the clients still calling the GET is dropped here (docs/wiki/legacy-compatibility.md).\n\
+# A URL THAT CARRIES A CAPABILITY IS NOT LOGGED WHOLE EITHER (2026-10-28): the link previews and the\n\
+# link check keep their path and drop their query (the URL a reader opened), the OIDC callback drops\n\
+# its query (with or without a trailing slash), and an invite keeps its route with its token replaced -\n\
+# the two join pages (their whole path segment, whatever its alphabet, and their query if any) and the\n\
+# two API routes that read an invite.\n\
+# TWO MAPS, CHAINED: a map applies ONE rule, so the route rules run first and the query rules then\n\
+# run on their output - an invite path that also carries a token= or a quoted join path is redacted\n\
+# twice, not once.\n\
+# EVERY RULE IS WRITTEN TO BE LINEAR IN ITS INPUT: no optional group or repetition a later one can\n\
+# re-split, each one stopping only at a delimiter the next cannot consume. A rule that backtracks\n\
+# quadratically costs ~100 ms per 8 kB line and, at the PCRE match limit, makes nginx write an alert\n\
+# and log the field as "-". access-log-redaction.test.mjs times every rule on adversarial inputs in\n\
+# the JavaScript engine, a proxy for PCRE; the 2026-10-28 rules were also run through pcre2test.\n\
+map $request_uri $route_redacted_request_uri {\n\
+    "~^/api/presence[?]" "/api/presence?query-redacted";\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
     "~^(?<receipt_path>/f/[^/?]+/receipt)[?]" "${receipt_path}?query-redacted";\n\
-    "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
+    "~^(?<link_path>/api/mls/link-(?:preview|preview/image|safety))[?]" "${link_path}?query-redacted";\n\
+    "~^(?<callback_path>/auth/callback/?)[?]" "${callback_path}?query-redacted";\n\
+    "~^(?<invite_head>/api/(?:channels/invites|mls/group-invites)/)[^/?]+(?<invite_tail>.*)$" "${invite_head}redacted${invite_tail}";\n\
+    "~^(?<join_page>/[cg]/join/)[^/?]+(?<join_page_tail>(?:/[^?]*)?)[?]" "${join_page}redacted${join_page_tail}?query-redacted";\n\
+    "~^(?<join_page_bare>/[cg]/join/)[^/?]+(?<join_page_bare_tail>(?:/[^?]*)?)$" "${join_page_bare}redacted${join_page_bare_tail}";\n\
     default $request_uri;\n\
 }\n\
-# A PUBLIC FORM PAGE SENDS NO REFERER (2026-10-22, paid public forms WP-P2). `/f/<id>/receipt` carries\n\
-# a guest'"'"'s receipt in its query, and the page boots on the client: the first requests it makes (its\n\
-# own chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
-# policy is a HEADER of the page itself, on every `/f/` page. Keyed on $request_uri, which @app_shell'"'"'s\n\
-# try_files does not rewrite. An empty value sends no header, so every other page is unchanged.\n\
-map $request_uri $public_form_referrer_policy {\n\
+# THE QUERY RULES, on what the route rules left. A query naming a join path anywhere - plain,\n\
+# percent-encoded or encoded twice (a login returnTo, or one passed on by an invite route) - loses its\n\
+# WHOLE query, so a second invite in it cannot survive the first. THE token KEY, HOWEVER IT IS\n\
+# SPELLED: a query holding the key twice, or spelled percent-encoded, in another case or as an array\n\
+# (token[]) loses its WHOLE query too: a map rewrites one occurrence, and the services decode the key\n\
+# before reading it, so a literal match alone would log the others. A query holding it once,\n\
+# literally, keeps everything but its value (the /api/ws line keeps userId/deviceId).\n\
+map $route_redacted_request_uri $logged_request_uri {\n\
+    "~*^(?<join_query_path>[^?]*)[?].*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)" "${join_query_path}?query-redacted";\n\
+    "~*^(?<query_path>[^?]*)[?](?:[^&]*&)*?(?:(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)[^&]*&(?:[^&]*&)*?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)|(?!token=)(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b))" "${query_path}?query-redacted";\n\
+    "~*^(?<uri_before_token>.*[?&])(?<token_key>token)=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}${token_key}=redacted${uri_after_token}";\n\
+    default $route_redacted_request_uri;\n\
+}\n\
+# THE REFERER OF A CAPABILITY PAGE KEEPS ITS ORIGIN ONLY. Those pages send none or only their origin\n\
+# (the policy below), but a client that ignores the policy, or a page reached before it applied, would\n\
+# write the same URL into the referer field. A referer naming a join token (plain, percent-encoded or\n\
+# encoded twice), a receipt or callback query, or any token key is logged as its origin; every other\n\
+# referer is unchanged. A request with none keeps the stock "-": nginx\n\
+# writes "-" for an absent header, but a map hands it an EMPTY value, which it writes as "" (measured).\n\
+# The origin group ends at a delimiter (the lookahead), so a long host cannot be re-split against the\n\
+# wildcard after it, as in the request maps above.\n\
+map $http_referer $logged_http_referer {\n\
+    "" "-";\n\
+    "~*^(?:(?<ref_join_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?.*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)(?:[a-z0-9_.~-]|%%[0-9a-f]{2})" "${ref_join_origin}/redacted";\n\
+    "~*^(?:(?<ref_page_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?/(?:f/[^/?#]+/receipt|auth/callback/?)[?]" "${ref_page_origin}/redacted";\n\
+    "~*^(?:(?<ref_query_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?[^?#]*[?](?:.*&)?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)" "${ref_query_origin}/redacted";\n\
+    default $http_referer;\n\
+}\n\
+# A PAGE WHOSE URL CARRIES A CAPABILITY SENDS NO PATH IN ITS REFERER (2026-10-22 for `/f/`, paid public\n\
+# forms WP-P2; 2026-10-28 for the two join pages, the OIDC callback and login). `/f/<id>/receipt` carries\n\
+# a guest'"'"'s receipt in its query, `/c/join/<token>` and `/g/join/<token>` an invite in their path,\n\
+# `/auth/callback` a one-time code in its query, `/login` an invite in its returnTo when a join page sent\n\
+# a reader there signed out; each page boots on the client, so the first requests it makes (its own\n\
+# chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
+# policy is a HEADER of the page itself. Keyed on $request_uri, which @app_shell'"'"'s try_files does not\n\
+# rewrite. An empty value sends no header, so every other page is unchanged.\n\
+# strict-origin, NOT no-referrer, for the 2026-10-28 pages: the app never reloads its document, so the\n\
+# policy outlives the page for the life of the tab, and under no-referrer a same-origin POST carries\n\
+# `Origin: null` (Fetch, "append a request Origin header"), which every service would log as a refused\n\
+# CORS origin. strict-origin sends the origin alone as Referer and keeps the real Origin header.\n\
+map $request_uri $capability_referrer_policy {\n\
     default "";\n\
     "~^/f/" "no-referrer";\n\
+    "~^/[cg]/join/" "strict-origin";\n\
+    "~^/auth/callback/?(?:[?]|$)" "strict-origin";\n\
+    "~^/login(?:[?]|$)" "strict-origin";\n\
 }\n\
 # FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
 # access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
 # rt = total time; urt and ust = the upstream's time and status (a slow or failing SSR shows here);\n\
 # ce = whether THIS response was compressed; deg = the SSR's own admission that it served a degraded\n\
 # head (X-Canari-Degraded). Durations, statuses and one header value: no address, cookie or query.\n\
-log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\" rt=$request_time urt=$upstream_response_time ust=$upstream_status ce=$sent_http_content_encoding deg=$sent_http_x_canari_degraded";\n\
+log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$logged_http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\" rt=$request_time urt=$upstream_response_time ust=$upstream_status ce=$sent_http_content_encoding deg=$sent_http_x_canari_degraded";\n\
 \n\
 # THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
 # every request on /adminer/, and the upstream has no use for it - it is stripped, and the cookies of Adminer\n\
@@ -533,7 +593,7 @@ server {\n\
     # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
-    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    add_header Referrer-Policy $capability_referrer_policy always;\n\
     # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
     # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\
     # refuse those scripts. csp-page.conf adds only frame-ancestors (see the snippet comment above).\n\
@@ -558,7 +618,7 @@ server {\n\
     try_files /app-shell.html =502;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
-    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    add_header Referrer-Policy $capability_referrer_policy always;\n\
     # The prerendered shell carries its policy as a <meta> (kit.csp, hashes included), which cannot\n\
     # say frame-ancestors - csp-page.conf says it.\n\
     include /etc/nginx/snippets/csp-page.conf;\n\
@@ -613,6 +673,9 @@ server {\n\
     }\n\
     \n\
     location /api/presence {\n\
+    # THE PRESENCE BODY IS AT MOST 1000 IDS (~70 kB), so the server-wide 100m upload limit is no\n\
+    # bound here: the gateway reads a body before it can refuse an anonymous caller (2026-10-28).\n\
+    client_max_body_size 128k;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
@@ -892,6 +955,31 @@ server {\n\
     # The public Lydia callback, rate-limited at the edge (zone lydia_callback); otherwise /api/payments.\n\
     location = /api/payments/lydia-request-callback {\n\
     limit_req zone=lydia_callback burst=50 nodelay;\n\
+    client_max_body_size 16k;\n\
+    limit_req_status 429;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
+    set $upstream_payment core-service:3012;\n\
+    proxy_pass http://$upstream_payment;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    # The public, UNSIGNED business/create webhook: same zone as the callback; it writes nothing (payments.md).\n\
+    location = /api/payments/lydia-business-webhook {\n\
+    limit_req zone=lydia_callback burst=50 nodelay;\n\
+    client_max_body_size 16k;\n\
     limit_req_status 429;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\

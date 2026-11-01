@@ -27,6 +27,20 @@ export class Group {
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   imageMediaId?: string | null;
 
+  /**
+   * The account that created this group - the authenticated `x-user-id` of `POST mls/groups` in
+   * canonical form, never a body field. The creation bootstrap enrols the group's recorded creator
+   * (`createdBy`) and nobody else; a group with no recorded creator is bootstrapped by nobody
+   * (`MembersController.isCreationBootstrap`, re-read under the seat lock by
+   * `writePendingSeats(..., 'creator')`). INTERNAL: never returned to a client.
+   *
+   * NULL - a group written before migration 042, a key-distribution group, a creation with no
+   * authenticated caller - means NOBODY may bootstrap it: refused, never admitted. An erased
+   * creator's id is replaced by `[deleted]`, which matches no caller either.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  createdBy?: string | null;
+
   /** True for multi-member group chats; false for 1-to-1 direct messages. */
   @Column({ default: false })
   isGroup: boolean;

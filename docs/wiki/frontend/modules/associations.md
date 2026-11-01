@@ -81,6 +81,47 @@ Now:
 - Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
   local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
 
+## The slug is a technical id: derived by the server, never shown, typed or edited (user, 2026-10-26)
+
+The product rule is *a technical id is never shown to, typed by, or edited by a person*. For an
+association, list or institution it means: no `@slug` under the detail title (a list keeps its
+parent's name), none in the edit subtitles (a list keeps its promo year), and no "Slug (URL)" field
+on the shared creation flow. The slug remains the URL segment (`/associations/<slug>`) and the
+unique key.
+
+The server derives it: `CreateAssociationDto.slug` is optional, and `AssociationsService.create`
+walks `slugCandidates(name)` from `association-slug.util.ts` - lowercase, accents folded, hyphenated,
+at most 50 characters, then `-2`, `-3`... Each candidate is its OWN transaction and the unique index
+is the arbiter (a unique violation aborts the transaction it happens in, and a check-then-insert
+would let two concurrent creates both pass). A slug SENT explicitly (an old client) is still
+validated and refused `400` when taken, including when it loses the race at the index.
+
+Four guards: only a unique violation of the SLUG column is retried, never any other `23505` - and
+it is classified by the COLUMNS of the index the driver names (`violatesUniqueColumns` in
+`common/pg-errors.ts`, one catalog read on the violation path), not by the constraint's NAME,
+because production's schema is not built by `synchronize` and nothing proves its slug constraint
+carries the name TypeORM would give it (a hand-named one would have turned every derived collision
+into a `500`); a derived candidate whose cotisation stem would collide with another
+association's (`bde-2026-2027` beside `bde`, `assertCotisationStemFree`, recognised by its typed
+`COTISATION_TAG_COLLISION` code through `isCotisationStemCollision`) walks to the next suffix, while
+an explicit slug keeps the `409`; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`,
+held equal to the route folders by a spec) is never derived bare and is refused when sent; letters
+NFKD cannot decompose (`oe`, `ae`, `ss`...) are expanded before folding, and NFKD (not NFD) folds
+full-width and other compatibility forms (`ＢＤＥ` is `bde`). `association-slug-derivation.integration.spec.ts`
+proves it against a real PostgreSQL (`SOCIAL_IT_DATABASE_URL`), including a slug constraint renamed
+by hand.
+
+**The walk is capped.** A name with no Latin letter or digit folds to `asso`, so every such name
+shares one base; after `SLUG_MAX_ATTEMPTS` (50) candidates the create is refused `400` with the
+typed code `ASSOCIATION_SLUG_EXHAUSTED`, which the creation page maps to
+`m.assoc_new_error_slug_exhausted()` (add a word to the name) - never the server's English message.
+
+**Order of shipping: the server first.** A store build EMBEDS its frontend, so a build that sends no
+slug must never meet a server that still requires one. The server change ships (production deploy)
+BEFORE, or in the same release as, the first store build carrying the new form - never after. The
+explicit-slug branch kept for old clients is a shim with a removal condition:
+[legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-explicit-slug-sent-on-association-creation-by-a-client-older-than-the-derived-slug).
+
 ## The audience tab and the campus prompt (WP-B, 2026-10-08)
 
 The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global admin and a BDE star of the association: two presets (my campus; my campus and chosen formations), a third (everyone) for an institution only, the grid link for admins. The creation page shows `ProfileCampusPrompt` instead of the form when the creator's profile has no campus, and maps the five typed server refusals through `audienceRefusal.ts`. Mechanism, limits (a star cannot read the current audience) and tests: [profiles-and-access](../../profiles-and-access.md#audiences-client-presets-as-built-wp-b-2026-10-08).
@@ -99,6 +140,41 @@ association that runs it, surfaced on the read side as the denormalised `parentN
 **A campaign list can run two themes at once**, a public one and the one it is actually called, so
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
 are always optional and associations leave them NULL.
+
+### What a list and an institution manage (owner, 2026-10-31)
+
+ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
+the hub, the route guard and the permission editor all read it. An association has every section. A
+**list** and an **institution** sell nothing (no shop, cotisations, purchases, delegation or payments)
+and share eight: profile, members, documents, forms, bookings, partnerships, the republication /
+co-organisation queue and danger; an institution adds its audience (global admin only). The list
+route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components as the association
+page. `/associations/<slug>/edit` of a list forwards to the list route, so an old link or a
+notification lands on the same section.
+
+**The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
+is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`,
+`MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
+checkbox edits its own bit only; the server strips the shop and payout rights on write (below). The admin preset a new member receives is
+`adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
+endpoints carry no type check, so they already accepted a list; the republication allowlist
+(`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
+(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. **The server holds the same rule** (`associations/selling-kinds.ts`, an allowlist: only `association`
+sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on:
+product create and update (`ProductsService`), the cotisation provisioning and `cotisationEnabled: true`
+on `PATCH :id`, the Lydia account link (`setLydiaAccountId`, the one writer of the payout account),
+`requestPaymentDelegation` / `approvePaymentDelegation`, and a form price (`POST` and `PUT` of a form).
+It judges NEW WRITES only: no existing product, account or priced form is deleted or rewritten. An
+existing product may be taken OFF sale (`isActive: false` alone), never put on sale or repriced. A form
+is judged MERGED (`assertKindMayPrice`): any price source counts - base price, payment switch, grid cell,
+a choice option's supplement (only a CHOICE question's: `isChoiceQuestion`, the one rule at save and at submit) - and a form that already charges stays editable while its
+`priceFingerprint` (key-order-insensitive: jsonb reorders a grid's keys) is unchanged, and may always be
+made free. The shop and payout rights are STRIPPED from any member bitmask written for such a kind
+(`writablePermissions`, on `addMember` and `updateMemberRole`); a bit stored before stays until that
+member is next saved and opens nothing meanwhile, since every route behind it refuses the kind. The
+role editor never shows them. The form editor draws no price section for these kinds; a priced one is
+shown frozen with a "make this form free" button (it also clears option supplements) (`FormPaymentSection`, `associationSells`), and the
+refusal reads from the typed code (`asso_kind_does_not_sell`), never the server's English.
 
 ### The half that could only ever be turned off
 
@@ -290,3 +366,15 @@ left in its kind).
 `/associations/me/list` filters them out. If archived associations are ever to be refused as
 authors, the refusal goes in `canPostAs` first and the group turns `disabled` with a reason in the
 same change - the picker must never offer what the server refuses, nor hide what it accepts.
+
+## The external profile projection
+
+`GET /api/external/profile/:sub` (core-service, `x-api-key`, consumed by Sky) relays social-service's
+internal `GET users/:userId/associations` unchanged - there is no DTO or whitelist in between. Both
+arrays, `current` and `former`, carry `type` (`association` | `list` | `institution`) and `promo`
+(a list's campaign year, else `null`); `former` rows also carry `slug` (`null` when the association
+no longer exists). The fields are additive: the only consumer of the route is that controller.
+Sky shows a list only until 1 August of its `promo` (`isPastCampaignList`, mirrored from
+`frontend/src/lib/associations/campaign.ts`), never in its former section, and matches a past
+mandate against a current one by `slug`.
+Pinned by `apps/social-service/src/internal/internal-user-associations.spec.ts`.

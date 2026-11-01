@@ -169,6 +169,41 @@ export function revokeRaceOwn({ held, status, expected, targetOf, allowed, seate
 }
 
 /**
+ * RM-5's CLOSING UNCONTESTED GRANT - the stale-leaf question (#2552). After the race cycles, with at
+ * least one where the grant landed first (a refused Welcome can leave the subject's leaf behind),
+ * the subject is let back in and granted with no kick beside it. Three things must then hold: the
+ * subject's devices are `active` in the salon's group, one row each; a salon message reaches the
+ * subject's seat; and the tree the subject joined holds exactly one leaf per active device - a stale
+ * leaf left by a refused Welcome is gone or reused, never a second leaf beside the new one.
+ *
+ * @param {object} c
+ * @param {number} c.grantFirstCycles cycles whose grant was accepted (2xx)
+ * @param {{deviceId: string, status: string}[]} c.subjectRows the subject's delivery rows after the grant
+ * @param {boolean} c.readable the closing marker reached the subject's seat
+ * @param {number|null} c.leaves the leaf count the subject's own roster check reported, null if none
+ * @param {number} c.activeDevices active delivery rows on the salon's group
+ * @param {string} [c.error] a gesture that threw
+ */
+export function kickRaceClosingOwn({ grantFirstCycles, subjectRows, readable, leaves, activeDevices, error }) {
+  const rows = subjectRows ?? [];
+  const ids = rows.map((r) => r.deviceId);
+  const out = [
+    { what: `closing: at least one cycle had the grant land first (${grantFirstCycles})`, ok: grantFirstCycles > 0 },
+    {
+      what: `closing: the subject is seated, one active row per device (${rows.map((r) => r.status).join(', ') || 'no row'})`,
+      ok: rows.length > 0 && rows.every((r) => r.status === 'active') && new Set(ids).size === ids.length,
+    },
+    { what: `closing: a salon message reached the subject (${readable ? 'read' : 'NOT read'})`, ok: readable === true },
+    {
+      what: `closing: no stale leaf - ${leaves ?? 'no'} leaf/leaves for ${activeDevices} active device(s)`,
+      ok: typeof leaves === 'number' && leaves === activeDevices,
+    },
+  ];
+  if (error) out.push({ what: `closing: a gesture threw - ${error}`, ok: false });
+  return out;
+}
+
+/**
  * RM-5, one cycle: the kick stood (retried inline), and the subject ended WHOLE - a member, allowed
  * and seated, or none of the three.
  *
@@ -259,10 +294,14 @@ const anyOf = (ids) => `(?:${ids.map(short).join('|') || '(?!)'})`;
  * function-entry logs and a route's first preload. First met on RM-4's first alpha.4 run
  * (2026-10-25), which was the first time the row reached judging.
  *
+ * `page … decoded after its salon entry was decided` joined on `1.4.1-alpha.6` (2026-10-26): its
+ * source now says it ONCE per salon per session (`useConversations.svelte.ts`), the decision and not
+ * a read, so it is narration here for the row's own salons.
+ *
  * NOT HERE, ON PURPOSE: the lines said once per READ rather than per decision - Graine's `sending 0
- * of 0` / `holds nothing` answers and absorbs, `stored page empty`, `page … decoded after its salon
- * entry` - which are fixed at the source and stay dirt until then; and `redelivered Welcome ignored`,
- * a duplicate delivery the backlog already carries.
+ * of 0` / `holds nothing` answers and absorbs, `stored page empty` - which are fixed at the source
+ * and stay dirt until then; and `redelivered Welcome ignored`, a duplicate delivery the backlog
+ * already carries.
  *
  * @param {{workspaceId: string, channelIds: string[], keyGroupIds: string[]}} p
  */
@@ -278,7 +317,7 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
     R(String.raw`^\[WELCOME\] ${kg}\.\.\. is a KEY-DISTRIBUTION group \(server row\) - installing it as a seed carrier$`),
     R(String.raw`^\[QUEUE\] Welcome for key group ${kg}\.\.\. - not announced to the conversation layer$`),
     R(String.raw`^\[GRAINE\] ADMIT salon grantee [0-9a-f]{8} to ${ch} \(community ${ws}\)$`),
-    R(String.raw`^\[GRAINE\] salon ${ch} of ${ws}: a Welcome is owed to this device \(queued, or an add in flight\) - not joining by external commit, the admitter's Welcome is the door$`),
+    R(String.raw`^\[GRAINE\] salon ${ch} of ${ws}: a Welcome is owed to this device \((?:welcome-queued|add-in-flight)\) - not joining by external commit, the admitter's Welcome is the door$`),
     R(String.raw`^\[WORKSPACE\] my role in ${ws} is now "[^"]+" \(canManage=(?:true|false) canManageChannels=(?:true|false) canModerate=(?:true|false)\)$`),
     R(String.raw`^\[channelSettings\.(?:loadChannelAccess|refreshAccess)\] channel_${ch}…$`),
     R(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser\] \{"channelId":"channel_${ch}…","userId":"[0-9a-f]{8}…"\}$`),
@@ -287,7 +326,67 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
     R(String.raw`^Removed from channel ${ch}…$`),
     R(String.raw`^\[channelSettings\.afterAccessWrite another write landed\] \{"channelId":"channel_${ch}…","base":\d+,"revision":\d+\}$`),
     /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
+    R(String.raw`^\[CHANNEL\] page of ${ch} decoded after its salon entry was decided$`),
   ];
+}
+
+/**
+ * RM-5'S KICK RACE, AS EACH SIDE SAYS IT (read on `1.4.1-alpha.6`, 2026-10-26). W1 kicks the subject
+ * while the granter gives them the private salon. The two outcomes the row plays are both designed:
+ *
+ * - THE GRANT LANDS, THEN THE KICK. The granter's Add put the subject's devices in the salon's
+ *   distribution group, the gate did not record them (`not_entitled`), and the server refused the
+ *   Welcome (`403`, "the roster does not name its owner"), so no Welcome is delivered.
+ * - THE KICK LANDS FIRST. The grant is refused with `409 CHANNEL_GRANTEE_NOT_MEMBER`, and the panel
+ *   reads the access again and reloads its picker.
+ *
+ * The kicked subject's next reads of the community's and the salon's distribution group are refused
+ * (`403`) and said once each. Every needle is scoped to the row's salon, its community, its salon
+ * group and the subject's user id. Another salon, another user, another code or another level stays
+ * dirt.
+ *
+ * @param {{workspaceId: string, channelIds: string[], groupIds: string[], subject: string}} p
+ * @returns {(RegExp | {levels: string[], re: RegExp})[]} the granter's narration; the subject's
+ *   refusals are HTTP statuses only ({@link kickRaceRefusals})
+ */
+export function kickRaceNarration({ workspaceId, channelIds, groupIds, subject }) {
+  const ws = short(workspaceId);
+  const ch = anyOf(channelIds);
+  const g = anyOf(groupIds);
+  const u = short(subject);
+  const R = (s) => new RegExp(s);
+  const at = (levels, s) => ({ levels, re: R(s), toString: () => `${levels.join('|')}: ${s}` });
+  return [
+    at(['debug'], String.raw`^\[COMMIT\] ${g}\.\.\. the gate did not record the admit of ${u}:web-${u}…-[0-9a-z]+-[0-9a-z]+ \(not_entitled\) - its Welcome is sent and answered as before$`),
+    // At `error` by the client's own choice; a plain needle, so it is forgiven in that bucket and
+    // only for this group and this subject.
+    R(String.raw`^\[WELCOME\] ${g}\.\.\. Welcome REFUSED for ${u}\.\.\.: the roster does not name its owner - terminal, no longer owed; the leaf it admitted has no seat and the stray sweep collects it$`),
+    at(['log', 'info'], String.raw`^\[GRAINE\] ADMIT ${u} into salon ${ch} of ${ws}: the Welcome to web-${u}…-[0-9a-z]+-[0-9a-z]+ was NOT delivered \(WelcomeTargetNotMemberError: the Welcome of ${g}\.\.\. to ${u}…:web-${u}…-[0-9a-z]+-[0-9a-z]+ was refused - the roster does not name its target\)`),
+    at(['debug'], String.raw`^\[channelSettings\.addAllowedUser failed\] ChannelApiError: \{"code":"CHANNEL_GRANTEE_NOT_MEMBER",.*"channelId":"${ch}…"`),
+    at(['debug'], String.raw`^\[channelSettings\.accessWriteRefused reading the access again\] \{"channelId":"channel_${ch}…","code":"CHANNEL_GRANTEE_NOT_MEMBER"\}$`),
+    at(['debug'], String.raw`^\[channelSettings\.accessWriteRefused grantee not a member, reloading the picker\] channel_${ch}…$`),
+  ];
+}
+
+/**
+ * RM-5's refusals, by seat: the granter's `409` on the salon's access path and `403` on the Welcome
+ * route, and the kicked subject's `403` on the salon's and the community's distribution group. Any
+ * other status, or the same one on another path, stays dirt.
+ *
+ * @param {{workspaceId: string, channelIds: string[]}} p
+ */
+export function kickRaceRefusals({ workspaceId, channelIds }) {
+  const ids = channelIds.map((c) => String(c).replace(/^channel_/, '')).join('|') || '(?!)';
+  return {
+    granter: [
+      { path: new RegExp(`^/api/channels/(?:${ids})/access$`), status: [409] },
+      { path: /^\/api\/mls\/welcome$/, status: [403] },
+    ],
+    subject: [
+      { path: new RegExp(`^/api/channels/(?:${ids})/distribution-group$`), status: [403] },
+      { path: new RegExp(`^/api/channels/workspaces/${workspaceId}/distribution-group$`), status: [403] },
+    ],
+  };
 }
 
 /**
@@ -296,4 +395,26 @@ export function salonNarration({ workspaceId, channelIds, keyGroupIds }) {
  */
 export function salonRaceRefusal(channelIds) {
   return new RegExp(String.raw`^\[channelSettings\.(?:add|remove)AllowedUser failed\] ChannelApiError: \{"code":"CHANNEL_ACCESS_CHANGED",.*"channelId":"${anyOf(channelIds)}…"`);
+}
+
+/**
+ * ... and the loser's panel reading the access again before it names the refusal
+ * (`ChannelSettingsPanel.svelte` `accessWriteRefused`), at `debug`, for that one code. Read on
+ * alpha.5's RM-4 (2026-10-26). `CHANNEL_GRANTEE_NOT_MEMBER` takes the same branch and is NOT this
+ * row's race, so it stays dirt.
+ */
+export function salonRaceReread(channelIds) {
+  return new RegExp(String.raw`^\[channelSettings\.accessWriteRefused reading the access again\] \{"channelId":"channel_${anyOf(channelIds)}…","code":"CHANNEL_ACCESS_CHANGED"\}$`);
+}
+
+/**
+ * The race loser's `409` on the salon's access path, as a refusal `observersOf` forgives on either
+ * racing seat - only one of them loses, and the row asserts which (`accessRaceOwn`). Any other status,
+ * or the same status on another path, stays dirt.
+ *
+ * @param {string[]} channelIds the row's channels, whole
+ */
+export function salonRaceRefusals(channelIds) {
+  const ids = channelIds.map((c) => String(c).replace(/^channel_/, '')).join('|') || '(?!)';
+  return [{ path: new RegExp(`^/api/channels/(?:${ids})/access$`), status: [409] }];
 }

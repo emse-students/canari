@@ -1,3 +1,4 @@
+import type { AppPath } from '$lib/utils/internalPath';
 import type { ProductCheckoutStatus } from '$lib/associations/api';
 
 /**
@@ -37,7 +38,7 @@ export function checkoutReturnView(status: ProductCheckoutStatus): CheckoutRetur
  * (`withCheckoutReturnKey`), all required, since the confirm route is addressed by all three.
  */
 export function checkoutReturnTarget(
-  params: URLSearchParams
+  params: Pick<URLSearchParams, 'get'>
 ): { associationId: string; productId: string; checkoutId: string } | null {
   const checkoutId = params.get('checkout_id');
   const associationId = params.get('association_id');
@@ -54,7 +55,7 @@ export function checkoutReturnTarget(
 export function shopReturnPath(
   marker: 'purchase_success' | 'purchase_cancel',
   params: URLSearchParams
-): string {
+): AppPath {
   const q = new URLSearchParams({ [marker]: '1' });
   const productId = params.get('productId') ?? params.get('product_id');
   if (productId) q.set('productId', productId);

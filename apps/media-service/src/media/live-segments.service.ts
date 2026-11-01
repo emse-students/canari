@@ -9,6 +9,9 @@ import { StorageService } from './storage.service';
  */
 export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 
+/** The most segment names one trim call may carry (social-service sends batches of this size at most). */
+export const LIVE_TRIM_MAX_NAMES = 50;
+
 /** Every object of every live lives under this prefix, and nothing else does. */
 export const LIVE_PREFIX = 'live/';
 
@@ -38,7 +41,8 @@ export const LIVE_SEGMENT_PUBLIC_PREFIX = '/api/media/public/live/';
 
 /**
  * THE SERVER-SIDE SWITCH OF THE LIVE FEATURE, the same variable social-service reads:
- * `LIVE_ENABLED=true` and nothing else opens the live routes; production renders `false`.
+ * `LIVE_ENABLED=true` and nothing else opens the live routes; both estates render `true` since the
+ * production flip (2026-10-30), and `lives_mode` is what closes them at runtime.
  */
 export function isLiveEnabled(): boolean {
   return process.env.LIVE_ENABLED === 'true';
@@ -50,6 +54,14 @@ export interface LivePurgeResult {
   failed: number;
   /** Objects still under the live's prefix after the deletes: 0 is the proof the live is gone. */
   remaining: number;
+}
+
+/** The answer of a trim: which of the asked segment names the store no longer holds, and which it refused. */
+export interface LiveTrimResult {
+  /** Names now absent from the store (an object that was already absent counts: the delete is idempotent). */
+  deleted: string[];
+  /** Names the store refused to delete: still there, asked again by the next pass. */
+  failed: string[];
 }
 
 /**
@@ -130,6 +142,33 @@ export class LiveSegmentsService {
     }
     this.logger.debug(`[LIVE_GC] ${ids.length} live folder(s) in the store`);
     return ids;
+  }
+
+  /**
+   * Deletes the named segments of ONE live while it is still on air (the trim behind its manifest
+   * window, lives.md "What a live stores"). A refusal is counted and logged, never thrown, so the
+   * caller keeps the rows of exactly the names that remain. Idempotent: deleting an absent object is
+   * not a failure, so a pass repeated after a crash converges. Names are checked as uuids by
+   * {@link LiveSegmentsService.key} - ALL of them BEFORE the first delete, so a bad name rejects
+   * the whole call (400) and leaves the store untouched, never half-applied.
+   */
+  async deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult> {
+    const keys = names.map((name) => LiveSegmentsService.key(liveId, name));
+    const result: LiveTrimResult = { deleted: [], failed: [] };
+    for (const [i, name] of names.entries()) {
+      const key = keys[i];
+      try {
+        await this.storage.delete(key);
+        result.deleted.push(name);
+      } catch (e) {
+        result.failed.push(name);
+        this.logger.warn(`[LIVE_TRIM] ${key} not deleted: ${String(e)}`);
+      }
+    }
+    this.logger.log(
+      `[LIVE_TRIM] live ${liveId}: deleted=${result.deleted.length} failed=${result.failed.length}`
+    );
+    return result;
   }
 
   /**

@@ -13,7 +13,7 @@ import { appendLog } from '$lib/utils/sessionLog';
  *
  * Every action is set in its own `try`: an engine that does not know an action THROWS on
  * `setActionHandler`, and one unknown action must not cost the others. Each refusal is logged once
- * per call, because "the system has no hang-up for this call" is exactly what a device reading needs.
+ * per page life, because "the system has no hang-up for this call" is exactly what a device reading needs.
  */
 
 /** What the call surface hands the OS. */
@@ -32,6 +32,28 @@ export interface MediaSessionHost {
   mediaSession?: MediaSession;
 }
 
+/**
+ * The refusals already said, by key, FOR THE LIFE OF THE PAGE. A refusal is a fact about the ENGINE
+ * (WebKit has no `hangup` action, Chromium has), and the Media Session API offers no way to ask for
+ * support up front - `setActionHandler` throwing IS the probe - so it is said once: the surface
+ * re-applies the session on every change it shows (313 identical lines in 46 s of a ring,
+ * 2026-10-31), and each later call of the same page would only repeat it (once per call on the
+ * iPhone 12, 2026-10-30).
+ */
+const saidThisEngine = new Set<string>();
+
+/** Logs `line` once per page life under `key`. */
+function sayOncePerEngine(key: string, line: string): void {
+  if (saidThisEngine.has(key)) return;
+  saidThisEngine.add(key);
+  appendLog(line);
+}
+
+/** Test seam: forgets what was said, as a fresh page load would. */
+export function resetCallMediaSessionForTest(): void {
+  saidThisEngine.clear();
+}
+
 /** Publishes the call to the OS media session. Returns whether the engine has one at all. */
 export function applyCallMediaSession(
   host: MediaSessionHost,
@@ -39,7 +61,10 @@ export function applyCallMediaSession(
 ): boolean {
   const session = host.mediaSession;
   if (!session) {
-    appendLog('[Call] no Media Session API on this engine - the OS shows no call controls');
+    sayOncePerEngine(
+      'no-api',
+      '[Call] no Media Session API on this engine - the OS shows no call controls'
+    );
     return false;
   }
   try {
@@ -58,7 +83,10 @@ export function applyCallMediaSession(
     try {
       session.setActionHandler(action as MediaSessionAction, handler);
     } catch (e) {
-      appendLog(`[Call] Media Session action '${action}' unsupported here: ${String(e)}`);
+      sayOncePerEngine(
+        `action:${action}`,
+        `[Call] Media Session action '${action}' unsupported here: ${String(e)}`
+      );
     }
   }
   // Chromium only: lets the system's own microphone indicator follow the in-app mute.
@@ -79,7 +107,7 @@ export function clearCallMediaSession(host: MediaSessionHost): void {
     try {
       session.setActionHandler(action as MediaSessionAction, null);
     } catch {
-      // Unsupported on this engine: applyCallMediaSession already logged it for this call.
+      // Unsupported on this engine: applyCallMediaSession already said so.
     }
   }
   try {

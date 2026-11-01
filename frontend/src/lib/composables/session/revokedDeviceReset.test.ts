@@ -54,7 +54,9 @@ vi.mock('$lib/utils/deviceReset', async (importOriginal) => ({
   wipeDeviceToFactory: () => wipeDeviceToFactory(),
 }));
 
-const { refresh, getToken, setToken, setSessionExpiredHandler } = await import('$lib/stores/auth');
+const { refresh, getToken, setToken, setSessionExpiredHandler, clearAuth } =
+  await import('$lib/stores/auth');
+const { endExpiredSession } = await import('./endExpiredSession');
 const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
 const { MlsDeliveryApi } = await import('$lib/mls-client/mlsDeliveryApi');
 const { answerDeviceRevokedFrame, settleSessionEndByRevocationImpl } =
@@ -193,6 +195,8 @@ describe('a device revoked by its owner while online', () => {
     expect(s.logs()).toContain('Revoked-device reset already running - joined');
     // Then the user is handed to the session-expired seam, after the reset.
     expect(s.cb.onSessionExpired).toHaveBeenCalledTimes(1);
+    // ...and says the reset already signed out, so the handler redirects without a second logout.
+    expect(s.cb.onSessionExpired).toHaveBeenCalledWith({ alreadySignedOut: true });
   });
 
   it('refusal first: a request meets the dead session, then the frame arrives - the same ONE reset', async () => {
@@ -301,5 +305,123 @@ describe('what never resets anything', () => {
 
     expect(wipeDeviceToFactory).not.toHaveBeenCalled();
     expect(s.logs()).toContain('server disagrees');
+  });
+});
+
+/**
+ * A REVOKED DEVICE SIGNS OUT EXACTLY ONCE - counted on the wire, through the real decision.
+ *
+ * The count is `POST /api/auth/logout` requests: the reset's own `clearAuth` is the sign-out, and
+ * `endExpiredSession` (the session-expired handler's decision) adds none when the reset has run. The
+ * handler is wired as the app shell wires it, and every discoverer's promise is awaited.
+ */
+describe('the sign-out count of a session that died', () => {
+  const logouts = () =>
+    fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/auth/logout'));
+
+  /** The app shell's wiring: the notifier and the callback seam both reach `endExpiredSession`. */
+  function app() {
+    const s = session();
+    const running: Promise<unknown>[] = [];
+    const handle = (outcome?: { alreadySignedOut?: boolean }) => {
+      running.push(
+        endExpiredSession({
+          outcome,
+          settleRevocation: () =>
+            settleSessionEndByRevocationImpl(s.ctx, s.cb, s.ctx.getUserId() || 'alice'),
+          signOut: clearAuth,
+          loginPath: '/login',
+          log: (m) => (s.cb.log as (m: string) => void)(m),
+        })
+      );
+    };
+    setSessionExpiredHandler(() => handle());
+    (s.cb as unknown as { onSessionExpired: typeof handle }).onSessionExpired = handle;
+    return { ...s, settleAll: () => Promise.all(running) };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('frame first: one logout', async () => {
+    refreshAnswer = revokedRefusal;
+    const a = app();
+    await answerDeviceRevokedFrame(a.ctx, a.cb, a.mls);
+    await a.settleAll();
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it('refusal first: one logout', async () => {
+    refreshAnswer = revokedRefusal;
+    const a = app();
+    await refresh().catch(() => {});
+    await answerDeviceRevokedFrame(a.ctx, a.cb, a.mls);
+    await a.settleAll();
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it('a rotated device id (not this device): one logout, nothing reset', async () => {
+    refreshAnswer = refusalNaming('alice', 'device-rotated-away');
+    const a = app();
+    await refresh().catch(() => {});
+    await a.settleAll();
+    expect(wipeDeviceToFactory).not.toHaveBeenCalled();
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it("another account's device (not this device): one logout, nothing reset", async () => {
+    refreshAnswer = refusalNaming('bob');
+    const a = app();
+    await refresh().catch(() => {});
+    await a.settleAll();
+    expect(wipeDeviceToFactory).not.toHaveBeenCalled();
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it('a plain expiry: one logout', async () => {
+    refreshAnswer = expiredRefusal;
+    const a = app();
+    await refresh().catch(() => {});
+    await a.settleAll();
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it('a reset that throws BEFORE its clearAuth: still one logout, never zero', async () => {
+    refreshAnswer = revokedRefusal;
+    removeMlsState.mockRejectedValueOnce(new Error('store locked'));
+    const a = app();
+    await refresh().catch(() => {});
+    await a.settleAll();
+    expect(logouts()).toHaveLength(1);
+  });
+
+  it('a reset that throws AFTER its clearAuth: TWO logouts - the accepted case, a harmless write on a gone session', async () => {
+    refreshAnswer = revokedRefusal;
+    wipeDeviceToFactory.mockRejectedValueOnce(new Error('factory reset failed'));
+    const a = app();
+    await refresh().catch(() => {});
+    await a.settleAll();
+    expect(logouts()).toHaveLength(2);
+  });
+
+  it('a refusal reaching the handler MID-WIPE joins it: no false "not this device", no second logout', async () => {
+    refreshAnswer = revokedRefusal;
+    const held = deferred();
+    factoryHeld = held.promise;
+    const a = app();
+    // The first discoverer starts the wipe, which parks on the held factory reset.
+    await refresh().catch(() => {});
+    await vi.waitFor(() => expect(localStorage.getItem(ACCOUNT_KEY.deviceId('alice'))).toBeNull());
+    // The wipe has deleted the key the identity comparison reads; a second refusal arrives now.
+    const second = settleSessionEndByRevocationImpl(a.ctx, a.cb, 'alice');
+    held.resolve();
+    await expect(second).resolves.toBe(true);
+    await a.settleAll();
+    expect(a.logs()).not.toContain('not this device');
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(logouts()).toHaveLength(1);
   });
 });

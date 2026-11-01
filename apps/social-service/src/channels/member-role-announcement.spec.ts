@@ -9,6 +9,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { roleUpdateBuilder } from './member-role-update.fake-spec';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 import { CHANNEL_PERMISSIONS } from './permissions';
 
 /**
@@ -79,6 +80,10 @@ describe('ChannelService.updateWorkspaceMemberRole - announcing it to the member
       save: jest.fn((m: Record<string, unknown>) => Promise.resolve(m)),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    // A role change writes under the community removal lock, through this manager.
+    Object.assign(memberRepo, {
+      manager: fakeDepartureManager(() => ({ channelRepo: noop, memberRepo, roleRepo })),
+    });
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
 
     const service = new ChannelService(

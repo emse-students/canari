@@ -291,30 +291,32 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       'queued-copy',
       'save',
       'pending-row',
-      // The invitation-link ask its Welcome answers, lifted in the same transaction.
-      'lift',
     ]);
   });
 
   /**
-   * A WELCOME STORED BY AN ADMITTED MEMBER ADMITS ITS TARGET: the ask an invitation link wrote is
-   * lifted with it, whatever client sent it - one older than `admits` declares nobody in its commit,
-   * and this is the one door that still sees its Add.
+   * A WELCOME SENT APART NEVER ADMITS ITS TARGET (ADM-3): the accepted commit is the one writer of a
+   * new person, and it lifts the ask in the transaction that accepts it. A seat still awaiting a
+   * member's admission is one no accepted commit admitted - an Add the gate refused, or one that
+   * never landed - so its Welcome is refused, nothing stored and nothing lifted.
    */
-  it("lifts the target's invitation-link ask, guarded on the flag, in the store's transaction", async () => {
-    txAsks.mockResolvedValueOnce([{ id: 'm-u2', userId: 'u2' }]);
+  it('refuses a Welcome to a seat still awaiting admission, and lifts nothing', async () => {
+    txSeat.mockResolvedValue({ id: 'm-u2', awaitingAdmission: true });
+
+    await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+      response: { code: 'WELCOME_TARGET_NOT_MEMBER', error: 'welcome_target_not_member' },
+    });
+    expect(queuedSave).not.toHaveBeenCalled();
+    expect(txLift).not.toHaveBeenCalled();
+    expect(txReads).not.toContain('pending-row');
+  });
+
+  it('stores a Welcome to an ADMITTED seat without touching its admission', async () => {
+    txSeat.mockResolvedValue({ id: 'm-u2', awaitingAdmission: false });
 
     await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
-
-    expect(txLift).toHaveBeenCalledTimes(1);
-    const [where, set] = txLift.mock.calls[0] as [
-      { groupId: string; id: { value: string[] }; awaitingAdmission: boolean },
-      unknown,
-    ];
-    expect(where.groupId).toBe('g1');
-    expect(where.awaitingAdmission).toBe(true);
-    expect(where.id.value).toEqual(['m-u2']);
-    expect(set).toEqual({ awaitingAdmission: false });
+    expect(txLift).not.toHaveBeenCalled();
+    expect(txAsks).not.toHaveBeenCalled();
   });
 
   /**

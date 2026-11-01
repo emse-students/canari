@@ -653,7 +653,11 @@ window with a durable row and a lock:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
   roster write and its eviction record in one transaction), the commit's advance (its admits), an
   account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
-  that transaction, so an accepted commit never leaves a leaf without its seat),
+  that transaction; an external join whose seat cannot be written - a departure in progress, a
+  revoked device, no key package - is refused whole with `NOT_A_MEMBER`, so an accepted external
+  commit never leaves a leaf without its seat; a pending member's commit adds no leaf, since its Add
+  did, and stands with its seat left `pending`, logged `committer seat NOT written` or
+  `REFUSED ... reason=`),
   `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
   registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
   roster re-read under it).
@@ -710,15 +714,13 @@ window with a durable row and a lock:
   the admit is dropped and the commit accepted, since the leaf belongs to an account that is going or
   a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
   committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
-  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
-  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
-  key package - and removes the route itself. And `addGroupMember` (a group invite, and the opening
-  of a 1:1 DM), a pre-existing writer not yet converted: it reads the key packages outside any lock
-  and writes the roster row and `pending` seats with no seat lock, so **an erased account can be
-  re-enrolled by a peer's invite, roster row included, even after the erasure's final pass**
-  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
-  pass"). An account erasure deletes the account's key packages FIRST, in a
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats` - which `addGroupMember` uses for
+  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`, the
+  recorded creator alone since migration 042).
+  **One known exception.** The demotion (`deactivateDeviceMembership`, the stale-device cron among
+  its callers), deliberately: it only moves a row that exists to `pending`, without that read - the
+  cron demotes precisely a device with no recent key package - and removes the route itself. An
+  account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
@@ -727,9 +729,13 @@ window with a durable row and a lock:
   package (`register-device`), and a token issued before the deletion is honoured for up to an
   hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
   device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
-  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
-  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
-  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`, then
+  every route of the account FOUND off the routing sets by its prefix (`findRoutesOfUser`, never off
+  a row) and removed under that group's seat lock when no active seat of the account stands behind
+  it (`removeUnseatedRoutes`) - a 1:1 DM whose tombstone committed before a crash is named by no
+  row, and its route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS - a route removed
+  alone would be written back by the next send's reconciliation (`MEMBERS_CACHE_REPAIRED`) - which core starts
   once every token expired, so no republish can follow it - termination is that pass's, never the
   ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
   `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
@@ -1808,6 +1814,133 @@ it, whenever, converging to nothing to do.
 reading it as one would empty the tree of everybody but this device. Same rule as every other
 destructive sweep here.
 
+### The actor of a removal commits it - 2026-10-27
+
+"Lazily" turned out to mean "at the next app load": the pass ran only from the community LISTING,
+and selecting a salon or a community calls nothing that reaches it. So the device that had just
+revoked somebody from a private salon - holding the salon's group, online by construction - committed
+nothing while it stayed loaded, and every session minted meanwhile stayed at the epoch the removed
+devices hold, protected by server routing alone. The rig hid it for a while: the leave-and-re-enter
+gesture of its salon row was a full page load until it became a click, after which the row measured
+the real behaviour.
+
+**Whoever removes somebody commits the Remove**, the mirror of section 20's admission:
+`commitSalonRevoke` (`frontend/src/lib/utils/graine/commitRemoval.ts`) runs from the settings panel
+right after the server accepts the revoke, not awaited and never throwing. It is the SAME roster
+pass, not a second implementation - a diff read after the server write, so it removes exactly whom
+the server no longer lists - and the pass is now serialised per scope
+(`reconcileDistributionGroupRoster`): a pass waits for the one running on its scope, and callers
+arriving while a pass still waits share it, so the actor's pass and a load's cannot both commit the
+same Remove. One writer: the actor's own device, on its leader tab. A shared pass logs through every
+caller that shares it. **The lane is bounded by its transports, not by a timer**: each pass awaits a
+local tree read, the roster, base and revoked-leaves reads (each under a response-head deadline, a
+typed `RequestDeadlineError`), at most one commit (the MLS lock-hold budget) and a local persist, so every
+pass settles, and a failed one is swallowed by the lane's tail rather than holding the scope - a
+hung actor pass cannot stall a community's opening. A removal the gate refuses re-reads the tree:
+"already gone" when another device removed them first, "still hold a leaf" only when they do.
+
+**A community kick, the same way** (`commitCommunityKick`, from the community admin panel): the
+kick cuts and strips the person from the community AND from every private salon in one server call,
+so the actor commits in the community's key group and then in each private salon's group of that
+community it holds, one at a time. A `channel.member.kicked` broadcast about somebody else stays
+`ignore` on every receiver (`memberRemoval.ts`): the commit is the actor's, never the fan-out's.
+
+**A departure nobody acting can commit is committed by ONE ELECTED device**
+(`frontend/src/lib/utils/graine/departureCommitter.ts`). A member's own LEAVE has no committer: MLS
+does not let a member commit its own removal, and the leaver's devices are unrouted first. A kick or
+a revoke whose actor holds no leaf in a scope is the same case. So every receiver of the removal
+broadcast about somebody else - and a salon leave now broadcasts `channel.member.removed` with the
+leaver as its own actor, to the salon's audience and the leaver - reads the scope's tree and its
+roster with per-device presence and elects a device: the first, in window order, of a window of
+four leaves (the departed user's excluded) whose user is on the roster and whose device the roster
+reports online. A receiver whose tree holds no leaf of the departed user decides nothing
+(`not-in-tree`). **The window MOVES**: the tree's leaves in canonical `userId:deviceId` order,
+rotated by a hash of (departed user, epoch) and cut to four (`electionWindow`). A fixed prefix would
+starve for good on four leaves that never commit - a stale device, a revoked leaf not yet removed, an
+older client - so the window is a function of the tree, the departure and the epoch, and the next
+DEPARTURE lands elsewhere; an epoch change is not a trigger, nothing re-runs an election when the
+epoch moves. The tree and its epoch are read TOGETHER, under the MLS lock (a read whose epoch moved
+decides nothing), so receivers that have merged the same commits compute the same window; a receiver
+a commit behind computes another, and the epoch gate keeps one Remove if two are elected. Only a
+receiver whose own leaf is in the window reads the roster at all - a departure costs at most four
+roster reads, not one per member - and each of them logs `nobody elected` with the window size and
+epoch when none of the four is online, so a starved window is visible from inside it. The elected
+device runs the scope's roster pass (the same serialised pass, so a load's pass on that device
+cannot double it) unless its tab is not the leader or its group sits in an epoch gap, which it says;
+every other receiver commits nothing and logs whom it left it to. **The actor is checked BY
+DEVICE**: a kick or a revoke names the actor's device when that device will commit
+(`committingDeviceId`: a Graine runtime and the leader tab), the server echoes it as
+`actorDeviceId`, and the receivers leave a scope's Remove to it exactly when that device is a leaf
+of the scope's tree - a user-level check handed it to an actor whose OTHER device held the leaf.
+
+**A claim the actor did not honour is RELEASED, on a proof, and only then decided again.** Only the
+actor's device can know its commit did not land, and only once its pass has ended: a receiver that
+decided against the claim on its own - on a reconnect, a timer, the next event - would race a commit
+still in flight at the same epoch, two writers that heal only because the epoch gate keeps one. So
+the pass reports the users holding a leaf of the tree it LEFT (`reconcileDistributionGroupRosterReported`,
+read inside the lane), or nothing at all when one of its commits has an unknown outcome
+(`CommitOutcomeUnknownError`: it may yet land) or was ACCEPTED by the server and failed to merge here
+(`AcceptedCommitNotMergedError`: it landed, and the tree this device still holds is the one before
+it). When the departed user is still named there - nothing staged, a definite refusal, a roster it
+could not read - the actor posts
+`POST /api/channels/workspaces/:workspaceId/members/:userId/removal-released` or
+`POST /api/channels/:channelId/members/:userId/removal-released` with `?actorDevice=` its own device
+(`commitRemoval.ts`). An actor whose device holds no key group for the scope (a state dropped, a
+salon registered and not held) stages nothing, which is a proof too, and releases at once. The
+server requires the device, checks the same permission as the removal and that the person is no
+longer in the scope, throttles per user, and publishes `channel.member.removal-released` with
+`releasedBy` and `releasedByDevice` to the scope's remaining members. Every receiver of THAT event,
+and only of it, decides that ONE scope without the claim (`commitReleasedDepartureIfElected`) - one
+scope per release, because the actor commits its scopes one after another and a salon's commit may
+still be in flight when the community's is released. **Only a receiver that DEFERRED to the
+releasing device re-decides** (`not-deferred` otherwise, at debug level): each receiver remembers, in
+memory, which device it left a (key group, departed user) Remove to on the removal event, and a
+release must name exactly that device; the entry is consumed by it and emptied at sign-out. The
+server binds a release only to a leaf of its CALLER, not to the removal it releases - any user
+allowed to remove members could name one of their own devices - so the receiver's own deferral is
+the fact that decides, and a release naming any other device changes nothing: every receiver that
+did not defer already elected on the removal event, and a second election there would race the
+first. (The alternative, the server recording each removal's actor and refusing anybody else's
+release, needs a durable record per removal; the receiver already holds the one fact the decision
+needs.) A receiver that reloaded in between forgot its deferral, and its load's own roster pass is
+the backstop. **And no leaf of the releasing actor is elected**: its device
+is online and holds a leaf, and a window starting on it would hand the Remove back to the one
+device that just declined it.
+**What is covered, said honestly**: an actor whose pass ended without removing them is covered at
+once, by every remaining member online at the release; an actor whose app closed before its pass
+ended, whose release was not announced (it says so), or whose commit outcome stayed unknown releases
+nothing, and the Remove waits for a holder's next roster pass - **at worst the next app load**. A
+member offline at the release is covered the same way. So are two cases nothing re-decides: a
+receiver whose tree read saw its epoch move (`unreadable`) does not read it again, and an actor
+commit whose outcome was unknown and is LATER refused releases nothing. **The other residuals, each
+left to that same backstop**: an actor that lost tab leadership between the kick and its commit
+(`not-leader`) releases nothing; a salon the actor's tree holds but this session never registered
+has no scope to commit or release from; receivers at different epochs may compute different windows
+(the epoch gate keeps one commit); the actor's OWN other devices are outside the release's audience,
+so they never re-decide it. The deferral is held per TAB: if leadership moves to another tab between the removal and the release, the new leader says `not-deferred`, and if the others had left the Remove to this device nobody commits it until a load. A deferral is consumed before the tree is read, so a release decided `unreadable` loses it. A new removal of the same person in the same group ends any earlier deferral, so a release of the earlier one cannot start a second election. A release refused by the per-user throttle (60 per minute, across all
+communities) is logged `NOT announced` and falls to the backstop too. An actor holding no key group
+for the scope releases to every member: the ones that did not defer say `not-deferred` at debug
+level only. **Rollout**: the deferral, the release and the route's `400` without a device ship in
+one build; no pre-release may carry part of them. No clock anywhere: two receivers reading
+presence a moment apart may still elect two devices - the epoch gate keeps one commit and the other
+pass reads the tree again - or none, and then the Remove waits for a holder's next roster pass.
+**Presence says online, not able to commit**: an elected device that does not hold the group, or an
+older client predating this election, commits nothing, and only the backstop - a holder's next
+roster pass - covers it.
+
+**A removal and a grant of the same salon are ordered by the server's `accessRevision`**, which both
+broadcasts now carry: a removal older than a grant already seen for the same person (a leave and a
+quick re-invitation, handled out of order) is ignored by the event pipeline (`SalonGrantLedger`,
+`memberRemoval.ts`) rather than purging a salon its user is back in. A removal whose announcement
+fails after the write is logged and answered as done - the removal happened, and a 500 would invite
+a retry answered "not a member".
+
+What it does not cover, said in its log line and left to a holder's next pass (the convergent diff
+above, unchanged): an actor or an elected device on a follower tab, a session with no Graine
+runtime, a roster read without per-device presence, no remaining device online - and **an
+access-list rewrite** (`updateChannelAccess`: a salon's list edited wholesale, or a public salon made
+private with a shorter list), which runs no actor pass and broadcasts no removal at all.
+
 ### Two primitives were missing, and one was inert
 
 `member_identities` / `get_member_identities` / `lister_identites_membres` (mls-core, wasm, Tauri):
@@ -2350,7 +2483,11 @@ repaired**. A bundle travels on the community's distribution group, so every mem
 answer to ANY member's request, and announcing held seeds re-read the salon's history on every online
 member per answer: 18 refetches of one salon in three minutes on a client that had asked for nothing
 (production web console, 2026-10-12, `v1.2.4`). A shortfall that is not
-`already held` is a refusal, which warns or errors on its own line.
+`already held` is a refusal, which warns or errors on its own line. **A bundle that carried no
+seed says no `absorbed` line at all** (2026-10-29): an "I hold nothing" answer or a pure decline
+reaches every member of the key group, so `absorbed 0/0 ... salon(s) none` was one line per member
+per answer to somebody else's ask - a read, not a decision. What such a bundle decides is said where
+it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
 
 **Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
@@ -3106,7 +3243,7 @@ phone processes it in the background with the app shut; a community newcomer now
 | Welcome authorization | `sendWelcome` in `apps/chat-delivery-service/src/services/messaging.service.ts`, through `memberOfGroupKind` | It asked `dm_group_members`, which names nobody for a key group (section 16), so every such Welcome would have been a 403. Now an ACTIVE device row - the one helper the replay (`getCommitsSince`) also uses |
 | The newcomer, foreground | `handleDistributionWelcome` in `setupMessageHandler.ts` | `getGroupMeta` names the kind (it now carries `distributionWorkspaceId` / `distributionChannelId`); registers the seed carrier BEFORE installing, installs, promotes the row. No conversation row. A failed install is ACKed and nothing else: the queued Welcome is gone, so the device's own load joins |
 | The newcomer, app killed | `processReceivedWelcomeBackground` (Android, unchanged) | Installs the Welcome and calls `membership-active` |
-| One door at a time | `ensureDistributionGroupFor` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`) | A device holding nothing whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
+| One door at a time | `externalJoin(groupId, { welcomeOwed: 'ask' })` from `ensureDistributionGroup` + `readWelcomeOwedFromSeat` (`utils/chat/welcomeOwed.ts`); the seat is SERVED WITH THE BASE (`DistributionSeat`: chat-delivery `GET internal/mls/distribution-groups/:scope/:scopeId?userId=&deviceId=`, passed through social-service's two `distribution-group` routes as `?deviceId=`); `ensureDistributionGroupFor` logs the `welcome_owed` and `seat_unreadable` outcomes | ONE read per attempt carries the base and this device's seat, the seat read server-side AFTER the base. A device whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining (`welcome_owed`); no seat served, or an add lock the server could not read (`addInFlight` absent, never `false`), is `seat_unreadable` and opens neither door this pass |
 
 **Why two admitters, or an admitter and the newcomer's own join, cannot both land.** Two admitters
 are serialised by the add-lock, taken before the tree is read. The external commit takes no lock and
@@ -3117,6 +3254,45 @@ writes their `pending` seats in the same transaction as the epoch advance, befor
 base can be minted - so a newcomer that reads that base also reads a seat, with `addInFlight` while
 the admitter holds the lock through its Welcomes, and waits. The same record makes the newcomer a
 recipient of every frame sealed from that epoch on (below).
+
+**That holds only if the seat is read AFTER the base, and until 2026-10-30 it was read before.**
+`ensureDistributionGroupFor` asked the seat question of its `ref` - the roster social-service served
+before the join - and only when that roster already named the device; `externalJoin` then fetched
+the base again and built on it. An Add accepted between the two reads stored the base the join used
+while the roster it was judged on predated the Add's seat, so the device joined over the Add: its
+external commit replaced the leaf the Add had written (`removes=1` on every member), and the
+admitter's Welcome, arriving tens of milliseconds later, found the group built and was logged
+`[WELCOME] key group <kg>... already held - redelivered Welcome ignored (idempotent)`. It was never
+a redelivery and never a second mint: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5,
+SALON-REVOKE-COMMIT, 2026-10-25..29) the Welcome's `qId` appears once, and `externalJoin succeeded`
+for the same group follows within 200 ms. The question now lives inside the join
+(`welcomeOwed: 'ask'`), and the answer comes IN THE SAME RESPONSE as each attempt's base:
+chat-delivery reads the device's seat after the base and serves both, so no seat can be older than
+the base it is judged against and the join costs no extra round trip. A separate seat read after the
+base was the first version (one more request per attempt, and a second failure mode); it was dropped
+in review before merging. The idempotent drop stays as the witness that would show the race again.
+The loader's own pre-read on a held-but-evicted group went the same way: it forgets the dead tree
+and lets the join's served seat decide, so an owed Welcome installs on a group no longer held.
+
+**The two facts of a `pending` seat are read lock first, queue second** (`readPendingMembershipFacts`).
+An Add queues its Welcome and only then releases the add lock. Read queue-first, a queue read made
+before the insert and a lock read made after the release both answer "nothing", and the seat an Add
+has just written reads as one nothing follows. Read lock-first, a lock seen free means any Add whose
+seat was read had already queued its Welcome, which the queue read then sees. The exception is a
+Welcome the device already took: installed, the group is held; failed and ACKed, a seat nothing
+follows is the truth. An add lock Redis could not read is served as unknown (`addInFlight` absent),
+never `false`.
+
+**`admittedAtEpoch` is not served in the seat, deliberately.** It is written in the epoch advance's
+own transaction, so it would close the window without any read order. But nothing clears it when the
+Welcome's install fails and the Welcome is ACKed. A seat carrying it would then read as owed forever,
+and the device would wait for a Welcome already spent: the failed-install strand.
+
+**The client and the server ship together.** A client from this change reads a base served without
+`seat` as `seat_unreadable` and joins nothing, on purpose, because "no answer" is never "nothing
+owed". So social-service, chat-delivery and the frontend go out in ONE release. A server rolled back
+under a newer client strands every key-group external join (`seat_unreadable` on each attempt) until
+the server serves `seat` again.
 
 **When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
 The first run measured the losing side: the newcomer's two live web clients joined by their own
@@ -3846,9 +4022,9 @@ and only because the server was further ahead (on the PC it was not, for three d
 **Held is now three questions, and the second one is asked everywhere it matters**:
 
 - **The loader** (`joinDistributionGroup`) reads `isGroupActive` on a held group. Held but inactive is
-  stale: it forgets the tree and joins, **unless a Welcome may be owed to this device**
-  (`readWelcomeOwedForThisDevice`), which is the only other way back in and which a second join
-  would race.
+  stale: it forgets the tree and joins, and **the join stands down when a Welcome is owed to this
+  device** (the seat served with its base, section 20 "One door at a time"), which is the only other
+  way back in and which a second join would race.
 - **The frame path and both replays** tell a new verdict, `evicted`, ONCE per group until it is
   forgotten (`tellEvictedOnce`), since a queued burst is one eviction. The frame is still
   acknowledged: its epoch belongs to a leaf this device no longer holds, and the seeds come back
@@ -4123,7 +4299,21 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
 
 - **One launch walks the roster one member at a time**: one roster read and one sealed send per
   member, once per epoch. Once every device the request named has answered (or, when it named none,
-  every tree device of the member), the next member is asked at once, from the answer itself. A
+  every tree device of the member), the next member is asked at once, from the answer itself, and
+  THAT decision is the one line said: `<member> holds nothing of community <ws> on <devices> at
+  distribution epoch N - recorded, every device of <member> on the key group has answered`, naming
+  every device that answered this request. It stops at the member: whether anybody is left is known
+  only after the next roster read, so the walk's own next line says it (`asked <next member>`, `is
+  final at distribution epoch N`, or why it waits). A device answering while a sibling is still to
+  answer moves only the durable record and says nothing (until 2026-10-29 it said `... - recorded; N
+  device(s) still to answer`, one line per device per ask, which the cross-client rig reads as
+  dirt). An ask that ends BEFORE its decision - replaced by a new ask, or dropped with its
+  community - says what it gathered once (`closeHistoryRequest`): `the history ask of community
+  <ws> to <member> ended before its decision (<why>): <devices> recorded as holding nothing at
+  distribution epoch N, <devices> still owed`; one that gathered nothing ends in silence. **Limit:
+  the in-flight ask is in memory**, so one cut short by a restart says nothing of its partial
+  answers; they stay in the durable record, and the next start's `asked <member> (<devices>)` names
+  only the devices not yet recorded. A
   device recorded already never moves the walk again, so a repeated answer cannot loop it.
 - The election skips a member whose devices are all recorded (`exhausted`), and for now a member
   whose ONLINE devices are all recorded (`spent`) - only the unrecorded online devices are named.
@@ -4193,7 +4383,7 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 (per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
 (`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
 reading - a cold start with every other member online, then a second start: the first shows one
-`holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
+`<member> holds nothing ... on <devices> at distribution epoch N - recorded, ...` per member (each followed by `asked <next member>`) and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
 
 ## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)

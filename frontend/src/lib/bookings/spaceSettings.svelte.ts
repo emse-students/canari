@@ -9,6 +9,8 @@
  */
 import type { AudienceCondition, FormItem } from '$lib/forms/api';
 import { instantOfWallTime, wallTimeIn } from './wallTime';
+import { BOOKING_NOTIFICATIONS_LIVE } from './notified';
+import { reminderFromValue, reminderValue } from './reminder';
 import type {
   Discoverability,
   ManagedSpace,
@@ -53,6 +55,12 @@ export interface SettingsDraft extends Record<NumberField, string> {
   timeZone: string;
   privateInfo: string;
   slotMode: SlotMode;
+  /**
+   * A 'slots' space's slot length in minutes, chosen from the wizard's list (so never out of
+   * range); `''` = not stored (a space created before migration 116), whose painter reads it
+   * from the lines. Not sent on a step space.
+   */
+  slotMinutes: string;
   nameVisibility: NameVisibility;
   discoverability: Discoverability;
   audience: AudienceCondition | null;
@@ -64,6 +72,8 @@ export interface SettingsDraft extends Record<NumberField, string> {
   opensAt: string;
   /** Always a period; it only counts when `maxMinutesPerPeriod` is set. */
   quotaPeriod: QuotaPeriod;
+  /** The default reminder delay as a `Select` value (`reminder.ts`), "none" for no reminder. */
+  reminderMinutes: string;
 }
 
 const text = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
@@ -87,12 +97,14 @@ export function draftFromSpace(space: ManagedSpace): SettingsDraft {
     timeZone: space.timeZone,
     privateInfo: space.privateInfo ?? '',
     slotMode: space.slotMode,
+    slotMinutes: text(space.slotMinutes),
     nameVisibility: space.nameVisibility,
     discoverability: space.discoverability,
     audience: $state.snapshot(space.audience ?? null),
     items: $state.snapshot(space.items ?? []),
     opensAt: space.opensAt ? wallTimeIn(Date.parse(space.opensAt), space.timeZone) : '',
     quotaPeriod: space.quotaPeriod ?? 'week',
+    reminderMinutes: reminderValue(space.reminderMinutes ?? null),
   };
 }
 
@@ -133,7 +145,11 @@ export function draftProblems(draft: SettingsDraft): DraftProblems {
  * The settings to send, or null while `draftProblems` names one. Every setting is sent: the editor
  * shows them all, so a PATCH of the whole is what the screen says.
  */
-export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
+export function settingsFromDraft(
+  draft: SettingsDraft
+):
+  | (Omit<SpaceSettings, 'reminderMinutes'> & Partial<Pick<SpaceSettings, 'reminderMinutes'>>)
+  | null {
   if (Object.keys(draftProblems(draft)).length) return null;
   const num = (f: NumberField) => parseNumber(f, draft[f]) as number | null;
   const opens = draft.opensAt ? instantOfWallTime(draft.opensAt, draft.timeZone) : null;
@@ -147,6 +163,8 @@ export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
     slotMode: draft.slotMode,
     stepMinutes: step ? num('stepMinutes') : null,
     maxSteps: step ? num('maxSteps') : null,
+    // The mirror: a step space stores no slot length, so a switch to step clears it.
+    slotMinutes: step || draft.slotMinutes === '' ? null : Number(draft.slotMinutes),
     nameVisibility: draft.nameVisibility,
     discoverability: draft.discoverability,
     audience: draft.audience,
@@ -162,12 +180,18 @@ export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
     participantWithdrawMinMinutes: num('participantWithdrawMinMinutes') as number,
     maxPeople: num('maxPeople'),
     retentionDays: num('retentionDays') as number,
+    // Sent only while the notices are live: off, the field is not shown, and a save must not
+    // touch a default nobody was offered (WP-N).
+    ...(BOOKING_NOTIFICATIONS_LIVE
+      ? { reminderMinutes: reminderFromValue(draft.reminderMinutes) }
+      : {}),
   };
 }
 
 /**
  * How many of the collapsed "booking rules" (D35 section 4) are set - the badge on the collapsed
- * section, as forms' advanced settings show one, so a rule is never hidden AND forgotten.
+ * section, as forms' advanced settings show one, so a rule is never hidden AND forgotten. The
+ * ceiling of people is NOT one of them since WP-R6 (Q-R13): it sits in "who", always in view.
  */
 export function activeRuleCount(draft: SettingsDraft): number {
   const set = (v: string) => v.trim() !== '';
@@ -178,7 +202,6 @@ export function activeRuleCount(draft: SettingsDraft): number {
     set(draft.maxActiveBookings),
     set(draft.maxMinutesPerPeriod),
     set(draft.participantWithdrawMinMinutes) && draft.participantWithdrawMinMinutes.trim() !== '0',
-    set(draft.maxPeople),
   ].filter(Boolean).length;
 }
 

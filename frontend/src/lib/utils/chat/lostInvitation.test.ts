@@ -56,6 +56,10 @@ function harness() {
     notifyCommitsApplied: vi.fn(),
     processIncomingMessage: vi.fn(async () => null),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [...roster].map((userId) => ({ userId })),
+      seatGeneration: 0,
+    })),
     removalEpochs: vi.fn(async (_g: string, u: string) => departures.get(u) ?? []),
     getEpoch: vi.fn(() => state.epoch),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
@@ -64,6 +68,7 @@ function harness() {
       { deviceId: `${u}-dev`, keyPackage: new Uint8Array([4]) },
     ]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(
       async (
@@ -218,7 +223,7 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
 
   it('another device holds the add lock: WAITING - nothing staged, the invitation is not over', async () => {
     const h = harness();
-    h.mlsService.acquireAddLock.mockResolvedValueOnce(false);
+    h.mlsService.acquireAddLockAnswer.mockResolvedValueOnce('held');
     const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
 
     expect(outcome).toEqual({ kind: 'waiting', on: 'add-lock' });
@@ -287,14 +292,21 @@ describe('inviteMembersToGroup - an Add that got no answer', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('writes the invitation and its roster baseline into the commit', async () => {
+  it('writes the invitation, its roster baseline and the seat generation it was decided at into the commit', async () => {
     const h = harness();
     h.roster.add('w5');
+    h.mlsService.getGroupRosterAtGeneration.mockImplementation(async () => ({
+      members: [...h.roster].map((userId) => ({ userId })),
+      seatGeneration: 4,
+    }));
     await inviteMembersToGroup(['W5', 'w6'], { id: G } as never, h.deps as never);
 
+    // The generation is what the gate orders a Decline against (ADM-3): one recorded after it holds
+    // against this Add, one recorded before it does not.
     expect(h.mlsService.addMembersBulk.mock.calls[0][3]).toEqual({
       users: ['w5', 'w6'],
       rostered: ['w5'],
+      seatGeneration: 4,
     });
   });
 

@@ -157,6 +157,15 @@ export class DeviceGroupMembership {
   @Column({ type: 'integer', nullable: true, default: null })
   admittedAtEpoch: number | null;
 
+  /**
+   * When a commit admitted this device into the group - the evidence `withheldWindows` reads a
+   * person's ARRIVAL from (their earliest row), so a newcomer is withheld everything before it.
+   *
+   * The insert's instant for every row but one kind: an invitation link writes `pending` rows when
+   * the person ASKS, before any member admitted them, and the member's Add that answers the ask
+   * re-dates them to its own transaction (`dateArrivalAtAdmission`, user 2026-10-21: "added =
+   * arrived"). Never written otherwise.
+   */
   @CreateDateColumn()
   createdAt: Date;
 

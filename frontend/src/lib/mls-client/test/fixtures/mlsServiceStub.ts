@@ -21,6 +21,7 @@ export function createMlsServiceStub(
     leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
     setDeviceEventConsumer: vi.fn(),
+    settleDeviceEvents: vi.fn().mockResolvedValue(true),
     // Default: a device never seen - a verifier test overrides it with the key it pins.
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.
@@ -53,6 +54,7 @@ export function createMlsServiceStub(
     getEpoch: vi.fn().mockReturnValue(0),
     registerMember: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
+    acquireAddLockAnswer: vi.fn().mockResolvedValue('taken'),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     // A PAGE, not a bare array: the walk reads `rows` and pins its upper bound from `head`. The
     // stub is cast to `IMlsService`, so a stale shape here is invisible to the type checker and
@@ -102,6 +104,7 @@ export function createMlsServiceStub(
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
+    heldGroupsKnown: vi.fn().mockReturnValue(true),
     notifyConversationAvailable: vi.fn(),
     notifyCommitsApplied: vi.fn(),
     // Still a member by default: eviction is the exception, and a stub that answered `false` would
@@ -120,9 +123,12 @@ export function createMlsServiceStub(
     declineJoinRequest: vi.fn().mockResolvedValue('withdrawn'),
     removeMember: vi.fn().mockResolvedValue(undefined),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
+    removeDepartedMembers: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
+    setAdmissionPolicy: vi.fn().mockResolvedValue(undefined),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
+    getGroupRosterAtGeneration: vi.fn().mockResolvedValue({ members: [], seatGeneration: 0 }),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
     // As the server answers: the person asked `for` is counted, with nothing withheld.
     getGroupWithheld: vi.fn(
@@ -131,9 +137,13 @@ export function createMlsServiceStub(
     ),
     // As every server since step A answers: addressed history answers are routed.
     getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
-    getGroupRosters: vi
-      .fn()
-      .mockResolvedValue({ rosters: new Map(), refused: new Set(), revoked: new Map() }),
+    getRevokedLeaves: vi.fn().mockResolvedValue([]),
+    getGroupRosters: vi.fn().mockResolvedValue({
+      rosters: new Map(),
+      refused: new Set(),
+      revoked: new Map(),
+      awaiting: new Map(),
+    }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     getPendingInvitations: vi.fn().mockResolvedValue([]),
@@ -157,7 +167,7 @@ export function createMlsServiceStub(
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
     onWelcomeProcessed: vi.fn(),
-    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     onWelcomeRequest: vi.fn(),
     onBaseRefreshRequest: vi.fn(),
     sendBaseRefreshRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),

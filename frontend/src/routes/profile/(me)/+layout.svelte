@@ -19,7 +19,7 @@
     const outcome = await model.load();
     if (outcome === 'unauthenticated') {
       const back = encodeURIComponent(page.url.pathname);
-      await goto(resolve(`/login?returnTo=${back}`), { replaceState: true });
+      await goto(resolve(`login?returnTo=${back}`), { replace: true });
     }
   });
 </script>
