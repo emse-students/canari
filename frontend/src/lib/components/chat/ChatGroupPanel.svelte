@@ -20,6 +20,7 @@
     Camera,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import ProfileLink from '../shared/ProfileLink.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -517,7 +518,7 @@
                   : ''}"
               >
                 <div class="flex min-w-0 items-center gap-3">
-                  <Avatar userId={member} size="sm" />
+                  <ProfileLink userId={member}><Avatar userId={member} size="sm" /></ProfileLink>
                   <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span

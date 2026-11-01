@@ -1409,6 +1409,7 @@
   "chat_channel_settings_label": "Paramètres du canal",
   "chat_group_settings_label": "Paramètres du groupe",
   "chat_dm_settings_label": "Paramètres de la discussion",
+  "chat_open_profile_label": "Ouvrir le profil de {name}",
   "chat_settings_title": "Paramètres",
   "chat_e2e_established_preview": "Canal E2E établi.",
   "chat_waiting_own_device": "En attente d'ajout. Cela se fait tout seul dès qu'un autre de vos appareils déjà dans cette conversation, ou un autre membre, ouvre l'application.",

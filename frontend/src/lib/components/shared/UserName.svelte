@@ -1,6 +1,7 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
+  import { isAbsentUser } from '$lib/utils/users/absentUsers';
 
   interface Props {
     /** User ID used to resolve the display name. */
@@ -24,7 +25,7 @@
   const displayName = $derived(resolved.current);
 </script>
 
-{#if link}
+{#if link && !isAbsentUser(userId)}
   <a
     href="/profile/{encodeURIComponent(userId)}"
     class="{className} hover:underline"

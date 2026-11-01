@@ -62,10 +62,36 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 `ChatComposer`.
 
 - **The header is three pieces of glass** (`ChatHeader`, `.chat-header-phone`): back, the
-  conversation in a CENTRE PILL (avatar, name - tap opens its settings), and `GlassMenuButton`
+  conversation in a CENTRE PILL (avatar, name - tap opens its settings, **or the peer's profile in a
+  direct conversation**, see below), and `GlassMenuButton`
   ("Plus d'actions") growing into the SAME actions as the classic row, under the same conditions -
   calls when their handlers are given, a channel's members first, media, search, settings.
   `ChatHeader.phoneMenu.svelte.test.ts` holds that parity, and that the website draws none of it.
+### A person in a conversation opens their profile (2026-11-01)
+
+Owner: *"it would be nice to reach the profile page of someone you click on in a conversation, in the
+participants list, or in the header if it's a 1:1"*. Three entry points, all real `<a>` (or a labelled
+button for the glass pill), all built by `profileHref` (`utils/users/profileHref.ts`) and drawn through
+`shared/ProfileLink.svelte` for avatars:
+
+- **A message**: the sender's avatar (received messages, last of a run) and the name above it in a group
+  (`data-profile-link`, `data-sender-profile-link`). Both stop the click, so the bubble's own tap, its
+  long-press and the reactions are untouched. Your own messages carry no avatar and no name, so no link.
+- **Members lists** (`ChatGroupPanel`, `ChannelMembersList`): the avatar joins the name, which already
+  linked. The remove-member control stays. A salon list builds hrefs from ids alone - no profile is
+  fetched for a link.
+- **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
+  centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
+  entry there, so nothing became unreachable). A group or salon pill still opens its settings.
+- **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
+  `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
+  link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
+  page itself owns visibility (blocks, review cohort), so a link is only a navigation.
+- **Scroll on return is NOT preserved**: the chat route unmounts on navigation and reopens at its entry
+  window; no per-conversation scroll memory exists. Open item, see the PR.
+
+Held by `ChatProfileEntryPoints.svelte.test.ts`.
+
 - **It floats over the thread.** `ChatArea` puts header, search, polls and pinned into one layer,
   `.chat-chrome-slot`, and publishes its height as `--chat-header-height`, the way the composer
   publishes `--chat-composer-height`. In the apps (`.chat-glass-chrome` on the panel) the layer is

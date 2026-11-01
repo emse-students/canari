@@ -13,6 +13,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
 // display name resolves for it, are one fact. This file held a private second copy of it.
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
+import { noteAbsentUser } from './absentUsers';
 import { noteDeletedAccount, noteResolvedName } from './nameMirror';
 
 const displayNameCache = new Map<string, string>();
@@ -390,6 +391,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // re-fetched its profile once per chip mount, in every check that opened that conversation.
       if (isAbsentUserError(e)) {
         profileAsked.add(normalized);
+        noteAbsentUser(normalized);
         // The server says this account does not exist: no native banner may name it again, seeded
         // name or not (WP-MENTION-NAME) - the phone's copy drops it, and a banner says "someone".
         noteDeletedAccount(normalized);
