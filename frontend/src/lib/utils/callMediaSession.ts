@@ -32,6 +32,21 @@ export interface MediaSessionHost {
   mediaSession?: MediaSession;
 }
 
+/**
+ * The refusals already said for the call in progress, by key. The surface re-applies the session on
+ * every change it shows (the mute, a picture appearing), and a refusal is a fact about the ENGINE:
+ * one line per call says it, the next ones would be noise (313 identical lines in 46 s of a ring,
+ * 2026-10-31). Emptied by {@link clearCallMediaSession}, which runs once when the call surface goes.
+ */
+const saidThisCall = new Set<string>();
+
+/** Logs `line` once per call under `key`. */
+function sayOncePerCall(key: string, line: string): void {
+  if (saidThisCall.has(key)) return;
+  saidThisCall.add(key);
+  appendLog(line);
+}
+
 /** Publishes the call to the OS media session. Returns whether the engine has one at all. */
 export function applyCallMediaSession(
   host: MediaSessionHost,
@@ -39,7 +54,10 @@ export function applyCallMediaSession(
 ): boolean {
   const session = host.mediaSession;
   if (!session) {
-    appendLog('[Call] no Media Session API on this engine - the OS shows no call controls');
+    sayOncePerCall(
+      'no-api',
+      '[Call] no Media Session API on this engine - the OS shows no call controls'
+    );
     return false;
   }
   try {
@@ -58,7 +76,10 @@ export function applyCallMediaSession(
     try {
       session.setActionHandler(action as MediaSessionAction, handler);
     } catch (e) {
-      appendLog(`[Call] Media Session action '${action}' unsupported here: ${String(e)}`);
+      sayOncePerCall(
+        `action:${action}`,
+        `[Call] Media Session action '${action}' unsupported here: ${String(e)}`
+      );
     }
   }
   // Chromium only: lets the system's own microphone indicator follow the in-app mute.
@@ -73,6 +94,8 @@ export function applyCallMediaSession(
 
 /** Takes the call off the OS media session (the call ended or the surface unmounted). */
 export function clearCallMediaSession(host: MediaSessionHost): void {
+  // The next call says its own refusals again.
+  saidThisCall.clear();
   const session = host.mediaSession;
   if (!session) return;
   for (const action of ['hangup', 'togglemicrophone'] as CallAction[]) {
