@@ -821,6 +821,68 @@ dead would produce, and the third row proves the claim is the thing holding the 
 an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
 introuvable", so the assertion is about ROUTING and touches nobody's data.
 
+#### One notification delegate, and a tap that waits for the page (2026-11-01)
+
+**Measured on `v1.5.4-alpha.1` (iPhone 12, TestFlight build 100500401).** A tap on a push banner opened
+the conversation with the app in the FOREGROUND, resumed the previous page from the BACKGROUND, and
+cold-started onto the feed from a KILLED app. In both failures iOS logged `Received response ...
+UNNotificationDefaultActionIdentifier` then `Reply (error: empty-response)`; the app never logged
+`[CanariPush] notification tap`, and logged `[CanariDeepLink] scene connected with 0 launch url(s)`. iOS
+also logged `Received response 7 for willPresentNotification` - 7 is badge|sound|alert, the answer of
+`tauri-plugin-notification`'s handler.
+
+**The cause, read from the code.** `UNUserNotificationCenter.delegate` is ONE weak slot and its last
+writer owns it. `CanariPushSetup` writes it from `canari_ios_bootstrap()` in `main()`; then
+`ffi::start_app()` builds the Tauri app, whose plugin setup calls `register_ios_plugin` ->
+`init_plugin_notification()` -> `NotificationPlugin.init` -> `NotificationManager.init()`, which
+writes `center.delegate = self` (`tauri-plugin-notification` 2.7.0, `ios/Sources/NotificationManager.swift`).
+That runs before `UIApplicationMain`, so before any notification is delivered, on every launch. The
+manager's `didReceive` forwards a response to its handler only when the trigger is NOT a
+`UNPushNotificationTrigger`; for a remote push it calls `completionHandler()` and nothing else. So
+`CanariNotificationDelegate` never ran on a phone - not its tap, not its reply and mark-as-read
+actions. The foreground PASS was the page's own path: a message arriving over the socket is posted
+by the page through the plugin (`useNotifications.svelte.ts`), and its tap comes back through the
+plugin's `actionPerformed` to `onAction`.
+
+**The fix: one delegate, guarded.** `CanariGuardNotificationCenterDelegate` replaces
+`-[UNUserNotificationCenter setDelegate:]` before Canari sets its own: Canari's delegate passes, any
+other object is refused and kept (weakly) as the FORWARD TARGET for the notifications it posted.
+Ownership is decided per notification from the request (`CanariNotificationPosterOf`): a remote push,
+the Share Extension's banner and `canari_push.mm`'s own local notifications (`canari-<n>` or a UUID)
+are Canari's; a request whose identifier is decimal is the plugin's (it always writes
+`"\(notification.id)"`), and both callbacks hand it to the refused plugin manager, so the page's
+`onAction` path is unchanged. `CanariCheckNotificationDelegate` accuses, at ERROR, a slot Canari does
+not hold at `didFinishLaunching` and at every `didBecomeActive` - the two moments before a tap is
+delivered; it is an event, never a poll. Tests: `iosNotificationDelegate.test.ts` (source shape).
+
+**The tap waits in durable state.** A killed app's tap is delivered before the WebView exists, so the
+delegate no longer `openURL`s its own scheme: `CanariQueueNotificationTap` writes
+`pending_notification_tap.json` (`{"deepLink","tappedAt"}`, a newer tap replacing an untaken one) and
+then dispatches `canari:notification-tap` to a live page. The page takes the file through
+`read_and_clear_pending_notification_tap` (the claim-by-rename handoff of `commands/handoff.rs`, so
+exactly once) and routes the link through the same `processUrls` as a deep link
+(`$lib/mobile/notificationTapDrain.ts`, wired in `hooks.client.ts`). No clock: the file is written
+before the event, and the page registers its listener before its first take, so either the listener
+hears the event or the take finds the file. Tests: `notificationTapDrain.test.ts`.
+
+**A tap is not an arrival.** The tap handler no longer hands the payload to `CanariHandleFcmData`: from
+a backgrounded or killed app `canari_ios_is_in_foreground()` is still false there, so it would have
+decrypted the message in the app process and posted it a second time. `willPresentNotification`
+(foreground) still does, as designed.
+
+**What this makes reachable for the first time, and so owes a reading:** the remote-push
+`willPresentNotification` (foreground arrival handling and its presentation answer), the reply and
+mark-as-read quick actions from the banner, and the share banner's tap.
+
+**A trap in the plugin, kept out of reach.** The plugin's handler force-unwraps the notification it
+saved in memory when posting (`notificationsMap[request.identifier]!`), so a tap on a page-posted
+notification from an EARLIER process (posted, app killed, tapped) traps the app inside the plugin -
+as it did whenever the plugin held the slot. Such a tap is no longer forwarded: its delivery date is
+before `g_processStartedAt`, taken in `main()` before any plugin exists, and the page's own map of
+targets died with that process, so nothing is left to route it to (it opens the app where it was,
+said in the log). Both dates are the device's wall clock; a clock set back between the post and the
+tap is the one case that misreads, in the direction of not forwarding.
+
 #### What each notification names as its tap target, and who routes it (2026-10-05)
 
 **Reported by the user: on an iPhone a tap on a push opens the app and nothing else.** The tap handler

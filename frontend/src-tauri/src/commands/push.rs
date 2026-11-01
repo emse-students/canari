@@ -1339,6 +1339,28 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
     )
 }
 
+/// The one-shot file the iOS notification delegate writes on a tap (`canari_push.mm`,
+/// `CanariQueueNotificationTap`). The NAME is the whole contract between the two sides
+/// (`iosNotificationDelegate.test.ts` reads it in both).
+pub(crate) const PENDING_NOTIFICATION_TAP_FILE: &str = "pending_notification_tap.json";
+
+/// Takes `{app_data_dir}/pending_notification_tap.json` - `{"deepLink","tappedAt"}`, the link a
+/// push banner's tap opens - read and deleted in one call, so a tap is acted on exactly once. Null
+/// when none waits (always on Android, whose tap is an intent).
+///
+/// A FILE, BECAUSE A COLD START'S TAP ARRIVES BEFORE THE PAGE: iOS delivers the response to the
+/// notification delegate before the WebView exists, so the native side keeps it in durable state
+/// and the page takes it at its mount, or when told one waits (`canari:notification-tap`,
+/// `$lib/mobile/notificationTapDrain`).
+#[tauri::command]
+pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> Option<String> {
+    crate::commands::handoff::read_and_clear_app_data_file(
+        &app,
+        PENDING_NOTIFICATION_TAP_FILE,
+        "NOTIF_TAP",
+    )
+}
+
 /// Writes the session context to `{app_data_dir}/push_context.json` so the native background
 /// handlers (Android `CanariFirebaseMessagingService`, iOS NSE) can decrypt push notifications.
 /// `push_token` is a long-lived Bearer token (empty on desktop) the native side uses to fetch

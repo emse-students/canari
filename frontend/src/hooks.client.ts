@@ -12,6 +12,8 @@ import { version } from '$app/env';
 import { resolve } from '$app/paths';
 import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { listenForNativeNotificationTaps } from '$lib/mobile/notificationTapDrain';
+import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -417,6 +419,14 @@ if (isTauriRuntime()) {
         if (urls[0]) deepLinkClaims.claim(urls[0]);
         processUrls(urls);
       });
+
+      // A PUSH BANNER'S TAP ON iOS IS NOT A URL OPEN. The native notification delegate keeps it in
+      // durable state (`pending_notification_tap.json`), because a cold start's tap arrives before
+      // this page exists; it is taken here exactly once and routed like any link
+      // (`$lib/mobile/notificationTapDrain`). No claim: the file's take IS the exactly-once.
+      if (isIosTauriRuntime()) {
+        listenForNativeNotificationTaps((link) => processUrls([link]));
+      }
 
       // Which launch URL this session has already acted on. NOT a module variable: `getCurrent()`
       // keeps returning the launch URL for the life of the PROCESS, while a WebView reload wipes

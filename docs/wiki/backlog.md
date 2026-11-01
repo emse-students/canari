@@ -3035,7 +3035,9 @@ full-screen ring. The web's own local notification is now deferred while the pag
 ([calls](frontend/modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)).
 Owed: one foreground ring on the iPhone. If a banner still shows, the two native candidates are
 (a) the notification plugin's own `UNUserNotificationCenter` delegate presenting in the foreground
-if it replaced `CanariNotificationDelegate` (which answers `UNNotificationPresentationOptionNone`
+if it replaced `CanariNotificationDelegate` - it DID, on every launch until 2026-11-01, when the slot
+was guarded ([mobile](frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01));
+re-read the ring on a build carrying that (`CanariNotificationDelegate` answers `UNNotificationPresentationOptionNone`
 in the foreground, `canari_push.mm`), and (b) the server's ring push (`calls.service.ts`:
 VoIP -> CallKit, or the FCM alert for a device without a VoIP token) reaching a device whose app is
 on screen - a CallKit report cannot be skipped for a VoIP push, so that half is a server question

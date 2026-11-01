@@ -3756,7 +3756,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
 /**
  * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
- * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
+ * only - a tap is not an arrival (`didReceiveNotificationResponse`). A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
  * `isWelcome` and `process_queue` branches below, which only a silent frame carries, are reached by
  * nothing on iOS today (docs/wiki/backlog.md). The `welcome_request_pending` branch was the same and
  * was deleted on 2026-10-22: it merged its add into `mls.bin` before the server answered, which
@@ -4399,6 +4399,185 @@ static void CanariInstallApnsTokenHook(void) {
 }
 #endif
 
+// --- ONE notification-center delegate, and nothing replaces it -------------------------------------
+//
+// `UNUserNotificationCenter.delegate` is ONE weak slot, and the last writer wins it silently.
+// `tauri-plugin-notification`'s `NotificationManager.init()` writes `center.delegate = self` when
+// Tauri registers the plugin, which is inside `ffi::start_app()` - AFTER `CanariPushSetup` ran from
+// `canari_ios_bootstrap()`. So the plugin owned the slot on every launch, and its `didReceive` drops
+// every remote push (`trigger is UNPushNotificationTrigger` -> `completionHandler()` and nothing
+// else): a tap on a push banner from a backgrounded app resumed the previous page, and from a killed
+// app opened the feed, while `CanariNotificationDelegate`'s tap handler never ran (iPhone 12,
+// 1.5.4-alpha.1: no `[CanariPush] notification tap` line, and iOS logging the plugin's
+// `willPresent` answer, 7 = badge|sound|alert). An ORDER is not an ownership: whoever registers
+// next would win the same way.
+//
+// So the slot is GUARDED: `-[UNUserNotificationCenter setDelegate:]` accepts Canari's delegate and
+// nothing else. Any other object asking for it is refused and kept as the FORWARD TARGET for the
+// notifications IT posted (the plugin's, from the page: `CanariNotificationPosterPlugin`), so its
+// own taps still reach the page's `onAction` - the foreground in-app path.
+
+/// Who posted a notification, and therefore who answers for it. Classified from the REQUEST, where
+/// the poster wrote it, never from the text.
+typedef NS_ENUM(NSInteger, CanariNotificationPoster) {
+  /// A remote push (APNs via FCM), the extension's rewrite included: Canari's.
+  CanariNotificationPosterPush,
+  /// The Share Extension's local "choose the conversation" banner: Canari's.
+  CanariNotificationPosterShare,
+  /// A local notification `canari_push.mm` posted itself (`canari-<n>` or a UUID): Canari's.
+  CanariNotificationPosterCanari,
+  /// `tauri-plugin-notification`'s, posted from the page: identified by its identifier, which the
+  /// plugin always writes as the decimal notification id (`"\(notification.id)"`) and no Canari
+  /// poster ever does. Its callbacks are the plugin's to answer.
+  CanariNotificationPosterPlugin,
+};
+
+/// Whether `identifier` is the plugin's shape: an optional `-` then decimal digits only.
+static BOOL CanariIsPluginNotificationIdentifier(NSString *identifier) {
+  static NSRegularExpression *re;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    re = [NSRegularExpression regularExpressionWithPattern:@"^-?[0-9]{1,10}$" options:0 error:nil];
+  });
+  return identifier != nil &&
+         [re numberOfMatchesInString:identifier options:0 range:NSMakeRange(0, identifier.length)] == 1;
+}
+
+static BOOL CanariIsShareNotification(NSDictionary *userInfo);
+
+static CanariNotificationPoster CanariNotificationPosterOf(UNNotificationRequest *request) {
+  if ([request.trigger isKindOfClass:[UNPushNotificationTrigger class]]) {
+    return CanariNotificationPosterPush;
+  }
+  if (CanariIsShareNotification(request.content.userInfo)) {
+    return CanariNotificationPosterShare;
+  }
+  if (CanariIsPluginNotificationIdentifier(request.identifier)) {
+    return CanariNotificationPosterPlugin;
+  }
+  return CanariNotificationPosterCanari;
+}
+
+@class CanariNotificationDelegate;
+static CanariNotificationDelegate *g_notifDelegate = nil;
+/// The object that asked for the delegate slot and was refused - the plugin's `NotificationManager`.
+/// Weak, as the slot itself is: the plugin owns its manager.
+static __weak id<UNUserNotificationCenterDelegate> g_refusedNotifDelegate = nil;
+static void (*CanariOrigSetNotifCenterDelegate)(id, SEL, id) = NULL;
+/// When this process began handling notifications: set first thing in `CanariPushSetup`, from
+/// `main()`, before any plugin can post. A plugin notification delivered earlier is another process's.
+static NSDate *g_processStartedAt = nil;
+
+/// The guarded setter: Canari's delegate passes, every other value (nil included) is refused and,
+/// when it is an object, kept as the forward target. Said once per refusal - one line per launch for
+/// the plugin, which is the fact a reader of the log needs to trust the forwarding.
+static void CanariGuardedSetNotifCenterDelegate(id self, SEL _cmd, id delegate) {
+  if (delegate != nil && delegate == (id)g_notifDelegate) {
+    CanariOrigSetNotifCenterDelegate(self, _cmd, delegate);
+    return;
+  }
+  if (delegate == nil) {
+    NSLog(@"[CanariPush] something set the notification delegate to nil - refused, Canari's stays");
+    return;
+  }
+  g_refusedNotifDelegate = delegate;
+  NSLog(@"[CanariPush] %@ asked to become the notification delegate - refused, Canari's stays and "
+        @"forwards that poster's own notifications to it",
+        NSStringFromClass([delegate class]));
+}
+
+/// Installs the guard on `-[UNUserNotificationCenter setDelegate:]`. Called once, from
+/// `CanariPushSetup`, BEFORE Canari sets its own delegate and before `ffi::start_app()` registers
+/// any plugin. Returns NO (said at ERROR) when the setter cannot be found, in which case the slot is
+/// unguarded and `CanariCheckNotificationDelegate` names the winner at the next launch or activation.
+static BOOL CanariGuardNotificationCenterDelegate(void) {
+  Class cls = [UNUserNotificationCenter class];
+  SEL sel = @selector(setDelegate:);
+  Method m = class_getInstanceMethod(cls, sel);
+  if (m == NULL) {
+    NSLog(@"[CanariPush] ERROR: -[UNUserNotificationCenter setDelegate:] not found - the delegate "
+          @"slot is UNGUARDED, a later writer replaces Canari's and taps are lost");
+    return NO;
+  }
+  CanariOrigSetNotifCenterDelegate = (void (*)(id, SEL, id))method_getImplementation(m);
+  // class_replaceMethod on the class itself: it replaces an own implementation and ADDS one over an
+  // inherited one, and the original IMP read above is right in both cases.
+  class_replaceMethod(cls, sel, (IMP)CanariGuardedSetNotifCenterDelegate, method_getTypeEncoding(m));
+  return YES;
+}
+
+/// ACCUSES, at the two moments a tap is about to be delivered, a delegate slot Canari does not hold:
+/// `didFinishLaunching` (a cold start's response arrives right after it) and `didBecomeActive` (a
+/// background tap's resume). An event, never a poll. Silent when the slot is Canari's.
+static void CanariCheckNotificationDelegate(NSString *moment) {
+  id<UNUserNotificationCenterDelegate> current = [UNUserNotificationCenter currentNotificationCenter].delegate;
+  if (current == (id)g_notifDelegate && current != nil) {
+    return;
+  }
+  NSLog(@"[CanariPush] ERROR at %@: the notification delegate is %@, not Canari's - push taps go to "
+        @"it and are LOST",
+        moment, current == nil ? @"nil" : NSStringFromClass([current class]));
+}
+
+// --- A tap waits in a file until the page takes it ---------------------------------------------------
+//
+// A tap on a killed app is delivered BEFORE the WebView exists, and on a backgrounded app before the
+// page has resumed. `openURL` on our own scheme handed it to the scene's URL path, whose arrival
+// relative to the page's listeners is not decided by anything here. The tap is instead written to
+// `pending_notification_tap.json` (THE DURABLE STATE), and the page TAKES it - read and deleted in
+// one command, `read_and_clear_pending_notification_tap` - at its mount and whenever this side says
+// one waits (`canari:notification-tap`). The order makes it deterministic: the file is written
+// BEFORE the event is dispatched, and the page registers its listener BEFORE its mount drain, so
+// either the listener hears the event or the drain finds the file (`notificationTapDrain.ts`).
+
+static NSString *const kPendingNotificationTapFileName = @"pending_notification_tap.json";
+
+/// Tells a live page that a tap waits. A page not loaded yet takes it at its mount.
+static void CanariTellPageOfNotificationTap(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariPush] notification tap waits before the WebView: the page takes it at mount");
+    return;
+  }
+  [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:notification-tap'));"
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariPush] ERROR the page was not told of the notification tap (%@): it "
+                      @"takes it at its next mount",
+                      CanariErrorReason(error));
+                return;
+              }
+              NSLog(@"[CanariPush] notification tap waits - the page was told");
+            }];
+}
+
+/// Writes the tap's link (`{"deepLink","tappedAt"}`) for the page, then tells it. A newer tap
+/// replaces an untaken older one: the user's last tap is where they asked to go.
+static void CanariQueueNotificationTap(NSString *deepLink) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] ERROR: no data directory - the notification tap is LOST");
+    return;
+  }
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                            withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
+  long long tappedAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  NSError *err = nil;
+  NSData *body = [NSJSONSerialization dataWithJSONObject:@{@"deepLink" : deepLink, @"tappedAt" : @(tappedAt)}
+                                                 options:0
+                                                   error:&err];
+  NSString *path = [dir stringByAppendingPathComponent:kPendingNotificationTapFileName];
+  if (body == nil || ![body writeToFile:path options:NSDataWritingAtomic error:&err]) {
+    NSLog(@"[CanariPush] ERROR the notification tap was not written (%@) - it is LOST",
+          CanariErrorReason(err));
+    return;
+  }
+  NSLog(@"[CanariPush] notification tap queued for the page: %@", CanariDescribeDeepLink(deepLink));
+  CanariTellPageOfNotificationTap();
+}
+
 @interface CanariNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
 
@@ -4418,7 +4597,21 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler {
-  (void)center;
+  if (CanariNotificationPosterOf(notification.request) == CanariNotificationPosterPlugin) {
+    // The page's own notification: the plugin answers (and tells the page) as it did when it held
+    // the slot.
+    id<UNUserNotificationCenterDelegate> plugin = g_refusedNotifDelegate;
+    if ([plugin respondsToSelector:_cmd]) {
+      [plugin userNotificationCenter:center
+             willPresentNotification:notification
+               withCompletionHandler:completionHandler];
+      return;
+    }
+    NSLog(@"[CanariPush] ERROR: a plugin notification is presented and no plugin delegate was "
+          @"refused - shown as a banner by Canari");
+    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+    return;
+  }
   if (CanariIsShareNotification(notification.request.content.userInfo)) {
     // The app is on screen: the share-ready signal has already imported the share and told the page.
     NSLog(@"[CanariShare] share banner while in the foreground - not shown, the page already has it");
@@ -4436,14 +4629,46 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
     didReceiveNotificationResponse:(UNNotificationResponse *)response
              withCompletionHandler:(void (^)(void))completionHandler {
-  (void)center;
+  if (CanariNotificationPosterOf(response.notification.request) == CanariNotificationPosterPlugin) {
+    // The page's own notification: the plugin emits `actionPerformed`, which the page's `onAction`
+    // routes (`useNotifications.svelte.ts`).
+    //
+    // ONLY ONE THIS PROCESS POSTED. The plugin keeps what it posted in memory and FORCE-UNWRAPS it
+    // on a tap (`notificationsMap[request.identifier]!`, `toActiveNotification`), so a notification
+    // delivered before this process began - posted, app killed, then tapped - traps the app. The
+    // delivery date against this process's start (`g_processStartedAt`, taken in `main()` before any
+    // plugin exists) is the fact that separates them; the page's own map of targets died with that
+    // process too, so there is nothing left to route it to.
+    if ([response.notification.date compare:g_processStartedAt] == NSOrderedAscending) {
+      NSLog(@"[CanariPush] notification tap on a page notification of an earlier process - not "
+            @"handed to the plugin, which cannot know it; the app opens where it was");
+      completionHandler();
+      return;
+    }
+    id<UNUserNotificationCenterDelegate> plugin = g_refusedNotifDelegate;
+    if ([plugin respondsToSelector:_cmd]) {
+      NSLog(@"[CanariPush] notification tap on a page notification - handed to the plugin");
+      [plugin userNotificationCenter:center
+          didReceiveNotificationResponse:response
+                   withCompletionHandler:completionHandler];
+      return;
+    }
+    NSLog(@"[CanariPush] ERROR: a tap on a plugin notification and no plugin delegate was refused - "
+          @"the app opens where it was");
+    completionHandler();
+    return;
+  }
   NSDictionary *userInfo = response.notification.request.content.userInfo;
   if (CanariIsShareNotification(userInfo)) {
     NSLog(@"[CanariShare] share banner tapped - the share is imported on activation");
     completionHandler();
     return;
   }
-  CanariPushProcessRemoteNotificationUserInfo(userInfo);
+  // A TAP IS NOT AN ARRIVAL: the payload is NOT handed to `CanariHandleFcmData` here. The message
+  // was delivered when the banner was drawn; re-handling it from a tap on a backgrounded or killed
+  // app (where `canari_ios_is_in_foreground()` is still false) decrypted it in this process and
+  // posted it a second time. That call stood here while the plugin held the delegate slot, so it
+  // never ran on a phone; it is removed in the change that makes this method reachable.
 
   // Notification quick actions (WP-XP-1): reply / mark as read fire even from a killed app - the
   // OS briefly relaunches the process to deliver this callback. Both reuse the background
@@ -4485,32 +4710,22 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
   NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
         deepLink.length > 0 ? CanariDescribeDeepLink(deepLink)
                             : @"ABSENT - the payload names no target");
+  // The page takes the link from durable state (`CanariQueueNotificationTap`), never from an
+  // `openURL` on our own scheme: a cold start's tap arrives before the WebView exists.
   if (deepLink.length > 0) {
-    NSURL *url = [NSURL URLWithString:deepLink];
-    if (url != nil) {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [[UIApplication sharedApplication] openURL:url
-                                           options:@{}
-                                 completionHandler:^(BOOL success) {
-                                   // The system's answer to the self-open: NO means it declined.
-                                   NSLog(@"[CanariPush] notification tap: openURL completed success=%d", success);
-                                 }];
-      });
-    } else {
-      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@",
-            CanariDescribeDeepLink(deepLink));
-    }
+    CanariQueueNotificationTap(deepLink);
   }
   completionHandler();
 }
 @end
 
-static CanariNotificationDelegate *g_notifDelegate = nil;
-
 void CanariPushSetup(void) {
+  g_processStartedAt = [NSDate date];
   g_mlsStateLock = [[NSLock alloc] init];
   g_cacheLock = [[NSLock alloc] init];
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
+  // The guard FIRST: from here on only Canari's delegate can hold the slot, whoever registers later.
+  CanariGuardNotificationCenterDelegate();
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
   CanariRefreshNotificationCategories();
   // Incoming-call ring (WP-XP-5): PushKit VoIP registry + CallKit provider + handover hook.
@@ -4534,6 +4749,8 @@ void CanariPushSetup(void) {
                 if (added) {
                   CanariReassignAppDelegate();
                 }
+                // Every plugin has registered by now, and a cold start's tap is delivered next.
+                CanariCheckNotificationDelegate(@"launch");
               }];
   [[NSNotificationCenter defaultCenter]
       addObserverForName:UIApplicationDidBecomeActiveNotification
@@ -4541,6 +4758,7 @@ void CanariPushSetup(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
                 CanariLogAppDelegateIdentity();
+                CanariCheckNotificationDelegate(@"activation");
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
