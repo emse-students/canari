@@ -86,6 +86,7 @@ jobs:
       run-android-app: ${{ steps.matrix.outputs.android_app }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
       run-miconnect: ${{ steps.matrix.outputs.miconnect }}
+      run-call-e2e: ${{ steps.matrix.outputs.call_e2e }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -119,6 +120,7 @@ jobs:
             echo "android_app=true"  >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
             echo "miconnect=true"    >> "$GITHUB_OUTPUT"
+            echo "call_e2e=true"     >> "$GITHUB_OUTPUT"
           }
 
           # ── Determine base commit ──
@@ -359,6 +361,21 @@ jobs:
             echo "mls_compat=true" >> "$GITHUB_OUTPUT"
           else
             echo "mls_compat=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- The SFU's end-to-end call (owner decision D3, 2026-11-01) --
+          # ASK WHAT THE GATE READS: the crate (its harness lives in `apps/call-service/e2e/`), the
+          # shared Chrome driver, the app's E2E worker and every module that worker or the page
+          # imports - the worker IS the transform under test, built from source, so a change to it
+          # alone must run the call that proves it still works through the SFU.
+          if has '^apps/call-service/' || \
+             has '^tools/headless-chrome/' || \
+             has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
+             has '^frontend/src/lib/utils/(callAudio|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
+             has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
+            echo "call_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "call_e2e=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- MiConnect's blueprints --
@@ -1321,6 +1338,88 @@ jobs:
         run: bash .github/scripts/android-app-compile.sh
 
   # =================================================================================================
+  # THE SFU'S END-TO-END CALL - REAL BROWSERS, REAL TURN, ENCRYPTED AUDIO (owner decision D3, 2026-11-01)
+  #
+  # `call-service` is kept working for the day the School opens UDP to it (D2), and a green
+  # `cargo test` was never evidence of that: its unit tests run no ICE stack and `relay_path.rs`
+  # places no call through the SFU and no browser peer. THIS is the call: the crate's binary, a
+  # throwaway coturn on this runner's own address, two headless Chromes running the app's own E2E
+  # frame transform, relay-only on both browsers and on the SFU, and a pass only on PROOF - each
+  # browser decrypted N audio frames under the OTHER browser's send key, over a `relay` pair, and the
+  # SFU's record shows both sessions connected and both ending `client-close`
+  # (docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
+  #
+  # A JOB OF THIS FILE, NOT A CALLED LIBRARY: `tools/ecosystem-shape/shape.mjs` refuses a workflow
+  # file it does not expect, and a job here is already invisible in the Actions list and already a
+  # need of `CI passed`. Skipped when no path it reads changed, and `skipped` passes the aggregate.
+  #
+  # COTURN IS A `docker run` STEP, NOT A `services:` CONTAINER: a service container takes no
+  # command-line arguments, and coturn is configured by its arguments alone (the image's default
+  # asks an internet service for an external address). `--network host` puts its relay ports on the
+  # runner's address, the one both browsers and the SFU reach - GitHub's runners have UDP.
+  #
+  # NO CLOCK DECIDES THE VERDICT. The harness waits for a proof of success or of failure (the SFU's
+  # ICE giving up, a refused TURN allocation, a socket closing, a frame that does not decrypt, a
+  # process exiting); `timeout-minutes` is the only bound, for a run in which nothing happens at all.
+  # =================================================================================================
+  test-call-service-e2e:
+    name: Call Service E2E (two browsers through the SFU and coturn)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-call-e2e == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/call-service
+
+      - name: Build the call-service binary
+        working-directory: apps/call-service
+        run: cargo build --locked
+
+      - name: Start a throwaway coturn on the runner's address
+        run: |
+          set -euo pipefail
+          ip="$(hostname -I | awk '{print $1}')"
+          password="$(openssl rand -hex 16)"
+          docker run -d --name e2e-coturn --network host \
+            coturn/coturn:4.7.0@sha256:a00afb5b4890de4df22bbe70379c6b316685dffee297d53cac1271dcb91fab93 \
+            -n --log-file=stdout --no-cli --no-tls --no-dtls \
+            --listening-ip="$ip" --relay-ip="$ip" --external-ip="$ip" --listening-port=3478 \
+            --min-port=49160 --max-port=49400 \
+            --lt-cred-mech --realm=canari.test --user="e2e:$password" --allow-loopback-peers
+          # Not a secret, and deliberately not masked: it opens a relay that lives for this job
+          # only, on an address only this runner reaches.
+          echo "E2E_TURN_URL=turn:$ip:3478?transport=udp" >> "$GITHUB_ENV"
+          echo "E2E_TURN_PASSWORD=$password" >> "$GITHUB_ENV"
+          # Ready is a FACT, read from coturn's own log: the UDP listener on the address we gave it.
+          until docker logs e2e-coturn 2>&1 | grep -q "UDP listener opened on: $ip:3478"; do
+            if [ "$(docker inspect -f '{{.State.Running}}' e2e-coturn)" != "true" ]; then
+              docker logs e2e-coturn; echo "::error::coturn exited before it listened"; exit 1
+            fi
+            sleep 1
+          done
+          echo "coturn listening on $ip:3478 (udp)"
+
+      - name: Two browsers call each other through the SFU, encrypted
+        run: |
+          bun apps/call-service/e2e/run.mjs \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      - name: coturn's log, on failure
+        if: failure()
+        run: docker logs e2e-coturn 2>&1 | tail -200
+
+  # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS
   # The rig's rules about itself: the two log classifiers and the phase/device declarations. None of
   # the three touches a browser, a phone or production - they are pure assertions over source, which
@@ -1667,7 +1766,7 @@ jobs:
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job either passed or had nothing to do
