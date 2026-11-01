@@ -1244,12 +1244,13 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
  * Android twin: writeSentMessageToCache in CanariFirebaseMessagingService.kt.
  */
 static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserId,
-                                          NSString *messageId, NSString *text, long long sentAt) {
+                                          NSString *messageId, NSString *text, long long sentAt,
+                                          long long receivedAt) {
   if (messageId.length == 0 || selfUserId.length == 0) {
     NSLog(@"[CanariPush] writeSentMessageToCache: missing messageId/userId -> entry ignored");
     return;
   }
-  CanariAppendFcmCacheEntry(@{
+  NSMutableDictionary *entry = [@{
     @"groupId" : groupId ?: @"",
     @"messageId" : messageId,
     @"senderId" : selfUserId,
@@ -1257,7 +1258,18 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
     @"content" : text ?: @"",
     @"timestamp" : @(sentAt),
     @"type" : @"text",
-  }, messageId);
+  } mutableCopy];
+  // The `receivedAt` the reply's POST answered: the row's `serverTimestamp`, so it is placed where
+  // the server accepted it, as a foreground send is (`fcmCache.ts`). 0 when unknown - said here, and
+  // the row keeps its `sentAt` until the app dates it.
+  if (receivedAt > 0) {
+    entry[@"serverTimestamp"] = @(receivedAt);
+  } else {
+    NSLog(@"[CanariPush] writeSentMessageToCache: no receive time for msg=%@ - the row is placed by "
+          @"its sentAt until the app dates it",
+          [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
+  }
+  CanariAppendFcmCacheEntry(entry, messageId);
 }
 
 /**
@@ -1727,7 +1739,8 @@ static void CanariRegisterBackgroundCleanupHandler(void) {
 }
 
 // Forward declarations for functions used in the outbox-retry handler but defined later.
-static int CanariDrainOutboxBackground(CanariPushContext *ctx);
+static int CanariDrainOutboxBackground(CanariPushContext *ctx,
+                                       NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut);
 static void CanariMaybeNotifyPendingSync(int remaining);
 
 /// WP-XP-8: submits a BGProcessingTaskRequest for outbox retry. Unlike the cleanup task,
@@ -1763,7 +1776,7 @@ static void CanariRegisterOutboxRetryHandler(void) {
                         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                           CanariPushContext *ctx = CanariLoadPushContext();
                           if (ctx != nil) {
-                            int remaining = CanariDrainOutboxBackground(ctx);
+                            int remaining = CanariDrainOutboxBackground(ctx, nil);
                             if (remaining > 0) {
                               CanariMaybeNotifyPendingSync(remaining);
                             }
@@ -1984,9 +1997,15 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
   return out;
 }
 
-static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                        NSString *ciphertextB64, NSString *messageId, BOOL silent,
-                                        BOOL durable) {
+/**
+ * POSTs one queued frame. Returns -1 when it was NOT delivered, otherwise the server's receive time
+ * (`receivedAt`, ms) the answer carried - 0 when it carried none, which is logged. The drain writes
+ * it beside the id in `outbox_sent.ndjson` (`id<TAB>receivedAt`, the Android shape), so the app
+ * dates its own copy by the server's clock as it does a foreground send (outboxMirror.ts).
+ */
+static long long CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret,
+                                             NSString *groupId, NSString *ciphertextB64,
+                                             NSString *messageId, BOOL silent, BOOL durable) {
   NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send", ctx.baseUrl]];
   NSDictionary *payload = @{
     @"userId" : ctx.userId,
@@ -1999,12 +2018,30 @@ static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret
   };
   NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
   int status = 0;
-  CanariHttpRequest(@"POST", url, secret, body, &status);
+  NSData *answer = CanariHttpRequest(@"POST", url, secret, body, &status);
   NSLog(@"[CanariPush] sendQueuedMessagePush: HTTP %d group=%@ msg=%@", status, groupId, messageId);
-  return status == 200 || status == 201;
+  if (status != 200 && status != 201) {
+    return -1;
+  }
+  long long receivedAt = 0;
+  id parsed = answer != nil ? [NSJSONSerialization JSONObjectWithData:answer options:0 error:nil]
+                            : nil;
+  if ([parsed isKindOfClass:[NSDictionary class]]) {
+    id value = ((NSDictionary *)parsed)[@"receivedAt"];
+    if ([value isKindOfClass:[NSNumber class]]) {
+      receivedAt = [(NSNumber *)value longLongValue];
+    }
+  }
+  if (receivedAt <= 0) {
+    NSLog(@"[CanariPush] sendQueuedMessagePush: sent, the answer carried no receive time msg=%@",
+          messageId);
+    receivedAt = 0;
+  }
+  return receivedAt;
 }
 
-static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
+static int CanariDrainOutboxBackground(CanariPushContext *ctx,
+                                       NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {
     return 0;
@@ -2044,9 +2081,17 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
       [remaining addObject:entry];
       continue;
     }
-    if (CanariSendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.entryId,
-                                    entry.silent, entry.durable)) {
-      [sentIds addObject:entry.entryId];
+    long long receivedAt = CanariSendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext,
+                                                       entry.entryId, entry.silent, entry.durable);
+    if (receivedAt > 0) {
+      // Handed to a caller that writes a row of its own (the quick reply's cache entry).
+      receivedAtOut[entry.entryId] = @(receivedAt);
+    }
+    if (receivedAt >= 0) {
+      // One `outbox_sent.ndjson` line: the id, and the server's receive time when it answered one.
+      [sentIds addObject:receivedAt > 0
+                             ? [NSString stringWithFormat:@"%@\t%lld", entry.entryId, receivedAt]
+                             : entry.entryId];
     } else {
       [remaining addObject:entry];
     }
@@ -2185,7 +2230,7 @@ static void CanariSendReadWatermark(NSString *groupId, long long at) {
   NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
   [entries addObject:entry];
   CanariRewriteOutboxMirror(entries);
-  CanariDrainOutboxBackground(ctx);
+  CanariDrainOutboxBackground(ctx, nil);
   NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
 }
 
@@ -2244,7 +2289,7 @@ static void CanariSendCallDecline(NSString *groupId, NSString *callId) {
           callId);
     return;
   }
-  BOOL sent = CanariSendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, YES, NO);
+  BOOL sent = CanariSendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, YES, NO) >= 0;
   NSLog(@"[CanariCallKit] decline call=%@ sent=%d", callId, sent);
 }
 
@@ -2292,11 +2337,14 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long
   NSLog(@"[CanariPush] handleQuickReplyAction: queued id=%@ group=%@",
         [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)], groupId);
 
-  int remaining = CanariDrainOutboxBackground(ctx);
+  NSMutableDictionary<NSString *, NSNumber *> *receivedAts = [NSMutableDictionary dictionary];
+  int remaining = CanariDrainOutboxBackground(ctx, receivedAts);
   if (remaining == 0) {
     // Delivered: record it locally BEFORE clearing the notification, so the one visible trace of
-    // the reply is never dropped before the durable one exists.
-    CanariWriteSentMessageToCache(groupId, ctx.userId, messageId, text, sentAt);
+    // the reply is never dropped before the durable one exists - with the server's receive time,
+    // so the row is placed where the server put it (0 when this drain did not deliver it itself).
+    CanariWriteSentMessageToCache(groupId, ctx.userId, messageId, text, sentAt,
+                                  receivedAts[messageId].longLongValue);
     CanariCancelConversationNotification(groupId, nil);
     // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the delivered
     // branch: a reply still sitting in the outbox has not been seen by anyone, and announcing a
@@ -2537,7 +2585,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
     NSLog(@"[CanariPush] processReceivedWelcomeBackground: join failed %@", groupId);
   }
 
-  int remaining = CanariDrainOutboxBackground(ctx);
+  int remaining = CanariDrainOutboxBackground(ctx, nil);
   CanariMaybeNotifyPendingSync(remaining);
 }
 
@@ -3598,7 +3646,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
     if (drainCtx != nil) {
-      int remaining = CanariDrainOutboxBackground(drainCtx);
+      int remaining = CanariDrainOutboxBackground(drainCtx, nil);
       CanariMaybeNotifyPendingSync(remaining);
     }
   });

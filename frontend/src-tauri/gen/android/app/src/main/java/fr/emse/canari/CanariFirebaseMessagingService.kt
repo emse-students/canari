@@ -182,6 +182,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * [CanariNotificationActionReceiver.sendReadWatermark] for why a lookup was wrong.
          */
         const val EXTRA_SENT_AT      = "sentAt"
+        /**
+         * The SERVER's `createdAt` of that same message, in ms, 0 when the notification does not
+         * know it. The conversation is ordered and read on the server's clock (readState.ts, owner
+         * 2026-10-31), so the shade's read mark states it beside [EXTRA_SENT_AT]: the frame carries
+         * it as `serverAt` and `read_watermarks.ndjson` as a second field.
+         */
+        const val EXTRA_SERVER_AT    = "serverAt"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
@@ -519,6 +526,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             notifId: Int,
             sentAt: Long,
+            serverAt: Long,
         ): NotificationCompat.Action {
             val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
                 .setLabel(res.getString(R.string.notif_action_reply))
@@ -527,6 +535,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 action = ACTION_QUICK_REPLY
                 putExtra(EXTRA_GROUP_ID, groupId)
                 putExtra(EXTRA_SENT_AT, sentAt)
+                putExtra(EXTRA_SERVER_AT, serverAt)
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context, notifId, intent,
@@ -544,11 +553,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             notifId: Int,
             sentAt: Long,
+            serverAt: Long,
         ): NotificationCompat.Action {
             val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
                 action = ACTION_MARK_READ
                 putExtra(EXTRA_GROUP_ID, groupId)
                 putExtra(EXTRA_SENT_AT, sentAt)
+                putExtra(EXTRA_SERVER_AT, serverAt)
             }
             // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with
             // the reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with
@@ -583,6 +594,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             replyText: String,
             sentAt: Long,
+            serverAt: Long,
         ) {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -628,8 +640,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setGroup(GROUP_KEY_MESSAGES)
                     .setOnlyAlertOnce(true)
                 if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt))
-                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt))
+                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
+                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
                 }
                 manager.notify(notifId, builder.build())
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
@@ -878,6 +890,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             messageId: String,
             text: String,
             sentAt: Long,
+            /**
+             * The `receivedAt` the reply's POST answered, in ms: the row's `serverTimestamp`, so it is
+             * placed where the server accepted it, as a foreground send is. 0 when unknown (another
+             * drain delivered it, or the answer carried none) - said here, and the row keeps `sentAt`.
+             */
+            serverTimestamp: Long,
         ) {
             if (messageId.isEmpty() || selfUserId.isEmpty()) {
                 Log.w(TAG, "writeSentMessageToCache: missing messageId/userId -> entry ignored")
@@ -890,7 +908,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("senderName", "")
                 put("content",    text)
                 put("timestamp",  sentAt)
+                if (serverTimestamp > 0L) put("serverTimestamp", serverTimestamp)
                 put("type",       "text")
+            }
+            if (serverTimestamp <= 0L) {
+                Log.w(TAG, "writeSentMessageToCache: no receive time for msg=${messageId.take(8)} - the row is placed by its sentAt until the app dates it")
             }
             appendFcmCacheEntry(context, entry, messageId, groupId)
         }
@@ -905,11 +927,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * badge. Without it the user acknowledged a conversation from the shade, opened the app and
          * found it unread - which looks exactly like the action having done nothing.
          *
-         * ONE LINE PER CONVERSATION, keeping the larger `at`: the merge on the far side is `max`
-         * anyway, so collapsing here bounds the file by the number of conversations instead of by a
-         * ring-buffer cap that could drop the very entry it was written for.
+         * ONE LINE PER CONVERSATION, keeping the larger `at` and the larger `serverAt`: the merge on
+         * the far side is `max` anyway, so collapsing here bounds the file by the number of
+         * conversations instead of by a ring-buffer cap that could drop the very entry it was
+         * written for. `serverAt` (the server's `createdAt` of the same message, 0 when unknown) is
+         * the mark on the clock the conversation is ordered by; `at` stays, for the stamped map and
+         * for [shadeReadWatermark].
          */
-        internal fun appendReadWatermark(context: Context, groupId: String, at: Long) {
+        internal fun appendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
             if (groupId.isEmpty() || at <= 0L) {
                 Log.w(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at -> nothing to record")
                 return
@@ -919,18 +944,44 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CACHE_LOCK.lock()
                 try {
                     val byGroup = parseReadWatermarks(file)
-                    byGroup[groupId] = maxOf(byGroup[groupId] ?: 0L, at)
+                    val held = byGroup[groupId]
+                    byGroup[groupId] = ShadeReadMark(
+                        maxOf(held?.at ?: 0L, at),
+                        maxOf(held?.serverAt ?: 0L, serverAt),
+                    )
                     file.writeText(
-                        byGroup.entries.joinToString("\n") { (g, a) ->
-                            JSONObject().apply { put("groupId", g); put("at", a) }.toString()
+                        byGroup.entries.joinToString("\n") { (g, mark) ->
+                            JSONObject().apply {
+                                put("groupId", g)
+                                put("at", mark.at)
+                                if (mark.serverAt > 0L) put("serverAt", mark.serverAt)
+                            }.toString()
                         } + "\n"
                     )
                 } finally {
                     CACHE_LOCK.unlock()
                 }
-                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at recorded for the next boot")
+                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at serverAt=$serverAt recorded for the next boot")
             } catch (e: Exception) {
                 Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+            }
+        }
+
+        /** One conversation's line of `read_watermarks.ndjson`: the stamped mark and the server one (0 = unknown). */
+        internal data class ShadeReadMark(val at: Long, val serverAt: Long)
+
+        /**
+         * A push's ISO 8601 `createdAt` as ms, 0 when absent or unreadable. An unreadable one is
+         * logged: the shade's read mark then falls back to the stamped clock alone, and a format
+         * drift on the server must not stay invisible.
+         */
+        internal fun serverInstantOf(iso: String?): Long {
+            if (iso.isNullOrEmpty()) return 0L
+            return try {
+                java.time.Instant.parse(iso).toEpochMilli().coerceAtLeast(0L)
+            } catch (e: Exception) {
+                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.message}")
+                0L
             }
         }
 
@@ -942,8 +993,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * Parses `read_watermarks.ndjson` into groupId -> highest `at`. Caller holds [CACHE_LOCK].
          * An unparsable line is dropped and said so; a missing file is an empty map.
          */
-        private fun parseReadWatermarks(file: File): LinkedHashMap<String, Long> {
-            val byGroup = LinkedHashMap<String, Long>()
+        private fun parseReadWatermarks(file: File): LinkedHashMap<String, ShadeReadMark> {
+            val byGroup = LinkedHashMap<String, ShadeReadMark>()
             if (!file.exists()) return byGroup
             for (line in file.readLines()) {
                 if (line.isBlank()) continue
@@ -951,7 +1002,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val o = JSONObject(line)
                     val g = o.optString("groupId")
                     val a = o.optLong("at", 0L)
-                    if (g.isNotEmpty() && a > 0L) byGroup[g] = maxOf(byGroup[g] ?: 0L, a)
+                    val s = o.optLong("serverAt", 0L).coerceAtLeast(0L)
+                    if (g.isNotEmpty() && a > 0L) {
+                        val held = byGroup[g]
+                        byGroup[g] = ShadeReadMark(maxOf(held?.at ?: 0L, a), maxOf(held?.serverAt ?: 0L, s))
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
                 }
@@ -970,20 +1025,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notification without the reply line. Once the app has merged the file its own
          * conversation row carries the watermark, and `notifyInbound` asks the same question there.
          */
-        internal fun shadeReadWatermark(context: Context, groupId: String): Long {
-            if (groupId.isEmpty()) return 0L
+        internal fun shadeReadWatermark(context: Context, groupId: String): ShadeReadMark {
+            val none = ShadeReadMark(0L, 0L)
+            if (groupId.isEmpty()) return none
             return try {
                 CACHE_LOCK.lock()
                 try {
-                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: 0L
+                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: none
                 } finally {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
-                0L
+                none
             }
         }
+
+        /**
+         * Whether a message is covered by what the user read from the shade. ON THE SERVER'S CLOCK
+         * when both sides carry it - the message's `serverAt` and the mark's - because that is the
+         * clock the conversation is ordered and read by (owner 2026-10-31): a sender whose phone
+         * runs late stamps a NEW message below a mark taken on a newer one, and the stamped
+         * comparison swallowed its banner. On the sender's stamps otherwise, as before: a mark
+         * written by a build that did not record `serverAt`, or a message whose push carried none.
+         */
+        internal fun coveredByShadeMark(sentAt: Long, serverAt: Long, mark: ShadeReadMark): Boolean =
+            if (serverAt > 0L && mark.serverAt > 0L) serverAt <= mark.serverAt else sentAt <= mark.at
 
         /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
         private fun callNotifId(callId: String): Int =
@@ -1345,7 +1412,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
-        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx) }
+            /**
+             * Told of each entry THIS drain delivered, with the server's receive time its POST
+             * answered - how a quick reply learns the `receivedAt` its cache row is dated by.
+             */
+            onSent: (SentOutboxId) -> Unit = {},
+        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent) }
 
         /**
          * Serialises every read-modify-write of `outbox_pending.ndjson` in this process: the drain,
@@ -1405,7 +1477,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
                 return@synchronized false
             }
-            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false)
+            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false) != null
             Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
             sent
         }
@@ -1415,6 +1487,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
+            onSent: (SentOutboxId) -> Unit,
         ): Int {
             val entries = readOutboxMirror(context)
             if (entries.isEmpty()) return 0
@@ -1433,7 +1506,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return entries.size
             }
             val deadline = System.currentTimeMillis() + DRAIN_POST_BUDGET_MS
-            val sentIds = mutableListOf<String>()
+            // Each delivered id WITH the server's receive time it was answered (0 when the answer
+            // carried none): the app dates its own copy by it, as it does a foreground send.
+            val sentIds = mutableListOf<SentOutboxId>()
             val remaining = mutableListOf<OutboxMirrorEntry>()
             var checkpointed = 0
             var index = 0
@@ -1450,8 +1525,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(entry)
                     continue
                 }
-                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)) {
-                    sentIds.add(entry.id)
+                val receivedAt = sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)
+                if (receivedAt != null) {
+                    val sent = SentOutboxId(entry.id, receivedAt)
+                    sentIds.add(sent)
+                    onSent(sent)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
                     remaining.add(entry)
@@ -1546,7 +1624,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns true if delivered. */
+        /**
+         * POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns `null` when it
+         * was not delivered, else the server's receive time (`receivedAt`, 0 when the answer has none).
+         */
         private fun sendQueuedMessagePush(
             ctx: PushContext,
             secret: String,
@@ -1555,7 +1636,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             messageId: String,
             silent: Boolean,
             durable: Boolean,
-        ): Boolean {
+        ): Long? {
             return try {
                 val url = URL("${ctx.baseUrl}/api/mls/push/send")
                 val body = JSONObject().apply {
@@ -1579,13 +1660,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                    code == 200 || code == 201
+                    if (code != 200 && code != 201) return null
+                    // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
+                    // app orders this message by it (messageOrder.ts). An answer without it (an older
+                    // server, an unreadable body) still counts as sent, undated: 0.
+                    val receivedAt = try {
+                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
+                        0L
+                    }
+                    if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
+                    receivedAt.coerceAtLeast(0L)
                 } finally {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
-                false
+                null
             }
         }
 
@@ -1731,12 +1823,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
-        private fun appendOutboxSent(context: Context, ids: List<String>) {
+        /** One delivered entry: its id and the server's receive time (`receivedAt`, 0 when unknown). */
+        internal data class SentOutboxId(val id: String, val receivedAt: Long)
+
+        /**
+         * Appends the delivered messageIds to the reconciliation log read by the TS at login, one
+         * line each: `id` alone, or `id<TAB>receivedAt` when the server answered its receive time.
+         * The TS reads both shapes (`reconcileOutboxSent`, outboxMirror.ts), so a file an older
+         * build wrote still reconciles.
+         */
+        private fun appendOutboxSent(context: Context, ids: List<SentOutboxId>) {
             try {
                 val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_SENT_FILE)
                 val existing = if (file.exists()) file.readText() else ""
-                file.writeText(existing + ids.joinToString("\n") + "\n")
+                val lines = ids.joinToString("\n") { if (it.receivedAt > 0L) "${it.id}\t${it.receivedAt}" else it.id }
+                file.writeText(existing + lines + "\n")
             } catch (e: Exception) {
                 Log.w(TAG, "appendOutboxSent: ${e.message}")
             }
@@ -1887,6 +1988,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             body: String,
             mentionsMe: Boolean,
             sentAt: Long,
+            serverAt: Long,
             covers: Int,
         ): Boolean {
             val context = CanariApplication.appContext()
@@ -1894,7 +1996,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt covers=$covers")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers")
             WS_NOTIF_LANE.execute {
                 try {
                     val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
@@ -1912,6 +2014,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             groupId = groupId,
                             channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
                             sentAt = sentAt,
+                            serverAt = serverAt,
                             // The WebView already decided this reader cannot see the message land.
                             suppressInForeground = false,
                             supersedes = generics.firstOrNull() ?: 0L,
@@ -2249,6 +2352,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             sentAt: Long = 0L,
             /**
+             * The SERVER's `createdAt` of the same message, in ms ([EXTRA_SERVER_AT]): handed to the
+             * quick actions beside [sentAt] so the read mark they send is on the clock the
+             * conversation is ordered by. 0 when unknown, and the actions then send the stamped mark.
+             */
+            serverAt: Long = 0L,
+            /**
              * Whether a foregrounded app is on its own a reason not to post.
              *
              * TRUE for a PUSH, which knows nothing finer: the frame came from outside and the only
@@ -2303,13 +2412,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
                 return 0L
             }
-            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark]. Only where the
-            // sender's stamp exists, the same condition the de-duplication below carries, and never
-            // against a supersede, which redraws a line that is already there.
+            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
+            // [coveredByShadeMark]. Only where the sender's stamp exists, the same condition the
+            // de-duplication below carries, and never against a supersede, which redraws a line
+            // that is already there.
             if (sentAt > 0L && supersedes == 0L) {
                 val readUpTo = shadeReadWatermark(this, groupId)
-                if (sentAt <= readUpTo) {
-                    Log.d(TAG, "showMessageNotification: read from the shade up to $readUpTo -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
+                    Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
                     return 0L
                 }
             }
@@ -2505,14 +2615,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
             // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
             } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                 // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
                 // reaches with one PushSecret call. Reply stays off - the send is end-to-end
                 // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
                 // banner that shows the message: the mark is the receipt the sender sees.
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
             }
 
             val notif = notifBuilder.build()
@@ -2791,7 +2901,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * merge by `max` across devices, so a fast clock would mark future messages read permanently
      * and unfixably. Returns "" only if the JVM could not allocate the string.
      */
-    external fun nativeBuildReadWatermarkProto(at: Long): String
+    external fun nativeBuildReadWatermarkProto(at: Long, serverAt: Long): String
 
     /**
      * Builds the plaintext call hangup (base64) the native ring's Decline sends - the same
@@ -3124,6 +3234,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val senderId        = data["senderId"] ?: ""
         val queuedMessageId = data["queuedMessageId"]
         val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
+        // The server's acceptance of this message (`queued_message.createdAt`, ISO 8601): the key the
+        // conversation is ordered and read on (readState.ts, owner 2026-10-31). Carried to the cache
+        // row and to the shade's actions. 0 when absent or unreadable, which is said.
+        val pushServerAt    = serverInstantOf(data["createdAt"])
 
         Log.d(TAG, "thread: groupId=$groupId named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
 
@@ -3301,7 +3415,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (gate is NotificationLevelGate.Decision.Withhold) {
             Log.d(TAG, "[NOTIF] group=${groupId.take(8)} withheld: ${gate.reason}")
             if (decrypted != null) {
-                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
             }
             if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                 enqueueRefusedFrameWorker()
@@ -3347,7 +3461,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         if (decrypted != null) {
-            writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+            writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
         }
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -3372,7 +3486,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } else {
                 val stamp = showMessageNotification(
                     senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-                    channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
+                    channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
+                    namesEachSender = true,
                 )
                 if (refusedForGood && stamp != 0L) {
                     GENERIC_BANNERS.genericPosted(groupId, stamp)
@@ -4623,6 +4738,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupName: String,
         isGroup: Boolean?,
         msg: DecryptedMessage,
+        /** The push's `createdAt` in ms, 0 when unknown: the row's `serverTimestamp` (fcmCache.ts). */
+        serverAt: Long,
     ) {
         if (msg.messageId.isEmpty()) {
             Log.w(TAG, "writeFcmCache: messageId empty -> entry ignored")
@@ -4644,6 +4761,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             isGroup?.let { put("isGroup", it) }
             put("content",    msg.text)
             put("timestamp",  msg.sentAt)
+            if (serverAt > 0L) put("serverTimestamp", serverAt)
             put("type",       msg.type)
             msg.replyTo?.let { put("replyTo", it) }
             msg.mediaKind?.let { put("mediaKind", it) }
