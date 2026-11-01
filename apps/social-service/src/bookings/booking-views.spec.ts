@@ -84,7 +84,7 @@ describe('bookingView', () => {
       const view = bookingView(booking, people, relation, visibility, STRANGER);
       expect('holderName' in view).toBe(shown);
       expect('holderId' in view).toBe(shown);
-      if (shown) expect(view.holderId).toBe(HOLDER);
+      expect((view as { holderId?: string }).holderId).toBe(shown ? HOLDER : undefined);
     }
   );
 

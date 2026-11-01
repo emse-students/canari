@@ -3,7 +3,7 @@ import { PRODUCT_ALREADY_PURCHASED, TIER_NOT_A_RISE, TIER_NOT_RANKABLE } from '.
 
 /**
  * The money decisions a cotisation tier sale rests on, as pure functions shared by the checkout
- * (`ProductsService.resolvePurchase`), its settlement and the shop listings, so the price a viewer is
+ * (`ProductsService.decidePurchase`), its settlement and the shop listings, so the price a viewer is
  * QUOTED and the price a checkout CHARGES are one computation (docs/wiki/cotisations.md
  * "Rising to a higher tier").
  */

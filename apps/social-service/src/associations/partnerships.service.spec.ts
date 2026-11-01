@@ -363,6 +363,21 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
       expect(cardRepo.save).toHaveBeenCalled();
     });
 
+    it('CONTROL: the editor repeats membersOnly on every save, and renaming a card already ticked is not asked', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: true });
+      // The PartnershipEditor's real update body: every field, membersOnly included.
+      await service.update('asso1', 'card1', {
+        title: 'Renamed',
+        membersOnly: true,
+        isActive: true,
+        badgeText: null,
+      } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+      expect(assoRepo.findOne).not.toHaveBeenCalled();
+    });
+
     it('CONTROL: an edit that does not tick the box is not asked', async () => {
       const { service, cardRepo, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
