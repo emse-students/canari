@@ -29,6 +29,7 @@ const tabOutboxMock = vi.hoisted(() => ({
   publishOutboxEntryCancelled: vi.fn(),
   publishOutboxEntryFailed: vi.fn(),
   forwardReelTakeWrite: vi.fn(),
+  acknowledgeReelTakeAdoption: vi.fn(),
   subscribeTabOutboxEvents: vi.fn((handler: (event: TabOutboxEvent) => void) => {
     tab.handlers.push(handler);
     return () => {};
@@ -185,6 +186,8 @@ interface LifeOptions {
   afterUpload?: () => Promise<void>;
   /** Runs right AFTER the take's full row (with its file) was read for its transfer. */
   afterFullRead?: () => Promise<void>;
+  /** Messages TOMBSTONED on this device (deleted for everyone): their stored row says `isDeleted`. */
+  tombstones?: string[];
 }
 
 const ACCEPT = async () => undefined;
@@ -196,7 +199,9 @@ function life(w: World, opts: LifeOptions = {}) {
   const s = w.storage;
   const storage = {
     saveMessage: vi.fn(async () => undefined),
-    getMessage: vi.fn(async () => null),
+    getMessage: vi.fn(async (id: string) =>
+      opts.tombstones?.includes(id) ? { id, isDeleted: true } : null
+    ),
     saveOutboxEntry: (e: OutboxEntry, k: string) => live(() => s.saveOutboxEntry(e, k)),
     saveReelTake: (
       t: OutboxEntry,
@@ -1272,6 +1277,120 @@ describe('one take, several conversations (RC-13)', () => {
     tab.role = 'leader';
     await leader.outbox.flush();
     await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+  });
+
+  it('L1: a `releasing` write that FAILS while the transfer runs is owed, written again by the drive, and the late file released in this page life', async () => {
+    const w = world();
+    const execute = w.sql.db.execute;
+    let failNext = false;
+    let failed = false;
+    w.sql.db.execute = async (q: string, p?: any[]) => {
+      if (failNext && q.includes('UPDATE outbox SET conversation_id') && p?.[0] === ID) {
+        failNext = false;
+        failed = true;
+        throw new Error('database is locked');
+      }
+      return execute(q, p);
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const l: ReturnType<typeof life> = life(w, {
+        afterUpload: async () => {
+          failNext = true;
+          await cancelAll(l, 3);
+        },
+      });
+      await enqueueTake(l, 3);
+      await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+      expect(failed).toBe(true);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('NOT recorded, owed'))).toBe(true);
+      const [stored] = [...w.server.stored.keys()];
+      expect(w.events).toEqual([`release ${stored}`]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('L2: a deletion whose forwarded event no leader took is RE-DERIVED from its tombstone by the next leader, and the last releases the file', async () => {
+    const w = world();
+    const first = life(w);
+    await enqueueTake(first, 1);
+    await expectDeliveredOnce(w, first, 1);
+    const { media } = await sentReel(w, first);
+    first.kill();
+
+    // A follower meets the tombstone and leaves it: only the leader maintains the records (L3).
+    tab.role = 'follower';
+    const follower = life(w, { tombstones: [SEND_IDS[0]] });
+    await follower.outbox.flush();
+    expect([...w.sql.rows.keys()]).toEqual([ID]);
+    follower.kill();
+
+    tab.role = 'leader';
+    await life(w, { tombstones: [SEND_IDS[0]] }).outbox.flush();
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(w.events.filter((e) => e.startsWith('release'))).toEqual([`release ${media.mediaId}`]);
+  });
+
+  it('L3: an expired record is swept by the leader only', async () => {
+    const w = world();
+    const rows = takeRows(1);
+    rows.take.media!.expiresAtMs = 1_000;
+    const first = life(w);
+    await first.outbox.enqueueTake(rows.take, rows.sends);
+    await vi.waitFor(() => expect(sends(first)).toBe(1));
+    await vi.waitFor(async () => expect((await takeRow(w))?.take?.state).toBe('sent'));
+    first.kill();
+
+    tab.role = 'follower';
+    const follower = life(w);
+    await follower.outbox.flush();
+    expect(w.sql.rows.has(ID)).toBe(true);
+    follower.kill();
+
+    tab.role = 'leader';
+    await life(w).outbox.flush();
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
+  });
+
+  it("L2: a follower's forwarded adoption the leader never acknowledged is SAID when its publish step ends, with its cost; an acknowledged one is not", async () => {
+    tab.role = 'follower';
+    const w = world();
+    const l = life(w, { prepare: () => NEVER() });
+    await enqueueTake(l, 1, { awaitsPublish: true });
+    const ref = await publishStepUpload(w);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
+      l.outbox.endPublishWait(ID);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+
+      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
+      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      l.outbox.endPublishWait(ID);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      l.kill();
+    }
+  });
+
+  it('L2: the leader acknowledges an adoption a follower forwarded', async () => {
+    const w = world();
+    const l = life(w, { prepare: () => NEVER() });
+    await enqueueTake(l, 1);
+    const ref = await publishStepUpload(w);
+    tabOutboxMock.acknowledgeReelTakeAdoption.mockClear();
+    tab.handlers[0]({
+      type: 'outbox_reel_take_adopt',
+      takeId: ID,
+      uploaded: { ref, durationMs: 4200 },
+    });
+    await vi.waitFor(() =>
+      expect(tabOutboxMock.acknowledgeReelTakeAdoption).toHaveBeenCalledWith(ID)
+    );
+    l.kill();
   });
 
   it("THE LEADER DOES A FOLLOWER'S FORWARDED DELETION: the record marks it, and the last releases the file", async () => {

@@ -87,7 +87,9 @@ export type TabOutboxEvent =
   | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason }
   /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
   | { type: 'outbox_reel_send_deleted'; messageId: string }
-  | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload };
+  | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload }
+  /** The leader took a forwarded adoption: the follower owes nothing more for it. */
+  | { type: 'outbox_reel_take_adopt_ack'; takeId: string };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
@@ -97,6 +99,7 @@ const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_entry_retired',
   'outbox_reel_send_deleted',
   'outbox_reel_take_adopt',
+  'outbox_reel_take_adopt_ack',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -187,6 +190,18 @@ export function forwardReelTakeWrite(
 ): void {
   if (getIsTabLeader()) return;
   ensureChannel()?.postMessage(event satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a follower's forwarded adoption ({@link forwardReelTakeWrite}) was taken. The
+ * follower would otherwise end its publish step not knowing, and says so with its cost.
+ */
+export function acknowledgeReelTakeAdoption(takeId: string): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_reel_take_adopt_ack',
+    takeId,
+  } satisfies TabOutboxEvent);
 }
 
 /**
