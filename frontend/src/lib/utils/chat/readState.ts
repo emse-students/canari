@@ -1,3 +1,4 @@
+import { resolveAnchor, type VisibleAnchor } from './visibleRow';
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
 import { messageTime, stampedTime } from './messageOrder';
 
@@ -367,21 +368,24 @@ export function countUnreadForUser(
  * reader can see. A reaction, an edit or a pin is not a row and never reaches this function.
  *
  * @param msgs The thread in DISPLAY order (`messageGroups` rows), never the store's order.
- * @param lastVisibleId The id of the last row at least partly in view; `null` when the position is
- *        not measured yet, which counts nothing - a count with no position would be the old lie.
+ * @param anchor The last row at least partly in view above the composer; `null` when the position
+ *        is not measured yet, which counts nothing - a count with no position would be the old lie.
+ *        A row that has since gone resolves to the nearest surviving one (`resolveAnchor`).
  */
 export function countUnreadBelow(
   msgs: ReadonlyArray<
     Pick<ChatMessage, 'id' | 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
   >,
-  lastVisibleId: string | null,
+  anchor: VisibleAnchor | null,
   watermark: number,
   serverWatermark = 0
 ): number {
-  if (lastVisibleId === null) return 0;
-  const at = msgs.findIndex((msg) => msg.id === lastVisibleId);
-  if (at < 0) return 0;
-  return countUnreadForUser(msgs.slice(at + 1), watermark, serverWatermark);
+  const { index } = resolveAnchor(
+    msgs.map((msg) => msg.id),
+    anchor
+  );
+  if (index < 0) return 0;
+  return countUnreadForUser(msgs.slice(index + 1), watermark, serverWatermark);
 }
 
 /**
