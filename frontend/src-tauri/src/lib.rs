@@ -1213,7 +1213,8 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 /// Builds the `read_watermark` control proto for the "mark as read" and quick-reply notification
 /// actions. `at` is the sender's `sent_at` for the message the notification is about, carried down
 /// from the push - never this device's clock, for the reason
-/// [`mobile::proto_fields::build_read_watermark_app_message`] states.
+/// [`mobile::proto_fields::build_read_watermark_app_message`] states - and `server_at` the server's
+/// `createdAt` of that message (0 when the notification does not know it).
 ///
 /// Infallible by construction (no string to decode, no JSON to parse), so unlike its neighbours it
 /// has no error branch to log: an empty return would mean the JVM could not allocate a string.
@@ -1225,10 +1226,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     at: jni::sys::jlong,
+    server_at: jni::sys::jlong,
 ) -> jni::objects::JString<'a> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    let bytes = mobile::proto_fields::build_read_watermark_app_message(at);
+    let bytes = mobile::proto_fields::build_read_watermark_app_message(at, server_at);
     let out = STANDARD.encode(&bytes);
     env.new_string(&out)
         .unwrap_or_else(|_| env.new_string("").unwrap())

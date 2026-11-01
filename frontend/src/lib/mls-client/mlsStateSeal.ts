@@ -267,9 +267,10 @@ export class MlsStateUnreadableNowError extends Error {
 }
 
 /**
- * The codes `mls-core`'s deterministic reader answers ABOUT THE BYTES - `MlsError::state_verdict_code`
- * in Rust, handed across the WASM boundary as a code by `state_blob_verdict`, never read out of a
- * message.
+ * The codes `mls-core` answers ABOUT THE BYTES - `MlsError::state_verdict_code` in Rust - handed
+ * across every boundary as a code (`state_blob_verdict`, the `code` field of a failed WASM
+ * construction or of `initialiser_mls`'s rejection), never read out of a message. The web's v2
+ * opener throws two of them itself, decided from the bytes the same way.
  */
 export type MlsStateVerdictCode =
   | 'STATE_ALTERED'
@@ -286,21 +287,27 @@ export const MLS_STATE_VERDICT_CODES: ReadonlySet<string> = new Set<MlsStateVerd
 ]);
 
 /**
- * WebCrypto refused a v2 blob AND `mls-core`'s deterministic reader gave a verdict on the same
- * bytes: a FACT, carried as a {@link code} the classifier reads by type (`classifyStateLoadFailure`).
+ * A verdict ABOUT THE BYTES of a saved state: a FACT, carried as a {@link code} the classifier
+ * reads by type (`classifyStateLoadFailure`) - the ONE type every state-load verdict arrives as,
+ * whichever side decided it:
  *
- * The message still starts with the code, so a reader of the logs - and every consumer that has not
- * moved to the type yet - sees the same word a native load surfaces for the same bytes.
+ *  - the web's v2 opener, from the header alone ({@link openMlsStateBlobV2});
+ *  - `mls-core`'s deterministic reader, after WebCrypto refused a v2 blob - then {@link refusal}
+ *    carries that refusal (`loadAndInitWasm`);
+ *  - `mls-core` itself, through a failed WASM construction or a rejected `initialiser_mls`, typed
+ *    from the boundary's `code` field (`mlsStateLoadErrorOf`).
+ *
+ * The message starts with the code for a reader of the logs; NOTHING reads it back.
  */
 export class MlsStateVerdictError extends Error {
   constructor(
     readonly code: MlsStateVerdictCode,
-    readonly refusal: MlsStateUnreadableNowError
+    detail: string,
+    /** The WebCrypto refusal the deterministic reader judged, when that is where the verdict came from. */
+    readonly refusal: MlsStateUnreadableNowError | null = null,
+    cause: unknown = refusal ?? undefined
   ) {
-    super(
-      `${code}: mls-core's deterministic reader judged the v2 state blob WebCrypto refused (${refusal.blobBytes} B, ${refusal.errorName})`,
-      { cause: refusal }
-    );
+    super(`${code}: ${detail}`, { cause });
     this.name = 'MlsStateVerdictError';
   }
 }
@@ -313,7 +320,7 @@ function errorNameOf(e: unknown): string {
 /**
  * Opens a v2 blob on the web, returning the plain CBOR snapshot for the WASM to load.
  *
- * Rejects with the codes `classifyStateLoadFailure` reads: `STATE_KEY_MISMATCH` when the header
+ * Rejects with a typed {@link MlsStateVerdictError} whose code `classifyStateLoadFailure` reads: `STATE_KEY_MISMATCH` when the header
  * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess) and
  * `STATE_UNDECRYPTABLE` for a stub too short to carry a body - both decided from the bytes alone,
  * the same as `mls-core`. A rejection from WebCrypto itself (key derivation or decrypt) is
@@ -324,14 +331,15 @@ export async function openMlsStateBlobV2(
   deviceKeyB64: string
 ): Promise<Uint8Array> {
   if (!isMlsStateBlobV2(blob)) {
-    throw new Error('STATE_UNDECRYPTABLE: not a framed v2 state blob');
+    throw new MlsStateVerdictError('STATE_UNDECRYPTABLE', 'not a framed v2 state blob');
   }
   // A stored blob is never backed by a SharedArrayBuffer; the cast says so to WebCrypto's types.
   const bytes = blob as Uint8Array<ArrayBuffer>;
   const body = bytes.subarray(MLS_STATE_BLOB_HEADER_LEN);
   if (body.length < MLS_STATE_BLOB_V2_IV_LEN + 16) {
-    throw new Error(
-      `STATE_UNDECRYPTABLE: framed state blob (version 2) carries ${body.length} byte(s) after its header, too short to hold its 28-byte minimum`
+    throw new MlsStateVerdictError(
+      'STATE_UNDECRYPTABLE',
+      `framed state blob (version 2) carries ${body.length} byte(s) after its header, too short to hold its 28-byte minimum`
     );
   }
   let keyMaterial: PreparedKey;
@@ -346,8 +354,9 @@ export async function openMlsStateBlobV2(
   const { header, aesKey } = keyMaterial;
   for (let i = MLS_STATE_BLOB_MAGIC.length + 1; i < MLS_STATE_BLOB_HEADER_LEN; i++) {
     if (blob[i] !== header[i]) {
-      throw new Error(
-        "STATE_KEY_MISMATCH: the state's header names a different device key, so the PIN was rotated on another device and the OLD one opens this state"
+      throw new MlsStateVerdictError(
+        'STATE_KEY_MISMATCH',
+        "the state's header names a different device key, so the PIN was rotated on another device and the OLD one opens this state"
       );
     }
   }

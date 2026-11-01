@@ -588,6 +588,9 @@ WhatsApp does. The five switches moved in ONE commit; `callsCompiled.test.ts` as
 | `kCanariCallsEnabled` | `canari_push.mm` | installs the `PKPushRegistry` and the `CXProvider` at process start; `CanariReportIncomingCall` reports to CallKit instead of returning |
 | `voip` | `Info.plist` + `project.yml` `UIBackgroundModes` | the only way PushKit hands out a token; App Review checks it is used |
 
+**Owner, 2026-11-01:** the incoming-call screen is in-app plus Android full screen, with the same
+design; the live end keeps its red X, since a confirmation modal exists.
+
 **What moved with them.**
 - **Android's full-screen intent opens a SCREEN, never the answer.** Android launches a full-screen
   intent BY ITSELF on a locked or idle phone, and it used to be the answer deep link - every call to
@@ -2572,7 +2575,7 @@ If a banner still shows in the foreground on the next reading, it is not this pa
 
 | Moment | In-app screen (web, Android, iPhone) | Android native ring (CallStyle + full-screen intent) | iPhone native ring |
 |---|---|---|---|
-| Incoming | name, photo, "Appel entrant", **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
+| Incoming | name, photo, "Appel audio" / "Appel vidéo" ([2026-11-01](#the-incoming-call-screen-in-canaris-look-owner-2026-11-01)), **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right; on a locked phone `IncomingCallActivity`, the same screen as in-app | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
 | Outgoing | name, photo, **"Appel..." / "Calling..."** (was "Sonnerie..." / "Ringing..."), mute, hang-up | - | - |
 | In call | name, photo, `mm:ss`, mute, camera, speaker (apps only), hang-up | the ongoing CallStyle with the same "Calling..." text while dialling (it reads the same `call_ringing_label`) | - |
 
@@ -2581,6 +2584,22 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
 `CallOverlay.svelte.test.ts` ("the screen every platform shows") pins the name, the backdrop, decline-before-accept DOM order, the tokens, "Calling..." and the absence of Accept on an outgoing call.
 
 **Rendered in Chromium** with a stand-in `CallService` on a public route (no estate, no account, so the photo is the initials tile): [incoming at 390x844](assets/call-screen-incoming-390.png), [in call at 390x844](assets/call-screen-live-390.png), [calling at 1280x800](assets/call-screen-calling-1280.png) (the desktop screen is the whole window, as on Messenger web). **Owed to a phone:** a REAL photo behind the blur on the Mi 9T and the iPhone (WebKit's `blur-3xl` on a scaled element is the cost to read), the safe-area on the notch, and the Android speaker button in the screenshot's place.
+
+### The incoming-call screen, in Canari's look (owner, 2026-11-01)
+
+**The request** (owner): *"L'ecran quand on nous appelle est assez moche, avec juste deux gros carres vert et rouge. Refais tout : quelque chose de joli avec ecrit Appel video ou Appel audio, la photo et le nom, dans la belle identite visuelle de Canari."* The squares were Android's locked-phone screen (`IncomingCallActivity`: two flat `Button`s with `setBackgroundColor`); the in-app ring already had round buttons but said only "Appel entrant". Both now draw ONE screen, top to bottom:
+
+| Piece | In-app (`CallOverlay.svelte`, `isIncoming`) | Android locked phone (`IncomingCallActivity.drawScreen`) |
+|---|---|---|
+| Backdrop | Canari's night gradient `from-cn-ink to-cn-scrim`, the caller's photo blurred over it (as before), a veil, and a `cn-yellow/15` glow behind the face (ring only) | the same gradient (`call_screen_top/bottom`), the ORIGINAL photo blurred by `RenderEffect` (API 31+; the gradient alone below), the same veil and radial yellow glow. The photo is `callScreenPhoto`: the cached avatar FILE decoded uncropped and sampled to the screen's short edge, off the main thread - never the notification icon, which is circle-cropped at icon size and would blur into a disc with transparent corners and upscale the face. With no readable original the icon is the face and there is no backdrop |
+| Photo | 144 px (192 from `md`), a `cn-yellow/60` ring, initials tile until/without a photo | 144dp, the same yellow ring, initials (`initialsOf`) until the photo; the Canari mark for a caller this phone never named |
+| Halo | two `cn-yellow` halos, `animate-call-halo` and `animate-call-halo-late` (2.4 s, scale 1 -> 1.45, fade; the second 1.2 s behind), `motion-safe` only | the same two halos (`HALO_MS`, `HALO_SCALE`), skipped when the phone's animations are off (`ValueAnimator.areAnimatorsEnabled`) |
+| Name, kind | `text-3xl` name, then a pill: `Phone` + "Appel audio" or `Video` + "Appel vidéo" (`call_audio_only_label`, `chat_video_call_label`) | 32sp name, the same pill (`call_screen_kind_audio` / `_video`, app locale) |
+| Actions | Refuser (red, `PhoneOff`) left, Accepter (green, `Phone`, or `Video` for a video call) right, 64 px discs, labels under, a coloured shadow | the same order and colours (`call_decline`, `call_accept`), 72dp discs with a ripple, Material glyphs (`ic_call_decline`, `ic_call_answer`, `ic_call_answer_video`), labels under, above the navigation bar's inset |
+
+The Android colours - the white inks over the screen included (`call_on_screen*`, `call_pill_*`, `call_ripple`) - are `res/values/colors.xml` entries that name their `app.css` twin; the screen is dark in both themes, like `cn-scrim`, so they have no night variant. The ring's `call-status` line is gone (the kind pill replaces it, and the live region still announces "Appel entrant"), so `call_incoming_video_label` was deleted; `IncomingCallActivity.intentFor` now takes `hasVideo` instead of the notification's body text. The CallStyle notification itself is the system's and was not touched; the iPhone's lock screen is CallKit's and cannot be drawn.
+
+`CallOverlay.svelte.test.ts` ("the incoming-call screen") pins the audio and video subtitles and glyphs, the name after the photo, the initials fallback, the halo and glow on a ring only, and that Accept and Decline call `acceptCall` and `endCall`. **Rendered in Chromium** at 390x844 with a stand-in `CallService` (no account, so the initials tile): [audio](assets/call-screen-incoming-390.png), [video](assets/call-screen-incoming-video-390.png); light and dark render the same, by design. **Owed to a phone:** the locked-phone ring on the Mi 9T (photo, blur, halo, both buttons, the gesture-bar inset, a caller never named), and the in-app ring on the iPhone 12 (a real photo behind the blur, the halo's cost in WebKit, the notch).
 
 ### Ringing, announcing, hearing
 
@@ -2656,7 +2675,7 @@ the call. Messages still arrive and are shown; only their sound goes.**
 
 | Sound | How it is silenced during a call |
 |---|---|
-| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing (`[AUDIO] <name> tone silenced - a call holds the app's sound`). The incoming ring passes `purpose: 'call'` and is exempt |
+| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing. Each is counted (one `Log.d` line per tone, which the in-app log does not record); the count is told once on the gate's release line, `[AUDIO] the call released the app's sound (...) - N tone(s) silenced during the call`. The incoming ring passes `purpose: 'call'` and is exempt |
 | Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on, until unmuted (`volumechange` pauses them). Nothing resumes on the call's end - the reader presses play. The reel review is now registered, so it also follows "one media at a time" and the pause on leaving the screen |
 | Browser notification (web, desktop browser) | raised with `silent: true` |
 | Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
@@ -2664,8 +2683,9 @@ the call. Messages still arrive and are shown; only their sound goes.**
 
 **The one gate.** Each `CallService` states its `callState` under its holder id; the gate is held while
 any holder is `calling`, `incoming` or `incall` and released at `ended` / `idle`, or when a replaced
-service is retired (`retireFromPageRing`). Logged once per change: `[AUDIO] a call holds the app's
-sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
+service is retired (`retireFromPageRing`). Logged once per change, through `Log.i` (`Log.d` writes
+`console.debug`, which the in-app log never records - the line was unreadable on a device until
+2026-11-01): `[AUDIO] a call holds the app's sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
 `toneOutput.test.ts`, `playbackArbiter.test.ts`, the p2p block above and `CallSoundHoldTest.kt`.
 
 **What is NOT covered, and what would lift it:**
@@ -2701,7 +2721,7 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 |---|---|---|
 | The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
 | The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
-| Audio route (speaker, earpiece, Bluetooth) | iOS only: label-matched `setSinkId`, best effort, logged when there is nothing to route to | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
+| Audio route (speaker, earpiece, Bluetooth) | iOS only: the loudspeaker by label-matched `setSinkId`, best effort, `WARN` when none is listed; the earpiece is the call's DEFAULT output (WebKit lists no such device), asked as `setSinkId('')` or nothing at all (`callAudioRoute.ts`) | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
 | Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | - |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
 | The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |

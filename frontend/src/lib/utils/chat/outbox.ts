@@ -78,6 +78,9 @@ import {
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
 import { MessageWrittenError } from './messageWrittenError';
+import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
+import { mapStoredMessagesToChatMessages } from './messageUtils';
+import { noteServerTime } from './serverClock';
 
 /** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
@@ -590,8 +593,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * failed message could be overtaken by the next one.
    *
    * ONE EXCEPTION, BY DESIGN (WP-OFF-9): an attachment whose UPLOAD runs or is owed does not hold its
-   * successors - only what depends on it. Display order is `sentAt`, so it still sorts at its compose
-   * time on every device; only the wire order changes.
+   * successors - only what depends on it. Display order is the SERVER's acceptance time
+   * (`messageOrder.ts`, owner 2026-10-31), so a text sent after the file and accepted before it is
+   * drawn above it on every device - the author's included: until its send answers, the file sits
+   * below every dated row, and it then takes its `receivedAt`.
    */
   /**
    * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
@@ -870,6 +875,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       showServerFailure(event.messageId, event.serverErrors);
       return;
     }
+    // The server time FIRST, then the status: a row that left the "awaiting its server time" tier
+    // with no time would be placed at its `sentAt` for the length of one render.
+    if (typeof event.receivedAt === 'number')
+      patchServerTimestamp(event.messageId, event.receivedAt);
     patchStatus(event.messageId, 'sent');
     // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
     clearUpload(event.messageId);
@@ -887,13 +896,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return null;
   }
 
-  /** Patch a message's status in the reactive map (in-memory; status is derived, not persisted). */
+  /**
+   * Patch a message's status in the reactive map (in-memory; status is derived, not persisted).
+   *
+   * MOVED, NOT ONLY PATCHED: an own row without a server time is ordered BELOW every dated row while
+   * it is unsent (`awaitsServerTime`), so a status change can change its place (`messageOrder.ts`).
+   */
   function patchStatus(messageId: string, status: ChatMessage['status']): void {
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    if (messages[found.idx].status === status) return;
-    messages[found.idx] = { ...messages[found.idx], status };
+    if (found.convo.messages[found.idx].status === status) return;
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      status,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -949,12 +965,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         : 'sent';
   }
 
-  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  /**
+   * Record the server's receive time on a sent message in the reactive map; `persistSent` writes it.
+   *
+   * THE ROW TAKES ITS PLACE HERE: until now it sat below every dated row, and from now it is ordered
+   * by this time on every device - above a peer's message the server accepted after it, below one it
+   * accepted before (`messageOrder.ts`, owner 2026-10-31).
+   */
   function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    noteServerTime(deps.userId, serverTimestamp);
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      serverTimestamp,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -1790,6 +1815,47 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Draws a text failed on 5xx: status `error`, and the `failed` view that is how the bubble knows a
    * Retry exists for it (`retryUpload` is the one handler). ONE place for the three tabs' paths.
    */
+  /**
+   * Puts a queued message the screen does not hold back on it, read by id from the store.
+   *
+   * A page read holds the newest page only, and an own message still queued is ordered BELOW every
+   * dated row while it is unsent (`awaitsServerTime`) - by its `sentAt` on disk, so one older than a
+   * page was in no page after a reload: the send went on, or stayed failed, invisibly, until it
+   * landed (review of #2824, P2-3). Its conversation must be on screen; one that is not loads it
+   * with its page later, and this runs again then. Status is applied by the caller.
+   */
+  async function restoreQueuedRow(entry: OutboxEntry): Promise<void> {
+    // A control entry (reaction, edit, deletion, read mark) is no message of its own: its id is a
+    // fresh one, never a row, and what it mutates is restored as that row's own entry.
+    if (!storage || entry.kind === 'control') return;
+    const holder = [...conversations].find(([, convo]) => convo.id === entry.conversationId);
+    if (!holder) return;
+    let stored: Awaited<ReturnType<IStorage['getMessage']>>;
+    try {
+      stored = await storage.getMessage(entry.id, deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued row not read back: ${String(e)}`);
+      return;
+    }
+    if (!stored) {
+      console.error(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message - the send has nothing to show`
+      );
+      return;
+    }
+    // Read again after the await: a page or a live echo may have put the row there meanwhile.
+    if (findMessage(entry.id)) return;
+    const [key] = holder;
+    const convo = conversations.get(key);
+    if (!convo) return;
+    const [row] = mapStoredMessagesToChatMessages([stored], deps.userId);
+    conversations.set(key, {
+      ...convo,
+      messages: insertMessageOrdered(convo.messages, { ...row, status: 'pending' }),
+    });
+    log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued, older than the page held - put back on screen`);
+  }
+
   function showServerFailure(messageId: string, serverErrors: number): void {
     patchStatus(messageId, 'error');
     patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
@@ -2165,7 +2231,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         uploadTasks.delete(entry.id);
         uploadOwed.delete(entry.id);
         // The tab that composed this may be a follower, whose own echo is still showing `pending`.
-        publishOutboxEntrySent(entry.id, mediaContent);
+        publishOutboxEntrySent(
+          entry.id,
+          mediaContent,
+          entry.kind !== 'control' ? sent.receivedAt : null
+        );
         // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
         // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
         await storage
@@ -3157,6 +3227,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!storage) return;
       const entries = await readQueue('pending statuses');
       for (const entry of entries) {
+        if (!findMessage(entry.id)) await restoreQueuedRow(entry);
         const found = findMessage(entry.id);
         // A text failed on 5xx stays FAILED across a reload: its durable count says so.
         if (found && isServerFailureTerminal(entry)) {

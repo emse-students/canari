@@ -1,6 +1,7 @@
 <script lang="ts">
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+  import { noteServerTime } from '$lib/utils/chat/serverClock';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { resolve } from '$app/paths';
   /**
@@ -100,7 +101,7 @@
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
-  import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+  import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
@@ -1594,6 +1595,9 @@
     const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
+      // The leader relays a frame the SERVER dated: this tab, which receives none itself, notes it
+      // like the leader did, so its own read marks are bounded the same (serverClock.ts).
+      noteServerTime(globalSession.userId || currentUserId() || '', event.message.serverTimestamp);
       const merged = mergeAnnouncedMessage(convo.messages, event.message, event.clientMessageId);
       if (!merged) return;
       if (merged.settledEcho && event.clientMessageId) {
@@ -1894,7 +1898,14 @@
           stepDone('key-group-joins');
           // The notification extension's outcomes while away (`nseOutcomes.ts`), not awaited.
           void drainNseOutcomes(appendLog);
-          if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          if (storage) {
+            await reconcileOutboxSent(storage, {
+              deviceKeyB64: globalSession.deviceKeyB64,
+              userId: globalSession.userId,
+              onDated: (id, receivedAt) =>
+                dateBackgroundSentRow(globalConvs.conversations, id, receivedAt),
+            }).catch((e) => appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`));
+          }
           stepDone('outbox');
           // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
           // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).

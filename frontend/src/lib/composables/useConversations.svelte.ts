@@ -99,6 +99,7 @@ import {
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
@@ -741,7 +742,13 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder).
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {
@@ -1523,20 +1530,20 @@ export function useConversations() {
     const convo = conversations.get(contactName);
     if (!convo) return false;
 
-    const timestamps = convo.messages.map((m) =>
-      m.timestamp instanceof Date
-        ? m.timestamp.getTime()
-        : new SvelteDate(m.timestamp as any).getTime()
-    );
-    const beforeTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+    // The cursor is WHERE THE STORE'S PAGES STOP: the lowest `(orderAt, id)` among the rows a store
+    // page handed back (`oldestPageKey`), the pair the store pages on. Never the oldest row in
+    // memory: a row that reached it another way (live, from a bundle, an own pending send) may sit
+    // far below the last stored page, and paging below it skipped every stored row in between - as
+    // did a cursor on the key alone, which dropped the rows tied with the boundary (review of #2824,
+    // P2-4). No row from the store yet: the store's newest page, which the merge below deduplicates.
+    const before = oldestPageKey(convo.messages);
 
     const older = await ctx.storage.getMessagesPage(
       convo.id,
       ctx.deviceKeyB64,
       OLDER_MESSAGES_PAGE,
-      beforeTimestamp
+      before
     );
-    if (older.length === 0) return false;
 
     const mapped = await retroactivelyResolveHexIds(
       mapStoredMessagesToChatMessages(older, ctx.userId),
@@ -1548,13 +1555,25 @@ export function useConversations() {
     const current = conversations.get(contactName);
     if (!current) return false;
 
-    const existingIds = new SvelteSet(current.messages.map((m) => m.id));
-    const merged = [...mapped.filter((m) => !existingIds.has(m.id)), ...current.messages].sort(
-      compareMessageOrder
-    );
+    // A held row the store handed back again takes its fresh position. Below a PROVISIONAL boundary
+    // the store re-read everything at or above it, once keyed for real: a held store row it did not
+    // hand back has no position left to vouch for, and keeping its old one would make every later
+    // page re-read the window again.
+    const fresh = new SvelteMap(mapped.map((m) => [m.id, m]));
+    const held = current.messages.map((m) => {
+      const again = fresh.get(m.id)?.pageKey;
+      if (again) return { ...m, pageKey: again };
+      if (before?.provisional && m.pageKey) return { ...m, pageKey: undefined };
+      return m;
+    });
+    const heldIds = new SvelteSet(held.map((m) => m.id));
+    const merged = [...mapped.filter((m) => !heldIds.has(m.id)), ...held].sort(compareMessageOrder);
 
     conversations.set(contactName, { ...current, messages: merged });
-    return older.length === OLDER_MESSAGES_PAGE;
+    const below = before
+      ? older.filter((m) => m.pageKey && comparePageKeys(m.pageKey, before) < 0).length
+      : older.length;
+    return below === OLDER_MESSAGES_PAGE;
   }
 
   /**
