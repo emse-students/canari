@@ -45,7 +45,7 @@
     "@fontsource/chewy": "^5.3.0",
     "@fontsource/leckerli-one": "^5.3.0",
     "@humanspeak/svelte-markdown": "^2.2.0",
-    "@lucide/svelte": "^1.62.0",
+    "@lucide/svelte": "^1.64.0",
     "@sosweetham/tauri-plugin-system-components-api": "0.1.8",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-biometric": "^2.5.0",
