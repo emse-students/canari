@@ -24,6 +24,14 @@ plus the pointer here. Adding a rule there means asking first whether it belongs
 
 ---
 
+## Product philosophy - sovereignty
+
+The processing register is [register-of-processing](compliance/register-of-processing.md).
+
+Owner, 2026-11-01, verbatim: *"La philosophie de Canari est d'être souveraine et sécurisée, en plus de tout centraliser. Ne pas collecter et vendre les données, ne pas utiliser des algorithmes pour capter les utilisateurs outre le nécessaire. Meta, Google etc, sont à l'opposé de notre philosophie."*
+
+Applied: prefer self-hosted or EU options, send third parties the minimum, add no engagement algorithms. A new third-party recipient is a register line AND a privacy-policy line, written together.
+
 ## MLS state and keys -> [mls-protocol](protocols/mls-protocol.md), [auth](frontend/modules/auth.md)
 
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
