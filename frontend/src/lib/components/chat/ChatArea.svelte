@@ -327,6 +327,9 @@
   const waitingToBeAdded = $derived(
     conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
   );
+  // THE JOINER'S OWN ASK, opened: nothing in the thread was ever readable here, so say what it waits
+  // for rather than leave an empty thread and a live composer with no explanation.
+  const waitingForAMember = $derived(!!conversation && isNeverAdmitted(conversation));
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
   // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
@@ -1691,6 +1694,11 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{m.chat_waiting_own_device()}</span>
           </div>
+        {:else if waitingForAMember}
+          <div class="chat-send-notice is-pending" role="status" data-awaiting-admission-notice>
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{m.chat_awaiting_admission_notice()}</span>
+          </div>
         {/if}
       {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -1724,7 +1732,9 @@
           {onRemovePendingFile}
           {videoPreparation}
           {isUploading}
-          notice={sendError || heldNotice || waitingToBeAdded ? sendNotice : undefined}
+          notice={sendError || heldNotice || waitingToBeAdded || waitingForAMember
+            ? sendNotice
+            : undefined}
         />
       </div>
     {/if}

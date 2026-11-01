@@ -40,6 +40,7 @@ import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
 import { SeatEviction } from './entities/seat-eviction.entity';
+import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import Redis from 'ioredis';
 
@@ -104,6 +105,7 @@ class RedisShutdown implements OnModuleDestroy {
         NotificationPreference,
         GroupMembershipInterval,
         SeatEviction,
+        JoinAskPush,
         RevokedDeviceGroup,
       ],
       synchronize: process.env.NODE_ENV !== 'production',

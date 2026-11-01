@@ -1086,6 +1086,7 @@ export class InternalController {
       // The account's eviction records: what refuses a claim it took before this erasure is the
       // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).
       manager.query(`DELETE FROM dm_seat_evictions WHERE "userId" = $1`, [userId]),
+      manager.query(`DELETE FROM dm_join_ask_pushes WHERE "userId" = $1`, [userId]),
       // The key groups its revoked devices held: a binding for a person nothing will answer for.
       manager.delete(RevokedDeviceGroup, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.

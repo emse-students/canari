@@ -68,6 +68,7 @@ function harness() {
       { deviceId: `${u}-dev`, keyPackage: new Uint8Array([4]) },
     ]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(
       async (
@@ -222,7 +223,7 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
 
   it('another device holds the add lock: WAITING - nothing staged, the invitation is not over', async () => {
     const h = harness();
-    h.mlsService.acquireAddLock.mockResolvedValueOnce(false);
+    h.mlsService.acquireAddLockAnswer.mockResolvedValueOnce('held');
     const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
 
     expect(outcome).toEqual({ kind: 'waiting', on: 'add-lock' });

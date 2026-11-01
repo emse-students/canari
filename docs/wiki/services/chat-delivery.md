@@ -2369,6 +2369,7 @@ are both ON with no backfill). It lives in THIS service because every push is se
 | Category | Pushes filed under it | Decided in |
 |---|---|---|
 | `messages` | MLS 1-to-1 and group messages (`type: 'message'`) | `sendFcmForQueued`: delivered **silent**, not dropped |
+| `messages` (join ask) | `chat_join_ask`: "X veut rejoindre", one per member Decline to the admitted members ([mls-protocol](../protocols/mls-protocol.md)) | `sendPushToUser`: not sent |
 | `channels` | community salon messages (`type: 'channel'`) | `sendPushToUser`: not sent |
 | `posts` | `social_association_post`, `social_followed_post` | `sendPushToUser` |
 | `comments` | `social_comment`, `social_reply` | `sendPushToUser` |

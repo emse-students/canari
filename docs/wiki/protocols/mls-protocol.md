@@ -1197,6 +1197,55 @@ or expired - discovery removes it with no status read: there is no past and no e
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
 
+**The admission card and its edges, friction pass (2026-11-01).** Four defects of the same flow, none
+of them touching the rule:
+
+- *The card names the person.* `JoinRequestRow` resolved the name with `getUserDisplayNameSync`, which
+  reads a cache that notifies nobody - and a person who came by link is exactly the one no cache
+  holds, so the card read "Utilisateur inconnu" for good. The card now resolves each person once
+  when their ask (or decline line) appears (`resolveUserDisplayName`) and holds the answer in a
+  reactive map; the name is a link to `/profile/<id>`.
+- *The list says an ask exists.* `ConversationTile` shows a small count (`data-join-asks`) of the
+  asks of its conversation, derived from `pendingJoinRequests()` and gated by `canAnswerJoinRequests()`
+  like the card, so it leaves with the ask. Client-only; the preview stays the last message.
+- *The joiner is told.* A never-admitted row opened in `ChatArea` shows `chat_awaiting_admission_notice`
+  in the composer's notice band (the device-key line stays for a member's own further device). When
+  discovery purges that row - declined, or expired - it says once, as a toast
+  (`chat_admission_ended_toast`), at the one site that removes it. `chat_send_held` no longer says
+  "session".
+- *The loser of a tap race is not told it failed.* A refusal of the member's own Add carries a typed
+  `JoinRefusalKind` (`joinAnswers.ts`, from `BulkAdditionRefusal`: `add-lock-busy` is `busy`,
+  `removed-meanwhile` is `raced`, never read from the `reason` text). `busy` is only an ANSWERED
+  refusal: `acquireAddLockAnswer` tells the server's "held" from a transport error or a non-2xx, which
+  is `add-lock-unanswered` and a plain failure. `commit-race-lost` and the other aborts prove nobody
+  answered this ask, so they are failures too. `answerJoinRequestOutcome` returns the kind and
+  `answerJoinRequestOrToast` says "someone is adding people, try again in a moment" or "another member
+  already answered"; the ask stays until the server's settlement frame clears it. Any other refusal is
+  still "try again".
+
+**One push per ask, to the members already admitted (owner, 2026-11-01).** A member who has the app
+closed learned of an ask only at the next open. The invitation-link acceptance now sends ONE ordinary,
+user-visible push per `askId` ("X veut rejoindre", the conversation's name as the body), composed on
+the device from `contentKey = chat_join_ask` (`composeServerNotification` on Android, the NSE on iOS;
+category `messages`, so the account's messages switch and a conversation muted to `none` silence it).
+It is NOT the background-add wake, which an awaiting seat still suppresses (`notifyWelcomeRequest`):
+that wake lets a phone answer by itself and no push answers an ask.
+
+**One push per member Decline, never per seat.** The claim is a row keyed `(groupId, userId)`
+(`dm_join_ask_pushes`, migration 043), NOT the seat: a self-withdrawal (`members.controller.ts`)
+deletes the seat and a re-follow writes a new one, so a claim on the seat let the joiner push every
+member again and again with no member acting. `pushJoinAsk` inserts the row with `gen` = the person's
+`dm_seat_evictions."declinedAtSeatGeneration"` (0 when none) `ON CONFLICT DO UPDATE ... WHERE old gen
+< new gen RETURNING 1`: only a MEMBER's Decline moves that counter, so accept / withdraw / accept sends
+once, a Decline then a new ask sends again, and an expiry re-arms nothing. Two replicas race on the one
+statement and only one gets a row back. Never to the joiner, to a seat that itself awaits a member,
+or to a member for whom a block stands between them and the asker (either direction, `isBlockedBetween`,
+logged). With no resolvable name the actor is empty and every device says "Someone wants to join" -
+the lock screen never shows an id (the failed lookup is a WARN). At-most-once: a send failing after
+the claim is logged per recipient (summary `sent / failed / muted / blocked`), not retried. **The push
+is not withdrawn when the ask ends**: an ordinary push cannot be recalled, and the card in the
+conversation says the ask is over. Migration 043 is purely additive (a new table).
+
 **A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
 2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
 persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the

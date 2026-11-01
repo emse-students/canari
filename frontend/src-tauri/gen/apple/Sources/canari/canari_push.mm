@@ -629,12 +629,22 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",
+    // A new person asks to join a conversation the reader is in (chat-delivery's own key): the
+    // person names the title, the conversation's name is the body.
+    @"chat_join_ask" : @"join_ask",
     // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's word)
     // is the body, a fixed sentence on a link-only space (Q-R5).
     @"social_booking_cancelled" : @"booking_cancelled",
     @"social_booking_withdrawn" : @"booking_withdrawn",
     @"social_booking_added" : @"booking_added",
   };
+  // With no name to show (the lookup failed server-side) the title says "someone": an id never
+  // reaches a lock screen.
+  if ([key isEqualToString:@"chat_join_ask"] && actor.length == 0) {
+    *title = CanariLocalized(@"notif.social.join_ask_anon.title");
+    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.join_ask.body");
+    return;
+  }
   NSString *stem = actorTitled[key];
   if (stem) {
     *title = [NSString
