@@ -58,7 +58,7 @@
   import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
-  import { callMicNotice, callStatusText } from '$lib/utils/callStatusText';
+  import { callE2eLine, callMicNotice, callStatusText } from '$lib/utils/callStatusText';
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
@@ -99,12 +99,23 @@
   $effect(() => () => callView.reset());
 
   let primary = $derived(participants[0]);
+  /**
+   * The peer's name and id as STRINGS, for the effects that hand them to the OS. `participants` is
+   * re-derived by the parent on every change of the conversations map, so `primary` is a NEW object
+   * many times a second while nothing about the peer changed: an effect reading it re-ran ~20 times
+   * a second (313 "no Media Session API" lines in 46 s of a video ring, 2026-10-31). A string that
+   * did not change notifies nobody.
+   */
+  let peerTitle = $derived(primary?.displayName || m.call_label());
+  let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
   // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
   let statusText = $derived(callStatusText(call.kind, call.duration));
   /** A VIDEO call rings: the subtitle says so and Accept carries a camera, as it answers with one. */
   let ringHasVideo = $derived(isIncoming && callService.incomingHasVideo);
   let isEnded = $derived(call.callState === 'ended');
+  /** The encryption line: none while ringing, the check from `connecting`, the shield once proven. */
+  let e2eLine = $derived(callE2eLine(call.kind, call.e2eProven));
 
   /** The remote stream carrying the peer's picture (`call.remoteVideoTrack`), if any. */
   let remoteVideoStream = $derived.by(() => {
@@ -270,9 +281,8 @@
   // -- The call in the background: told to the OS, and every transition logged ----------------
   $effect(() => {
     if (isIncoming || isEnded) return;
-    const title = primary?.displayName || m.call_label();
     applyCallMediaSession(navigator, {
-      title,
+      title: peerTitle,
       artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
       muted: call.isMuted,
       onHangup: () => {
@@ -304,8 +314,8 @@
     if (!androidCall) return;
     androidCall.publish(
       ongoingCallSpec(call.kind, !!call.localStream, {
-        title: primary?.displayName || m.call_label(),
-        peerUserId: primary?.userId ?? null,
+        title: peerTitle,
+        peerUserId,
         connectedAtMs: call.connectedAt,
         speaker: isSpeakerOn,
         // A default yields to a connected headset natively; the user's tap does not.
@@ -640,20 +650,23 @@
         <ChevronDown size={26} />
       </button>
       <!-- Claimed on EVIDENCE only (CallService.e2eProven): a frame encrypted and one decrypted
-           by this call's worker. A transform merely attached proved nothing on Chromium. -->
-      <span
-        class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
-        title={call.e2eProven ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
-        data-testid="call-e2e-line"
-      >
-        {#if call.e2eProven}
-          <ShieldCheck size={14} class="shrink-0" />
-          <span class="truncate">{m.call_e2e_encrypted_title()}</span>
-        {:else}
-          <Shield size={14} class="shrink-0" />
-          <span class="truncate">{m.call_e2e_verifying()}</span>
-        {/if}
-      </span>
+           by this call's worker. A transform merely attached proved nothing on Chromium. A ring
+           shows none: nothing is encrypted before the media exists (`callE2eLine`). -->
+      {#if e2eLine !== 'none'}
+        <span
+          class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
+          title={e2eLine === 'proven' ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
+          data-testid="call-e2e-line"
+        >
+          {#if e2eLine === 'proven'}
+            <ShieldCheck size={14} class="shrink-0" />
+            <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+          {:else}
+            <Shield size={14} class="shrink-0" />
+            <span class="truncate">{m.call_e2e_verifying()}</span>
+          {/if}
+        </span>
+      {/if}
       <div class="flex shrink-0 items-center">
         {#if showSwitch}
           <button

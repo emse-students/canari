@@ -64,7 +64,6 @@
   import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
   import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
-  import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
 
@@ -86,9 +85,15 @@
      * to a list without their post (reported 2026-10-05, a personal post on the Mi 9T).
      */
     onPostCreated: (landing: PostFeed | null) => void;
+    /**
+     * The member chose "En direct". The PARENT closes this composer and hosts the broadcaster's
+     * screen, so the live REPLACES the composer instead of stacking on it, and ending it returns to
+     * the feed (owner, 2026-10-31). Called after the draft was saved (`goLive`).
+     */
+    onGoLive: (target: { associationId: string | null; associationName: string | null }) => void;
   }
 
-  let { onPostCreated }: Props = $props();
+  let { onPostCreated, onGoLive }: Props = $props();
 
   // --- Text & media ---
   let markdown = $state('');
@@ -166,12 +171,29 @@
    * so the chip is not offered while "anonymous" is chosen, nor while the chosen association is not
    * in the list read (a restored draft's): the live would otherwise go out under the wrong name.
    */
-  let liveOpen = $state(false);
   const liveAssociation = $derived(
     isAssociationSelected
       ? (postAsAssociations.find((a) => a.id === selectedAssociationId) ?? null)
       : null
   );
+
+  /**
+   * Hands over to the broadcaster's screen. The composer is about to unmount, and the debounced
+   * auto-save below dies with it, so the draft is saved NOW (text, poll, form; the media are held
+   * in memory by `holdPostComposerMedia`): the next open of the composer brings it back, and
+   * nothing is lost silently.
+   */
+  function goLive() {
+    const kept = saveOrClearComposerDraft();
+    Log.d(
+      'POST_COMPOSER',
+      `going live: the composer closes, its draft is ${kept ? 'kept for the next open' : 'empty, nothing to keep'}`
+    );
+    onGoLive({
+      associationId: liveAssociation?.id ?? null,
+      associationName: liveAssociation?.name ?? null,
+    });
+  }
 
   /** The events a post as an association may link to, "no event" first. */
   const linkableEventOptions = $derived(
@@ -580,14 +602,6 @@
   The error banner is in the FOOTER for the reason its comment in the script gives: a keyboard used
   to cover the one sentence that named the cause.
 -->
-{#if liveOpen}
-  <LiveOverlay
-    associationId={liveAssociation?.id ?? null}
-    associationName={liveAssociation?.name ?? null}
-    onclose={() => (liveOpen = false)}
-  />
-{/if}
-
 <div class="flex min-h-0 flex-1 flex-col">
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3 sm:px-6">
     <!-- Who is publishing: the avatar of that identity, and the choice itself drawn as the name. -->
@@ -789,7 +803,7 @@
       onLive={livesAvailable(serverLivesMode()) &&
       !isAnonymousSelected &&
       (!isAssociationSelected || liveAssociation)
-        ? () => (liveOpen = true)
+        ? goLive
         : undefined}
       reel={reelAllowed
         ? {
