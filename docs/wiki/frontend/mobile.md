@@ -1081,22 +1081,45 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   only THEN is its marker removed - so the app's listing sees the marker, the done record or both,
   never a marker carrying an outcome and never neither. The app consumes a done record like a line.
   A short append is cut back (`ftruncate`) to the size measured under the lock before it, so no
-  torn line stays to glue itself to the next one. Every `Trace` property is read and written under
-  the run's lock, because the expiry reads it on another thread while the decrypt writes it.
+  torn line stays to glue itself to the next one. Every append that does not land returns its
+  cause as a typed value (`Appended`: busy, lock or log not opened, not measured, short write cut
+  back or not), and the done-record line names THAT cause - a busy lock is only one of them. Every
+  `Trace` property is read and written under the run's lock, because the expiry reads it on another
+  thread while the decrypt writes it.
 - **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
   `nse_inflight.<pid>.<n>.json`, stamped with the boot session it ran in (`kern.bootsessionuuid`,
   compared for EQUALITY - not `kern.boottime`, which Darwin recomputes when the clock is stepped and
   would call a live run killed), rewritten at every stage, removed with its line - under the run's
   lock, and never rewritten once the run has ended, so an expired run cannot come back as a marker.
-  A marker whose run's line was already taken (same `pid` and `at`) is removed uncounted, alive or
-  not; otherwise the app turns the marker of a process PROVEN gone (stamped in another boot
-  session, or `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and
-  footprint it reached. A live or unknowable process keeps its marker - no clock - and at most 64
-  are kept, the oldest beyond that removed with a warning. A file the run removed between the
-  app's listing and its removal is "already moved", not an error.
+  The boot session is read ONCE per process on both sides (a `static let` in the extension, a
+  `OnceLock` in the app), so a kernel that does not answer is said once, not at every stage.
+  **A run's identity is `(pid, at, n)`**: `at` is a millisecond and two runs of one process can
+  start in the same one, so the sequence `n` its file names carry is written into its record too
+  (and kept by the allowlist - a per-process counter from 1, no more personal than `pid`). A marker
+  whose run's line was already taken (same identity) is removed uncounted, alive or not; otherwise
+  the app turns the marker of a process PROVEN gone (stamped in another boot session, or
+  `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and footprint it
+  reached - **but only when the app's own removal of that marker is what removed it**. A proof of
+  death is not a proof the run never ended: between the listing and the proof the run can write its
+  done record, remove its marker and exit. It removes its marker before handing the content back,
+  so a marker already gone (or a done record of the same `<pid>.<n>` now present) means the run
+  reached its end, and its line arrives as that done record - never also as `killed`. A marker gone
+  before the app even read it is the same finished run, not an unreadable one. A live or
+  unknowable process keeps its marker - no clock - and at most 64 are kept, the oldest beyond that
+  removed with a warning. A file the run removed between the app's listing and its removal is
+  "already moved", not an error; a done record the app fails to remove is withheld (logged ERROR)
+  and handed over by the drain that does remove it, so one run is never two lines, and one it
+  cannot READ (other than "not found") is kept, never removed - removing it would lose the outcome
+  AND the twin that keeps its dead marker from being counted `killed`. A dead run's marker the run
+  itself removed after the listing, with no done record beside it, is a run whose done-record write
+  failed: not a kill, and logged as an outcome lost. **The known residual:** a finished run whose
+  marker unlink fails TWICE - once in the extension, once at the app's drain `k` - is counted
+  `killed` at drain `k+1`, since nothing names its line any more; both failures are logged at
+  ERROR (the extension's in its `NSLog`, the app's in its own log), so such a `killed` is never
+  silent.
 - **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files, the done
   records and the dead markers under the lock and re-serialises each line through a TYPED
-  allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`, enums for `outcome` and `stage`,
+  allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`/`n`, enums for `outcome` and `stage`,
   and for `kind`/`cause` a code token `^[a-z0-9_-]+(;direct=[a-z0-9-]+)?$` with no digit and no
   UUID shape), so nothing but codes and numbers can reach a log; `nseOutcomes.ts` writes them as
   `[NSE_OUTCOME] {...}` plus a per-outcome summary line, at login and at every resume. No text,

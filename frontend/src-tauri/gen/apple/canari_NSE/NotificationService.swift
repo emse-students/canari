@@ -595,8 +595,10 @@ class NotificationService: UNNotificationServiceExtension {
     /// `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time zone or a
     /// manual change), so a live run would read as another boot's and be reported `killed`. Nil when
     /// the kernel does not answer, which only disables the boot proof (twin: `boot_session` in
-    /// `commands/nse_outcomes.rs`).
-    static func bootSession() -> String? {
+    /// `commands/nse_outcomes.rs`). READ ONCE PER PROCESS (a lazy, thread-safe `static let`): the
+    /// session cannot change under a running process, and every `mark` stamps it, so a kernel that
+    /// does not answer is said once rather than at every stage of every run.
+    static let bootSession: String? = {
       var size = 0
       guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
         NSLog("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno)")
@@ -609,7 +611,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
       let session = String(cString: buffer)
       return session.isEmpty ? nil : session
-    }
+    }()
 
     /// One run's record: what it is, how far it got, and what it decided. EVERY mutable property is
     /// read and written under `lock`, because the expiry reads it from another thread while the
@@ -617,6 +619,10 @@ class NotificationService: UNNotificationServiceExtension {
     final class Trace {
       let kind: String
       let startedAtMs: Int64
+      /// The run's sequence in this process, from 1: with the pid and `startedAtMs` it is the
+      /// run's identity, since two runs of one process can start in the same millisecond. Carried
+      /// by the file names AND the record, so the reader can match a line to its marker.
+      let sequence: Int
       private let started = Date()
       private let markerName: String
       private let doneName: String
@@ -649,6 +655,7 @@ class NotificationService: UNNotificationServiceExtension {
         NseOutcomeLog.sequence += 1
         let n = NseOutcomeLog.sequence
         NseOutcomeLog.sequenceLock.unlock()
+        sequence = n
         markerName = "\(NseOutcomeLog.inflightPrefix)\(getpid()).\(n).json"
         doneName = "\(NseOutcomeLog.donePrefix)\(getpid()).\(n).json"
         locked { writeMarkerLocked() }
@@ -681,8 +688,9 @@ class NotificationService: UNNotificationServiceExtension {
 
       /// Writes this run's one line and removes its marker, under the lock - only the first call
       /// writes. The cause is written for `fallback` (the first noted) and `expired` (the stage it
-      /// reached), never for another outcome. The append never WAITS for the app's reader: when its
-      /// lock is held, the record goes into the run's own marker, renamed `nse_done.*`.
+      /// reached), never for another outcome. The append never WAITS for the app's reader: when it
+      /// does not append (the lock held, or the cause it names), the record is written atomically
+      /// under the run's own `nse_done.*` name, and the marker is removed after it.
       func end(outcome result: String, cause finalCause: String? = nil) {
         locked {
           guard !written else { return }
@@ -703,21 +711,27 @@ class NotificationService: UNNotificationServiceExtension {
           }
           let marker = dir.appendingPathComponent(markerName)
           defer { removeMarker(marker) }
-          if NseOutcomeLog.append(record, dir: dir) { return }
+          let appended = NseOutcomeLog.append(record, dir: dir)
+          if case .appended = appended { return }
           // THE DONE RECORD IS WRITTEN UNDER ITS OWN NAME, ATOMICALLY, AND ONLY THEN IS THE MARKER
           // REMOVED: the app's listing sees the marker, the done record, or both - never a marker
           // carrying an outcome, never a moment with neither. Both at once is one run, which the
-          // reader settles by its (pid, at).
+          // reader settles by its (pid, at, n).
           guard let data = try? JSONSerialization.data(withJSONObject: record) else {
-            NSLog("[CanariNSE] outcome: ERROR not appended and not encoded for a done record")
+            NSLog(
+              "[CanariNSE] outcome: ERROR not appended (\(appended.reason)) and not encoded for a done record"
+            )
             return
           }
           do {
             try data.write(to: dir.appendingPathComponent(doneName), options: .atomic)
-            NSLog("[CanariNSE] outcome: log busy - left as a done record for the app to take")
+            NSLog(
+              "[CanariNSE] outcome: not appended (\(appended.reason)) - left as a done record for the app to take"
+            )
           } catch {
             NSLog(
-              "[CanariNSE] outcome: ERROR not appended and no done record: \(errorReason(error))")
+              "[CanariNSE] outcome: ERROR not appended (\(appended.reason)) and no done record: \(errorReason(error))"
+            )
           }
         }
       }
@@ -727,21 +741,23 @@ class NotificationService: UNNotificationServiceExtension {
       /// Removes the run's marker; already gone is the expected answer when nothing was ever written.
       private func removeMarker(_ marker: URL) {
         if unlink(marker.path) != 0, errno != ENOENT {
-          NSLog("[CanariNSE] outcome: in-flight marker NOT removed errno=\(errno)")
+          NSLog(
+            "[CanariNSE] outcome: ERROR in-flight marker NOT removed errno=\(errno) - the app may count this finished run killed"
+          )
         }
       }
 
       private func recordLocked(outcome: String?, cause: String?) -> [String: Any] {
         NseOutcomeLog.record(
-          kind: kind, at: startedAtMs, outcome: outcome, cause: cause, stage: stageValue,
-          ms: elapsedMs, peakMB: peakValue, stateKB: stateKBValue)
+          kind: kind, at: startedAtMs, n: sequence, outcome: outcome, cause: cause,
+          stage: stageValue, ms: elapsedMs, peakMB: peakValue, stateKB: stateKBValue)
       }
 
       /// Called with `lock` held.
       private func writeMarkerLocked() {
         guard !written, let dir = NotificationService.appGroupDir() else { return }
         var fields = recordLocked(outcome: nil, cause: nil)
-        if let session = NseOutcomeLog.bootSession() { fields["boot"] = session }
+        if let session = NseOutcomeLog.bootSession { fields["boot"] = session }
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
         do {
           try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
@@ -754,12 +770,13 @@ class NotificationService: UNNotificationServiceExtension {
     /// The record of a run, the ONLY place its keys are named (the reader's typed allowlist must
     /// hold every one - `nseOutcomes.test.ts`). `outcome` is nil for an in-flight marker.
     static func record(
-      kind: String, at: Int64, outcome: String?, cause: String?, stage: String, ms: Int,
+      kind: String, at: Int64, n: Int, outcome: String?, cause: String?, stage: String, ms: Int,
       peakMB: Int, stateKB: Int?
     ) -> [String: Any] {
       var record: [String: Any] = [:]
       record["v"] = 1
       record["at"] = at
+      record["n"] = n
       record["kind"] = kind
       if let outcome = outcome { record["outcome"] = outcome }
       if let cause = cause { record["cause"] = cause }
@@ -771,25 +788,49 @@ class NotificationService: UNNotificationServiceExtension {
       return record
     }
 
+    /// What an append did - and, when it did not append, WHY, so the caller logs the true cause
+    /// rather than calling every refusal a busy log.
+    enum Appended {
+      case appended
+      /// The app's reader holds the lock: the ordinary reason for a done record.
+      case busy
+      case notEncoded
+      case lockNotOpened(errno: Int32)
+      case lockNotTaken(errno: Int32)
+      case logNotOpened(errno: Int32)
+      case logNotMeasured(errno: Int32)
+      /// `notCutBackErrno` is set when `ftruncate` failed too, and a torn line may stay in the file.
+      case shortWrite(wrote: Int, of: Int, errno: Int32, notCutBackErrno: Int32?)
+
+      var reason: String {
+        switch self {
+        case .appended: return "appended"
+        case .busy: return "log busy"
+        case .notEncoded: return "line not encoded"
+        case .lockNotOpened(let e): return "lock file not opened errno=\(e)"
+        case .lockNotTaken(let e): return "lock not taken errno=\(e)"
+        case .logNotOpened(let e): return "log not opened errno=\(e)"
+        case .logNotMeasured(let e): return "log not measured errno=\(e)"
+        case .shortWrite(let wrote, let total, let e, let notCutBack):
+          let cut = notCutBack.map { "ERROR torn line NOT cut back errno=\($0)" } ?? "cut back"
+          return "short write \(wrote)/\(total) errno=\(e) \(cut)"
+        }
+      }
+    }
+
     /// Appends one line under the cross-process lock the app's reader takes too, rotating first
     /// when the file is past `rotateBytes`. NON-BLOCKING: this runs on the path that hands the
-    /// content back, so a lock the app holds answers false at once and the caller keeps the record.
-    static func append(_ record: [String: Any], dir: URL) -> Bool {
+    /// content back, so a lock the app holds answers `.busy` at once and the caller keeps the
+    /// record. Every other refusal names its own cause.
+    static func append(_ record: [String: Any], dir: URL) -> Appended {
       guard let data = try? JSONSerialization.data(withJSONObject: record) else {
-        NSLog("[CanariNSE] outcome: line not encoded")
-        return false
+        return .notEncoded
       }
       let lockFd = open(dir.appendingPathComponent(lockFile).path, O_WRONLY | O_CREAT, 0o644)
-      guard lockFd >= 0 else {
-        NSLog("[CanariNSE] outcome: lock file not opened errno=\(errno)")
-        return false
-      }
+      guard lockFd >= 0 else { return .lockNotOpened(errno: errno) }
       defer { close(lockFd) }
       guard flock(lockFd, LOCK_EX | LOCK_NB) == 0 else {
-        if errno != EWOULDBLOCK {
-          NSLog("[CanariNSE] outcome: lock not taken errno=\(errno)")
-        }
-        return false
+        return errno == EWOULDBLOCK ? .busy : .lockNotTaken(errno: errno)
       }
       defer { flock(lockFd, LOCK_UN) }
       let path = dir.appendingPathComponent(outcomesFile).path
@@ -803,35 +844,23 @@ class NotificationService: UNNotificationServiceExtension {
         }
       }
       let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
-      guard fd >= 0 else {
-        NSLog("[CanariNSE] outcome: log not opened errno=\(errno)")
-        return false
-      }
+      guard fd >= 0 else { return .logNotOpened(errno: errno) }
       defer { close(fd) }
       // The size BEFORE this line, measured under the lock: a short write is cut back to it, so a
       // torn line never stays in the file to glue itself to the next one.
       var info = stat()
-      guard fstat(fd, &info) == 0 else {
-        NSLog("[CanariNSE] outcome: log not measured errno=\(errno)")
-        return false
-      }
+      guard fstat(fd, &info) == 0 else { return .logNotMeasured(errno: errno) }
       let before = info.st_size
       var bytes = [UInt8](data)
       bytes.append(0x0A)
       let wrote = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
       if wrote != bytes.count {
         let writeErrno = errno
-        if ftruncate(fd, before) != 0 {
-          NSLog(
-            "[CanariNSE] outcome: ERROR short write \(wrote)/\(bytes.count) errno=\(writeErrno) NOT cut back errno=\(errno)"
-          )
-        } else {
-          NSLog(
-            "[CanariNSE] outcome: short write \(wrote)/\(bytes.count) errno=\(writeErrno) - cut back")
-        }
-        return false
+        let truncateErrno: Int32? = ftruncate(fd, before) == 0 ? nil : errno
+        return .shortWrite(
+          wrote: wrote, of: bytes.count, errno: writeErrno, notCutBackErrno: truncateErrno)
       }
-      return true
+      return .appended
     }
   }
 
