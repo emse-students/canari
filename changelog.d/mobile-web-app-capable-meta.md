@@ -1,1 +1,3 @@
-Add the standard `mobile-web-app-capable` meta beside the Apple one, so Chrome 156 stops warning on every page ([design-reference](../docs/wiki/frontend/design-reference.md)).
+### Fixed - Chrome no longer warns about the home-screen meta tag on every page
+
+The standard `mobile-web-app-capable` meta now sits beside the Apple one, which Safari still needs ([design-reference](docs/wiki/frontend/design-reference.md)).
