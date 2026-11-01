@@ -11,7 +11,7 @@
  * no version tag and none is needed, because the payload only ever grows optional keys.
  */
 
-import type { PageKey, StoredMessage, StoredMessagePatch } from './types';
+import type { PageKey, StoredMessage, StoredMessagePatch, UnsentReason } from './types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { messageTime } from '$lib/utils/chat/messageTime';
 
@@ -86,6 +86,7 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
   if (msg.editProof) payload.editProof = msg.editProof;
   if (msg.deleteProof) payload.deleteProof = msg.deleteProof;
   if (msg.restoredUnverified) payload.restoredUnverified = true;
+  if (msg.unsentReason) payload.unsentReason = msg.unsentReason;
   return payload;
 }
 
@@ -115,6 +116,11 @@ export function mergeStoredMessage(msg: StoredMessage, patch: StoredMessagePatch
     ([key, value]) => value !== undefined && key !== 'id' && key !== 'conversationId'
   );
   return Object.assign({ ...msg }, Object.fromEntries(defined));
+}
+
+/** Read an {@link UnsentReason} out of an untrusted decrypted payload, or `undefined`. */
+function unsentReason(value: unknown): UnsentReason | undefined {
+  return value === 'group-deleted' || value === 'not-a-member' ? value : undefined;
 }
 
 /** Read a positive number out of an untrusted decrypted payload, or `undefined`. */
@@ -147,5 +153,6 @@ export function fromMessagePayload(
     editProof: recordedAuthorship(payload.editProof),
     deleteProof: recordedAuthorship(payload.deleteProof),
     restoredUnverified: payload.restoredUnverified === true ? true : undefined,
+    unsentReason: unsentReason(payload.unsentReason),
   };
 }

@@ -39,6 +39,8 @@
     upload?: UploadView | null;
     /** The upload was refused for good: says so and offers the delete. */
     uploadFailed?: boolean;
+    /** What a failed upload says: the group's reason, or the server's refusal (the default). */
+    uploadFailedLabel?: string;
     /** No upload advances it and it never got a `mediaId`: says so and offers the delete. */
     orphan?: boolean;
     onCancelUpload?: () => void;
@@ -54,6 +56,7 @@
     onOpen,
     upload = null,
     uploadFailed = false,
+    uploadFailedLabel = m.upload_failed_label(),
     orphan = false,
     onCancelUpload,
     onRetryUpload,
@@ -105,7 +108,7 @@
       {#if uploadFailed || orphan}
         <CircleAlert size={22} class="text-red-err" />
         <p class="text-2xs leading-tight font-semibold">
-          {uploadFailed ? m.upload_failed_label() : m.media_orphan_label()}
+          {uploadFailed ? uploadFailedLabel : m.media_orphan_label()}
         </p>
         {#if onCancelUpload}
           <button

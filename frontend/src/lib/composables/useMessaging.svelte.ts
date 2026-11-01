@@ -103,12 +103,13 @@ import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
+  applyOutboxPendingStatuses,
   awaitOutboxSettled,
   enqueueOutboxMessage,
   isEnqueueQuotaFailure,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
-import { MessagePairWriteError } from '$lib/utils/chat/messageWrittenError';
+import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -126,6 +127,7 @@ import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
+import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
@@ -165,7 +167,6 @@ export interface MessagingContext {
   storage: IStorage | null;
   log: (msg: string) => void;
   saveConversation: (contactName: string) => Promise<void>;
-  verifyCurrentUserMembership: (contactName: string) => Promise<boolean>;
   playNotificationTone: () => void;
   playSendTone?: () => void;
   /** `mentionsMe` selects the mention trill over the message one. */
@@ -300,6 +301,12 @@ export function useMessaging() {
     resetJoinRequests();
     // And what this device said about the history it withheld: the next account's asks are new.
     resetAnswerDecisionsSaid();
+    // And the messages held for a conversation not loaded yet: replayed under the next account,
+    // they would be written into ITS store (review of #2874).
+    const orphans = orphanBuffer.size;
+    orphanBuffer.clear();
+    if (orphans > 0)
+      log(`[COMPOSER] signed out: orphan messages of ${orphans} conversation(s) forgotten`);
   }
 
   /**
@@ -394,6 +401,8 @@ export function useMessaging() {
       content: string;
       contactName: string;
       options: AddMessageToChatOptions & { skipDbSave?: boolean };
+      /** An own send, buffered without its entry: its status is the queue's to say at the replay. */
+      ownSend?: boolean;
     }>
   >();
 
@@ -841,6 +850,47 @@ export function useMessaging() {
     return text;
   }
 
+  /**
+   * Keeps a message whose conversation is not in the map yet, for `drainOrphanMessages` to replay.
+   *
+   * NEVER WITH ITS OUTBOX ENTRY (review of #2874). The replay goes back through `addMessageToChat`,
+   * and an entry carried along would be written - and so SENT - a second time by
+   * `saveMessageWithOutboxEntry`, long after the queue had already sent it from its own row. The
+   * buffer keeps the message; the queue alone owns the send. `onPairWritten` goes with the entry:
+   * the pair it reports was not written here, and a late call would tell the caller it had been.
+   */
+  function bufferOrphan(
+    normalized: string,
+    senderId: string,
+    content: string,
+    contactName: string,
+    options: AddMessageToChatOptions & { skipDbSave?: boolean }
+  ): void {
+    // THE STATUS GOES WITH THE ENTRY: `pending` was true at the tap and says nothing at the replay,
+    // which may come after the queue sent it. The replay asks the queue instead (`drainOrphanMessages`).
+    const { outboxEntry, onPairWritten: _reportOnlyAPairWritten, ...kept } = options;
+    if (outboxEntry) {
+      console.error(
+        `[ADD_MSG] ${outboxEntry.id.slice(0, 8)}… own send into "${normalized}", absent from the map: buffered WITHOUT its outbox entry - the queue sends it from its own row`
+      );
+    }
+    const buffer = orphanBuffer.get(normalized) ?? [];
+    if (buffer.length >= MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+      console.warn(
+        `[ADD_MSG] orphan buffer of "${normalized}" full (${MAX_ORPHAN_MESSAGES_PER_CONVERSATION}) - message not kept`
+      );
+      return;
+    }
+    buffer.push({
+      senderId,
+      content,
+      contactName,
+      options: outboxEntry ? { ...kept, status: undefined } : kept,
+      ...(outboxEntry ? { ownSend: true } : {}),
+    });
+    orphanBuffer.set(normalized, buffer);
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -868,11 +918,7 @@ export function useMessaging() {
         console.warn(
           `[ADD_MSG] conversation "${normalized}" introuvable (bulk) — bufferisation orpheline`
         );
-        const buffer = orphanBuffer.get(normalized) ?? [];
-        if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-          buffer.push({ senderId, content, contactName, options });
-          orphanBuffer.set(normalized, buffer);
-        }
+        bufferOrphan(normalized, senderId, content, contactName, options);
         return;
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
@@ -926,11 +972,7 @@ export function useMessaging() {
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
-      const buffer = orphanBuffer.get(normalized) ?? [];
-      if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-        buffer.push({ senderId, content, contactName, options });
-        orphanBuffer.set(normalized, buffer);
-      }
+      bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
 
@@ -1164,8 +1206,13 @@ export function useMessaging() {
           } catch (e) {
             // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
             // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
-            console.error('[DB] the message and its outbox entry were NOT written:', e);
             pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+            console.error(
+              pairWriteFailure.entryWritten
+                ? '[DB] the outbox entry was written WITHOUT its message:'
+                : '[DB] the message and its outbox entry were NOT written:',
+              e
+            );
           }
         } else {
           await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
@@ -1471,6 +1518,10 @@ export function useMessaging() {
     let sentMediaMessageCount = 0;
     /** A held salon upload was refused because the account signed out - see the media catch. */
     let sessionEndedDuringSend = false;
+    /** A file of this send was refused and given back to the staging (the catch below). */
+    let mediaRestaged = false;
+    /** The conversation left the map between the tap and a file's write - see the media loop. */
+    let conversationGoneDuringSend = false;
 
     // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
     // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
@@ -1498,13 +1549,15 @@ export function useMessaging() {
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
     );
 
-    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. The barrier
-    // below can hold a send for many seconds on a stalled link (18 s measured, 2026-10-31), and the
-    // staging used to be cleared only after it: every Send tap meanwhile read the same files again
-    // and queued another copy under a new id - 13 taps, 13 copies of one video. Now a second Send
-    // finds nothing staged and aborts as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file
-    // staged in the same conversation during the barrier belongs to the NEXT send. A voice note
-    // (`opts.files`) never entered the staging.
+    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. A send still
+    // awaits before its entry is durable - the file read, the pair write, a held salon - and the
+    // staging used to be cleared only after a pre-send barrier that lasted 18 s on a stalled link
+    // (2026-10-31): every Send tap meanwhile read the same files again and queued another copy under
+    // a new id - 13 taps, 13 copies of one video. Now a second Send finds nothing staged and aborts
+    // as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file staged in the same conversation
+    // meanwhile belongs to the NEXT send. A voice note (`opts.files`) never entered the staging.
+    /** The account that tapped: a failure after a sign-out gives nothing back to the next one. */
+    const tapGeneration = signOutGeneration();
     if (sendsQueue && fileEntries.length > 0) {
       setPendingMediaFiles(
         sentFrom,
@@ -1512,107 +1565,32 @@ export function useMessaging() {
       );
     }
 
-    // A DM/GROUP FILE IS QUEUED IN THE OUTBOX like a text, but only once the group is usable: the
-    // barrier and the membership check below run BEFORE its placeholder and its entry are written,
-    // and a refusal gives the claimed files back to the staging. Text/reply are captured into the
-    // outbox and never blocked here - they flush automatically once the group becomes sendable.
-    // Queuing the file at the tap and dropping this barrier, which the outbox flush already takes,
-    // is `docs/wiki/backlog.d/media-send-queued-at-the-tap.md`.
-    if (filesToSend.length > 0 && !isChannel) {
-      const generation = signOutGeneration();
-      const barrierStartedAt = performance.now();
-      ctx.log(
-        `[SEND] media barrier: waiting for the inbound queue and the membership check before ${fileEntries.length} file(s) are queued`
-      );
-      // WAIT FOR THE DRAIN, DO NOT REFUSE BECAUSE OF IT.
-      //
-      // This used to bail out on `isMessageCatchupActive` and tell the user "Synchronisation en
-      // cours - reessayez dans un instant". That flag is raised from `pendingCount > 1`, a count of
-      // CIPHERTEXTS taken before anything is decrypted, so it cannot tell an arriving message from
-      // the reconciliation's own probe: two probe frames on a server carrying no other traffic were
-      // enough to refuse a photo. The requirement was never "no drain is running" - it is "encrypt
-      // at the current epoch", and `waitForMessageQueueIdle` states exactly that, as a fact rather
-      // than a guess. It is the same barrier the outbox flusher takes before every send, and it
-      // costs nothing when there is no drain to wait for.
-      /**
-       * Gives the claimed files back to the staging, and says so - or says why not: a voice note or
-       * a chat-reel take (`opts.files`) never came from the staging, and a sign-out since the tap
-       * has handed the staging to the next account. Answers whether the files are back.
-       */
-      const restage = (why: string): boolean => {
-        if (!sendsQueue) {
-          ctx.log(
-            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: a voice note or a chat-reel take, sent without passing through the staging`
-          );
-          return false;
-        }
-        if (signOutGeneration() !== generation) {
-          ctx.log(
-            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: signed out since the send`
-          );
-          return false;
-        }
+    // A DM/GROUP FILE IS QUEUED AT THE TAP, LIKE A TEXT. Its placeholder and its outbox entry are
+    // written below with no wait before them; whether the group can take it NOW is the outbox's
+    // question, asked at the flush exactly as it is for a text: `waitForMessageQueueIdle('outbox
+    // flush')` before any lane runs (so the file is sealed at the current epoch), then per entry the
+    // `isGroupHealthy` gate (a row awaiting re-admission is HELD there and resumed by its Welcome),
+    // `isGroupActive` (an evicted group retires the entry) and the deleted-group read - all three
+    // BEFORE the upload is paid. A composer-side barrier answered the same questions a second time,
+    // earlier and slower (18 s on a stalled link, 2026-10-31, with nothing on screen meanwhile), and
+    // its answer could go stale before the flush ran anyway. The one refusal left is the text path's
+    // own (`sendChatMessage`): a conversation deleted server-side takes nothing new.
+    if (filesToSend.length > 0 && !isChannel && convo.lifecycle === 'removed') {
+      if (sendsQueue) {
         restageInOrder(sentFrom, fileEntries);
         ctx.log(
-          `[SEND] ${fileEntries.length} file(s) back in the staging of ${sentFrom.slice(0, 8)}… after ${why}`
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is deleted, ${fileEntries.length} file(s) back in its staging`
         );
-        return true;
-      };
-      let stillMember: boolean;
-      // ONE GUARD OVER EVERYTHING THAT CAN THROW WHILE THE FILES ARE CLAIMED - `ensureMls()` too,
-      // which throws synchronously when there is no MLS service, before any promise exists.
-      try {
-        await ctx
-          .ensureMls()
-          // `null`: a click on the send button, never a stack inside a decrypt session.
-          .waitForMessageQueueIdle('media send', null)
-          .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-        stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
-      } catch (error) {
-        ctx.log(`[SEND] media barrier threw: ${String(error)}`);
-        restage('a barrier that threw');
-        throw error;
-      }
-      // THE ROW AS IT IS NOW, not the snapshot taken before the two awaits above: a Remove merged
-      // during the barrier - the first half of a re-admission writes the row `pending` - is exactly
-      // what this refusal is for. A file is not queued until the group is usable.
-      const lifecycle = ctx.conversations.get(sentFrom)?.lifecycle;
-      ctx.log(
-        `[SEND] media barrier: done after ${Math.round(performance.now() - barrierStartedAt)} ms (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
-      );
-      // THE ACCOUNT THAT TAPPED SEND LEFT DURING THE BARRIER: `forgetAccount` has cleared the
-      // staging, and neither a queue entry nor a re-staged file of the leaving account may reach
-      // the next one.
-      if (signOutGeneration() !== generation) {
+      } else {
+        // A voice note or a chat-reel take never came from the staging: it is lost, and said so.
         ctx.log(
-          `[SEND] media dropped: signed out during the barrier, ${fileEntries.length} file(s) neither queued nor re-staged`
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is deleted, ${fileEntries.length} file(s) NOT re-staged (a voice note or a chat-reel take)`
         );
-        return;
       }
-      if (!stillMember || lifecycle !== 'active') {
-        ctx.log(
-          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is not usable yet (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
-        );
-        const restaged = restage('the refusal');
-        // THE BANNER IS THE CONVERSATION ON SCREEN NOW, and the barrier may have lasted long enough
-        // for the member to leave `sentFrom`: a refusal is said there only, so it is never read as a
-        // fact about another conversation. A re-staged file waits, visible, in `sentFrom`'s composer;
-        // one that was NOT re-staged (a voice note, a chat-reel take) is lost, so it is said
-        // wherever the member now is - never dropped in silence.
-        const sessionNotReady = m.chat_send_session_establishing();
-        if (ctx.selectedNow() === sentFrom) {
-          ctx.setSendError(sessionNotReady);
-        } else if (!restaged) {
-          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: sessionNotReady }));
-        } else {
-          ctx.log(
-            '[SEND] refusal banner not shown: the conversation changed since the send, the file(s) wait in its composer'
-          );
-        }
-        // FALSE, not undefined: nothing was queued, so the composer gives the caption it cleared at
-        // the tap back to `sentFrom`'s draft (`MainChatPage` `handleSendChat`).
-        return false;
-      }
+      // No await since the tap: the conversation on screen is still `sentFrom`.
+      ctx.setSendError(m.chat_conversation_deleted_message());
+      // FALSE: nothing was queued, so the composer gives back the caption it cleared at the tap.
+      return false;
     }
 
     const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
@@ -1630,13 +1608,21 @@ export function useMessaging() {
             : 'file';
 
     if (fileEntries.length > 0) {
-      // The staging was claimed before the barrier, above; a failure below re-stages what is unsent.
+      // The staging was claimed at the tap, above; a failure below re-stages what is unsent.
+      // EVERY FILE OF ONE TAP IS DATED BY THE TAP, one millisecond apart in staging order: the queue
+      // orders by `sentAt`, and dating each file once the previous one's write had ended let a text
+      // typed during a long write fall BETWEEN two files the member sent before it.
+      const tappedAt = Date.now();
+      // WHERE THE FILES GO: the conversation the send was made in, or - when a duplicate-group merge
+      // re-keyed that DM while the send was reading a file - the row it was moved to.
+      let sendKey = sentFrom;
+      let sendGroupId = convo.id;
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
           const messageId = crypto.randomUUID();
-          const sentAt = Date.now();
+          const sentAt = tappedAt + index;
 
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
@@ -1725,11 +1711,6 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-              await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
-                messageId,
-                status: 'pending',
-                timestamp: new SvelteDate(sentAt),
-              });
               const outboxEntry: OutboxEntry = {
                 id: messageId,
                 conversationId: convo.id,
@@ -1753,22 +1734,118 @@ export function useMessaging() {
                 attempts: 0,
                 createdAt: sentAt,
               };
+              // THE PLACEHOLDER AND ITS ENTRY ARE ONE WRITE, as a text's echo and entry are
+              // (`sendChatMessage`): a kill between two writes left a `mediaId: ''` row no queue
+              // knew about. `pairWritten` is what `addMessageToChat` REPORTS it wrote, never
+              // inferred; a pair write that failed is thrown typed, and the outbox then writes its
+              // own row. Either way the entry is durable before the upload starts, so the file
+              // survives a kill between the tap and its transfer.
+              let pairWritten = false;
+              // THE ACCOUNT IS ASKED BEFORE EACH WRITE, not once at the tap: the read above and the
+              // pair write below are awaits, and a sign-out inside one hands `enqueueOutboxMessage`
+              // (the module's ACTIVE controller) to the next account, which would send this file
+              // as itself (review of #2874, M1). Dropped, never re-staged, and said in the log.
+              if (signOutGeneration() !== tapGeneration) {
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: signed out since the tap`
+                );
+                sessionEndedDuringSend = true;
+                break;
+              }
+              // AND THE CONVERSATION, with no await from here to the write: one that left the map
+              // since the tap would send this placeholder into the orphan buffer, which is not where
+              // a send belongs (review of #2874). Two ways out of the map, two answers:
+              //  - RE-KEYED: a duplicate-group merge moved the DM's row to the group just joined
+              //    (`setupMessageHandler`, the Welcome path). The file follows it, found by the same
+              //    predicate the merge used, so the two cannot disagree about which row the DM is;
+              //  - GONE (deleted, left): the file is dropped and the MEMBER IS TOLD, never only the
+              //    log - a file and its caption vanishing behind a log line is a silent loss.
+              if (!ctx.conversations.get(sendKey)) {
+                const followed =
+                  (convo.conversationType ?? 'group') === 'direct'
+                    ? findDirectConversationByPeer(
+                        ctx.conversations,
+                        convo.directPeerId ?? convo.contactName
+                      )
+                    : undefined;
+                if (followed) {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… ${sendKey.slice(0, 8)}… was re-keyed to ${followed[0].slice(0, 8)}… since the tap (a duplicate group merged) - the file follows it`
+                  );
+                  [sendKey, sendGroupId] = [followed[0], followed[1].id];
+                  outboxEntry.conversationId = sendGroupId;
+                } else {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sendKey.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
+                  );
+                  ctx.setSendError(m.chat_media_conversation_gone());
+                  conversationGoneDuringSend = true;
+                  break;
+                }
+              }
               try {
-                await enqueueOutboxMessage(outboxEntry);
+                await addMessageToChat(ctx.userId, placeholder, sendKey, ctx, {
+                  messageId,
+                  status: 'pending',
+                  timestamp: new SvelteDate(sentAt),
+                  outboxEntry,
+                  onPairWritten: () => {
+                    pairWritten = true;
+                  },
+                });
+              } catch (pairError) {
+                if (!(pairError instanceof MessagePairWriteError)) throw pairError;
+                // THE ENTRY REACHED DISK ALONE (SQLite writes it first): the queue owns it, so it
+                // is not written a second time and the file is not given back (M2).
+                pairWritten = pairError.entryWritten;
+                ctx.log(
+                  pairError.entryWritten
+                    ? `[MEDIA] ${messageId.slice(0, 8)}… its entry was written WITHOUT its placeholder row - the queue owns it: ${String(pairError.cause)}`
+                    : `[MEDIA] ${messageId.slice(0, 8)}… its placeholder and entry were NOT written together - the outbox writes its own row: ${String(pairError.cause)}`
+                );
+              }
+              if (signOutGeneration() !== tapGeneration) {
+                // Whatever was written stays in the LEAVING account's store, whose own queue sends
+                // it at its next sign-in; it is never handed to the next account's.
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… not handed to the queue: signed out during its write (written=${pairWritten})`
+                );
+                sessionEndedDuringSend = true;
+                break;
+              }
+              try {
+                await enqueueOutboxMessage(
+                  outboxEntry,
+                  pairWritten ? { alreadyDurable: true } : undefined
+                );
               } catch (enqueueError) {
+                // THE ROW IS ON DISK BESIDE ITS PLACEHOLDER: the queue owns it - this session's, or
+                // the next one's - so the file is neither withdrawn nor re-staged (a second Send
+                // would then post it twice). Counted as queued.
+                if (enqueueError instanceof MessageWrittenError) {
+                  console.error(
+                    `[MEDIA] ${messageId.slice(0, 8)}… written with its entry, but the live queue refused it - the next flush sends it:`,
+                    enqueueError
+                  );
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… durable, the live queue refused it - left to the next flush: ${String(enqueueError.cause)}`
+                  );
+                  sentMediaMessageCount++;
+                  continue;
+                }
                 // The placeholder is on screen and in the store, and the catch below re-stages the
                 // file: leaving the row would be an orphan that a second Send then duplicates.
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(sentFrom);
+                const current = ctx.conversations.get(sendKey);
                 if (current) {
-                  ctx.conversations.set(sentFrom, {
+                  ctx.conversations.set(sendKey, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
                 }
-                await forgetLocalMessage(messageId, convo.id, ctx);
+                await forgetLocalMessage(messageId, sendGroupId, ctx);
                 throw enqueueError;
               }
             } finally {
@@ -1800,17 +1877,20 @@ export function useMessaging() {
         // The staging is per conversation, but the refusal is said on the banner of the conversation
         // ON SCREEN, and a held salon upload may be refused long after the click: an unsent file goes
         // back only where the member still is, so the banner and the file are seen together.
-        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+        const salonSessionEnded =
+          error instanceof SalonNotLoadableError && error.reason === 'session-ended';
+        if (salonSessionEnded || signOutGeneration() !== tapGeneration) {
           // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
           // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
           // composer, and the caption below would be held for the next session's gate and sealed
           // by whoever signs in. No banner either - it would be the next account's.
           sessionEndedDuringSend = true;
           ctx.log(
-            `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: ${salonSessionEnded ? 'the session ended while the salon was loading' : 'signed out since the tap'} (${String(error)})`
           );
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
+          mediaRestaged = unsent > 0;
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
@@ -1830,8 +1910,22 @@ export function useMessaging() {
     }
 
     if (sessionEndedDuringSend) {
-      ctx.log('[SEND] caption not sent: the session ended while its upload was held');
+      ctx.log('[SEND] caption not sent: the session ended during the media send');
       return;
+    }
+    if (conversationGoneDuringSend) {
+      // The banner above already said it. FALSE when nothing of this send went out, so the composer
+      // gives the caption back to the draft it was written in rather than losing it as well.
+      ctx.log('[SEND] caption not sent: the conversation left the list during the media send');
+      return sentMediaMessageCount === 0 && text ? false : undefined;
+    }
+    // THE CAPTION BELONGS TO THE FIRST FILE, and a refused first file given back to the staging
+    // takes it back with it: sent alone it would arrive as a text that captions nothing (review of
+    // #2874, L3). FALSE, so the composer gives it back to the draft beside the file. A file DROPPED
+    // because the member moved on (L4) leaves its caption to be sent, so the words are not lost too.
+    if (mediaRestaged && sentMediaMessageCount === 0 && text) {
+      ctx.log('[SEND] caption not sent alone: its file was refused - given back with it');
+      return false;
     }
     if (sentMediaMessageCount > 0 || !text) return;
 
@@ -2696,8 +2790,18 @@ export function useMessaging() {
       if (!messages || messages.length === 0) return;
       orphanBuffer.delete(normalized);
       console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
-      for (const msg of messages) {
-        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options);
+      const replays = messages.map((msg) =>
+        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
+      );
+      // AN OWN SEND'S STATUS IS READ FROM THE DURABLE QUEUE ONCE ITS ROW IS BACK, as at a reload: a
+      // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
+      // dropped at the buffering, so it can no longer outlive the send (re-review of #2874).
+      if (messages.some((msg) => msg.ownSend)) {
+        void Promise.allSettled(replays)
+          .then(() => applyOutboxPendingStatuses())
+          .catch((e: unknown) =>
+            console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
+          );
       }
     },
     /** Appends multiple messages in one reactive update and one batch DB write. */

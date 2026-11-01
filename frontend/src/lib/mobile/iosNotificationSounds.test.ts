@@ -95,3 +95,41 @@ describe('iOS notification sounds (palette A)', () => {
     }
   });
 });
+
+describe('the CallKit ringtone (Canari ring, 2026-11-01)', () => {
+  const FILE = 'canari_ring_callkit.wav';
+
+  it('CallKit is given the bundled name, and checks it is there', () => {
+    expect(pushMm).toContain(`kCanariRingtoneSound = @"${FILE}"`);
+    expect(pushMm).toContain('config.ringtoneSound = kCanariRingtoneSound;');
+    expect(pushMm).toContain('pathForResource:@"canari_ring_callkit" ofType:@"wav"');
+  });
+
+  it('the file is rendered, a 16-bit WAV of at most 30 s', () => {
+    const path = resolve(APPLE, 'CallSounds', FILE);
+    expect(existsSync(path), 'run bun tools/notification-sounds/render.mjs').toBe(true);
+    const buf = readFileSync(path);
+    expect(buf.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(buf.readUInt16LE(34)).toBe(16);
+    const seconds = buf.readUInt32LE(40) / 2 / buf.readUInt32LE(24);
+    // Apple: a bundled sound longer than 30 s is not played (the system tone rings instead).
+    expect(seconds).toBeLessThanOrEqual(30);
+    expect(seconds).toBeGreaterThan(5);
+  });
+
+  it('the project bundles it in the app Resources, from gen/apple/CallSounds', () => {
+    const group = pbx.match(/\/\* CallSounds \*\/ = \{[\s\S]*?path = ([^;]+);/);
+    expect(group?.[1], 'groupe CallSounds absent').toBe('CallSounds');
+    const ref = pbx.match(
+      new RegExp(`(\\w{24}) /\\* ${FILE} \\*/ = \\{isa = PBXFileReference;[^}]*path = ${FILE};`)
+    )?.[1];
+    expect(ref, `aucune PBXFileReference pour ${FILE}`).toBeDefined();
+    const build = pbx.match(
+      new RegExp(
+        `(\\w{24}) /\\* ${FILE} in Resources \\*/ = \\{isa = PBXBuildFile; fileRef = ${ref} `
+      )
+    )?.[1];
+    expect(build, `aucun PBXBuildFile pour ${FILE}`).toBeDefined();
+    expect(resourcePhase(APP_RESOURCES)).toContain(build!);
+  });
+});

@@ -1,4 +1,8 @@
-import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import {
+  assertOkMlsDeliveryResponse,
+  deliveryKeepalivePost,
+  type DeliveryRefusal,
+} from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
@@ -1097,13 +1101,14 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, or
-   * `null` when it sent none (transport failure, non-2xx, non-JSON) - see `deliveryKeepalivePost`.
+   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, a
+   * {@link DeliveryRefusal} when it refused the caller on membership, or `null` when it sent neither
+   * (transport failure, any other non-2xx, non-JSON) - see `deliveryKeepalivePost`.
    */
   async deliveryPost(
     path: string,
     body: Record<string, unknown>
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | DeliveryRefusal | null> {
     return deliveryKeepalivePost(
       this.historyUrl,
       path,

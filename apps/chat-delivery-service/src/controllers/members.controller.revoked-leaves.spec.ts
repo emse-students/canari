@@ -27,13 +27,15 @@ describe('MembersController.getRevokedLeaves', () => {
     // A community key group, and the caller holds an active device row in it.
     groups = {
       findOne: jest.fn().mockResolvedValue({
-        id: 'kg-1',
+        id: '00000000-0000-4000-8000-00000000c0a1',
         distributionWorkspaceId: 'ws-1',
         distributionChannelId: null,
       }),
     };
     devices = {
-      findOne: jest.fn().mockResolvedValue({ groupId: 'kg-1', userId: 'alice' }),
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ groupId: '00000000-0000-4000-8000-00000000c0a1', userId: 'alice' }),
       // The users bound to the group by a device row: alice and bob.
       find: jest.fn().mockResolvedValue([{ userId: 'alice' }, { userId: 'Bob' }]),
     };
@@ -62,7 +64,7 @@ describe('MembersController.getRevokedLeaves', () => {
 
   it('names, as sent, exactly the leaves of a key group whose device is revoked', async () => {
     const got = await controller.getRevokedLeaves(
-      'kg-1',
+      '00000000-0000-4000-8000-00000000c0a1',
       { identities: ['alice:web-1', 'BOB:phone-1', 'bob:laptop-2'] },
       'alice'
     );
@@ -84,7 +86,11 @@ describe('MembersController.getRevokedLeaves', () => {
     devices.find.mockResolvedValue([{ userId: 'alice' }, { userId: bob }]);
     revoked.find.mockResolvedValue([{ userId: bob, deviceId: `tauri-${bob}-mh9x2k1q-0z9y` }]);
 
-    const got = await controller.getRevokedLeaves('kg-1', { identities: [web, tauri] }, 'alice');
+    const got = await controller.getRevokedLeaves(
+      '00000000-0000-4000-8000-00000000c0a1',
+      { identities: [web, tauri] },
+      'alice'
+    );
 
     expect(got).toEqual({ revoked: [tauri] });
   });
@@ -93,7 +99,7 @@ describe('MembersController.getRevokedLeaves', () => {
     revoked.find.mockResolvedValue([{ userId: 'stranger', deviceId: 'lost-1' }]);
 
     const got = await controller.getRevokedLeaves(
-      'kg-1',
+      '00000000-0000-4000-8000-00000000c0a1',
       { identities: ['stranger:lost-1'] },
       'alice'
     );
@@ -101,28 +107,42 @@ describe('MembersController.getRevokedLeaves', () => {
     // A member of one group cannot read the revocations of people outside it.
     expect(got).toEqual({ revoked: [] });
     expect(revoked.find).not.toHaveBeenCalled();
-    expect(devices.find.mock.calls[0][0].where.groupId).toBe('kg-1');
+    expect(devices.find.mock.calls[0][0].where.groupId).toBe(
+      '00000000-0000-4000-8000-00000000c0a1'
+    );
   });
 
   it('refuses a caller who holds no seat in the group, before reading any revocation', async () => {
     devices.findOne.mockResolvedValue(null);
 
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1'] }, 'mallory')
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: ['bob:phone-1'] },
+        'mallory'
+      )
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(revoked.find).not.toHaveBeenCalled();
   });
 
   it('refuses a body that is not a list, or more than the cap', async () => {
-    await expect(controller.getRevokedLeaves('kg-1', {}, 'alice')).rejects.toBeInstanceOf(
-      BadRequestException
-    );
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: 'bob:phone-1' }, 'alice')
+      controller.getRevokedLeaves('00000000-0000-4000-8000-00000000c0a1', {}, 'alice')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: 'bob:phone-1' },
+        'alice'
+      )
     ).rejects.toBeInstanceOf(BadRequestException);
     const tooMany = Array.from({ length: REVOKED_LEAVES_MAX_IDENTITIES + 1 }, (_, i) => `u:${i}`);
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: tooMany }, 'alice')
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: tooMany },
+        'alice'
+      )
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(revoked.find).not.toHaveBeenCalled();
   });
@@ -141,7 +161,7 @@ describe('MembersController.getRevokedLeaves', () => {
     ];
 
     const got = await controller.getRevokedLeaves(
-      'kg-1',
+      '00000000-0000-4000-8000-00000000c0a1',
       { identities: [...crafted, 'BOB:phone-1', 'alice:web-1'] },
       'alice'
     );
@@ -157,7 +177,11 @@ describe('MembersController.getRevokedLeaves', () => {
     const warn = jest.spyOn(controller['logger'], 'warn');
 
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['x:y:z'] }, 'alice')
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: ['x:y:z'] },
+        'alice'
+      )
     ).resolves.toEqual({ revoked: [] });
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('asked=0 malformed=1'));
@@ -169,14 +193,26 @@ describe('MembersController.getRevokedLeaves', () => {
     const log = jest.spyOn(controller['logger'], 'log');
     const debug = jest.spyOn(controller['logger'], 'debug').mockImplementation(() => undefined);
 
-    await controller.getRevokedLeaves('kg-1', { identities: ['alice:web-1'] }, 'alice');
+    await controller.getRevokedLeaves(
+      '00000000-0000-4000-8000-00000000c0a1',
+      { identities: ['alice:web-1'] },
+      'alice'
+    );
     expect(debug).toHaveBeenCalledWith(expect.stringContaining('outside=0 revoked=0'));
     expect(log).not.toHaveBeenCalled();
 
-    await controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1'] }, 'alice');
+    await controller.getRevokedLeaves(
+      '00000000-0000-4000-8000-00000000c0a1',
+      { identities: ['bob:phone-1'] },
+      'alice'
+    );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('revoked=1'));
 
-    await controller.getRevokedLeaves('kg-1', { identities: ['stranger:x'] }, 'alice');
+    await controller.getRevokedLeaves(
+      '00000000-0000-4000-8000-00000000c0a1',
+      { identities: ['stranger:x'] },
+      'alice'
+    );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('outside=1 revoked=0'));
   });
 
@@ -185,13 +221,21 @@ describe('MembersController.getRevokedLeaves', () => {
     // bound, and nothing about them is answered.
     devices.find.mockResolvedValue([{ userId: 'alice' }]);
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1'] }, 'alice')
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: ['bob:phone-1'] },
+        'alice'
+      )
     ).resolves.toEqual({ revoked: [] });
 
     // Their new install's row in the group - pending is enough - binds them again.
     devices.find.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
     await expect(
-      controller.getRevokedLeaves('kg-1', { identities: ['bob:phone-1'] }, 'alice')
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: ['bob:phone-1'] },
+        'alice'
+      )
     ).resolves.toEqual({ revoked: ['bob:phone-1'] });
   });
 
@@ -206,7 +250,7 @@ describe('MembersController.getRevokedLeaves', () => {
     ]);
 
     const got = await controller.getRevokedLeaves(
-      'kg-1',
+      '00000000-0000-4000-8000-00000000c0a1',
       { identities: ['BOB:phone-1', 'bob:tablet-9'] },
       'alice'
     );
@@ -214,13 +258,19 @@ describe('MembersController.getRevokedLeaves', () => {
     // The recorded device is answered (in the caller's spelling); bob's other revoked device was
     // never recorded here, so bob is not bound for it.
     expect(got).toEqual({ revoked: ['BOB:phone-1'] });
-    expect(heldWhenRevoked.find.mock.calls[0][0].where.groupId).toBe('kg-1');
+    expect(heldWhenRevoked.find.mock.calls[0][0].where.groupId).toBe(
+      '00000000-0000-4000-8000-00000000c0a1'
+    );
   });
 
   it('answers an empty list without reading the revocations', async () => {
-    await expect(controller.getRevokedLeaves('kg-1', { identities: [] }, 'alice')).resolves.toEqual(
-      { revoked: [] }
-    );
+    await expect(
+      controller.getRevokedLeaves(
+        '00000000-0000-4000-8000-00000000c0a1',
+        { identities: [] },
+        'alice'
+      )
+    ).resolves.toEqual({ revoked: [] });
     expect(revoked.find).not.toHaveBeenCalled();
   });
 });

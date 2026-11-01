@@ -58,7 +58,10 @@ import {
   retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
-import { restoredConversationRow } from '$lib/utils/chat/conversations';
+import {
+  findDirectConversationByPeer,
+  restoredConversationRow,
+} from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
@@ -1570,10 +1573,7 @@ async function upsertConversation(
   let matchedExisting = false;
 
   if (isDirect) {
-    const existingDirect = Array.from(conversations.entries()).find(([, c]) => {
-      if ((c.conversationType ?? 'group') !== 'direct') return false;
-      return (c.directPeerId ?? c.contactName).toLowerCase() === directPeerId;
-    });
+    const existingDirect = findDirectConversationByPeer(conversations, directPeerId);
     if (existingDirect) {
       newConvoKey = existingDirect[0];
       matchedExisting = true;

@@ -59,6 +59,8 @@ import {
   type DistributionScope,
   distributionScopeOf,
   isEntitledToDistributionGroup,
+  isSalonReader,
+  salonIdOf,
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
@@ -70,6 +72,9 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  assertCallerHoldsSeat,
+  callerSeatStanding,
+  refuseNotAMember,
   dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
@@ -134,6 +139,7 @@ import {
   isUnresolvedIdentity,
   canonicalDeviceKey,
   canonicalLeafIdentity,
+  canonicalUserId,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -3983,6 +3989,27 @@ export class MessagingService {
   }
 
   /**
+   * Refuses unless `userId` is a member of the conversation a reaction was placed in - the gate of
+   * `mls/notify-reaction`, which pushes to another person on its caller's word.
+   *
+   * Two kinds of conversation reach it, and each is asked of the party that holds its roster: a
+   * DM or group (a uuid) goes through {@link assertCallerActsOnGroup} like every route keyed by a
+   * group id; a SALON (`channel_<id>`, {@link salonIdOf}) is no group of this service, so its reader
+   * question goes to social-service ({@link isSalonReader}), and a refusal there is the same 403
+   * `NOT_A_MEMBER`. Social-service unreachable is the retryable 503, never a refusal.
+   */
+  async assertCallerReactsIn(groupId: string, userId: string): Promise<void> {
+    const salon = salonIdOf(groupId);
+    if (salon === null) {
+      // Any other id - a uuid or not - is the shared gate's: it refuses a non-uuid before any query.
+      await this.assertCallerActsOnGroup('NOTIFY_REACTION', groupId, userId);
+      return;
+    }
+    if (await isSalonReader(salon, userId, this.makeTraceId('reaction'))) return;
+    throw refuseNotAMember(this.logger, 'NOTIFY_REACTION', groupId, userId, ' salon=true');
+  }
+
+  /**
    * Whether `userId` is a member of `groupId`, asked of the table that records membership for that
    * kind of group (see `memberOfGroupKind`). An unknown group has no members.
    */
@@ -5501,6 +5528,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'HISTORY_REQ');
+    await this.assertCallerActsOnGroup('HISTORY_REQ', groupId, canonicalUserId(requesterUserId));
 
     // Members this requester has already heard from. Compared case-insensitively because the client
     // builds the key from its MLS identity (`digestIdentity`, which lower-cases the user) while the
@@ -5687,6 +5715,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'BASE_REFRESH');
+    await this.assertCallerActsOnGroup('BASE_REFRESH', groupId, canonicalUserId(requesterUserId));
 
     const members = await this.routableMembers(groupId, traceId, 'BASE_REFRESH');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
@@ -5751,6 +5780,16 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'WELCOME_REQ');
+    // ANY SEAT MAY ASK - an admitted member's new device, and above all a seat awaiting a member's
+    // admission, whose ask this route IS - and nobody else: a caller with no seat learned which
+    // member devices were online and had its ask stored and replayed (re-review of #2358).
+    const standing = await assertCallerHoldsSeat(
+      { groups: this.groupRepo, seats: this.groupMemberRepo },
+      this.logger,
+      'WELCOME_REQ',
+      groupId,
+      canonicalUserId(requesterUserId)
+    );
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -5764,8 +5803,7 @@ export class MessagingService {
     // AN ASK OF A SEAT AWAITING A MEMBER is relayed exactly as before, and said only at its 1st,
     // 10th, 100th... repeat for this device ({@link awaitingAskRepeats}): every line below is the
     // same sentence on every cadence of a wait that may last the 14 days of the ask.
-    const awaitingAsk =
-      (await this.rosterSeat(groupId, requesterUserId))?.awaitingAdmission === true;
+    const awaitingAsk = standing === 'awaiting';
     const nth = awaitingAsk ? this.awaitingAskRepeats.hit(`ask|${groupId}|${senderKey}`) : 1;
     const say = (line: string) => {
       if (nth !== null) this.logger.log(line);
@@ -5819,10 +5857,23 @@ export class MessagingService {
         const pendingSetKey = `pending_welcome:${groupId}`;
         const stored: string[] = await this.redis.smembers(pendingSetKey);
         let drained = 0;
+        let unseated = 0;
         for (const storedKey of stored) {
           if (storedKey === senderKey) continue; // already forwarded above
           const [storedUserId, storedDeviceId] = storedKey.split(':');
           if (!storedUserId || !storedDeviceId) continue;
+          // RE-ASKED AT THE DRAIN, NOT TRUSTED FROM THE STORE: an entry may predate the gate above,
+          // or its person may have lost the seat since it was stored. Only a seat is replayed.
+          if (
+            (await callerSeatStanding(
+              this.groupMemberRepo,
+              groupId,
+              canonicalUserId(storedUserId)
+            )) === null
+          ) {
+            unseated++;
+            continue;
+          }
           await this.redis.publish(
             'chat:messages',
             JSON.stringify({
@@ -5848,6 +5899,12 @@ export class MessagingService {
           await this.redis.del(pendingSetKey);
           say(
             `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
+          );
+        }
+        if (unseated > 0) {
+          // Always said, never folded into the repeat count: each is a stored ask this drain dropped.
+          this.logger.warn(
+            `[WELCOME_REQ][${traceId}] DROPPED ${unseated} stored welcome_request(s) for group=${groupId} - their requester holds no seat in it any more`
           );
         }
 

@@ -62,7 +62,9 @@ import {
   clearAllUploads,
   clearUpload,
   patchUpload,
+  setUnsentReason,
   setUploadRetry,
+  type UnsentReason,
   uploadViewOf as viewOfUpload,
 } from './uploadProgress.svelte';
 import {
@@ -75,6 +77,7 @@ import {
   publishOutboxEntrySent,
   publishOutboxEntryCancelled,
   publishOutboxEntryFailed,
+  publishOutboxEntryRetired,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
 import { MessageWrittenError } from './messageWrittenError';
@@ -490,6 +493,12 @@ export interface OutboxController {
    */
   hasEntry: (messageId: string) => Promise<boolean | null>;
   /**
+   * The reason an own attachment was retired unsent, as its STORED row records it
+   * (`StoredMessage.unsentReason`) - the bubble's answer after a reload. `null` when none was
+   * recorded or the row cannot be read.
+   */
+  storedUnsentReason: (messageId: string) => Promise<UnsentReason | null>;
+  /**
    * Resolves once the queue has SETTLED `messageId` for now: delivered (`sent`), out of the queue
    * unsent with a failed or withdrawn row the page shows (`failed`), or still queued with no flush
    * left running that could move it before a retry (`pending`). Decided by events - an attempt's
@@ -884,6 +893,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    if (event.type === 'outbox_entry_retired') {
+      // ONLY A MESSAGE THIS TAB HOLDS: a reason for any other would sit in the map for the session,
+      // and the row, when it loads, reads its own reason from the store anyway.
+      if (!findMessage(event.messageId)) {
+        log(
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - not held here, nothing to draw`
+        );
+        return;
+      }
+      log(
+        `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - shown failed here`
+      );
+      setUnsentReason(event.messageId, event.reason);
+      patchStatus(event.messageId, 'error');
+      return;
+    }
     if (event.type === 'outbox_entry_failed') {
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… failed on 5xx in the leader tab - shown failed here`
@@ -927,6 +952,44 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       status,
     });
     conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /**
+   * Writes `reason` on the stored row of `messageId` and READS IT BACK. `updateMessage` writes
+   * nothing, and says nothing, for a row that is absent or undecryptable - so "it did not throw" is
+   * not "it is on disk", and only the read-back answers that (re-review of #2874). Every way it can
+   * fail is logged: a reload will then draw the file as never completed.
+   */
+  async function persistUnsentReason(messageId: string, reason: UnsentReason): Promise<void> {
+    const lost = (why: string) =>
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… unsent reason ${reason} NOT persisted (${why}) - a reload will show the file as never completed`
+      );
+    if (!storage) {
+      lost('no storage');
+      return;
+    }
+    try {
+      await storage.updateMessage(messageId, { unsentReason: reason }, deviceKey());
+      const back = await storage.getMessage(messageId, deviceKey());
+      if (!back) lost('its row is absent or undecryptable');
+      else if (back.unsentReason !== reason) lost('the row read back does not carry it');
+    } catch (e) {
+      lost(String(e).slice(0, 120));
+    }
+  }
+
+  /** See {@link OutboxController.storedUnsentReason}. */
+  async function storedUnsentReason(messageId: string): Promise<UnsentReason | null> {
+    if (!storage) return null;
+    try {
+      return (await storage.getMessage(messageId, deviceKey()))?.unsentReason ?? null;
+    } catch (e) {
+      log(
+        `[OUTBOX] storedUnsentReason ${messageId.slice(0, 8)}…: reading the row failed: ${String(e)}`
+      );
+      return null;
+    }
   }
 
   /** See {@link OutboxController.hasEntry}. */
@@ -1620,6 +1683,33 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     patchStatus(entry.id, 'error');
     clearUpload(entry.id);
+    // AN ATTACHMENT RETIRED FOR THE GROUP'S SAKE SAYS SO IN ITS BUBBLE, not "refused by the server"
+    // (review of #2874, M4): its bytes go with the row below, and the bubble is all that is left.
+    // DURABLE, ON THE MESSAGE ROW, BEFORE THE ENTRY GOES: the in-memory reason serves this tab only
+    // while it lives, and a reload - or a follower tab, which never runs this - drew the orphan's
+    // "never completed" instead (re-review of #2874). The follower is told live as well.
+    const unsentReason: UnsentReason | undefined =
+      entry.kind !== 'media'
+        ? undefined
+        : cause === 'group-deleted'
+          ? 'group-deleted'
+          : cause === 'evicted' || cause === 'evicted-late' || cause === 'removed'
+            ? 'not-a-member'
+            : undefined;
+    if (unsentReason) {
+      setUnsentReason(entry.id, unsentReason);
+      await persistUnsentReason(entry.id, unsentReason);
+      publishOutboxEntryRetired(entry.id, unsentReason);
+    }
+    // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
+    // deletes an ordinary chat upload (`DELETE /media/:id` is server-to-server), so it is said here,
+    // with its id, and left to the server's retention sweep of its class (review of #2874, L2).
+    const orphanedUpload = entry.kind === 'media' ? entry.media?.uploadedRef?.mediaId : undefined;
+    if (orphanedUpload) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… retired UNSENT after its upload (${cause}): media ${orphanedUpload} stays on the server until its retention sweep`;
+      console.warn(line);
+      log(line);
+    }
     uploadTasks.delete(entry.id);
     uploadOwed.delete(entry.id);
     repairHeld.delete(entry.id);
@@ -2076,6 +2166,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
 
     const terminalId = entry.conversationId;
+    // THE SEAL BARRIER COMES BEFORE THE GATES, FOR AN UPLOADED FILE. The flush's own barrier is an
+    // upload back - minutes on a weak link - and a lane woken by the upload's end does not pass it
+    // again, so commits that arrived meanwhile could still be unapplied: the file would be sealed at
+    // a stale epoch the up-to-date members cannot open (review of #2874, L1). ORDER, NOT A RE-CHECK:
+    // taken after the gates, a drained Remove naming this device (a real eviction, or the Remove half
+    // of a re-admission) was invisible to them, and the send then learnt it by FAILING - the file
+    // lost as `evicted-late`, a false "the Remove commit never reached it", and a permanent removal
+    // notice just before the Welcome. Taken here, the health and membership gates read the drained
+    // state and the send follows them with no await between. Free when the queue is idle, which is
+    // the steady state.
+    if (entry.kind === 'media' && entry.media?.uploadedRef) {
+      await mlsService
+        .waitForMessageQueueIdle('outbox media seal', null)
+        .catch((e) =>
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… incoming-queue barrier before the media seal failed, sealing at a possibly stale epoch: ${String(e)}`
+          )
+        );
+    }
     // Read BEFORE the gate: a ready announcement landing after it finds this entry in no set yet.
     const readySeen = readyAnnouncements.get(terminalId) ?? 0;
     const sendable = deps.isGroupHealthy(terminalId);
@@ -2185,6 +2294,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           startUpload(entry, media);
           return 'uploading';
         }
+        // NO AWAIT FROM THE GATES ABOVE TO THE SEND BELOW: the inbound-queue barrier this entry owes
+        // is taken BEFORE the gates (THE SEAL BARRIER above), so they read the post-drain state.
         const prepared = buildMediaMessage(entry, media, media.uploadedRef);
         proto = prepared.proto;
         mediaContent = prepared.content;
@@ -3017,7 +3128,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // nothing would ever send it.
       if (!storage) {
         log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
-        throw new OutboxEnqueueError('no storage layer');
+        const refused = new OutboxEnqueueError('no storage layer');
+        // A row the caller already wrote beside its echo EXISTS: saying "nothing was written" would
+        // have it withdrawn and given back for a second send (review of #2874, L5).
+        throw opts.alreadyDurable ? new MessageWrittenError(entry.id, refused) : refused;
       }
       // CLASSIFIED AT THE THROW (review of #2843, M1): a failure once the row is on disk - written
       // here, or beside its echo by the caller (`alreadyDurable`) - is about a message that EXISTS
@@ -3128,6 +3242,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     hasEntry,
+    storedUnsentReason,
 
     async cancelPending(messageId: string): Promise<boolean> {
       return (await withdraw(messageId, 'user')).withdrawn;
@@ -3432,6 +3547,11 @@ export function awaitOutboxSettled(messageId: string): Promise<OutboxSettlement>
  */
 export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> {
   return active ? active.hasEntry(messageId) : Promise.resolve(null);
+}
+
+/** {@link OutboxController.storedUnsentReason} on the active controller; `null` with none. */
+export function storedUnsentReasonOf(messageId: string): Promise<UnsentReason | null> {
+  return active ? active.storedUnsentReason(messageId) : Promise.resolve(null);
 }
 
 /**
