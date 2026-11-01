@@ -1,4 +1,5 @@
 import { assertAnsweredByApi } from '$lib/utils/apiJson';
+import { forgetBannerOwnership, settleAckAnswer } from '$lib/utils/chat/bannerOwnership';
 
 const PENDING_ACK_STORAGE_KEY = 'canari_pending_message_acks';
 const ACK_BACKOFF_MS = [500, 2000, 5000] as const;
@@ -54,6 +55,8 @@ function persistPendingAcks(payload: PendingAckPayload | null): void {
  */
 export function clearPersistedPendingAcks(): void {
   persistPendingAcks(null);
+  // The banner decisions waiting on those ACKs belong to the same account - see `bannerOwnership.ts`.
+  forgetBannerOwnership();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -102,6 +105,18 @@ export async function ackMessagesWithRetry(
         // failed attempt, so the ids are retried and then persisted, never forgotten.
         assertAnsweredByApi(res, 'POST /api/mls/messages/ack');
         persistPendingAcks(null);
+        // WHO OWNS EACH BANNER, as the server recorded it - every id of this payload, the ones a
+        // failed earlier attempt persisted included, so a held decision is settled by whichever
+        // attempt lands (`bannerOwnership.ts`). A body that is not JSON reads as a legacy answer.
+        // Its own `try`: the ids ARE acknowledged, so an unreadable body must not count as a failed
+        // attempt and send them again.
+        let answer: unknown = null;
+        try {
+          answer = await res.json();
+        } catch (e) {
+          log?.(`[ACK] answer body unreadable: ${String(e)}`);
+        }
+        settleAckAnswer(messageIds, answer);
         log?.(`[ACK] ${messageIds.length} message(s) acknowledged`);
         return;
       }

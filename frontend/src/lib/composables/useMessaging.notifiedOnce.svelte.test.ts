@@ -53,7 +53,7 @@ const LIVE_DRAIN = { bufferUi: true, showOverlay: false };
 
 /** A fresh session's view: the conversation row exists and holds no message - a cold start's map. */
 function coldStart() {
-  const sendSystemNotification = vi.fn().mockResolvedValue(undefined);
+  const sendSystemNotification = vi.fn().mockResolvedValue(true);
   const conversations = new SvelteMap<string, Conversation>([
     [CONVO, { id: CONVO, name: CONVO, messages: [], unreadCount: 0, lastMessageAt: 0 } as never],
   ]);
@@ -163,6 +163,26 @@ describe('a message is announced once on a device', () => {
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
     // The one banner stands for the one message it announces, not for the two the flush carried.
     expect(sendSystemNotification.mock.calls[0][4]).toMatchObject({ covers: 1 });
+  });
+
+  it('a banner that was NOT raised (throttled, refused, thrown) leaves its message announceable', async () => {
+    const first = coldStart();
+    first.sendSystemNotification.mockResolvedValue(false);
+    await first.messaging.addMessageToChat(PEER, 'hello', CONVO, first.ctx, { messageId: 'm-t' });
+    await vi.waitFor(() => expect(first.sendSystemNotification).toHaveBeenCalledTimes(1));
+    await settle();
+
+    const second = coldStart();
+    second.sendSystemNotification.mockRejectedValue(new Error('plugin threw'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await second.messaging.addMessageToChat(PEER, 'hello', CONVO, second.ctx, { messageId: 'm-t' });
+    await vi.waitFor(() => expect(second.sendSystemNotification).toHaveBeenCalledTimes(1));
+    await settle();
+
+    // Nothing was shown either time, so the next delivery still announces it.
+    const third = coldStart();
+    await third.messaging.addMessageToChat(PEER, 'hello', CONVO, third.ctx, { messageId: 'm-t' });
+    await vi.waitFor(() => expect(third.sendSystemNotification).toHaveBeenCalledTimes(1));
   });
 
   it('two decisions about one message racing across the cache read raise ONE banner', async () => {

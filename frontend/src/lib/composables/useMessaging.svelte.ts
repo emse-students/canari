@@ -8,7 +8,7 @@
  */
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
-import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
@@ -47,8 +47,14 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
-import { recordNotified, unnotifiedOf } from '$lib/utils/chat/notifiedMessages';
+import {
+  claimAnnouncement,
+  recordNotified,
+  settleAnnouncement,
+  unnotifiedOf,
+} from '$lib/utils/chat/notifiedMessages';
 import { pushCacheMessageIds } from '$lib/utils/chat/fcmCache';
+import { bannerVerdicts } from '$lib/utils/chat/bannerOwnership';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -170,7 +176,7 @@ export interface MessagingContext {
     conversationId?: string,
     mentionsMe?: boolean,
     native?: NativeMessageNotification
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -738,47 +744,83 @@ export function useMessaging() {
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
     void (async () => {
+      // OUT OF FRONT ON AN iPHONE, THE BANNER IS THE PAGE'S OR THE PUSH'S - AND THE SERVER'S ACK
+      // ANSWER SAYS WHICH (`bannerOwnership.ts`). The server pushes a row whose ACK has not arrived
+      // after ten seconds, and the extension announces that push; the ACK and the push are made
+      // exclusive there, so this waits for the answer - from this ACK or from the retry that
+      // finally lands - and announces only what the page owns. An ACK that never lands keeps this
+      // silent: its row is pushed, and the extension announces it.
+      let ownedIds = messageIds;
+      if (isIosTauriRuntime() && !isAppInForeground() && messageIds.length > 0) {
+        const verdicts = await bannerVerdicts(messageIds);
+        const pushed = messageIds.filter((id) => verdicts.get(id) === 'push');
+        // The extension announced these: recorded as such, so no later delivery announces them.
+        recordNotified(ctx.userId, pushed);
+        ownedIds = messageIds.filter((id) => verdicts.get(id) !== 'push');
+        if (ownedIds.length === 0) {
+          console.log(
+            `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) announced by their push (the server's ACK answer); nothing raised.`
+          );
+          return;
+        }
+        // The wait may have outlasted the background: a reader now looking at it is not told again.
+        if (canSeeArrival(ctx, conversationKey)) {
+          console.log(
+            `[NOTIF] Inbound in ${conversationKey} - the app came to the front while the ACK answered; nothing raised.`
+          );
+          return;
+        }
+      }
       // WHAT THE iOS SYSTEM ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
       // cache here, at the decision: the take that records it runs after this drain
       // (`pushCacheMessageIds`). Empty off iOS.
       const presented = await pushCacheMessageIds();
+      // What the extension presented WAS announced - recorded as such, by the party that saw it.
+      recordNotified(
+        ctx.userId,
+        messageIds.filter((id) => presented.has(id))
+      );
       // ASKED AGAIN AFTER THE AWAIT, AND CLAIMED IN THE SAME TICK: another decision about the same
-      // message (a live frame and the flush that follows it) may have claimed it meanwhile, and
-      // nothing between this check and the claim yields, so only one of them can pass.
-      const unannounced = unnotifiedOf(ctx.userId, messageIds);
-      recordNotified(ctx.userId, unannounced);
-      if (messageIds.length > 0 && unannounced.length === 0) {
-        console.log(
-          `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) claimed by another notification meanwhile; nothing raised.`
-        );
-        return;
-      }
-      // Recorded above WITH the presented ones - they were announced, by the extension.
-      const owed = unannounced.filter((id) => !presented.has(id));
+      // message (a live frame and the flush that follows it) may have recorded or claimed it
+      // meanwhile, and nothing between this check and the claim yields, so only one passes. A CLAIM,
+      // NOT A RECORD: the record is written once the banner exists (`settleAnnouncement`), so a
+      // throttle, a refusal or a throw leaves the message announceable.
+      const owed = claimAnnouncement(ctx.userId, ownedIds);
       if (messageIds.length > 0 && owed.length === 0) {
         console.log(
-          `[NOTIF] Inbound in ${conversationKey} - the notification extension already presented it; nothing raised.`
+          `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already announced (by the extension or another notification); nothing raised.`
         );
         return;
       }
-      // THE BANNER STANDS FOR WHAT IT ANNOUNCES, not for what the flush carried: a message already
-      // announced is not counted in it again.
-      const announced = messageIds.length > 0 ? owed.length : covers;
-      // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
-      const senderName = await resolveNotificationSenderName(senderId, convo);
-      ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-        // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-        // plain notification, it asks the native builder for the SAME one a push would raise. See
-        // `nativeNotification.ts` for the pair of notifications this replaced.
-        conversationId: conversationKey,
-        senderId,
-        senderName,
-        groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-        body: notificationBody,
-        mentionsMe,
-        sentAt,
-        covers: announced,
-      });
+      let raised = false;
+      try {
+        // THE BANNER STANDS FOR WHAT IT ANNOUNCES, not for what the flush carried: a message already
+        // announced is not counted in it again.
+        const announced = messageIds.length > 0 ? owed.length : covers;
+        // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+        const senderName = await resolveNotificationSenderName(senderId, convo);
+        raised = await ctx.sendSystemNotification(
+          senderName,
+          notificationBody,
+          conversationKey,
+          mentionsMe,
+          {
+            // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its
+            // own plain notification, it asks the native builder for the SAME one a push would raise.
+            // See `nativeNotification.ts` for the pair of notifications this replaced.
+            conversationId: conversationKey,
+            senderId,
+            senderName,
+            groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+            body: notificationBody,
+            mentionsMe,
+            sentAt,
+            covers: announced,
+          }
+        );
+      } finally {
+        settleAnnouncement(ctx.userId, owed, raised);
+      }
     })().catch((e: unknown) => {
       // EVERY SWALLOWED BRANCH LOGS: a rejection here is a banner owed and not raised.
       console.error(`[NOTIF] Inbound in ${conversationKey} - the notification was not raised:`, e);

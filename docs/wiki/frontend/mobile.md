@@ -2256,7 +2256,56 @@ see `sessionAuth`), and the restore seeded the rows only after the gateway, so t
 rows from the local store BEFORE `markInboundReady` (`useConversations.seedConversationRowsAhead`,
 phase `seed_conversations`), and the history phase, whose barriers need the socket, still runs after
 the gateway and replays what the seed returned instead of seeding again. No frame, held, live or
-pulled, can meet a map without its conversation, and nothing is held or delayed to get there.
+pulled, can meet a map without its conversation, and nothing is held or delayed to get there. The
+seed touches no network: a merged duplicate 1:1 is only NAMED there (`owedServerDeletes`) and deleted
+on the server by the history phase, so a slow request can never hold the inbound gate shut.
+
+**Round-2 review fixes (2026-11-01).** A message is recorded as announced only once its banner was
+actually posted (`sendSystemNotification` answers whether it was; a throttle, a refused permission or
+a throw leaves the message announceable). A new process clears the App Group's foreground flag at
+launch, because a process that died in front never ran `willResignActive` and every push after it
+was written `presented: false`. `CanariDrainAppGroupFcmCache` writes the app's copy BEFORE it removes
+the App Group file, and removes it only if the extension wrote nothing during the drain - the old
+order lost every entry a failed write held.
+
+#### Out of front, the banner is the page's or the push's - the server's ACK says which (2026-11-01)
+
+**The page knows when it is out of front.** iOS writes `window.__canariForeground` and the
+`canari:foreground` event - the pair Android's activity writes - from `didBecomeActive` /
+`willResignActive` and after every page load (`CanariPushForegroundToPage`). Before, the global was
+never set on iOS and the page read "in front" in every state.
+
+**The page and the push could not see each other.** Out of front the page still holds its socket for
+a while, receives a frame and ACKs it; the server pushes a row whose ACK has not arrived after ten
+seconds (`scheduleDeferredPush`), or at once to an offline device, and the extension announces that
+push. The page cannot know whether the push fired, the push cannot know what the page decided.
+
+**So the server makes them exclusive and records the winner** (`push-claim.ts`): one Redis key per
+queued row, `push-claim:<queuedId>`, written `SET ... NX GET`. A push that would draw claims `push`
+before sending, and is not sent if the ACK claimed first; the ACK claims `ack` for every row it finds
+queued, and only READS the claim of an id it no longer finds (a retry). Its answer lists `pushed` (a
+push owns the banner) and `unresolved` (no claim to read, or Redis refused). A retried ACK reads back
+the verdict its first attempt was given. Nothing un-claims: a push that claimed and then failed to
+send is logged at error level and keeps the banner - that one is a missing banner, and the line is
+its trace. The TTL (180 days, twice the 90-day queue retention) is garbage collection; a claim that
+expired before a retry reached it answers `unresolved`, never a guessed owner.
+
+**The page, out of front, waits for that answer** (`bannerOwnership.ts`, `notifyInbound`): each
+message is bound to the queued row that carried it, and the decision waits for the ACK of that row -
+the first attempt's answer, or the retry out of `sessionStorage` that finally lands. Then:
+
+| Verdict | Who announces |
+| --- | --- |
+| In front (no wait) | the page |
+| `page` - the ACK claimed it, no push will be sent | the page |
+| `push` - the push claimed it first | the extension; the page is silent and records the id as announced |
+| `unresolved` | the page (a duplicate rather than a missing banner) |
+| `legacy` - a server older than the claim | the page, as before ([legacy-compatibility](../legacy-compatibility.md)) |
+| no answer ever - the ACK never reached the server | the extension: the row stays queued and is pushed |
+
+**What this costs, deliberately:** a message received and read on arrival while backgrounded is no
+longer silently absorbed - out of front, someone announces it, exactly once. And a page woken back
+to the front while it waited does not announce it (`canSeeArrival` is asked again after the wait).
 
 #### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 

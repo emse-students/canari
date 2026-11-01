@@ -237,6 +237,9 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
     hdel: jest.fn(async () => 0),
     publish: jest.fn(async () => 0),
     del: jest.fn(async () => 0),
+    // The ACK's banner claim (`push-claim.ts`): no push is in play here, so every claim is won.
+    call: jest.fn(async () => null),
+    mget: jest.fn(async (...keys: string[]) => keys.map(() => null)),
     pipeline,
   };
 

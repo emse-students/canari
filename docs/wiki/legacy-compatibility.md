@@ -429,6 +429,19 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
 
+### No date yet - the ACK answered without `pushed` / `unresolved`, by a server older than the banner claim (2026-11-01)
+
+**Site:** `settleAckAnswer` in `frontend/src/lib/utils/chat/bannerOwnership.ts` (`legacy`).
+**Shim (2026-11-01):** `POST /api/mls/messages/ack` answers who owns each row's banner
+(`push-claim.ts`), and an iPhone out of front waits for that answer before it announces a message.
+An older chat-delivery answers `{ status, count }` only, so an answer missing either field is read
+as `legacy`: the page announces every message as it did before the claim (a duplicate when the
+push also fired), said ONCE per session by a `console.warn`. Without it the page would read every
+row as the page's - the same outcome - but silently, and the rollout would be invisible.
+**Removal condition:** every estate's chat-delivery answers both fields (dev and production deployed
+past this change, no rollback below it planned); then a missing field is a contract breach. A
+server version, not a client floor.
+
 ### No date yet - the presence ids in a URL
 
 **Two halves, two conditions** ([chat-gateway](services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)).

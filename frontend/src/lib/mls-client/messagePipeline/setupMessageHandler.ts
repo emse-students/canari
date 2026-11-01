@@ -37,6 +37,7 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
+import { bindQueuedRow } from '$lib/utils/chat/bannerOwnership';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -744,6 +745,8 @@ async function handleWelcome({
               ) {
                 const envelope = appMsgToEnvelope(appMsg);
                 if (envelope) {
+                  // Which queued row carried it - what the ACK's banner verdict is keyed by.
+                  bindQueuedRow(envelope.options.messageId, msg.deliveryMeta?.queuedMessageId);
                   if (batchAddMessages) {
                     // ARRIVALS, not a restore: these frames reached this device over the wire and
                     // were held only because the Welcome had not landed yet. Nobody has been told
@@ -1232,6 +1235,9 @@ async function handleKnownGroup({
         const stableId =
           normalizeMessageId(msg.messageId) ?? normalizeMessageId(deliveryMeta?.queuedMessageId);
         if (stableId) envelope.options.messageId = stableId;
+        // BOUND BEFORE IT IS HANDED OVER: the banner decision `addMessageToChat` starts may wait on
+        // the ACK of this row (`bannerOwnership.ts`), and it finds the row by this message id.
+        bindQueuedRow(stableId, deliveryMeta?.queuedMessageId);
         log(`[MLS] Message decrypted for ${convoKey.slice(0, 8)}… → addMessageToChat`);
         await addMessageToChat(sender, envelope.content, convoKey, {
           ...envelope.options,

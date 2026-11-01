@@ -485,9 +485,13 @@ static void CanariObserveCallProximity(void) {
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
 /// Re-read at every activation (a reload of the page loses the property) and after every keyboard
 /// resize; portrait only on iPhone, so there is no rotation to follow.
+static void CanariPushForegroundToPage(BOOL inForeground);
+
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
-/// end of the initial load - syslog showed 34 pt published and the page still read 0).
+/// end of the initial load - syslog showed 34 pt published and the page still read 0). The
+/// foreground flag is told again for the same reason: a page loaded in the background (a launch
+/// the system made, not the user) would otherwise start believing it is in front.
 @interface CanariLoadObserver : NSObject
 @end
 @implementation CanariLoadObserver
@@ -498,6 +502,7 @@ static void CanariObserveCallProximity(void) {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
+    CanariPushForegroundToPage(g_isInForeground ? YES : NO);
   }
 }
 @end
@@ -648,6 +653,38 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
       NSLog(@"[CanariIOS] foreground flag not removed: %@", error);
     }
   }
+}
+
+/// Tells the page whether the app is in front - `window.__canariForeground` and a `canari:foreground`
+/// event, the pair Android's `MainActivity.pushForeground` writes (`appForeground.ts`).
+///
+/// ONE FACT FOR EVERY BANNER DECISION. Without it the global was never set on iOS, so the page read
+/// "in front" in every state: with Notification Center pulled down, or in the moment after
+/// `willResignActive` while the socket still lives, it decided as an app on screen. Written from
+/// the same two callbacks that set `g_isInForeground` and the extension's App Group flag, so the
+/// page, the delegate and the extension read one state, and told again after every page load
+/// (`CanariLoadObserver`), so a page the system loaded in the background does not start on the
+/// global's default ("in front").
+static void CanariPushForegroundToPage(BOOL inForeground) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] foreground=%d not told to the page - no WebView yet", inForeground);
+    return;
+  }
+  NSString *value = inForeground ? @"true" : @"false";
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariForeground=%@;window.dispatchEvent(new CustomEvent("
+                       @"'canari:foreground',{detail:{foreground:%@}}));",
+                       value, value];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // A page that cannot be told keeps its last value - said, because a silent failure
+                // here reads exactly like the defect this exists to fix.
+                NSLog(@"[CanariIOS] foreground=%d not told to the page: %@", inForeground,
+                      CanariErrorReason(error));
+              }
+            }];
 }
 
 /// The Share Extension's banner (`canari_Share/ShareViewController.swift`), removed once its share is
@@ -830,6 +867,7 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
+  CanariPushForegroundToPage(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
@@ -868,6 +906,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
+  CanariPushForegroundToPage(NO);
   canari_ios_on_pause();
   // Snapshot the latest decrypt state into the App Group container before suspending, so a push
   // arriving while backgrounded is decrypted by the NSE against fresh state.
@@ -961,6 +1000,13 @@ void canari_ios_bootstrap(void) {
                    queue:nil
               usingBlock:^(__unused NSNotification *note) {
                 CanariInstallSceneLaunchUrlHook();
+                // A NEW PROCESS IS NOT IN FRONT UNTIL IT BECOMES ACTIVE. A process that died in the
+                // foreground (a crash, the watchdog) never ran `willResignActive`, so its flag
+                // would tell the extension "foreground" for every push until the next activation -
+                // each written `presented: false`, each announced a second time. Cleared here, at
+                // the first moment of every launch; `didBecomeActive` sets it again.
+                g_isInForeground = false;
+                CanariSetAppGroupForegroundFlag(NO);
               }];
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
                   object:nil
