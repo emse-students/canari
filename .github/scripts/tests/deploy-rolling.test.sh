@@ -372,6 +372,12 @@ if [ "$waited" = yes ]; then
 else
   fail "the pairing check did not wait for the request in its auth_request"
   cat "$TMP/auth.log" >&2
+  # What the old workers' other sockets were: the proxies' own access lines, and each table.
+  dc logs --no-color --tail 60 frontend api >&2 2>&1 || true
+  for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=frontend"); do
+    printf -- '-- %s /proc/net/tcp\n' "$c" >&2
+    docker exec "$c" cat /proc/net/tcp >&2 || true
+  done
 fi
 if [ "$(cat "$TMP/hold-auth.code")" = 200 ]; then
   ok "the POST released from its auth_request was answered 200"
