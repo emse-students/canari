@@ -21,8 +21,7 @@
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { goto } from '$app/navigation';
-  import { resolve } from '$app/paths';
+  import { openProfile } from '$lib/utils/users/profileHref';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import ProfileLink from '../shared/ProfileLink.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -140,7 +139,7 @@
   function openPill() {
     if (peerLinked) {
       Log.d('chatHeader.openPill -> peer profile');
-      void goto(resolve('/profile/[id]', { id: encodeURIComponent(contactName) }));
+      void openProfile(contactName);
     } else {
       onOpenSettings?.();
     }
@@ -381,14 +380,9 @@
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
       {#if peerLinked}
-        <a
-          href={resolve('/profile/[id]', { id: encodeURIComponent(contactName) })}
-          data-header-profile-link
-          class="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-amber-500"
-          aria-label={m.chat_open_profile_label({ name: effectiveDisplayName })}
-        >
+        <ProfileLink userId={contactName} class="hover:underline">
           <EmojiText text={effectiveDisplayName} />
-        </a>
+        </ProfileLink>
       {:else}
         <EmojiText text={effectiveDisplayName} />
       {/if}

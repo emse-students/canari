@@ -2,6 +2,7 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
+  import { profileHref } from '$lib/utils/users/profileHref';
 
   interface Props {
     /** User ID used to resolve the display name. */
@@ -27,7 +28,7 @@
 
 {#if link && !isAbsentUser(userId)}
   <a
-    href="/profile/{encodeURIComponent(userId)}"
+    href={profileHref(userId)}
     class="{className} hover:underline"
     onclick={(e) => e.stopPropagation()}><EmojiText text={displayName} /></a
   >

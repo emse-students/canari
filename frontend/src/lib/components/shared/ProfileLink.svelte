@@ -36,8 +36,9 @@
 {:else}
   <a
     href={profileHref(userId)}
-    class="{className} rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+    class="{className} rounded-full outline-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500"
     aria-label={m.chat_open_profile_label({ name: resolved.current })}
+    draggable="false"
     data-profile-link={userId}
     onclick={(e) => e.stopPropagation()}
   >

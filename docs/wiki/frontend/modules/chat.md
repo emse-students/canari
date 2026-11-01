@@ -88,7 +88,8 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
   page itself owns visibility (blocks, review cohort), so a link is only a navigation.
 - **Scroll on return is NOT preserved**: the chat route unmounts on navigation and reopens at its entry
-  window; no per-conversation scroll memory exists. Open item, see the PR.
+  window; no per-conversation scroll memory exists. Open item, with the mechanism it needs:
+[backlog](../../backlog.d/p3-conversation-scroll-kept-when-returning-from-a-profile.md).
 
 Held by `ChatProfileEntryPoints.svelte.test.ts`.
 
