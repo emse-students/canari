@@ -3,6 +3,9 @@
   import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
   import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
+  import PlanningList from '$lib/components/bookings/booker/PlanningList.svelte';
+  import RangeForm from '$lib/components/bookings/booker/RangeForm.svelte';
+  import { planningDays, planningKind } from '$lib/bookings/planning';
   import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
   import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
   import WeekBar from '$lib/components/bookings/booker/WeekBar.svelte';
@@ -110,8 +113,8 @@
   const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
   /** The week of the chosen column: the strip's dots, and the desktop grid. */
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
-  /** What the grid draws: the week, or on a phone the chosen day alone on its own axis. */
-  const layout = $derived(narrow ? weekLayout(columnUnits, [date], space, nowMs) : week);
+  /** What is drawn: the week - as a grid from `md`, as a planning list on a phone. */
+  const layout = $derived(week);
   /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
   const weekHeld = $derived.by(() => {
     const want = weekReadRange(start);
@@ -127,6 +130,16 @@
     if (weekHeld || !lastDrawn) lastDrawn = layout;
     return lastDrawn;
   });
+  /** The phone's planning: the same week, one list of rows per day. */
+  const planning = $derived(
+    planningDays(
+      drawn,
+      planningKind(space, nowMs, lastRefusedStart, mode === 'block'),
+      space.slotMode === 'slots'
+    )
+  );
+  /** The range form (the planning's "+" or a tapped free row), or null while closed. */
+  let range = $state<{ resourceId: string; startMs?: number; endMs?: number } | null>(null);
   const freeCounts = $derived(
     new Map(
       space.resources.map((r) => [
@@ -316,14 +329,29 @@
       >
         {#if drawn.endMin === drawn.startMin}
           <p class="text-text-muted py-8 text-center text-sm">
-            {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+            {m.bookings_week_empty()}
           </p>
+        {:else if narrow}
+          <PlanningList
+            days={planning}
+            {space}
+            {resource}
+            {nowMs}
+            {lastRefusedStart}
+            blockMode={mode === 'block'}
+            focusDate={date}
+            {today}
+            onOpen={(unit) => pick(resource, unit)}
+            onFree={(run) =>
+              (range = { resourceId: resource.id, startMs: run.startMs, endMs: run.endMs })}
+            onAdd={() => (range = { resourceId: resource.id })}
+          />
         {:else}
           <SpaceGrid
             {space}
             {resource}
             layout={drawn}
-            mode={narrow ? 'day' : 'week'}
+            mode="week"
             blockMode={mode === 'block'}
             {nowMs}
             {lastRefusedStart}
@@ -341,6 +369,24 @@
     </aside>
   {/if}
 </div>
+
+{#if range}
+  <RangeForm
+    {space}
+    resources={space.resources}
+    unitsOf={(id) => unitsInOrder(slots, id)}
+    dates={weekAll}
+    {nowMs}
+    {lastRefusedStart}
+    blockMode={mode === 'block'}
+    initial={range}
+    onSubmit={(picked, first, count) => {
+      range = null;
+      pick(picked, first, count);
+    }}
+    onClose={() => (range = null)}
+  />
+{/if}
 
 {#if sheet}
   {#if sheet.kind === 'book'}
