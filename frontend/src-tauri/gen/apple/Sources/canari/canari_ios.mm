@@ -670,7 +670,9 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
 static void CanariPushActiveToPage(BOOL active) {
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
-    NSLog(@"[CanariIOS] active=%d not told to the page - no WebView yet", active);
+    // Not an error: the load observer tells the page once it exists, and the page asks the App
+    // Group flag itself on load (`ios_app_active`, `appActive.ts`).
+    NSLog(@"[CanariIOS] active=%d not told to the page - no WebView yet, told at its load", active);
     return;
   }
   NSString *value = active ? @"true" : @"false";
@@ -681,9 +683,10 @@ static void CanariPushActiveToPage(BOOL active) {
   [webView evaluateJavaScript:js
             completionHandler:^(__unused id result, NSError *error) {
               if (error != nil) {
-                // A page that cannot be told keeps its last value - said, because a silent failure
-                // here reads exactly like the defect this exists to fix.
-                NSLog(@"[CanariIOS] active=%d not told to the page: %@", active,
+                // A page that cannot be told keeps its last value until it ASKS (`ios_app_active`,
+                // on its next `visibilitychange` or load) - an ERROR, because a page left on
+                // "inactive" while the app is in front withholds every queued frame.
+                NSLog(@"[CanariIOS] ERROR active=%d not told to the page: %@", active,
                       CanariErrorReason(error));
               }
             }];

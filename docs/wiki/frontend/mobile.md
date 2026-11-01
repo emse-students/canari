@@ -2279,6 +2279,14 @@ after every page load (`CanariPushActiveToPage`), read by `appActive.ts` only. N
 `__canariForeground`: `isAppInForeground()` keeps its meaning for the ten other iOS consumers (calls,
 tones, playback, the checkpoint flush, reconnects, read-marking).
 
+**Told AND asked.** A push can be lost (`evaluateJavaScript` failed), and a page left on "inactive"
+in front would withhold everything. So the page also ASKS, on load and on every `visibilitychange`:
+`ios_app_active` (`commands/app_active.rs`) stats `app_in_foreground` in the App Group - the flag
+`CanariSetAppGroupForegroundFlag` writes from the same callbacks, and the one the extension reads, so
+the page, the delegate and the extension hold one state. An answer overtaken by a told transition is
+dropped (the push is newer); a page that held the other value logs an ERROR, as does the native
+failure to tell it. No timer.
+
 **Why the page must not consume a frame while inactive.** The extension decrypts read-only from
 `mls.bin`. A frame the page has already consumed has spent its secret (and the page persists its
 state), so the extension's decrypt of the same frame is refused (`SecretReuse`, read as
@@ -2290,12 +2298,29 @@ the content.
 **So, while the iPhone app is inactive, the page consumes NO queued frame** - application, commit
 and Welcome alike (`BaseMlsService.processQueue`). The frame is not decrypted, not ACKed, forgotten
 by the delivery dedup so the pull on return is admitted, and nothing else of it is recorded; a later
-frame of a group already left in the same drain is left too, so the order is never inverted. The
-check is made in the same synchronous stretch as the start of decryption, so a frame either starts
-while active - and completes, banner and ACK, as before - or never starts. The page then asks the
-server to push those rows NOW (`POST /api/mls/messages/push-now`): it brings the deferred push
-forward, deletes nothing, and a repeated or foreign ask is a no-op (the waiting timer is taken once,
-in memory, `MessagingService.deferredPushes`). When the app is active again the page pulls them.
+frame of a group that has one left is left too, whatever the state now, so the order is never
+inverted. The check is made in the same synchronous stretch as the start of decryption, so a frame
+either starts while active - and completes, banner and ACK, as before - or never starts. The page
+then asks the server to push the rows still left NOW (`POST /api/mls/messages/push-now`): it brings
+the deferred push forward, deletes nothing, and a repeated or foreign ask is a no-op (the waiting
+timer is taken once, in memory, `MessagingService.deferredPushes`).
+
+**The release is decided once, and never during a drain** (`pullWhatTheGateReleases`). When the app
+becomes active, or a call's group goes live, every withheld group the gate now lets through is
+released whole and pulled back in one pull. A release that arrives mid-drain is deferred to the
+drain's end: that drain is still withholding the group's later frames, and a pull started then had
+its copy of those frames refused by the dedup while the drain held the originals - stranded, and the
+group's order inverted (review of #2844, 2026-11-01; the test is "ACTIVE MID-DRAIN" in
+`BaseMlsService.inactiveQueue.test.ts`).
+
+**The live call's group is exempt** (`setIosLiveCallGroup`, written by `CallService` from its own
+state: ringing, calling or connected). A call runs with the app in the background, and its hangup,
+answer and renegotiation are MLS frames of its group; withheld, the call would go deaf. The fact is
+the call's typed state, never read off a frame: the server cannot tell a call frame from any other
+silent frame, and teaching it would hand it a plaintext fact. A frame of that group withheld before
+the call went live is pulled back when it does. An invite that arrives while no call is live is
+withheld like any frame - the native ring and its answer join on the ring's own facts, never on the
+invite ([pendingCallAccept.ts](../../../frontend/src/lib/stores/pendingCallAccept.ts)).
 
 | Case | Who announces |
 | --- | --- |
@@ -2303,6 +2328,7 @@ in memory, `MessagingService.deferredPushes`). When the app is active again the 
 | Inactive, a private conversation's frame | the extension, from the server's push - decrypted FIRST, with its content |
 | Inactive, a frame that began decrypting while active | the page (it was ACKed, no push follows) |
 | Inactive, a salon message | the extension, from the salon's push to every member; the page is silent |
+| Inactive, a frame of the live call's group | the page, as when active (the call needs it) |
 | `push-now` refused or a server without it | the extension, from the deferred push ten seconds later ([legacy-compatibility](../legacy-compatibility.md)) |
 | Back to active | nobody again: the pull brings the rows, the push cache says they were presented |
 

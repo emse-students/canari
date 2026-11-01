@@ -3,6 +3,7 @@
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
+  import { installIosActiveQuery } from '$lib/utils/appActive';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -1436,6 +1437,10 @@
 
     const stopReconnect = connectivity.onReconnect(() => handleReconnect('reconnect'));
     document.addEventListener('visibilitychange', handleVisibility);
+    // THE PAGE ASKS WHETHER THE iPHONE APP IS ACTIVE, on load and on every visibility change, so a
+    // transition whose push to the page was lost cannot leave it withholding every queued frame in
+    // front (`appActive.ts`). A no-op off iOS.
+    const stopActiveQuery = installIosActiveQuery();
 
     // The refresh endpoint is the only place that learns a session is dead, and it can learn it
     // from any caller - a background poll, a socket reconnect, a native auto-login. Wiring the
@@ -1450,6 +1455,7 @@
 
     return () => {
       stopReconnect();
+      stopActiveQuery();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
       setMlsSessionLostHandler(null);

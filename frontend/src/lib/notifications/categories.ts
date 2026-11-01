@@ -7,6 +7,8 @@
  * WebSocket frame, where no push is involved) obey the same set. `categories.contract.test.ts` reads
  * the server file and fails when the two lists drift, because no compiler spans a service boundary.
  */
+import { isChannelConversationId } from '$lib/utils/chat/channelConversationId';
+
 export const NOTIFICATION_CATEGORIES = [
   'messages',
   'channels',
@@ -35,5 +37,5 @@ export function isNotificationCategory(value: unknown): value is NotificationCat
  * server makes between a `type: 'channel'` push and a `type: 'message'` one.
  */
 export function categoryOfConversation(conversationKey: string): NotificationCategory {
-  return conversationKey.startsWith('channel_') ? 'channels' : 'messages';
+  return isChannelConversationId(conversationKey) ? 'channels' : 'messages';
 }

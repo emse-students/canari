@@ -31,6 +31,7 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+use crate::commands::app_active::ios_app_active;
 use crate::commands::at_rest_key::{
     cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
     cle_au_repos_schema, supprimer_cle_appareil,
@@ -1736,6 +1737,7 @@ pub fn run() {
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
             take_nse_outcomes,
+            ios_app_active,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,

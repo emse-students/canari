@@ -16,6 +16,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
 }));
 
 const { BaseMlsService } = await import('$lib/services/BaseMlsService');
+const { setIosLiveCallGroup } = await import('$lib/utils/appActive');
 type Service = InstanceType<typeof BaseMlsService>;
 import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
@@ -62,6 +63,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     active(true);
     svc = makeService();
     applied = [];
@@ -143,9 +145,11 @@ describe('a queued frame while the iPhone app is inactive', () => {
     expect(pushNow).not.toHaveBeenCalled();
   });
 
-  it('a later frame of a group already left is left too, so its order is never inverted', async () => {
+  it('ACTIVE MID-DRAIN: both frames of the group come back in ONE pull after the drain, applied in order, none stranded', async () => {
     // One drain, round robin: group-a's first frame is left (inactive), a frame with no queued row
-    // in group-b is consumed and the app becomes active during it, then group-a's second frame.
+    // in group-b is consumed and the app becomes active during it, then group-a's second frame -
+    // left too, because its group already has one queued. The release waits for the drain's end:
+    // a pull started mid-drain had its copy of q-a2 refused while the drain still held the original.
     Object.assign(svc, {
       messageCallback: vi.fn(async (...args: unknown[]) => {
         applied.push((args[6] as { queuedMessageId?: string } | undefined)?.queuedMessageId ?? 'b');
@@ -153,13 +157,48 @@ describe('a queued frame while the iPhone app is inactive', () => {
         return true;
       }),
     });
+    const pulledWhileDraining: boolean[] = [];
+    Object.assign(svc, {
+      fetchPendingMessages: vi.fn(async () => {
+        pulledWhileDraining.push(inner(svc).messageScheduler.draining);
+        inner(svc).enqueueMessage(row('q-a1'), 'pull');
+        inner(svc).enqueueMessage(row('q-a2'), 'pull');
+      }),
+    });
     active(false);
     inner(svc).enqueueMessage(row('q-a1'), 'live');
     inner(svc).enqueueMessage({ ...row('', 'group-b'), queuedMessageId: undefined }, 'live');
     inner(svc).enqueueMessage(row('q-a2'), 'live');
+    await vi.waitFor(() => expect(applied).toEqual(['b', 'q-a1', 'q-a2']));
     await inner(svc).messageScheduler.waitUntilIdle();
-    expect(applied).toContain('b');
-    expect(applied).not.toContain('q-a1');
-    expect(applied).not.toContain('q-a2');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pulledWhileDraining).toEqual([false]);
+    expect(ack).toHaveBeenCalledWith(['q-a1', 'q-a2']);
+    // Released before the end of the drain, so nothing is asked to be pushed.
+    expect(pushNow).not.toHaveBeenCalled();
+  });
+
+  describe('the group of a live call', () => {
+    afterEach(() => setIosLiveCallGroup(null));
+
+    it('is consumed out of front - its hangup and answer are frames of that group - while another group is still left', async () => {
+      active(false);
+      setIosLiveCallGroup('group-call');
+      await deliver(row('q-hangup', 'group-call'));
+      await deliver(row('q-other', 'group-x'));
+      expect(applied).toEqual(['q-hangup']);
+      expect(ack).toHaveBeenCalledWith(['q-hangup']);
+      expect(pushNow).toHaveBeenCalledWith(['q-other']);
+    });
+
+    it('a frame of it left before the call went live is pulled back when it does', async () => {
+      active(false);
+      await deliver(row('q-before', 'group-call'));
+      expect(applied).toEqual([]);
+      setIosLiveCallGroup('group-call');
+      expect(pull).toHaveBeenCalledTimes(1);
+      await deliver(row('q-before', 'group-call'), 'pull');
+      expect(applied).toEqual(['q-before']);
+    });
   });
 });
