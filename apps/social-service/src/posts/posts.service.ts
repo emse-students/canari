@@ -1388,7 +1388,7 @@ export class PostsService {
              AND NOT posts.anonymous)
          -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
          OR (NOT COALESCE(posts.anonymous, false)
-             AND ${republishedForViewerSql(`${5 + tail.length}`, '$3')})
+             AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
          -- What a followed PERSON reposted (WP-F6), never anonymous.
          OR ${memberRepostedAmongSql('$4')}
        )
@@ -1399,7 +1399,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind, republishedFeedAtSql(`${5 + tail.length}`, '$3', '$4'))}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3', '$4'))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );

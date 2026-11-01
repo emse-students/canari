@@ -151,6 +151,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
         "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, read boolean NOT NULL DEFAULT false,
         "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
+      -- What the block severing also reads since WP-F6 (migration 121's member reposts).
+      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid);
+      CREATE TABLE member_reposts ("postId" uuid NOT NULL, "reposterId" varchar(255) NOT NULL);
     `);
     for (const id of PEOPLE) {
       await admin.query(`INSERT INTO users (id, "displayName") VALUES ($1, $2)`, [
