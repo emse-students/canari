@@ -25,11 +25,15 @@
  *   both hang up, two `session end ... disposition=client-close` lines whose `connected_ms` is a
  *   number - the ledger saw a call that happened, and its end.
  *
- * NO CLOCK DECIDES ANYTHING. Every wait ends on a proof of success or on a proof of failure: the
- * service or a browser exiting, the service refusing a Join, a signalling socket closing early, a
- * peer connection reaching `failed`, a frame failing to decrypt. A run in which nothing at all
- * happens hangs, and the CI job's `timeout-minutes` is the only bound - which is the house rule
- * (CLAUDE.md, "termination from a proof").
+ * NO CLOCK DECIDES ANYTHING. Every wait - the launch and every page call included - ends on a proof
+ * of success or on a proof of failure: the service or a browser exiting, a page or its encryption
+ * worker failing to load, the service refusing a Join, a signalling socket closing early, a peer
+ * connection reaching `failed`, the SFU's ICE reaching `Failed`, a frame failing to decrypt, a full
+ * proof's worth of packets received with none decrypted (the transform bypassed), a selected pair
+ * that is not relay under `--turn`. After the hangup, a service that holds both closed sockets and
+ * then writes nothing for 40 reads has failed to record the end. A run in which nothing at all
+ * happens and nothing fails hangs, and the CI job's `timeout-minutes` is the only bound - which is
+ * the house rule (CLAUDE.md, "termination from a proof").
  */
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -100,6 +104,15 @@ const exp = () => Math.floor(Date.now() / 1000) + 3600;
 const serviceLog = [];
 let service = null;
 let serviceExit = null;
+let markServiceGone = () => {};
+/**
+ * Only ever REJECTS, when the service exits or cannot start: every wait on a browser races it, so a
+ * service that died is the run's verdict rather than a page that never answers.
+ */
+const serviceGone = new Promise((_, reject) => {
+  markServiceGone = () => reject(new Error(serviceExit));
+});
+serviceGone.catch(() => {});
 
 function startService() {
   const env = {
@@ -119,10 +132,12 @@ function startService() {
   };
   service = spawn(BIN, [], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   service.once('exit', (code, signal) => {
-    serviceExit = `call-service exited (code ${code}, signal ${signal})`;
+    serviceExit ??= `call-service exited (code ${code}, signal ${signal})`;
+    markServiceGone();
   });
   service.once('error', (e) => {
     serviceExit = `call-service could not start: ${String(e)} - build it first (cargo build)`;
+    markServiceGone();
   });
   let partial = '';
   const onData = (chunk) => {
@@ -166,7 +181,9 @@ async function buildPage(www) {
   }
   writeFileSync(
     join(www, 'index.html'),
-    '<!doctype html><meta charset="utf-8"><title>e2e</title><script type="module" src="/page.js"></script>'
+    // An empty icon: the browser's own `/favicon.ico` request would 404, and a 404 is a page error.
+    '<!doctype html><meta charset="utf-8"><link rel="icon" href="data:,"><title>e2e</title>' +
+      '<script type="module" src="/page.js"></script>'
   );
 }
 
@@ -181,6 +198,17 @@ function failureOf(name, st) {
   if (failures > 0) return `${name}: ${failures} frame(s) failed to decrypt`;
   if ((st.report?.transformErrors ?? 0) > 0)
     return `${name}: the transform threw ${st.report.transformErrors} time(s)`;
+  // As many packets as the proof needs arrived and the receiver transform opened NONE of them: it is
+  // not in the path, and no later packet will route through it - the bypass Chromium makes final
+  // when a transform is assigned one task late (CALL-E2E-BYPASS-MI9T).
+  if ((st.inbound?.packetsReceived ?? 0) >= FRAMES && (st.report?.decrypted?.audio ?? 0) === 0)
+    return (
+      `${name}: ${st.inbound.packetsReceived} audio packets received and 0 decrypted - the ` +
+      'receiver transform is bypassed (CALL-E2E-BYPASS-MI9T)'
+    );
+  // Relay-only on both ends: a selected pair that is not relay to relay is a path the run forbade.
+  if (TURN && st.pair && (st.pair.local !== 'relay' || st.pair.remote !== 'relay'))
+    return `${name}: the selected pair is ${st.pair.local}->${st.pair.remote}, relay->relay owed`;
   return null;
 }
 
@@ -188,7 +216,7 @@ function failureOf(name, st) {
 function provenOf(st) {
   const r = st.report;
   if (!r) return false;
-  const relayOk = !TURN || st.pair?.local === 'relay';
+  const relayOk = !TURN || (st.pair?.local === 'relay' && st.pair?.remote === 'relay');
   return (
     (r.encrypted?.audio ?? 0) >= FRAMES &&
     (r.decrypted?.audio ?? 0) >= FRAMES &&
@@ -247,6 +275,17 @@ async function main() {
   });
 
   const sides = {};
+  /**
+   * Evaluates `expr` in one page, raced against every proof that no answer can come: either Chrome
+   * exiting or its page failing (`side.fault`), and the service exiting. A page that throws at
+   * load, a Chrome that crashes, a service that dies - each ends the wait at once, named.
+   */
+  const ask = (role, expr) =>
+    Promise.race([
+      sides[role].cdp.eval(expr),
+      serviceGone,
+      ...Object.values(sides).map((s) => s.fault),
+    ]);
   let verdict = null;
   try {
     for (const role of ['caller', 'callee']) {
@@ -259,29 +298,35 @@ async function main() {
         live,
         keep: KEEP,
         log: say,
+        // No clock: the launch and every eval end on a proof (`fault`, `abortOn`, `ask`).
         answerMs: Infinity,
         readyMs: Infinity,
+        failOnPageError: true,
+        abortOn: serviceGone,
       });
-      sides[role].exited.then(() => {
-        sides[role].gone = true;
-      });
-      await sides[role].cdp.eval(`e2e.start(${JSON.stringify(configOf(role))})`);
+      await ask(role, `e2e.start(${JSON.stringify(configOf(role))})`);
       say(`${role} joined room ${roomId}`);
     }
 
     // ---- Wait for the proof, or for a proof of failure ----
+    const room = `room=${roomId}`;
+    const disconnects = new Set();
     for (let poll = 0; ; poll++) {
       if (serviceExit) throw new Error(serviceExit);
-      // The SFU's side of the same proof: its ICE agent gave up on a peer of this room.
-      const iceDown = serviceLog.find(
-        (l) => /\[call\] ice (Failed|Disconnected) /.test(l) && l.includes(`room=${roomId}`)
-      );
-      if (iceDown)
-        throw new Error(`the SFU's ICE gave up: ${iceDown.slice(iceDown.indexOf('[call]'))}`);
-      for (const role of Object.keys(sides))
-        if (sides[role].gone) throw new Error(`${role}: Chrome exited`);
+      // The SFU's side of the same proof: its ICE agent gave up on a peer of this room. Only
+      // `Failed` is final; webrtc-rs reports `Disconnected` on a missed consent check and recovers
+      // from it, so that one is logged, never a verdict.
+      for (const l of serviceLog) {
+        if (!l.includes(room)) continue;
+        if (/\[call\] ice Failed /.test(l))
+          throw new Error(`the SFU's ICE gave up: ${l.slice(l.indexOf('[call]'))}`);
+        if (/\[call\] ice Disconnected /.test(l) && !disconnects.has(l)) {
+          disconnects.add(l);
+          say(`transient: ${l.slice(l.indexOf('[call]'))}`);
+        }
+      }
       const st = {};
-      for (const role of Object.keys(sides)) st[role] = await sides[role].cdp.eval('e2e.state()');
+      for (const role of Object.keys(sides)) st[role] = await ask(role, 'e2e.state()');
       const failed = Object.entries(st)
         .map(([role, s]) => failureOf(role, s))
         .filter(Boolean);
@@ -299,7 +344,6 @@ async function main() {
     }
 
     // ---- The SFU's own record of the call ----
-    const room = `room=${roomId}`;
     const connected = linesOf('[call] ice connected').filter((l) => l.includes(room));
     const published = linesOf('[call] track published').filter(
       (l) => l.includes(room) && l.includes('kind=audio')
@@ -316,15 +360,33 @@ async function main() {
       throw new Error('the SFU never said it uses TURN_URL - it ran without the relay');
 
     // ---- Both hang up: the record must say so, and say a call happened ----
-    for (const role of ['caller', 'callee']) await sides[role].cdp.eval('e2e.hangup()');
+    for (const role of ['caller', 'callee']) await ask(role, 'e2e.hangup()');
+    // First the proof that the service has both ends: each page's socket CLOSED, which the
+    // close handshake reaches only once the service answered the Close frame.
+    for (;;) {
+      if (serviceExit) throw new Error(`${serviceExit} before both sockets closed`);
+      const closed = await Promise.all(['caller', 'callee'].map((r) => ask(r, 'e2e.closed()')));
+      if (closed.every(Boolean)) break;
+      await Bun.sleep(POLL_MS);
+    }
+    // Then its record. Each session's line follows its socket's end with nothing in between but
+    // the peer connection's close; a service that has both ends and then writes NOTHING for
+    // QUIET_POLLS reads is stuck in that close or never writes the line - a defect named here,
+    // not a wait for the job's timeout. The bound is on silence, never on how long a call took.
+    const QUIET_POLLS = 40;
     const ends = [];
-    for (let seen = 0; ends.length < 2;) {
-      for (; seen < serviceLog.length; seen++) {
+    for (let seen = 0, quiet = 0; ends.length < 2; quiet++) {
+      for (; seen < serviceLog.length; seen++, quiet = 0) {
         const l = serviceLog[seen];
         if (l.includes('[call] session end') && l.includes(room)) ends.push(l);
       }
       if (ends.length >= 2) break;
       if (serviceExit) throw new Error(`${serviceExit} before both session ends were recorded`);
+      if (quiet >= QUIET_POLLS)
+        throw new Error(
+          `both sockets closed, ${ends.length} session end line(s) of 2 written, and the service ` +
+            `has written nothing since (${QUIET_POLLS} reads): it never recorded the end`
+        );
       await Bun.sleep(POLL_MS);
     }
     for (const l of ends) {
@@ -337,7 +399,13 @@ async function main() {
   } catch (e) {
     verdict = `FAIL: ${e?.message ?? String(e)}`;
     for (const role of Object.keys(sides)) {
-      const log = await sides[role].cdp?.eval('e2e.log()').catch(() => null);
+      // A Chrome that exited answers nothing: its log is then unreadable, never awaited.
+      const log = sides[role].cdp
+        ? await Promise.race([
+            sides[role].cdp.eval('e2e.log()'),
+            sides[role].exited.then(() => null),
+          ]).catch(() => null)
+        : null;
       say(`--- ${role} page log ---\n${(log ?? ['(unreadable)']).join('\n')}`);
     }
     say(`--- call-service log (last 80 lines) ---\n${serviceLog.slice(-80).join('\n')}`);

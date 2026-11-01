@@ -1389,16 +1389,20 @@ jobs:
       - name: Start a throwaway coturn on the runner's address
         run: |
           set -euo pipefail
-          ip="$(hostname -I | awk '{print $1}')"
+          # The source address the kernel would use toward the outside: the interface that carries
+          # the default route, by the routing table's own answer (no packet is sent), rather than
+          # whichever address `hostname -I` happens to list first (a docker bridge, an IPv6).
+          ip="$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')"
+          if [ -z "$ip" ]; then ip -4 route; echo "::error::no IPv4 source address on the default route"; exit 1; fi
           password="$(openssl rand -hex 16)"
+          # Masked before anything can print it (coturn's own log included).
+          echo "::add-mask::$password"
           docker run -d --name e2e-coturn --network host \
             coturn/coturn:4.7.0@sha256:a00afb5b4890de4df22bbe70379c6b316685dffee297d53cac1271dcb91fab93 \
             -n --log-file=stdout --no-cli --no-tls --no-dtls \
             --listening-ip="$ip" --relay-ip="$ip" --external-ip="$ip" --listening-port=3478 \
             --min-port=49160 --max-port=49400 \
             --lt-cred-mech --realm=canari.test --user="e2e:$password" --allow-loopback-peers
-          # Not a secret, and deliberately not masked: it opens a relay that lives for this job
-          # only, on an address only this runner reaches.
           echo "E2E_TURN_URL=turn:$ip:3478?transport=udp" >> "$GITHUB_ENV"
           echo "E2E_TURN_PASSWORD=$password" >> "$GITHUB_ENV"
           # Ready is a FACT, and the KERNEL's: a UDP socket bound to the address and port we gave
@@ -1420,9 +1424,11 @@ jobs:
           bun apps/call-service/e2e/run.mjs \
             --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
 
-      - name: coturn's log, on failure
-        if: failure()
-        run: docker logs e2e-coturn 2>&1 | tail -200
+      # `always()`, not `failure()`: a run CANCELLED by the job's timeout is the one whose relay's
+      # side of the story is most needed. Nothing to print when coturn never started.
+      - name: coturn's log
+        if: always()
+        run: docker logs e2e-coturn 2>&1 | tail -200 || true
 
   # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS

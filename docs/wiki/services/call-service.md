@@ -272,7 +272,7 @@ identity must not become two values.
 | `[call] session start room= peer=` | `Join` accepted | the ledger begins here |
 | `[call] track published room= peer= kind=` | `on_track` | this peer's media reached the SFU |
 | `[call] ice connected room= peer= after_ms= …` | first `Connected`/`Completed` | media path formed, and how long it took |
-| `[call] ice Failed\|Disconnected room= peer= connected_ms= …` | terminal ICE state | negotiation gave up; carries the counts |
+| `[call] ice Failed\|Disconnected room= peer= connected_ms= …` | ICE left `connected` | `Failed` is terminal (negotiation gave up); `Disconnected` is NOT - webrtc-rs reports it on missed consent checks and may return to `connected`. Carries the counts |
 | `[call] session end room= peer= disposition= …` | socket closed | **the record** |
 
 `peer` is `{user_id}:{uuid}` — one socket, not one user, so a user's two devices are two records.
@@ -372,11 +372,23 @@ else. Then the SFU's own record: `ice connected` and an audio `track published` 
 after both hang up, two `session end ... disposition=client-close` lines whose `connected_ms` is a
 number.
 
-**No clock decides it.** Every wait ends on a proof of success or of failure: the service or a
-Chrome exiting, `Refused`, a signalling socket closing before the hangup, a peer connection
-`failed`, the SFU's `ice Failed|Disconnected` for the room, a refused TURN allocation
-(`icecandidateerror` under a relay-only policy with one server), a frame that does not decrypt. A
-run in which NOTHING happens hangs, and the job's `timeout-minutes` is the only bound.
+**No clock decides it.** Every wait - the Chrome launch and every page call included - is raced
+against a proof of failure, and ends on it or on success: the service or a Chrome exiting; the page
+throwing or a script that would not load (CDP `Runtime.exceptionThrown`, a `network`/`javascript`
+`Log.entryAdded` error); the encryption worker's `error` or `messageerror` (a worker that 404s
+would otherwise leave every `state()` waiting for a report); `Refused`; a signalling socket closing
+before the hangup; a peer connection `failed`; the SFU's `ice Failed` for the room (`Disconnected`
+is logged as transient, never a verdict); a refused TURN allocation (`icecandidateerror` under a
+relay-only policy with one server); a frame that does not decrypt; **250 packets received and 0
+decrypted** - the receiver transform is out of the path, which no later packet changes
+(`CALL-E2E-BYPASS-MI9T`); under TURN, a selected pair that is not `relay` -> `relay`. After the
+hangup the run first waits for both pages' sockets to finish the close handshake (the service has
+both ends), then for the two `session end` lines; a service that then writes NOTHING for 40 reads
+has failed to record the end, named as such - a bound on silence, not on how long anything took. A
+run in which nothing happens and nothing fails hangs, and the job's `timeout-minutes` is the only
+bound. The TURN password is `::add-mask::`ed, the runner's address is the default route's `src`
+(`ip -4 route get`), and coturn's log is printed `always()` - a run cancelled by the timeout needs it
+most.
 
 **What it covers that nothing did before:** a browser peer, DTLS-SRTP between Chrome and webrtc-rs
 0.17, the SFU's forwarding loop carrying E2E-encrypted Opus untouched, the renegotiation path

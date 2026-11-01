@@ -59,6 +59,12 @@ let fault: string | null = null;
 let hungUp = false;
 let lastReport: Record<string, unknown> | null = null;
 /**
+ * Settles once the worker can no longer answer (a script that would not load or parse, an uncaught
+ * error, a message it could not deserialise): every wait on the worker races it, so a dead worker
+ * is a fault the driver reads rather than a report it waits for forever.
+ */
+let workerDead: Promise<void> = new Promise(() => {});
+/**
  * Server frames are handled ONE AT A TIME, in arrival order: each handler awaits the peer
  * connection, and two running at once would apply a candidate before the description it belongs to.
  */
@@ -89,6 +95,16 @@ function send(frame: Record<string, unknown>) {
 /** The app worker, keyed as `CallService.ensureWorkerKeyReady` keys it, BEFORE the first track. */
 async function keyWorker(): Promise<Worker> {
   const w = new Worker('/encryption.worker.js', { type: 'module' });
+  workerDead = new Promise<void>((resolve) => {
+    w.addEventListener('error', (e: ErrorEvent) => {
+      setFault(`the encryption worker failed: ${e.message || 'it did not load'}`);
+      resolve();
+    });
+    w.addEventListener('messageerror', () => {
+      setFault('the encryption worker sent a message that could not be deserialised');
+      resolve();
+    });
+  });
   w.addEventListener('message', (e: MessageEvent<{ type?: string; detail?: string }>) => {
     const t = e.data?.type;
     if (t === 'report') lastReport = e.data as Record<string, unknown>;
@@ -97,7 +113,7 @@ async function keyWorker(): Promise<Worker> {
     )
       note(`worker ${JSON.stringify(e.data)}`);
   });
-  await new Promise<void>((resolve, reject) => {
+  const keyed = new Promise<void>((resolve, reject) => {
     const onKey = (e: MessageEvent<{ type?: string; detail?: string }>) => {
       if (e.data?.type === 'keyReady') resolve();
       if (e.data?.type === 'keyError') reject(new Error(e.data.detail));
@@ -107,6 +123,12 @@ async function keyWorker(): Promise<Worker> {
     const receive = KEYS[cfg.role === 'caller' ? 'callee' : 'caller'].slice().buffer;
     w.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
   });
+  await Promise.race([
+    keyed,
+    workerDead.then(() => {
+      throw new Error(fault ?? 'the encryption worker died');
+    }),
+  ]);
   return w;
 }
 
@@ -259,7 +281,8 @@ async function state() {
       }
     }
   }
-  await answered;
+  // A dead worker never answers: its fault (set by the same event) is then what this returns.
+  await Promise.race([answered, workerDead]);
   return {
     fault,
     frames,
@@ -277,5 +300,10 @@ function hangup() {
   pc?.close();
 }
 
-Object.assign(window, { e2e: { start, state, hangup, log: () => log } });
+/** Whether the signalling socket finished its close handshake: the service has this end. */
+function closed() {
+  return ws?.readyState === WebSocket.CLOSED;
+}
+
+Object.assign(window, { e2e: { start, state, hangup, closed, log: () => log } });
 document.title = 'e2e-ready';

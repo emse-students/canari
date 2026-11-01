@@ -55,8 +55,14 @@ export class Cdp {
     this.answerMs = answerMs;
     this.id = 0;
     this.pending = new Map();
+    /** CDP events by method, for `on`. */
+    this.listeners = new Map();
     ws.addEventListener('message', (e) => {
       const msg = JSON.parse(e.data);
+      if (msg.method) {
+        for (const fn of this.listeners.get(msg.method) ?? []) fn(msg.params);
+        return;
+      }
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
@@ -72,6 +78,11 @@ export class Cdp {
       ws.addEventListener('error', rej, { once: true });
     });
     return new Cdp(ws, answerMs);
+  }
+
+  /** Calls `fn(params)` on every CDP event named `method` (its domain must be enabled). */
+  on(method, fn) {
+    this.listeners.set(method, [...(this.listeners.get(method) ?? []), fn]);
   }
 
   send(method, params = {}) {
@@ -133,7 +144,15 @@ export async function until(fn, what, ms = 20_000) {
  * when given), opens `url` and waits for the page to set `document.title` to `readyTitle`.
  *
  * `live` is the caller's set of running Chromes - what its interrupt handler must take down; the
- * side is added before anything can throw. Returns `{ name, proc, exited, port, cdp, profile }`.
+ * side is added before anything can throw. Returns `{ name, proc, exited, port, cdp, profile,
+ * fault }`.
+ *
+ * `side.fault` is a promise that only ever REJECTS, with the proof that this side can no longer
+ * answer: its Chrome exited, or - with `failOnPageError` - the page threw an uncaught exception or
+ * logged an error (a script that would not load is a `Log.entryAdded` error, not an exception).
+ * Every wait of the launch is raced against it and against `abortOn` (the caller's own proof of
+ * failure, such as the service under test exiting), so a launch never outlives what it waits on;
+ * a caller racing its own `eval`s against it gets the same guarantee after the launch.
  */
 export async function launchChrome({
   chrome = defaultChrome(),
@@ -147,6 +166,8 @@ export async function launchChrome({
   log = console.log,
   answerMs = 60_000,
   readyMs = 20_000,
+  failOnPageError = false,
+  abortOn = new Promise(() => {}),
 }) {
   rmSync(profile, { recursive: true, force: true });
   mkdirSync(profile, { recursive: true });
@@ -174,38 +195,69 @@ export async function launchChrome({
     { stdio: 'ignore' }
   );
   const exited = new Promise((res) => proc.once('exit', res));
-  const side = { name, proc, exited, port: 0, cdp: null, profile };
+  let pageFailed = () => {};
+  const fault = Promise.race([
+    exited.then((code) => {
+      throw new Error(`${name}: Chrome exited (code ${code})`);
+    }),
+    new Promise((_, reject) => {
+      pageFailed = (why) => reject(new Error(`${name}: the page failed - ${why}`));
+    }),
+  ]);
+  // Observed by whoever races it; never an unhandled rejection when nobody is waiting.
+  fault.catch(() => {});
+  const side = { name, proc, exited, port: 0, cdp: null, profile, fault };
   live.add(side);
+  const guarded = (p) => Promise.race([p, fault, abortOn]);
   try {
     const portFile = join(profile, 'DevToolsActivePort');
-    side.port = await until(
-      () => {
-        if (!existsSync(portFile)) return false;
-        try {
-          return readFileSync(portFile, 'utf8').split('\n')[0];
-        } catch (e) {
-          // Windows: Chrome still holds the file it is writing (EBUSY) - not written yet, read again.
-          if (e.code === 'EBUSY') return false;
-          throw e;
-        }
-      },
-      `${name} DevTools port`,
-      readyMs
+    side.port = await guarded(
+      until(
+        () => {
+          if (!existsSync(portFile)) return false;
+          try {
+            return readFileSync(portFile, 'utf8').split('\n')[0];
+          } catch (e) {
+            // Windows: Chrome still holds the file it is writing (EBUSY) - not written yet, read again.
+            if (e.code === 'EBUSY') return false;
+            throw e;
+          }
+        },
+        `${name} DevTools port`,
+        readyMs
+      )
     );
-    const targets = await until(
-      async () => {
-        const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
-        return list.find((t) => t.type === 'page');
-      },
-      `${name} page target`,
-      readyMs
+    const targets = await guarded(
+      until(
+        async () => {
+          const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
+          return list.find((t) => t.type === 'page');
+        },
+        `${name} page target`,
+        readyMs
+      )
     );
-    side.cdp = await Cdp.open(targets.webSocketDebuggerUrl, answerMs);
-    await side.cdp.send('Page.navigate', { url });
-    await until(
-      async () => (await side.cdp.eval('document.title').catch(() => '')) === readyTitle,
-      `${name} page`,
-      readyMs
+    side.cdp = await guarded(Cdp.open(targets.webSocketDebuggerUrl, answerMs));
+    if (failOnPageError) {
+      side.cdp.on('Runtime.exceptionThrown', (p) =>
+        pageFailed(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text)
+      );
+      // A resource that would not load (`network`) or a script error (`javascript`); the browser's
+      // other sources (media, rendering, interventions) report on the browser, not on the page.
+      side.cdp.on('Log.entryAdded', (p) => {
+        if (p.entry?.level === 'error' && ['network', 'javascript'].includes(p.entry.source))
+          pageFailed(`${p.entry.text} ${p.entry.url ?? ''}`.trim());
+      });
+      await guarded(side.cdp.send('Runtime.enable'));
+      await guarded(side.cdp.send('Log.enable'));
+    }
+    await guarded(side.cdp.send('Page.navigate', { url }));
+    await guarded(
+      until(
+        async () => (await side.cdp.eval('document.title').catch(() => '')) === readyTitle,
+        `${name} page`,
+        readyMs
+      )
     );
     return side;
   } catch (e) {
