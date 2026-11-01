@@ -354,6 +354,11 @@ for svc in frontend api; do
     docker exec "$c" cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$2 ~ /:0BB8$/ || $3 ~ /:0BB8$/ { print "      " $2, $3, $4, $5, $10 }'
   done
 done
+for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=frontend"); do
+  printf '    frontend %s processes and their sockets:\n' "$c"
+  # shellcheck disable=SC2016 # run inside the container
+  docker exec -u nginx "$c" sh -c 'for p in /proc/[0-9]*; do printf "      %s [%s] %s:" "${p#/proc/}" "$(awk "/^PPid/ {print \$2}" "$p/status")" "$(tr "\0" " " <"$p/cmdline")"; ls -l "$p/fd" 2>/dev/null | grep -o "socket:\[[0-9]*\]" | tr -d "socket:[]" | tr "\n" " "; echo; done' 2>&1
+done
 deploy >"$TMP/auth.log" 2>&1 &
 DEPLOY_PID=$!
 # Released once the deploy either waits for it (the check is sound) or has moved on to retiring the
