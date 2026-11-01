@@ -1397,8 +1397,13 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
    measured before anything else is built.
-2. **The emission side.** A user holding no leaf ASKS a member instead of entering alone, mirroring
-   the further-device door, and never in a 1:1 - so the legitimate paths above stop producing the
+2. **The emission side.** A user holding no leaf ASKS a member and waits for that member's Add,
+   never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
+   device asks first but lets itself in when no member device can answer, because its user's leaf
+   already vouches for it in every member's tree. A user with no leaf has nothing in the tree to vouch
+   for it, so a member's Add stays its only door
+   ([mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)). Done this
+   way, the legitimate paths above stop producing the
    commit before any member refuses it. Each path is pinned by a named test that it is merged today
    (`admission_policy.rs`: a 1:1 peer whose KeyPackage was skipped, a user whose only device was
    revoked and swept, an only leaf evicted on a standing seat).
