@@ -134,6 +134,17 @@ describe('the slow state is derived from observed answers, and never stacks on o
     heavy.answered(false);
   });
 
+  it('an unproven answer (a live segment, a 204) beside a slow route keeps the in-flight hint quiet', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const heavy = connectivity.trackRequest();
+    await vi.advanceTimersByTimeAsync(2_000);
+    connectivity.trackRequest().unproven('GET /segment answered 200 with video/mp2t');
+    await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS * 3);
+    expect(connectivity.slow).toBe(false);
+    heavy.answered(false);
+    debug.mockRestore();
+  });
+
   it('a transfer (a body mostly upload time) never arms the in-flight hint, yet still settles cleanly', async () => {
     const r = connectivity.trackRequest({ transfer: true });
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS * 3);
@@ -194,6 +205,24 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.isOffline).toBe(false);
     stall();
     expect(connectivity.isOffline).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('an unproven answer restarts the stall count without moving reachability either way', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    stall();
+    connectivity.trackRequest().unproven('GET /segment answered 204 with no content type');
+    stall();
+    expect(connectivity.isOffline).toBe(false);
+    // And while unreachable, the same answer does not bring the server back.
+    stall();
+    expect(connectivity.isOffline).toBe(true);
+    connectivity.trackRequest().unproven('GET /x answered 511 with text/html');
+    expect(connectivity.isOffline).toBe(true);
+    debug.mockRestore();
     warn.mockRestore();
   });
 

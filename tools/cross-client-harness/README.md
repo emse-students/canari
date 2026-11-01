@@ -48,6 +48,8 @@ Nothing else knows the split exists.
 | **A1** | The Tauri WebView on the phone | CDP on `localhost:9333` via `adb forward`            |
 | **I1** | The Tauri WebView on the iPhone | the WebKit inspector bridge on `localhost:9444` (`pymobiledevice3 webinspector cdp`), WDA for the rest |
 
+**W2 and the iPhone can run the same test account**, so a PIN reset through W2 purges the iPhone's footprint: check which devices share the account before resetting a PIN.
+
 **The iPhone is `CANARI_PHONE=ios`**: `phone-any.mjs` then hands a row `phone-ios.mjs`, which keeps
 `phone.mjs`'s interface over WDA, Notification Center and the syslog, and the I1 connection performs
 every CDP `Input.*` frame as a WDA touch or key (`webkit-input.mjs`) - the WebKit protocol has no
