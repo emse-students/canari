@@ -273,17 +273,3 @@ export const COMMIT_RATE_WARN_PER_DEVICE_HOUR = 8;
 
 /** How many groups each commit-log report line names - one line per cause, never one per row. */
 export const COMMIT_LOG_REPORT_TOP_N = 10;
-
-/**
- * Orphan devices (queued rows, no session row, no push token, not revoked) above which the daily
- * orphan report speaks at WARN.
- *
- * **43, THE SMALLEST POPULATION A HAND PASS WAS EVER RUN ON** (2026-10-12, the first pass). The four
- * hand passes revoked 43, 118, 109 and 285 devices
- * (`docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md`), and right after the fourth
- * one the population was 1. No regrowth RATE was ever measured, so the threshold is not derived
- * from one: it is set where the owner has already judged a pass worth running, so the report
- * accuses before the queue again holds what the earlier passes found by hand. The plain line below
- * it is printed every day, so the first weeks of it ARE the rate measurement.
- */
-export const ORPHAN_DEVICE_WARN_COUNT = 43;

@@ -566,6 +566,8 @@ is the owner's decision.**
 A full-row backup of every affected table, filtered to the allowlist, was taken just before the run
 and is kept privately, outside the repository.
 
+**What is left was not counted.** The re-count above covers the 285; nobody re-ran the whole predicate after the pass. The skipped device no longer met it (it had come back), so the population right after the pass is unmeasured: it is whatever the 6 devices excluded for life, and any new orphan, made of it. The first `[ORPHAN_DEVICES]` line in production is its first reading.
+
 **The skipped device is the evidence that this stays a hand procedure.** It had no session and no
 push token for days, it was on a measured allowlist, and it came back the same day. A scheduled reaper
 was built for this population and closed unmerged (#2880, owner, 2026-11-01): at the GC's 90 days the
@@ -578,40 +580,36 @@ procedure keeps the orphans, and a daily count watches for the next regrowth
 
 ### The procedure, re-runnable
 
-The `[ORPHAN_DEVICES]` line of the delivery log (daily) says when to consider it: it turns WARN above
-43 devices, the smallest population a pass was ever run on. A pass is the owner's decision each time.
+**One definition.** The orphan predicate lives in ONE place,
+`apps/chat-delivery-service/src/utils/orphan-devices.ts`: queued rows, no session row, no push token,
+not revoked, and no life in the last 7 days (no key package or one-time key package published, no
+commit logged, no frame sent). The daily `[ORPHAN_DEVICES]` count, this procedure's allowlist
+(`ORPHAN_DEVICE_LIST_SQL`) and its per-device re-check (`ORPHAN_DEVICE_RECHECK_SQL`) are built from it,
+so what the report counts is what a pass would revoke; `orphan-devices.spec.ts` fails if this page
+carries a copy of the predicate. In the container the compiled statements are in
+`dist/utils/orphan-devices.js`, with their parameters from `orphanDeviceParams()`.
 
-1. **Measure the allowlist, read-only**, and save it outside the repository (user id, device id, rows,
-   seats). The predicate: queued rows, no session row, no push token, not revoked, and no life in the
-   last 7 days.
+**The life clauses are not equal.** A key package, a one-time key package or a commit is durable
+evidence: those rows outlive their delivery. A frame SENT is weak evidence, because a queued row is
+deleted once it is delivered - a device whose frames were all fetched leaves no trace in
+`queued_message`. The commit-log and key-package clauses carry the weight.
 
-   ```sql
-   SELECT q."recipientId" AS "userId", q."deviceId", count(*) AS rows
-     FROM queued_message q
-    GROUP BY q."recipientId", q."deviceId"
-   HAVING NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = q."deviceId")
-      AND NOT EXISTS (SELECT 1 FROM push_token t WHERE t."deviceId" = q."deviceId")
-      AND NOT EXISTS (SELECT 1 FROM revoked_device r
-                       WHERE r."userId" = q."recipientId" AND r."deviceId" = q."deviceId")
-      -- no life in 7 days: no frame sent, no commit sent, no key package published
-      AND NOT EXISTS (SELECT 1 FROM queued_message m
-                       WHERE m."senderDeviceId" = q."deviceId" AND m."createdAt" > now() - interval '7 days')
-      AND NOT EXISTS (SELECT 1 FROM mls_commit_log c
-                       WHERE c."senderDeviceId" = q."deviceId" AND c."createdAt" > now() - interval '7 days')
-      AND NOT EXISTS (SELECT 1 FROM key_package k
-                       WHERE k."deviceId" = q."deviceId" AND k."createdAt" > now() - interval '7 days')
-      AND NOT EXISTS (SELECT 1 FROM one_time_key_package o
-                       WHERE o."deviceId" = q."deviceId" AND o."createdAt" > now() - interval '7 days');
-   ```
+The daily `[ORPHAN_DEVICES]` line says when to consider a pass; it has no threshold until the regrowth
+rate is measured ([backlog](../backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)).
+A pass is the owner's decision each time.
 
+1. **Measure the allowlist, read-only**, with `ORPHAN_DEVICE_LIST_SQL`, and save it outside the
+   repository (user id, device id, rows, seats).
 2. **Back up first**: every row of every table the route purges (`queued_message`, the seats in
    `dm_device_group_memberships`, `key_package`, `one_time_key_package`), filtered to the allowlist,
    kept privately. The restore is the first pass's ([the backup](#the-backup-and-how-to-restore-it)).
 3. **Call the route, never a `DELETE`**: `DELETE /api/mls/devices/:userId/:deviceId` from inside the
    delivery container, one device at a time with a 1 s pause, the arguments passed through the
    environment (`bun -e` drops the first positional argument - the third pass's slip).
-4. **Re-check each device right before its call** (no session, no push token, not revoked) and skip it
-   if the predicate no longer holds - that is how the fourth pass kept the device that came back.
+4. **Re-check each device right before its call** with `ORPHAN_DEVICE_RECHECK_SQL` - the same
+   predicate as step 1, the 7-day life clauses included - and skip it on `0`; that is how the fourth
+   pass kept the device that came back. The re-check and the call are NOT atomic: a device that signs
+   in between the two is revoked anyway, and comes back by registering again, the designed path.
 5. **Stop** on any status other than 200, and on a purge that removed no queued row.
 6. **Load guard**: pause while the 1-minute load is above 6, resume below it.
 7. **One device first**, checked in the database, the Redis routing set and the logs; then the rest.
