@@ -2553,20 +2553,28 @@ release keeps the ids a pull brought for its whole life, because the delivery me
 may have evicted them). A pull that fails lists nothing, so the group stays parked until a pull
 completes - never a live frame ahead of an unapplied pull.
 
-- **Termination of a failed release pull** (`pullForUnlistedRelease`). A release no pull has listed,
-  with none in flight, is pulled for by the next EVENT that needs it: a live frame parked behind it,
-  or a WAIT on the group (`whenGroupDrained`, `waitForGroupQueueIdle` - the admission gate, the
-  parked seed asks, the key-group epoch check, a history answer). A pull's own end, failed or not,
-  never starts one, and none starts while one is in flight: the pulls are bounded by the frames
-  delivered plus the waits made, and the first that lists the mailbox ends the release. With the
-  server failing, nobody waiting and the socket silent, nothing pulls until the reconnect - and
-  nothing needs it to.
+- **Termination of a failed release pull: every wait is followed by a pull that covers it**
+  (`pullForUnlistedRelease`, `pullWhatIsOwed`). A DEMAND is a live frame parked behind an unlisted
+  release, or a WAIT on the group (`whenGroupDrained`, `waitForGroupQueueIdle` - the admission gate,
+  the parked seed asks, the key-group epoch check, a history answer). With no pull COVERING the
+  release in flight - one that started at or after it; an older pull chained in the same slot cannot
+  list it (`pullsInFlight`) - the demand starts one. With one in flight, it marks the release `owed`
+  instead, and that pull's end, if it did not list the mailbox, starts ONE pull for every demand it
+  absorbed. A pull's end with no demand marked starts nothing, and each mark is spent once: the
+  pulls are bounded by the frames delivered plus the waits made, and the first that lists the
+  mailbox ends the release. A pull that lists it marks the release listed BEFORE it leaves the
+  in-flight slot, so a demand in between starts no redundant pull. With the server failing, nobody
+  waiting and the socket silent, nothing pulls until the reconnect - and nothing needs it to.
+- **The pull slot is cleared once every pull chained in it has landed**, not when the last one to
+  start has: a later pull landing first used to clear it while an older one still fetched, so the
+  barrier (`waitForGroupQueueIdle`) passed and that pull then delivered a frame a second time.
 - **No push asked while the app is in front.** A group whose release is deferred (frames still
   queued here) stays withheld while the app is active; its frames are not pushed (`push-now` is
   asked only out of front), because a banner would announce a message the open app shows.
 - **A destroyed client decides nothing.** The two waits that outlive a drain (the key-group epoch
   check, a history answer) stop on `GroupDrainAbandonedError` - typed, never read off a message -
-  instead of answering from a service that has ended.
+  instead of answering from a service that has ended. Any other failure of the wait is logged as a
+  warning naming the caller, and the check or the answer goes ahead.
 - **A group with frames still queued here is not released** (one held behind this device's own
   commit, say): released then, a frame of it would be applied when the commit ends, ahead of the
   withheld ones the pull brings back. The drain that empties it decides at its end.

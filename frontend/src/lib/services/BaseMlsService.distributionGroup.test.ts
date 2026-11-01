@@ -1134,6 +1134,21 @@ describe('a held key group behind its server', () => {
     info.mockRestore();
   });
 
+  it('any OTHER failure of the wait is said, naming the caller, and the epoch is still checked', async () => {
+    const { ctx, settle } = behind(5, [], 5);
+    const failure = new Error('scheduler broke');
+    (
+      ctx as unknown as { waitForGroupQueueIdle: ReturnType<typeof vi.fn> }
+    ).waitForGroupQueueIdle.mockRejectedValue(failure);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    settle();
+
+    expect(await verdict).toBe('current');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[GRAINE] epoch check'), failure);
+    warn.mockRestore();
+  });
+
   it('says EXHAUSTED when the log cannot supply the commits, and leaves the gap armed', async () => {
     const { ctx, settle, listener } = behind(4, [], 9);
     ctx.fetchCommitsSince.mockResolvedValue({ commits: [], activeEpoch: 9, belowFloor: true });
