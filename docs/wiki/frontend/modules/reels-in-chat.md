@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-5 and RC-7 merged, the writer OFF; "Envoyer à..." to several targets designed in section 15, not built)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-5 and RC-7 merged, the writer switched ON by `feat/chat-reel-writer-on` once its phone readings pass; "Envoyer à..." to several targets designed in section 15, not built)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -514,7 +514,8 @@ that works in the office.
 
 **What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30).** Built and
 merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
-`prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01). Owed, in this order: (2) the session-leak P2 ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled));
+`prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01), and (2) the session-leak P2 (the
+durable release mark of section 14, 2026-11-01). Owed, in this order:
 (3) RC-14 then **RC-13 - before the switch, not after: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
@@ -533,6 +534,12 @@ server class (#1661, RC-2) shipped in `v1.2.2`, RC-7 (native push, #2112) in `v1
 release yet. Owed before the switch moves: the chat profile and the 60 s cap wired into the queued
 reel, the durable release of an upload session an offline device leaked, the RC-0 re-run and the
 readings on both phones (the pull requests' own "Owed" lists).
+**The flip (2026-11-01, draft `feat/chat-reel-writer-on`, HELD)**: `CHAT_REEL_WRITER_ENABLED = true`, the
+test pinning it `true` (a DM or a group films, a salon never does). It lands only after the chat
+profile (`fix/chat-reel-chat-profile`) and the durable release (`fix/chat-reel-session-release`) are
+merged, AND the phone readings in that pull request pass on the Mi 9T and the iPhone 12, AND the
+owner has decided the ordering question this list raises: RC-14 then RC-13 are marked "before the
+switch, not after", and neither is built.
 RC-2's `chat-reel` class is server-side and safe to ship first (nothing sets it yet). The stable follows
 the usual two-release sequence ([CLAUDE.md](../../../../CLAUDE.md) "gesture two") with a pre-release on dev
 and the testers.
@@ -772,14 +779,40 @@ new field lives in the encrypted outbox payload.
   only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
   slot). A permanent failure that deletes the
   row (group deleted, eviction, an unpreparable take) releases it the same way.
-  **Best effort, and what it does not cover**: a `DELETE` that gets no answer (the cancel was made
-  offline, on the weak link the reel was stuck on) is logged `NOT released` and left to the server's
-  sweep - 24 h holding one of the owner's 4 open sessions, up to 256 MiB staged and its share of the
-  daily `chat-reel` budget. Four such cancels in a day would be answered 429 until the sweep. A
-  sign-out, an account erasure and an account deletion wipe the outbox without a `DELETE` either:
-  the same sweep holds those sessions. **Filed as a P2 owed BEFORE the writer is switched on**
-  ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled)):
-  a durable "to release" mark swept at the next start or sign-in.
+  **The release is owed in DURABLE STATE (2026-11-01, `utils/chat/uploadReleaseMarks.ts`).** The
+  outbox's `releaseUpload` is `releaseUploadDurably`: the session id is written to ONE device-wide
+  `localStorage` key (`canari_upload_release_marks`, `{ ownerId: uploadId[] }`, ids only, no key)
+  BEFORE the `DELETE`, and removed only when the server ANSWERED it - a 2xx, or media-service's own
+  JSON 403/404/409 (not this owner's, gone, completed), read through `responseOrigin` like every
+  session answer. A transport failure, an edge page, a 5xx or a refused token keeps the mark
+  (`releaseUploadSession` now returns `answered`/`unanswered`). The session's drain
+  (`registerUploadReleaseDrain`, the `pendingGroupExits` shape) releases the owner's marks once at
+  startup and on every reconnect, and is detached at sign-out. **Two accounts on one device never
+  mix (review of 2026-11-01)**: the drain's owner is FIXED at registration; ONE pass runs at a time
+  (a flush waits for the pass in flight); a pass asks before EVERY `DELETE` whether its registration
+  is still the current one and stops otherwise, keeping the marks it did not reach; and every
+  `DELETE` takes its token through `ownerBoundToken`, which refuses a token whose subject is not the
+  mark's owner (`ReleaseOwnerChangedError`, nothing sent, `unanswered`, the mark kept) - so another
+  account's 403 can never read as an answer and drop the mark. The 401 renewal already refuses a
+  renewed token naming another account (`TokenAccountChangedError`). An EMPTY owner id is a fallback
+  signal: no mark is written, the `DELETE` is still tried, the line accuses at ERROR, and an
+  unanswered one is the server's 24 h sweep's. Idempotent by the server: a repeat is a 404, an
+  answer. **What each former leak path is now:**
+  - a cancel made offline: marked, released at the next start or reconnect;
+  - a sign-out: never was a leak - the outbox survives a sign-out, and the row resumes its session at
+    the next sign-in of that account;
+  - an account deletion: media-service's erasure fan-out ends the owner's open sessions itself
+    (`cancelAllOwnedBy`, [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)),
+    and the device drops that owner's marks with the rest of its data (`wipeDeletedAccountLocalData`);
+  - **left to the 24 h sweep, and why**: a device REVOKED with a reel queued (the factory wipe clears
+    `localStorage`, marks included, and a revoked device must not wait on the network before it
+    wipes), and the "forgot PIN" reset (the rows are encrypted under the device key the forgotten PIN
+    guarded, so no session id is readable). Both need a reel queued at that very moment and cost one
+    of 4 slots for a day.
+  Pinned by `uploadReleaseMarks.test.ts` (an offline cancel, a "relaunch" that only the store
+  survives, the real `releaseUploadSession` against the fake session server: the session closed and
+  the mark gone; a 404 is an answer; another owner's marks untouched; a damaged value said at ERROR)
+  and media-service's `upload-session.service.spec.ts` / `media.controller.account-erasure.spec.ts`.
 - **The tile** shows the sender's own unsent reel with the attachment bubble's figure, cancel and
   retry (`ChatReelTile` `upload`/`uploadFailed`/`orphan`); with no `mediaId` there is nothing to open,
   so no tap is offered. Queued with no transfer running yet it still offers the cancel. Drawn with

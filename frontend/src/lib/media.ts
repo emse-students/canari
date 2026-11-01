@@ -988,7 +988,8 @@ export class MediaService {
   /**
    * Releases a resumable session the member withdrew (`DELETE /api/media/upload/session/:id`), so
    * its staged parts and its slot among the owner's open sessions are not held for the server's
-   * 24 h sweep. Best effort, logged, never throws ({@link releaseUploadSession}).
+   * 24 h sweep. Best effort, logged, never throws, and says whether the server answered
+   * ({@link releaseUploadSession}): the durable release mark retries an unanswered one.
    */
   releaseResumableUpload(uploadId: string, token: () => Promise<string>, why: string) {
     return releaseUploadSession(this.uploadSessionPort(token), uploadId, why, appendLog);

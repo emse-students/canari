@@ -2,8 +2,8 @@ import type { ReelLimits } from '$lib/posts/api';
 import type { CaptureDestination } from './reelCapture';
 
 /**
- * THE WRITER OF A CANAREEL IN A CONVERSATION - `false` UNTIL RC-5 AND RC-7 HAVE SHIPPED (user,
- * 2026-10-14: the writer waits for the resumable upload and the native push before ANY stable).
+ * THE WRITER OF A CANAREEL IN A CONVERSATION - ON (2026-11-01, after the phone readings of the
+ * pull request that flipped it; user, 2026-10-14: never before the resumable upload and the native push).
  *
  * The reader (RC-1) and the server class (RC-2) are in production; this is the one switch that lets a
  * member FILM a reel in a DM or a group. While it is `false` the chat camera takes photos only, as it
@@ -15,12 +15,13 @@ import type { CaptureDestination } from './reelCapture';
  *   `captureCapMs`), so a take fits the budget - DONE;
  * - RC-5 shipped (the upload survives a weak network and a kill);
  * - RC-7 shipped (a push says "CanaReel", not "video"), and the readers are the `minClientVersion` floor;
- * - and the rest of the section-7 list (re-ordered 2026-10-30): the durable release of a leaked upload
- *   session, RC-14 then RC-13, RC-6's `410` amendment, RC-8 or salons kept out.
+ * - the durable release of a leaked upload session (`uploadReleaseMarks.ts`) - DONE;
+ * - and the rest of the section-7 list (re-ordered 2026-10-30), an ordering the OWNER rules on: RC-14
+ *   then RC-13, RC-6's `410` amendment, RC-8 or salons kept out.
  *
  * Salons are NOT written by this switch even when it is `true`: their send path is RC-8's.
  */
-export const CHAT_REEL_WRITER_ENABLED = false;
+export const CHAT_REEL_WRITER_ENABLED = true;
 
 /** A chat reel's life, the server's window (`CHAT_REEL_RETENTION_DAYS` in media-service). */
 export const CHAT_REEL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
