@@ -150,6 +150,8 @@ services:
       # The key-group shared-payload WRITER (migration 034), off as on both estates; set it true
       # here to exercise the writer locally.
       QUEUED_PAYLOAD_SHARED_WRITES: ${QUEUED_PAYLOAD_SHARED_WRITES:-false}
+      # The retired-device reaper, off as on both estates; dry-run or on to exercise it locally.
+      RETIRED_DEVICE_REAPER: ${RETIRED_DEVICE_REAPER:-off}
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}

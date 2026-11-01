@@ -549,3 +549,127 @@ alone would therefore be refilled within a day; the fix is the revoke path above
 measured that day. 220 of the 292 belong to a user with a live session on another device, and 1 sent
 a frame in the last 7 days, so a fourth pass must exclude what shows life. **Not run: a fourth pass
 is the owner's decision.**
+
+## Fourth pass, by hand, and the reaper that replaces the passes - 2026-11-01
+
+**The fourth pass.** On 2026-11-01 the owner had the population of the re-measure above revoked by
+hand, through the same `DELETE /api/mls/devices/:userId/:deviceId` route: **286 devices** with no
+session and no push token. It is the fourth time this population was revoked by hand, and every
+re-measure found it again.
+
+**The owner then decided (2026-11-01, "Oui, la construire") to build the fix at the source**: a
+scheduled reaper in `chat-delivery-service`, **built OFF**. The owner reads the rule and a dry run
+of what it would revoke, then validates its activation. The mechanism, its switch and its log lines
+are on the service page: [the retired-device reaper](../services/chat-delivery.md#the-retired-device-reaper-built-off-2026-11-01).
+
+**Its predicate is R, tightened**: R's three clauses (no session, no push token, a newer device of
+the same owner and platform with a live session and a key package newer than this device's oldest
+queued row), plus "not revoked" and "no life signal in 7 days" (no queued frame sent, no commit
+sent, no key package or one-time key package published). Every clause has a fixture that fails it
+alone and is kept (`retired-device-reaper.integration.spec.ts`), and neutralising any one clause in
+the statement fails that spec - checked clause by clause when it was written.
+
+### Clause 5 against the hand passes - it would NOT have named all of them
+
+**The third and fourth passes did not use R's owner clause; they took every device with no session
+and no push token.** So the reaper, as built, would have left part of them in place. What the
+recorded counts say, as lower bounds (they count "another device with a session" on ANY platform,
+with no key-package age condition, so clause 5 excludes at least this many and possibly more):
+
+| Pass | Devices revoked | Owner had another device with a session | Excluded by clause 5, at least |
+| --- | --- | --- | --- |
+| Third, 2026-10-24 | 109 | 70 (session OR push token) | **39 (36 %)** |
+| Fourth, 2026-11-01 (the re-measure's 292) | 286 | 220 of 292 | **72 of 292 (25 %)** |
+| R in full, 2026-10-12 | 126 named of about 288 with a queue and no session | - | about **56 %**, but push tokens explain part of it |
+
+**Whether it would have excluded MOST of the 286 is not answerable from the repository**: the
+same-platform and key-package-age conditions were never measured on that population, and its
+queues and key packages are gone now. The 2026-10-12 figure (R named 126 of about 288) says it may
+well be about half. **The clause was kept as specified, not weakened**: what it refuses is a device
+whose owner has NOT provably moved to a newer device of the same kind - for example an account whose
+only other device is a phone, or whose newer browser stopped too. Those devices still fill the
+queue; the second statement below counts them, and whether to reap them on weaker evidence is the
+owner's decision.
+
+### The dry run, read-only, as the owner runs it
+
+This is the reaper's statement (`RETIRED_DEVICE_PREDICATE_SQL` in
+`apps/chat-delivery-service/src/services/retired-device-reaper.ts`, the authority if the two ever
+differ) with its parameters written in: `$1` = now - 7 days, `$2` = now - the 10-year ban window,
+`$3` = now, `$4` = the cap of 100, `$5`/`$6` = NULL. The database runs in UTC
+(`checkDatabaseClockAgreement`), so `now()` compares correctly with the `timestamp` columns.
+
+```sql
+BEGIN READ ONLY;
+WITH queued AS (
+  SELECT q."recipientId" AS "userId", q."deviceId" AS "deviceId",
+         min(q."createdAt") AS "oldestQueuedAt", count(*)::int AS "queuedRows"
+    FROM queued_message q
+   GROUP BY q."recipientId", q."deviceId"
+)
+SELECT d."userId", d."deviceId", d."oldestQueuedAt", d."queuedRows",
+       count(*) OVER ()::int AS "matched"
+  FROM queued d
+ WHERE NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = d."deviceId")
+   AND NOT EXISTS (SELECT 1 FROM push_token t WHERE t."deviceId" = d."deviceId")
+   AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                    WHERE r."userId" = d."userId" AND r."deviceId" = d."deviceId"
+                      AND r."revokedAt" > now() - interval '3650 days')
+   AND NOT EXISTS (SELECT 1 FROM queued_message o
+                    WHERE o."senderDeviceId" = d."deviceId" AND o."createdAt" > now() - interval '7 days')
+   AND NOT EXISTS (SELECT 1 FROM mls_commit_log c
+                    WHERE c."senderDeviceId" = d."deviceId" AND c."createdAt" > now() - interval '7 days')
+   AND NOT EXISTS (SELECT 1 FROM key_package k
+                    WHERE k."deviceId" = d."deviceId" AND k."createdAt" > now() - interval '7 days')
+   AND NOT EXISTS (SELECT 1 FROM one_time_key_package p
+                    WHERE p."deviceId" = d."deviceId" AND p."createdAt" > now() - interval '7 days')
+   AND EXISTS (SELECT 1 FROM key_package k2
+                 JOIN auth_sessions s2
+                   ON s2."deviceId" = k2."deviceId" AND s2."userId" = k2."userId"
+                  AND s2."expiresAt" > now()
+                WHERE k2."userId" = d."userId" AND k2."deviceId" <> d."deviceId"
+                  AND split_part(k2."deviceId", '-', 1) = split_part(d."deviceId", '-', 1)
+                  AND k2."createdAt" > d."oldestQueuedAt")
+ ORDER BY d."oldestQueuedAt" ASC, d."userId" ASC, d."deviceId" ASC
+ LIMIT 100;
+ROLLBACK;
+```
+
+**And what clause 5 alone keeps** - the same population with and without it, so the owner sees the
+devices the reaper will NOT touch:
+
+```sql
+BEGIN READ ONLY;
+WITH queued AS (
+  SELECT q."recipientId" AS "userId", q."deviceId" AS "deviceId", min(q."createdAt") AS oldest
+    FROM queued_message q GROUP BY 1, 2
+), base AS (
+  SELECT d.*, EXISTS (SELECT 1 FROM key_package k2
+                        JOIN auth_sessions s2
+                          ON s2."deviceId" = k2."deviceId" AND s2."userId" = k2."userId"
+                         AND s2."expiresAt" > now()
+                       WHERE k2."userId" = d."userId" AND k2."deviceId" <> d."deviceId"
+                         AND split_part(k2."deviceId", '-', 1) = split_part(d."deviceId", '-', 1)
+                         AND k2."createdAt" > d.oldest) AS replaced
+    FROM queued d
+   WHERE NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = d."deviceId")
+     AND NOT EXISTS (SELECT 1 FROM push_token t WHERE t."deviceId" = d."deviceId")
+     AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                      WHERE r."userId" = d."userId" AND r."deviceId" = d."deviceId")
+     AND NOT EXISTS (SELECT 1 FROM queued_message o
+                      WHERE o."senderDeviceId" = d."deviceId" AND o."createdAt" > now() - interval '7 days')
+     AND NOT EXISTS (SELECT 1 FROM mls_commit_log c
+                      WHERE c."senderDeviceId" = d."deviceId" AND c."createdAt" > now() - interval '7 days')
+     AND NOT EXISTS (SELECT 1 FROM key_package k
+                      WHERE k."deviceId" = d."deviceId" AND k."createdAt" > now() - interval '7 days')
+     AND NOT EXISTS (SELECT 1 FROM one_time_key_package p
+                      WHERE p."deviceId" = d."deviceId" AND p."createdAt" > now() - interval '7 days')
+)
+SELECT split_part("deviceId", '-', 1) AS platform, count(*) AS "clauses 1-4",
+       count(*) FILTER (WHERE replaced) AS "all five (the reaper)"
+  FROM base GROUP BY 1;
+ROLLBACK;
+```
+
+**Not done, and the owner's**: running either statement on production, setting the switch to
+`dry-run` and then `on` ([backlog](../backlog.d/retired-device-reaper-activation-owed-to-the-owner.md)).

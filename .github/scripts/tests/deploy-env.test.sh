@@ -413,6 +413,14 @@ else
     fail "QUEUED_PAYLOAD_SHARED_WRITES is not false"
   fi
 
+  # The retired-device reaper REVOKES DEVICES, so it ships OFF: its dry run and then its activation
+  # are the owner's decision, each a deliberate edit of this expectation, never a default.
+  if grep -q '^RETIRED_DEVICE_REAPER=off$' "$out"; then
+    pass "RETIRED_DEVICE_REAPER is the literal off - the owner validates its activation"
+  else
+    fail "RETIRED_DEVICE_REAPER is not off"
+  fi
+
   # DEPLOY_BUILD must never be written in production: /api/version reports `build`, and production's
   # version already names its content because it is built from a tag.
   if grep -qE '^DEPLOY_BUILD=.+' "$out"; then

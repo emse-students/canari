@@ -73,6 +73,8 @@ Hourly and daily cron jobs:
 - Purge orphaned Redis keys and device entries.
 - Purge soft-deleted groups and push tokens.
 - Purge stale pending invitations and revocations.
+- Revoke devices a newer device of their owner replaced (`RETIRED_DEVICE_REAPER`: `off` as shipped,
+  `dry-run`, `on`) - see [the retired-device reaper](../../docs/wiki/services/chat-delivery.md#the-retired-device-reaper-built-off-2026-11-01).
 
 ## Databases
 

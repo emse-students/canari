@@ -75,7 +75,7 @@ log "snapshot: $(printf '%s\n' "$PROD_NAMES" | wc -l | tr -d ' ') variables"
 # ── The five lists ───────────────────────────────────────────────────────────
 # Kept exactly as production has them: no local equivalent, or the key that reads the data.
 KEEP="APNS_VOIP_KEY_ID APNS_VOIP_KEY_P8 APNS_VOIP_SANDBOX APNS_VOIP_TEAM_ID APNS_VOIP_TOPIC
-AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET
+AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET QUEUED_PAYLOAD_SHARED_WRITES
 CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_CALLS_API_TOKEN CLOUDFLARE_TURN_ANALYTICS_TOKEN CLOUDFLARE_TURN_KEY_ID
 CLOUDFLARE_TURN_MONTHLY_BUDGET_GB
 CLOUDFLARE_TURN_TTL_SECONDS EXTERNAL_API_KEY
@@ -97,7 +97,10 @@ TURN_USERNAME"
 # PRODUCTION pair, and Lydia moves real money with it. A laptop holding a production dump would hold
 # a key that charges a real payer the moment `LYDIA_ENV` named the real Lydia. Local gets
 # `LYDIA_ENV=homologation` (LOCAL, below) and no token, so a Lydia call answers "not configured".
-BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN"
+#
+# RETIRED_DEVICE_REAPER is the third reason: it REVOKES devices. Empty reads as `off`, so a local
+# stack never revokes anything because production happened to have the reaper on.
+BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN RETIRED_DEVICE_REAPER"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

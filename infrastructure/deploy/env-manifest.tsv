@@ -80,6 +80,7 @@ LIVE_REPORT_SIGNING_KEY	required	required	secret:LIVE_REPORT_SIGNING_KEY	a repor
 ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
 CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
 QUEUED_PAYLOAD_SHARED_WRITES	literal	literal	literal:false	nothing - a key-group frame is queued inline per seat; turned true only in a release AFTER the one shipping its readers (docs/wiki/services/chat-delivery.md)
+RETIRED_DEVICE_REAPER	literal	literal	literal:off	nothing - the retired-device reaper selects and revokes nothing; dry-run then on are the owner's decision, each a commit (docs/wiki/services/chat-delivery.md)
 INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled, and an owner's device delete answers 503 (chat-delivery cannot ask core-service to end the device's sessions)
 EXTERNAL_API_KEY	warn	warn	secret:EXTERNAL_API_KEY	the external profile API rejects every request, so Sky sees nothing
 SKY_API_KEY	warn	warn	secret:SKY_API_KEY	the Sky parrainage tree on profiles is empty

@@ -273,3 +273,29 @@ export const COMMIT_RATE_WARN_PER_DEVICE_HOUR = 8;
 
 /** How many groups each commit-log report line names - one line per cause, never one per row. */
 export const COMMIT_LOG_REPORT_TOP_N = 10;
+
+/**
+ * How far back the retired-device reaper looks for a LIFE SIGNAL of the device it would revoke: a
+ * frame it sent that is still queued, a commit it sent, a key package or one-time key package it
+ * published. Any one of them inside this window keeps the device, whatever else holds.
+ *
+ * **SEVEN DAYS, set by the owner's decision of 2026-11-01**, and it is a GUARD, not the trigger:
+ * the reaper selects on durable facts (no session, no push token, not revoked, replaced by a live
+ * device of the same platform), and this window only refuses a device that showed life recently,
+ * the one population the 2026-11-01 re-measure found inside the candidates (1 of 292 had sent a
+ * frame in the last 7 days). If it were wrong it would keep a device one more day, never revoke one
+ * early.
+ */
+export const RETIRED_DEVICE_LIFE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The most devices ONE run of the retired-device reaper revokes (or lists, in a dry run).
+ *
+ * The run is daily, and the backlog it was built for was revoked by hand on 2026-11-01 (286
+ * devices), so the steady state is what accrues between two runs - NOT MEASURED YET; the owner's
+ * first dry run is that measurement. A run that names more than this is not the steady state: it
+ * takes the oldest queues first, reports `matched` above `cap` at the accusing level, and the rest
+ * wait for the next run, so a predicate gone wrong costs at most this many devices before someone
+ * reads the line.
+ */
+export const RETIRED_DEVICE_REAP_CAP = 100;

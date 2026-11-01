@@ -55,9 +55,9 @@ import {
   activeRevocationWhere,
   revocationReasonOf,
   revokedDeviceRefusal,
-  upsertRevocation,
 } from '../utils/revocation';
 import { parseSessionId } from '../utils/session-id';
+import { revokeDevice } from '../utils/revoke-device';
 import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
@@ -937,41 +937,26 @@ export class DevicesController {
       'Cannot delete another user device'
     );
 
-    // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
-    //    key groups the device held: its rows were the binding the revoked-leaves question reads.
-    const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId, {
-      recordKeyGroupsHeld: true,
-    });
-
-    // 2. Denylist the device to prevent immediate re-registration (explicit deletion only;
-    //    the GC does not denylist).
-    //    Deliberately NOT filtered by the ban window: this asks "have I already got a row for this
-    //    device", which has no age - filtering here would insert a duplicate that the unique
-    //    constraint on (userId, deviceId) then rejects, turning a re-revocation into a 500. What
-    //    the window changes is the DATE: revoking again restarts it, so a device banned, un-banned
-    //    and banned again is banned from today rather than from the first time.
-    //    THE CAUSE IS MERGED, NEVER OVERWRITTEN DOWNWARD - an owner's active ban stays the owner's
-    //    whatever a later call says - and it is merged IN THE ONE STATEMENT that writes it
-    //    (`upsertRevocation`), so two deletes racing on one id cannot both read "no owner" and the
-    //    "retired" one win.
-    const recordedReason = await upsertRevocation(
+    // 1-3. Purge the footprint (recording the key groups it held), ban the id with its cause, and
+    //    tell a connected device now - `revokeDevice`, the one sequence this route and the
+    //    retired-device reaper share. The ban is deliberately NOT filtered by the ban window: it asks
+    //    "have I already got a row for this device", which has no age - filtering would insert a
+    //    duplicate the unique constraint rejects, turning a re-revocation into a 500. THE CAUSE IS
+    //    MERGED, NEVER OVERWRITTEN DOWNWARD, in the one statement that writes it (`upsertRevocation`),
+    //    so two deletes racing on one id cannot both read "no owner" and the "retired" one win. The
+    //    signal goes BEFORE the sessions are ended, so a failure of that step below never skips it.
+    const { purge, recordedReason, signalled } = await revokeDevice(
+      this.messagingService,
       this.dataSource,
       safeUserId,
       safeDeviceId,
-      reason,
-      crypto.randomUUID()
+      reason
     );
     if (recordedReason !== reason) {
       this.logger.warn(
         `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} asked reason=${reason} - kept reason=${recordedReason}: an owner's ban is never downgraded`
       );
     }
-
-    // 3. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
-    //    delete the user has to make twice, and the second half is invisible from the panel they
-    //    used. The denylist row above is the durable half; this is what makes it immediate. It is
-    //    sent BEFORE the sessions are ended, so a failure of that step below never skips it.
-    const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
 
     // 4. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
     //    the panel's second request. Every session bound to the device except the caller's own is

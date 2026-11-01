@@ -45,6 +45,11 @@ import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
+import {
+  RETIRED_DEVICE_REAPER_ENV,
+  readRetiredDeviceReaperMode,
+  runRetiredDeviceReaper,
+} from './services/retired-device-reaper';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -53,6 +58,16 @@ import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 @Controller()
 export class AppController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppController.name);
+
+  /**
+   * The retired-device reaper's switch, read ONCE at boot: `off` unless the estate's
+   * `RETIRED_DEVICE_REAPER` says `dry-run` or `on`; any other value refuses to boot
+   * (`readRetiredDeviceReaperMode`). OFF as shipped - its activation is the owner's.
+   */
+  private readonly retiredDeviceReaperMode = readRetiredDeviceReaperMode(
+    process.env[RETIRED_DEVICE_REAPER_ENV],
+    this.logger
+  );
   private staleDeviceInterval: ReturnType<typeof setInterval>;
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
   private cleanupStaleDevicesInterval: ReturnType<typeof setInterval>;
@@ -68,6 +83,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportStaleBasesInterval: ReturnType<typeof setInterval>;
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
+  private retiredDeviceReaperInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -273,6 +289,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Revoke the devices a newer device of their owner has replaced, while they still hold seats
+    // and a queue - OFF unless the switch says otherwise (`runRetiredDeviceReaper`). Daily: its
+    // idempotence is the ban row it writes, so the interval only decides how soon one is collected.
+    this.retiredDeviceReaperInterval = setInterval(() => {
+      void this.reapRetiredDevices().catch((e) =>
+        this.logger.error('[CRON] reapRetiredDevices failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
@@ -281,7 +306,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
-        'expired device revocations purge (24h) scheduled'
+        'expired device revocations purge (24h), ' +
+        `retired-device reaper (24h, ${this.retiredDeviceReaperMode}) scheduled`
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -311,6 +337,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['reclaimExpiredKeyPackages', () => this.reclaimExpiredKeyPackages()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
+      ['reapRetiredDevices', () => this.reapRetiredDevices()],
       // Last on purpose: they report the estate as the GC leaves it, not as it found it -
       // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
       ['reportQueueDepth', () => this.reportQueueDepth()],
@@ -372,6 +399,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportStaleBasesInterval);
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
+    clearInterval(this.retiredDeviceReaperInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -1128,6 +1156,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const sorted = [...values].sort((a, b) => a - b);
     const rank = (q: number) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
     return `p50=${rank(0.5)} p90=${rank(0.9)} max=${sorted[sorted.length - 1]}`;
+  }
+
+  /**
+   * One run of the retired-device reaper in the mode read at boot - see
+   * {@link runRetiredDeviceReaper} for the predicate, the cap, the re-check and the summary line.
+   */
+  private async reapRetiredDevices() {
+    await runRetiredDeviceReaper({
+      mode: this.retiredDeviceReaperMode,
+      db: this.groupRepo.manager,
+      messaging: this.messagingService,
+      logger: this.logger,
+    });
   }
 
   /**
