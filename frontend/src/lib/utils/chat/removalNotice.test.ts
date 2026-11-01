@@ -8,6 +8,7 @@ import {
   forgetRemovalNotices,
   owesRemovalNotice,
   removalNoticeId,
+  writeRemovalNotice,
 } from './removalNotice';
 
 /**
@@ -249,6 +250,98 @@ describe('the removal line is owed until the server answers', () => {
       isCurrent: () => true,
     });
     expect(ask).not.toHaveBeenCalled();
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(false);
+  });
+
+  /** Review of #2890, verification LOW-1: a throw must not reject every write queued behind it. */
+  it('a write that THROWS does not take the next one with it', async () => {
+    const w = world();
+    // Retired first, so both writes find a removed row.
+    await evict(w, async () => ({ kind: 'unserved' }));
+    const throwing = writeRemovalNotice({
+      conversations: w.conversations,
+      key: w.groupId,
+      groupId: w.groupId,
+      ownerId: OWNER,
+      askRemovedAt: async () => {
+        throw new Error('network');
+      },
+      addMessageToChat: w.addMessageToChat,
+      speak: true,
+      label: 'test',
+      // Throws inside the critical section, outside every catch of its own.
+      log: () => {},
+      isCurrent: () => {
+        throw new Error('boom');
+      },
+    });
+    const next = writeRemovalNotice({
+      conversations: w.conversations,
+      key: w.groupId,
+      groupId: w.groupId,
+      ownerId: OWNER,
+      removedAt: REMOVED_AT,
+      addMessageToChat: w.addMessageToChat,
+      speak: true,
+      label: 'test',
+      log: () => {},
+    });
+    await expect(throwing).rejects.toThrow('boom');
+    await expect(next).resolves.toBe('written');
+    expect(w.written).toHaveLength(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('removal notice write THREW')
+    );
+  });
+
+  /** Verification LOW-2: a live path passes no session check, and a sign-out clears the map. */
+  it("a sign-out during a live evidence's ask keeps the line owed", async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'unserved' }));
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(true);
+    await evict(
+      w,
+      async () => {
+        w.conversations.clear(); // the sign-out clears the map while the answer travels
+        return { kind: 'at', at: REMOVED_AT };
+      },
+      'inbound-frame'
+    );
+    expect(w.written).toEqual([]);
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(true);
+  });
+
+  /** Verification LOW-3: an earlier removal's line does not stand for a later removal's. */
+  it('removed, re-admitted, removed again: a second line is written', async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'at', at: REMOVED_AT }));
+    // A re-admission that left the first line in place.
+    w.conversations.set(w.groupId, { ...w.conversations.get(w.groupId)!, lifecycle: 'active' });
+    await evict(w, async () => ({ kind: 'at', at: REMOVED_AT + 60_000 }), 'inbound-frame');
+    expect(w.written.map((x) => x.id)).toEqual([
+      removalNoticeId(w.groupId, REMOVED_AT),
+      removalNoticeId(w.groupId, REMOVED_AT + 60_000),
+    ]);
+    // And a further evidence of the SECOND removal writes nothing more.
+    await evict(w, async () => ({ kind: 'at', at: REMOVED_AT + 60_100 }), 'inbound-frame');
+    expect(w.written).toHaveLength(2);
+  });
+
+  it('the next session still tells an earlier removal line from an owed one', async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'at', at: REMOVED_AT }));
+    w.conversations.set(w.groupId, { ...w.conversations.get(w.groupId)!, lifecycle: 'active' });
+    await evict(w, async () => ({ kind: 'unserved' }), 'inbound-frame');
+    forgetRemovalNotices(); // a new session
+    await drainOwedRemovalNotices({
+      ownerId: OWNER,
+      conversations: w.conversations,
+      askRemovedAt: async () => ({ kind: 'at', at: REMOVED_AT + 60_000 }),
+      addMessageToChat: w.addMessageToChat,
+      log: () => {},
+      isCurrent: () => true,
+    });
+    expect(w.written).toHaveLength(2);
     expect(owesRemovalNotice(OWNER, w.groupId)).toBe(false);
   });
 });

@@ -13,8 +13,10 @@
  *
  * A REMOVAL CAN BE UNDONE WHILE ITS DATE IS ASKED (a Welcome installs during the await), and
  * `retractEvictionNotice` then finds nothing to withdraw. So the row is re-read after every await,
- * and the line is written only while it is still `removed` and does not already hold one - the
- * 2026-09-22 rule (a false "you were removed" above a working conversation) kept across the ask.
+ * and the line is written only while it is still `removed` and does not already hold THIS removal's
+ * line - the 2026-09-22 rule (a false "you were removed" above a working conversation) kept across
+ * the ask. A line left by an EARLIER removal (a re-admission came between) is not this one's: the
+ * evidence that retires the row names the lines already there ({@link removalLineIds}).
  *
  * Per account, in `localStorage` like every per-account record (`accountLocalKeys.ts`).
  */
@@ -52,33 +54,59 @@ const undatable = new Set<string>();
 /** The write in flight per `ownerId:groupId`: two evidences landing together write one after the other. */
 const inFlight = new Map<string, Promise<unknown>>();
 
+/**
+ * Per `ownerId:groupId`, the removal lines the thread held when THIS removal retired the row: an
+ * earlier removal's (a re-admission came between), which never stand for this one's. Kept in the
+ * owed record too, so the next session tells them apart. Unknown (a removal retired by an earlier
+ * session and not owed) reads as none: every removal line in the thread then counts.
+ */
+const earlierLinesOf = new Map<string, ReadonlySet<string>>();
+
 /** Ends the session's memory of answered removals: called when the account signs out or switches. */
 export function forgetRemovalNotices(): void {
   undatable.clear();
+  earlierLinesOf.clear();
 }
 
 const scopeOf = (ownerId: string | undefined, groupId: string) => `${ownerId ?? '-'}:${groupId}`;
 
-function readOwed(ownerId: string): string[] {
+/** The ids of the "you were removed" lines a row holds. */
+export function removalLineIds(row: Pick<Conversation, 'messages'> | undefined): string[] {
+  if (!row) return [];
+  const notice = m.chat_system_removed_from_group();
+  return row.messages.filter((msg) => msg.isSystem && msg.content === notice).map((msg) => msg.id);
+}
+
+/** The owed record: per group, the earlier removal lines that are not this removal's. */
+type OwedRecord = Record<string, string[]>;
+
+function readOwed(ownerId: string): OwedRecord {
   const s = accountStore();
-  if (!s) return [];
+  if (!s) return {};
   try {
-    const parsed: unknown = JSON.parse(s.getItem(ACCOUNT_KEY.owedRemovalNotices(ownerId)) ?? '[]');
-    return Array.isArray(parsed) ? parsed.filter((g): g is string => typeof g === 'string') : [];
+    const parsed: unknown = JSON.parse(s.getItem(ACCOUNT_KEY.owedRemovalNotices(ownerId)) ?? '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const owed: OwedRecord = {};
+    for (const [groupId, ids] of Object.entries(parsed)) {
+      owed[groupId] = Array.isArray(ids)
+        ? ids.filter((x): x is string => typeof x === 'string')
+        : [];
+    }
+    return owed;
   } catch (e) {
     console.error(
       `[EVICT] the owed removal notices are UNREADABLE - none is asked again: ${String(e).slice(0, 120)}`
     );
-    return [];
+    return {};
   }
 }
 
-function writeOwed(ownerId: string, groups: string[]): void {
+function writeOwed(ownerId: string, owed: OwedRecord): void {
   const s = accountStore();
   if (!s) return;
   const key = ACCOUNT_KEY.owedRemovalNotices(ownerId);
   try {
-    if (groups.length > 0) s.setItem(key, JSON.stringify(groups));
+    if (Object.keys(owed).length > 0) s.setItem(key, JSON.stringify(owed));
     else s.removeItem(key);
   } catch (e) {
     console.error(
@@ -89,34 +117,47 @@ function writeOwed(ownerId: string, groups: string[]): void {
 
 /** Whether a removal line is owed in `groupId` for `ownerId`. */
 export function owesRemovalNotice(ownerId: string, groupId: string): boolean {
-  return readOwed(ownerId).includes(groupId);
+  return groupId in readOwed(ownerId);
 }
 
 function owe(ownerId: string | undefined, groupId: string): void {
   if (!ownerId) return;
   const owed = readOwed(ownerId);
-  if (!owed.includes(groupId)) writeOwed(ownerId, [...owed, groupId]);
+  const earlier = [...(earlierLinesOf.get(scopeOf(ownerId, groupId)) ?? [])];
+  writeOwed(ownerId, { ...owed, [groupId]: earlier });
 }
 
 function settle(ownerId: string | undefined, groupId: string): void {
   if (!ownerId) return;
   const owed = readOwed(ownerId);
-  if (owed.includes(groupId))
-    writeOwed(
-      ownerId,
-      owed.filter((g) => g !== groupId)
-    );
+  if (!(groupId in owed)) return;
+  delete owed[groupId];
+  writeOwed(ownerId, owed);
 }
 
-/** Why the line may no longer be written into `groupId`'s row, or `null` when it still may. */
-function noLongerOwed(conversations: Map<string, Conversation>, groupId: string): string | null {
+/** The earlier removals' lines for `scope`: this session's memory, else the owed record's. */
+function earlierLines(ownerId: string | undefined, groupId: string): ReadonlySet<string> {
+  const known = earlierLinesOf.get(scopeOf(ownerId, groupId));
+  if (known) return known;
+  return new Set(ownerId ? (readOwed(ownerId)[groupId] ?? []) : []);
+}
+
+/**
+ * Why the line may no longer be written into `groupId`'s row - `gone` when the row left the map,
+ * which only the session can say the meaning of - or `null` when it still may.
+ */
+function noLongerOwed(
+  conversations: Map<string, Conversation>,
+  ownerId: string | undefined,
+  groupId: string
+): string | 'gone' | null {
   const key = findConversationKeyByGroupId(conversations, groupId);
   const row = key ? conversations.get(key) : undefined;
-  if (!row) return 'the row is gone';
+  if (!row) return 'gone';
   if (row.lifecycle !== 'removed') return `the row is ${row.lifecycle ?? 'active'} again`;
-  const notice = m.chat_system_removed_from_group();
-  if (row.messages.some((msg) => msg.isSystem && msg.content === notice)) {
-    return 'the thread already holds the line';
+  const earlier = earlierLines(ownerId, groupId);
+  if (removalLineIds(row).some((id) => !earlier.has(id))) {
+    return 'the thread already holds the line of this removal';
   }
   return null;
 }
@@ -139,8 +180,18 @@ export interface RemovalNoticeDeps {
   /** How this was learnt, for the log. */
   label: string;
   log: (message: string) => void;
-  /** Whether the session that started this is still the signed-in one; a retired one writes nothing. */
+  /**
+   * Whether the session that started this is still the signed-in one; a retired one writes nothing.
+   * Without it, a row gone from the map is not taken for a deleted conversation: the sign-out clears
+   * the map, and settling then would erase the leaving account's owed record. The line stays owed,
+   * and the next restore's drain (which passes it) decides.
+   */
   isCurrent?: () => boolean;
+  /**
+   * The removal lines the thread held before THIS evidence retired the row - an earlier removal's.
+   * Passed only by the evidence that retired it.
+   */
+  earlierLines?: readonly string[];
 }
 
 /**
@@ -153,11 +204,20 @@ export function writeRemovalNotice(
 ): Promise<'written' | 'settled' | 'owed' | 'stale'> {
   const scope = scopeOf(deps.ownerId, deps.groupId);
   const previous = inFlight.get(scope) ?? Promise.resolve();
-  const run = previous.then(() => writeRemovalNoticeNow(deps));
+  // The next write runs whatever became of the previous one: a throw must not reject every write
+  // queued behind it.
+  const now = () => writeRemovalNoticeNow(deps);
+  const run = previous.then(now, now);
   inFlight.set(scope, run);
-  void run.finally(() => {
-    if (inFlight.get(scope) === run) inFlight.delete(scope);
-  });
+  run
+    .catch((e: unknown) =>
+      console.error(
+        `[EVICT] ${deps.groupId.slice(0, 8)}… - removal notice write THREW: ${String(e)}`
+      )
+    )
+    .finally(() => {
+      if (inFlight.get(scope) === run) inFlight.delete(scope);
+    });
   return run;
 }
 
@@ -167,16 +227,25 @@ async function writeRemovalNoticeNow(
   const { conversations, groupId, ownerId, removedAt, askRemovedAt, speak, label, log } = deps;
   const short = groupId.slice(0, 8);
   const scope = scopeOf(ownerId, groupId);
+  if (deps.earlierLines) earlierLinesOf.set(scope, new Set(deps.earlierLines));
   /** Re-read after every await: the session may have ended, the removal been undone, the line written. */
   const recheck = (): 'stale' | 'settled' | null => {
     if (deps.isCurrent && !deps.isCurrent()) {
       log(`[EVICT] ${short}… - removal notice not written (${label}): the session ended meanwhile`);
       return 'stale';
     }
-    const why = noLongerOwed(conversations, groupId);
+    const why = noLongerOwed(conversations, ownerId, groupId);
     if (why === null) return null;
+    if (why === 'gone' && !deps.isCurrent) {
+      log(
+        `[EVICT] ${short}… - removal notice not written (${label}): the row left the map - kept owed for the next restore to decide`
+      );
+      return 'stale';
+    }
     settle(ownerId, groupId);
-    log(`[EVICT] ${short}… - removal notice not written (${label}): ${why}`);
+    log(
+      `[EVICT] ${short}… - removal notice not written (${label}): ${why === 'gone' ? 'the row is gone' : why}`
+    );
     return 'settled';
   };
   const before = recheck();
@@ -263,7 +332,7 @@ export async function drainOwedRemovalNotices(deps: {
   log: (message: string) => void;
   isCurrent: () => boolean;
 }): Promise<void> {
-  const owed = readOwed(deps.ownerId);
+  const owed = Object.keys(readOwed(deps.ownerId));
   if (owed.length === 0) return;
   console.log(`[EVICT] ${owed.length} owed removal notice(s) asked again after the restore`);
   for (const groupId of owed) {

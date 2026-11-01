@@ -57,7 +57,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
-import { writeRemovalNotice } from './removalNotice';
+import { removalLineIds, writeRemovalNotice } from './removalNotice';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
@@ -194,15 +194,14 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     return false;
   }
 
-  // Read BEFORE the retire, which rewrites the row: the notice is deduplicated on the thread's own
-  // contents, the only place the first evidence left a trace the second can see.
-  const notice = m.chat_system_removed_from_group();
-  const alreadyNoticed =
-    conversations.get(key)?.messages.some((msg) => msg.isSystem && msg.content === notice) ?? false;
+  // Read BEFORE the retire: the removal lines the thread already holds. If this evidence retires the
+  // row, they belong to an EARLIER removal (a re-admission came between), and must not stand for this
+  // one's; otherwise the notice is deduplicated on the thread's own contents by `writeRemovalNotice`.
+  const linesBefore = removalLineIds(conversations.get(key));
 
   const retired = await retireConversation({ conversations, key, groupId, saveConversation });
 
-  if (!alreadyNoticed && addMessageToChat) {
+  if (addMessageToChat) {
     // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local clock
     // at this instant, and a device learning its removal days late (a check on selection, a refused
     // send) drew "you were removed" below everything said after it. The evidence's own time first,
@@ -217,6 +216,7 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
       askRemovedAt,
       addMessageToChat,
       speak: retired,
+      ...(retired ? { earlierLines: linesBefore } : {}),
       label: evidence,
       log,
     });
