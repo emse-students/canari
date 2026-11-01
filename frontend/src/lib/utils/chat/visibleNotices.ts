@@ -92,6 +92,42 @@ export async function renderVisibleNotice(
 }
 
 /**
+ * WHEN A NOTICE DRAWN FROM A RECEIVED FRAME HAPPENED: the dating options of its row, or `null` when
+ * nothing durable dates it.
+ *
+ * A notice is a row like any other in the timeline, so it is dated exactly as a received text frame
+ * is (`appMsgToEnvelope` + `serverTimestamp` in `setupMessageHandler`): `timestamp` is the frame's own
+ * `sentAt` (minted by `mkVisibleSystem`), the server's acceptance standing in for an older frame that
+ * carries none, and `serverTimestamp` is the server's acceptance - the key the conversation is
+ * ordered by (`messageTime`).
+ *
+ * WHY THIS EXISTS. The live handler wrote notices with no date at all, so `addMessageToChat` dated
+ * them with THIS DEVICE'S CLOCK at the moment it processed the frame. A device that drained the
+ * frame hours late - a phone opening a group for the first time after a conversation had happened in
+ * it - drew "X added A, B" BELOW every message that followed the addition (owner, v1.6.0, 2026-11-01).
+ * When this device learnt of an event is not when the event happened, so the local clock is never a
+ * candidate here, not even as a last resort: `null` says no instant is known, and the caller refuses
+ * to draw rather than draw a row in the wrong place.
+ *
+ * @param sentAtMs the frame's `sentAt` (Unix ms), undefined for a frame that carries none
+ * @param serverAtMs the server's acceptance of the frame (`queuedCreatedAt`), when the delivery said
+ */
+export function receivedNoticeTime(
+  sentAtMs: number | undefined,
+  serverAtMs: number | undefined
+): Pick<AddMessageToChatOptions, 'timestamp' | 'serverTimestamp'> | null {
+  const valid = (ms: number | undefined): ms is number =>
+    typeof ms === 'number' && Number.isFinite(ms) && ms > 0;
+  const server = valid(serverAtMs) ? serverAtMs : undefined;
+  const stamped = valid(sentAtMs) ? sentAtMs : server;
+  if (stamped === undefined) return null;
+  return {
+    timestamp: new Date(stamped),
+    ...(server !== undefined ? { serverTimestamp: server } : {}),
+  };
+}
+
+/**
  * Sends a visible notice frame and, once the delivery service has ACCEPTED it, writes the acting
  * device's own row under the id the frame carries.
  *

@@ -1785,6 +1785,39 @@ Pinned by `systemMessageHandler.noticeIdentity.test.ts`, which asserts the conve
 directly: one frame handed to both paths produces one id. Old frames carry none and stay
 duplicate-prone - [legacy-compatibility](../../legacy-compatibility.md).
 
+### A visible notice is dated by its FRAME, never by when this device learnt of it
+
+**The sender's id was half of what the frame owed the row; its date was the other half, and the
+live path dropped it.** `mkVisibleSystem` mints `sentAt` beside `messageId`, and the delivery says
+when the server accepted the frame (`queuedCreatedAt`) - yet every notice branch of
+`handleSystemEvent` wrote `{ isSystem: true, messageId }` and nothing else, so `addMessageToChat`
+(`resolveMessageTimestamp`) dated the row `new Date()`: THIS device's clock at the moment its drain
+reached the frame. The acting device (`sendVisibleNotice`, `frame.sentAt`) and the archive replay
+(the history row's server time) were both right; only the live receiver was not.
+
+**What that cost (owner, v1.6.0, iPhone, 2026-11-01).** A group created on the PC with two members,
+a conversation in it, and the phone opening the group for the FIRST time: its queue drained the
+`memberAdded` frame hours late, the notice took that instant as its order key, and "X a ajouté A, B
+au groupe" sat BELOW every message that followed the addition. The messages themselves were right,
+because a received text row has always carried its `sentAt` and `serverTimestamp`. The row was
+written once and the replay deduplicates by id, so the wrong date was durable.
+
+**The fix is `receivedNoticeTime(sentAt, queuedCreatedAt)` (`visibleNotices.ts`)**, read through ONE
+writer in `handleSystemEvent` (`writeNotice`) by every notice branch - the five membership notices,
+`groupDeleted`, and both channel invitation cards. It dates the row exactly as a received text row is
+dated: `timestamp` the frame's `sentAt` (the server acceptance for an older frame that carries none),
+`serverTimestamp` the server acceptance, which is the order key (`messageTime`). Both
+`setupMessageHandler` call sites (the live frame and the Welcome buffer) pass `sentAt` in the
+context. **With neither time the row is NOT drawn**, refused at ERROR (`[NOTICE] REFUSED to draw`):
+every delivery route of this build carries the server time, so reaching it means a route lost it, and
+the local clock is never a stand-in for when an event happened.
+
+**Not in scope, and still dated by the local clock:** the notices this device derives from its OWN
+learning rather than from a frame - device notices (`deviceNotices.svelte.ts`), the eviction notice
+(`recordEviction`), call records (`callSystemMessages.ts`). A row already written with the wrong date
+by an older build keeps it. Pinned by `systemMessageHandler.noticeTime.test.ts`, which drains a group
+six hours late and asserts the notice stays above the conversation, in either processing order.
+
 ### A mutation event is authorised on RECEIPT, by the MLS sender
 
 `delete_message` and `edit_message` name a target by `messageId`. `handleSystemEvent` resolves it and
