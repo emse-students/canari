@@ -67,31 +67,33 @@ export function uploadClassFor(media: { intent?: 'reel-message' }): 'chat-reel' 
 
 /**
  * The longest take a CHAT reel may be (D-size, RC-3): the server's `chatMaxDurationMs` (60 s), the
- * one copy, read from `GET /api/posts/reel-limits`. A server that predates RC-3 does not serve it;
- * its general reel cap is then the only cap there is, and that is said as a warning, because it means
- * the server this client talks to is older than the writer it runs.
+ * one copy, served by `GET /api/posts/reel-limits` since 89a81ad7d5. There is NO fallback to the
+ * 90 s reel cap: an answer without a usable chat cap is `null`, and the caller refuses to film or
+ * parks the take. Pure - the caller says it.
  */
-export function chatReelCapMs(
-  limits: Pick<ReelLimits, 'maxDurationMs' | 'chatMaxDurationMs'>
-): number {
-  if (limits.chatMaxDurationMs === undefined) {
-    console.warn(
-      `[chat-reel] the server serves no chat cap (older than RC-3): the reel cap ${limits.maxDurationMs} ms applies`
-    );
-    return limits.maxDurationMs;
-  }
-  return limits.chatMaxDurationMs;
+export function servedChatCapMs(limits: Pick<ReelLimits, 'chatMaxDurationMs'>): number | null {
+  const cap: unknown = limits.chatMaxDurationMs;
+  return typeof cap === 'number' && Number.isFinite(cap) && cap > 0 ? cap : null;
 }
 
 /**
  * The cap the camera arms its ring with for `destination`: the chat cap for a conversation, the reel
  * cap for every other destination (the feed and a post keep `maxDurationMs`, byte-identical to before).
+ * `null` for a chat whose cap the server did not serve. Pure.
  */
 export function captureCapMs(
   limits: Pick<ReelLimits, 'maxDurationMs' | 'chatMaxDurationMs'>,
   destination: CaptureDestination
-): number {
-  return destination === 'chat' ? chatReelCapMs(limits) : limits.maxDurationMs;
+): number | null {
+  return destination === 'chat' ? servedChatCapMs(limits) : limits.maxDurationMs;
+}
+
+/** The server's reel-limits answer carried no usable chat cap: the take is parked, never prepared. */
+export class ChatReelCapMissingError extends Error {
+  constructor() {
+    super('the server served no chat reel cap (chatMaxDurationMs)');
+    this.name = 'ChatReelCapMissingError';
+  }
 }
 
 /**
@@ -99,12 +101,17 @@ export function captureCapMs(
  * `chat` profile (540p, 1.2 Mb/s) and the chat cap, so a take filmed under the cap is encoded at the
  * size the retention budget was decided on, and a longer one is refused as a FACT of the take (`too
  * long`, failed for good) rather than uploaded at the feed's size.
+ *
+ * @throws {ChatReelCapMissingError} when the server served no chat cap - an ordinary failure, so the
+ *   outbox PARKS the take (kept, Retry), exactly as when the limits cannot be read at all.
  */
 export function chatReelPrepareOptions(
-  reel: Pick<ReelLimits, 'maxDurationMs' | 'chatMaxDurationMs'>,
+  reel: Pick<ReelLimits, 'chatMaxDurationMs'>,
   maxPlaintextBytes: number | undefined
 ): { profile: 'chat'; maxSeconds: number; maxBytes: number | undefined } {
-  return { profile: 'chat', maxSeconds: chatReelCapMs(reel) / 1000, maxBytes: maxPlaintextBytes };
+  const cap = servedChatCapMs(reel);
+  if (cap === null) throw new ChatReelCapMissingError();
+  return { profile: 'chat', maxSeconds: cap / 1000, maxBytes: maxPlaintextBytes };
 }
 
 /** The files the chat camera filmed as a reel message, keyed by the file like `capturePoster.ts`. */
