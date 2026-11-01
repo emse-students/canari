@@ -649,6 +649,10 @@ export async function handleSystemEvent(
         conversations,
         groupId: convo.id,
         evidence: 'system-event',
+        // The server's acceptance of the announcement its author sent right after the Remove commit.
+        removedAt: deliveryMeta?.queuedCreatedAt,
+        askRemovedAt: () => mlsService.ownRemovalAt(convo.id),
+        ownerId: userId,
         saveConversation,
         addMessageToChat,
         log,

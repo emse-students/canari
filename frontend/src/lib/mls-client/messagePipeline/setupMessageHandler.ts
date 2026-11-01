@@ -13,6 +13,7 @@ import {
   appMsgToEnvelope,
   normalizeMessageId,
 } from '$lib/utils/chat/messageUtils';
+import { receivedNoticeTime } from '$lib/utils/chat/visibleNotices';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
@@ -1180,6 +1181,12 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'remove-commit',
+        // The server's acceptance of THIS Remove commit: the instant the removal happened, and the
+        // date of the notice - never when this device merged it.
+        removedAt: deliveryMeta?.queuedCreatedAt,
+        // A Remove commit reached through the replay carries no delivery time: the server's record.
+        askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
@@ -1288,7 +1295,12 @@ async function handleKnownGroup({
         }
       }
     } else if (msg.call) {
-      onCallSignal?.(sender, groupId, msg.call);
+      onCallSignal?.(
+        sender,
+        groupId,
+        msg.call,
+        receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt)
+      );
     } else if (msg.system) {
       const event = msg.system.event ?? '';
       let data: any = {};
@@ -1355,6 +1367,8 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'inbound-frame',
+        askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,

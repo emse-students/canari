@@ -56,6 +56,8 @@
 
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
+import { removalLineIds, writeRemovalNotice } from './removalNotice';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
@@ -116,6 +118,25 @@ export interface RecordEvictionDeps {
   groupId: string;
   /** How this device found out - see {@link EvictionEvidence}. */
   evidence: EvictionEvidence;
+  /**
+   * WHEN THE REMOVAL HAPPENED, in server milliseconds, when the evidence carries it - and the date of
+   * the notice. A `remove-commit` delivered live carries the server's acceptance of the Remove commit
+   * (its delivery's `queuedCreatedAt`); a `system-event` the server's acceptance of its author's
+   * announcement, sent right after that commit. A Remove commit applied through the replay
+   * (`commitReplay.ts`) carries no delivery time, and every other evidence is learnt AFTER the
+   * removal (a later frame, a check, a refusal) - those ask {@link askRemovedAt} instead.
+   */
+  removedAt?: number;
+  /**
+   * Asks the server when THIS device's own seat was removed (`IMlsService.ownRemovalAt`: the
+   * person's closed membership stretch, or this device's kick) - the date of the notice when the
+   * evidence carries none. Read of the device's own rows, so a removed device may ask; the
+   * members-only commit log could not answer it. An answer with no instant settles the line; no
+   * answer leaves it OWED, durably (`removalNotice.ts`).
+   */
+  askRemovedAt?: () => Promise<ServerInstant>;
+  /** The signed-in account: an owed removal line is recorded under it, and asked again next session. */
+  ownerId?: string;
   log: (message: string) => void;
   saveConversation?: (key: string) => Promise<void>;
   /**
@@ -151,7 +172,17 @@ export interface RecordEvictionDeps {
  * says so. Returns whether THIS call performed the transition.
  */
 export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean> {
-  const { conversations, groupId, evidence, log, saveConversation, addMessageToChat } = deps;
+  const {
+    conversations,
+    groupId,
+    evidence,
+    removedAt,
+    askRemovedAt,
+    ownerId,
+    log,
+    saveConversation,
+    addMessageToChat,
+  } = deps;
   const short = groupId.slice(0, 8);
   const { what, missed } = EVICTION_EVIDENCE[evidence];
 
@@ -163,20 +194,32 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     return false;
   }
 
-  // Read BEFORE the retire, which rewrites the row: the notice is deduplicated on the thread's own
-  // contents, the only place the first evidence left a trace the second can see.
-  const notice = m.chat_system_removed_from_group();
-  const alreadyNoticed =
-    conversations.get(key)?.messages.some((msg) => msg.isSystem && msg.content === notice) ?? false;
+  // Read BEFORE the retire: the removal lines the thread already holds. If this evidence retires the
+  // row, they belong to an EARLIER removal (a re-admission came between), and must not stand for this
+  // one's; otherwise the notice is deduplicated on the thread's own contents by `writeRemovalNotice`.
+  const linesBefore = removalLineIds(conversations.get(key));
 
   const retired = await retireConversation({ conversations, key, groupId, saveConversation });
 
-  if (!alreadyNoticed) {
-    // Best-effort, and after the retire: the banner is the durable half and must not be held up by
-    // a message write. A swallowed branch logs.
-    await addMessageToChat?.('system', notice, key, { isSystem: true }).catch((e: unknown) =>
-      log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`)
-    );
+  if (addMessageToChat) {
+    // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local clock
+    // at this instant, and a device learning its removal days late (a check on selection, a refused
+    // send) drew "you were removed" below everything said after it. The evidence's own time first,
+    // then the server's record of this seat's removal - and, with no answer, the line is OWED.
+    // Only the call that retired the row speaks, so a second evidence does not repeat a refusal.
+    await writeRemovalNotice({
+      conversations,
+      key,
+      groupId,
+      ownerId,
+      removedAt,
+      askRemovedAt,
+      addMessageToChat,
+      speak: retired,
+      ...(retired ? { earlierLines: linesBefore } : {}),
+      label: evidence,
+      log,
+    });
   }
 
   if (missed) {
