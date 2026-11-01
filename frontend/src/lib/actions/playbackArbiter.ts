@@ -31,7 +31,8 @@ import { callHoldsAppSound, callSoundHeld } from '$lib/utils/callSoundGate';
  *
  * A CALL HOLDS THE SOUND (`callSoundGate`, 2026-10-31): when a call starts ringing out or in, every
  * registered media playing WITH sound is paused, and one that starts with sound during the call (an
- * autoplaying reel, a live, a tap on a voice note) is paused on its `play`. Muted ones play on.
+ * autoplaying reel, a live, a tap on a voice note) is paused on its `play`. Muted ones play on - until
+ * they are unmuted (`volumechange`), which pauses them too.
  *
  * WHAT IT DELIBERATELY DOES NOT DO: a refused `play()` raises no `play` event, so it claims nothing and
  * pauses nothing; notification sounds and a call's streams are not registered, so they are untouched.
@@ -167,11 +168,23 @@ export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions
   registry.set(el, { ambient: options.ambient === true });
   const onPlay = () => claimPlayback(el);
   const onQuiet = () => notifyIfIdle();
+  // A muted media playing during a call (a reel, the feed) that is UNMUTED becomes a sound: the
+  // call keeps it. `play` does not fire for that, `volumechange` does.
+  const onVolume = () => {
+    if (!isPlaying(el) || el.muted || !callHoldsAppSound()) return;
+    Log.d(
+      'VIDEO',
+      `playback arbiter: a ${el.tagName.toLowerCase()} was unmuted during a call - paused`
+    );
+    el.pause();
+  };
   el.addEventListener('play', onPlay);
   el.addEventListener('pause', onQuiet);
   el.addEventListener('ended', onQuiet);
+  el.addEventListener('volumechange', onVolume);
   return {
     destroy() {
+      el.removeEventListener('volumechange', onVolume);
       el.removeEventListener('play', onPlay);
       el.removeEventListener('pause', onQuiet);
       el.removeEventListener('ended', onQuiet);

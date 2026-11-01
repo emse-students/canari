@@ -1775,6 +1775,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(PENDING_SYNC_NOTIF_ID, notif)
             Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
@@ -1807,6 +1809,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(NEW_DEVICE_NOTIF_ID, notif)
             Log.d(TAG, "showNewDeviceNotification: shown (id=$NEW_DEVICE_NOTIF_ID)")

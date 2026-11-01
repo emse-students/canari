@@ -272,6 +272,10 @@ it('a call holds the sound: what plays with sound is paused when it starts, a mu
     const reel = video();
     void reel.play();
     expect(reel.paused, 'a reel starting with sound during the call is paused').toBe(true);
+
+    feed.muted = false;
+    feed.dispatchEvent(new Event('volumechange'));
+    expect(feed.paused, 'a muted video unmuted during the call is paused').toBe(true);
   } finally {
     resetCallSoundGateForTest();
   }

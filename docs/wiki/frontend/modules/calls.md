@@ -2527,7 +2527,9 @@ pause, a phone's rhythm),
 - **What plays it.** `CallOverlay` mounts a second hidden `<audio>` beside the voice sink and hands it
   to [callRingback.ts](../../../../frontend/src/lib/utils/callRingback.ts): `start` / `stop` follow
   `ringingOut`; the element's own `loop` repeats the file. `prime` - a muted play paused at once -
-  runs inside the dialling tap (the overlay mounts within it), so the `play()` seconds later is not
+  runs inside the dialling tap (the overlay mounts within it) - NOT on Android, whose WebView plays
+  without a gesture and where a muted play before the microphone is held would open a MEDIA-usage
+  stream on the loudspeaker - so the `play()` seconds later is not
   refused by a WebView's gesture rule; a refusal still says `[Call] WARN ringback refused without a
   gesture`. Logged: `ringback primed`, `ringback playing (...)`, `ringback stopped (...)`.
 - **The output.** The microphone is held BEFORE the invite (`setupMedia`), so on Android the
@@ -2555,7 +2557,7 @@ the call. Messages still arrive and are shown; only their sound goes.**
 | Sound | How it is silenced during a call |
 |---|---|
 | Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing (`[AUDIO] <name> tone silenced - a call holds the app's sound`). The incoming ring passes `purpose: 'call'` and is exempt |
-| Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on. Nothing resumes on the call's end - the reader presses play |
+| Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on, until unmuted (`volumechange` pauses them). Nothing resumes on the call's end - the reader presses play. The reel review is now registered, so it also follows "one media at a time" and the pause on leaving the screen |
 | Browser notification (web, desktop browser) | raised with `silent: true` |
 | Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
 | iOS banners drawn by the notification service extension | `content.sound = nil` while `CXCallObserver` lists a call not ended (the CallKit ring, a call answered on it, a cellular call). In the foreground the app already presents no banner at all |

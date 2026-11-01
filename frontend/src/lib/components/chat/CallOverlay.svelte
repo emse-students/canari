@@ -185,8 +185,11 @@
     if (!ringback) return;
     const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
       .userActivation;
-    // Only the caller rings out, and only the dialling tap can unlock the element for it.
-    if (activation?.isActive && call.callState === 'calling') {
+    // Only the caller rings out, and only the dialling tap can unlock the element for it. NOT on
+    // Android: its WebView needs no gesture to play, and a muted play there before the microphone
+    // is held would open a MEDIA-usage stream - the ringback would then sound at media volume
+    // through the loudspeaker instead of in the call's communication route.
+    if (activation?.isActive && call.callState === 'calling' && !isAndroidTauriRuntime()) {
       untrack(() => ringback.prime('mounted within the dialling tap'));
     }
   });
