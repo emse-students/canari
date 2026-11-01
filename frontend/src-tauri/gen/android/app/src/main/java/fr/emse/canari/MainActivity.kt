@@ -443,9 +443,9 @@ class MainActivity : TauriActivity() {
 
     override fun onStop() {
         super.onStop()
-        // The in-app ring is the open app's: off screen, the OS notification rings, and the page
-        // starts the player again when it is back (`utils/callRing.ts`).
-        CallRingPlayer.ringingCallId?.let { CallRingPlayer.stop(it, "the app left the screen") }
+        // The in-app ring is the on-screen app's: off screen the call rings on as the native
+        // CallStyle ring, and the page starts the player again when it is back (`utils/callRing.ts`).
+        CallRingPlayer.handOverOffScreen(this)
         CookieManager.getInstance().flush()
     }
 

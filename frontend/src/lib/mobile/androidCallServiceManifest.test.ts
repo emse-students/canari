@@ -98,14 +98,16 @@ describe('the bridge, both sides of the WebView', () => {
     expect(bridgeTs).toContain('canariCall?: AndroidCallBridge');
   });
 
-  it('the six methods the page calls are the six the interface exposes', () => {
+  it('the eight methods the page calls are the eight the interface exposes', () => {
     for (const method of [
       'start(json: String)',
       'update(json: String)',
       'stop(callId: String, reason: String)',
       'pageLoaded()',
-      'ringStart(callId: String, appSounds: Boolean)',
+      'ringStart(json: String)',
       'ringStop(callId: String, reason: String)',
+      'takeDndRegrantOwed()',
+      'openCallChannelSettings()',
     ]) {
       expect(bridgeKt).toMatch(
         // Every metacharacter, backslash included, so the signature is matched as literal text.
@@ -117,8 +119,10 @@ describe('the bridge, both sides of the WebView', () => {
       'update(json: string): void;',
       'stop(callId: string, reason: string): void;',
       'pageLoaded(): void;',
-      'ringStart(callId: string, appSounds: boolean): void;',
+      'ringStart(json: string): void;',
       'ringStop(callId: string, reason: string): void;',
+      'takeDndRegrantOwed(): boolean;',
+      'openCallChannelSettings(): void;',
     ]) {
       expect(bridgeTs).toContain(method);
     }
@@ -149,7 +153,7 @@ describe('the bridge, both sides of the WebView', () => {
   it('a destroyed activity takes the call service down with its page, and a loaded page releases an orphan', () => {
     expect(activityKt).toContain('CallForegroundService.stopForPageGone(this)');
     expect(layout).toMatch(
-      /if \(isAndroidTauriRuntime\(\)\) releaseCallServiceOfPreviousPage\(window\);/
+      /if \(isAndroidTauriRuntime\(\)\) \{\s*releaseCallServiceOfPreviousPage\(window\);/
     );
   });
 });

@@ -18,7 +18,12 @@
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
-  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    askCallChannelDndIfOwed,
+    DND_REGRANT_TOAST_MS,
+    releaseCallServiceOfPreviousPage,
+  } from '$lib/mobile/androidCallService';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import {
     clearEdgeExclusionsForNewDocument,
@@ -149,7 +154,13 @@
     const disposePressedClickGuard = installPressedClickGuard();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
-    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    if (isAndroidTauriRuntime()) {
+      releaseCallServiceOfPreviousPage(window);
+      // Canari's ring moved channel: a Do Not Disturb grant the old one had is asked for once.
+      askCallChannelDndIfOwed(window, (message, action) =>
+        showToast(message, 'warning', DND_REGRANT_TOAST_MS, action)
+      );
+    }
     // Its iOS twin: the proximity sensor a reloaded page may have left armed.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     themeStore.init();

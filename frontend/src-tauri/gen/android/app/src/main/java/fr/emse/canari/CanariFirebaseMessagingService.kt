@@ -1308,6 +1308,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (callId.isEmpty()) return
             // The answer record dies with the ring, whether or not this process still shows it.
             CallRingAnswer.forget(context, callId)
+            // So does the on-screen player of the same call (`call_ring_end`, a decline, the timeout).
+            CallRingPlayer.stopIfRinging(context, callId, "the ring of this call ended")
             if (!activeCallRings.remove(callId)) return
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))

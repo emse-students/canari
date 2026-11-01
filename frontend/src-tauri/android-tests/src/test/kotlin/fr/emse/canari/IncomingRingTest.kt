@@ -29,26 +29,44 @@ class IncomingRingTest {
 
     @Test
     fun `silent mode rings nothing`() {
-        assertEquals(IncomingRing.Plan(sound = false, vibrate = false), IncomingRing.plan(IncomingRing.RINGER_MODE_SILENT, appSounds = true))
+        assertEquals(IncomingRing.Plan(sound = false, vibrate = false), IncomingRing.plan(IncomingRing.RINGER_MODE_SILENT, appSounds = true, inAnotherCall = false))
     }
 
     @Test
     fun `vibrate mode only vibrates`() {
-        assertEquals(IncomingRing.Plan(sound = false, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_VIBRATE, appSounds = true))
+        assertEquals(IncomingRing.Plan(sound = false, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_VIBRATE, appSounds = true, inAnotherCall = false))
     }
 
     @Test
     fun `normal mode sounds and vibrates`() {
-        assertEquals(IncomingRing.Plan(sound = true, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_NORMAL, appSounds = true))
+        assertEquals(IncomingRing.Plan(sound = true, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_NORMAL, appSounds = true, inAnotherCall = false))
     }
 
     @Test
     fun `the app's sounds off - normal mode only vibrates`() {
-        assertEquals(IncomingRing.Plan(sound = false, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_NORMAL, appSounds = false))
+        assertEquals(IncomingRing.Plan(sound = false, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_NORMAL, appSounds = false, inAnotherCall = false))
     }
 
     @Test
     fun `an unknown ringer mode rings normally - a call is never missed for a new value`() {
-        assertEquals(IncomingRing.Plan(sound = true, vibrate = true), IncomingRing.plan(7, appSounds = true))
+        assertEquals(IncomingRing.Plan(sound = true, vibrate = true), IncomingRing.plan(7, appSounds = true, inAnotherCall = false))
+    }
+
+    @Test
+    fun `another call in progress - the ring only vibrates`() {
+        assertEquals(IncomingRing.Plan(sound = false, vibrate = true), IncomingRing.plan(IncomingRing.RINGER_MODE_NORMAL, appSounds = true, inAnotherCall = true))
+    }
+
+    @Test
+    fun `the new channel keeps the importance the user left on the old one`() {
+        assertEquals(0, IncomingRing.inheritedImportance(0)) // NONE stays NONE
+        assertEquals(2, IncomingRing.inheritedImportance(2))
+        assertEquals(IncomingRing.IMPORTANCE_HIGH, IncomingRing.inheritedImportance(4))
+    }
+
+    @Test
+    fun `no old channel, or an unspecified one - HIGH`() {
+        assertEquals(IncomingRing.IMPORTANCE_HIGH, IncomingRing.inheritedImportance(null))
+        assertEquals(IncomingRing.IMPORTANCE_HIGH, IncomingRing.inheritedImportance(IncomingRing.IMPORTANCE_UNSPECIFIED))
     }
 }

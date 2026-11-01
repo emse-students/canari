@@ -14,10 +14,14 @@ import {
   openAndroidCallSession,
   parseNativeCallEvent,
   releaseCallServiceOfPreviousPage,
+  askCallChannelDndIfOwed,
   type AndroidCallBridge,
   type AndroidCallHost,
   type OngoingCallSpec,
 } from './androidCallService';
+
+/** What the recording bridge's `takeDndRegrantOwed` answers. */
+let dndOwed = false;
 
 /** A window with a recording `canariCall` and a real event target the test can dispatch on. */
 function host(withBridge = true) {
@@ -28,8 +32,13 @@ function host(withBridge = true) {
     update: (arg) => calls.push({ method: 'update', arg }),
     stop: (callId, arg) => calls.push({ method: 'stop', arg, callId }),
     pageLoaded: () => calls.push({ method: 'pageLoaded', arg: '' }),
-    ringStart: (callId) => calls.push({ method: 'ringStart', arg: '', callId }),
+    ringStart: (arg) => calls.push({ method: 'ringStart', arg }),
     ringStop: (callId, arg) => calls.push({ method: 'ringStop', arg, callId }),
+    takeDndRegrantOwed: () => {
+      calls.push({ method: 'takeDndRegrantOwed', arg: '' });
+      return dndOwed;
+    },
+    openCallChannelSettings: () => calls.push({ method: 'openCallChannelSettings', arg: '' }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
     canariCall: withBridge ? bridge : undefined,
@@ -434,5 +443,29 @@ describe('parseNativeCallEvent', () => {
       speaker: null,
     });
     expect(parseNativeCallEvent({ ...c, kind: 'output', speaker: 'yes' })).toBeNull();
+  });
+});
+
+describe('the calls channel Do Not Disturb ask (Canari ring, 2026-11-01)', () => {
+  beforeEach(() => {
+    dndOwed = false;
+  });
+
+  it('asks once when native says the old channel had it, with a button to the channel settings', () => {
+    dndOwed = true;
+    const { h, calls } = host();
+    const shown: { message: string; action: { label: string; run: () => void } }[] = [];
+    askCallChannelDndIfOwed(h, (message, action) => shown.push({ message, action }));
+    expect(shown).toHaveLength(1);
+    expect(shown[0].message).not.toBe('');
+    shown[0].action.run();
+    expect(calls.map((c) => c.method)).toEqual(['takeDndRegrantOwed', 'openCallChannelSettings']);
+  });
+
+  it('shows nothing when nothing is owed, or with no bridge', () => {
+    const shown: string[] = [];
+    askCallChannelDndIfOwed(host().h, (message) => shown.push(message));
+    askCallChannelDndIfOwed(host(false).h, (message) => shown.push(message));
+    expect(shown).toEqual([]);
   });
 });

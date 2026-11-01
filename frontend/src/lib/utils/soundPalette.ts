@@ -274,7 +274,7 @@ const RING_MELODY: [number, number, number, number, number][] = [
  *
  * Rendered offline by `tools/notification-sounds/render.mjs`, never hand-copied: the 5 s loop to
  * `res/raw/canari_ring.wav` (the Android `canari_calls_v2` channel and the native in-app ring) and
- * `static/sounds/canari_ring.wav` (the web in-app ring, looped on the tone output), and a 30 s
+ * `static/sounds/canari_ring.wav` (the web in-app ring, looped on the tone output), and a 25 s
  * stretch of the same loop for CallKit's `ringtoneSound` on the iPhone. The render folds every
  * sample past the loop's end - the cadence's room tail - back onto its start, so `loop` playback
  * has no seam.

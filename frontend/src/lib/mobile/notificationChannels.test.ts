@@ -223,12 +223,30 @@ describe('the palette-A notification channels (2026-10-09)', () => {
   });
 
   it('the old ids are deleted at startup, and never equal a current id', () => {
-    const list = applicationKt.match(/SUPERSEDED_CHANNELS =\s*listOf\(([^)]*)\)/)?.[1] ?? '';
-    const old = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(old.sort()).toEqual(['canari_mentions', 'canari_messages', 'canari_reactions']);
+    // EVERY `listOf` the list is built from: its own literal, and each `+ X.Y` it appends (the
+    // calls channel's ids live in `IncomingRing.kt`), so an id added by either is read here.
+    // The declaration runs from `=` to the blank line that ends it.
+    const decl = applicationKt.match(/SUPERSEDED_CHANNELS =([\s\S]*?)\n\s*\n/)?.[1] ?? '';
+    const appended = [...decl.matchAll(/\+\s*IncomingRing\.(\w+)/g)].map((m) => m[1]);
+    expect(appended).toEqual(['SUPERSEDED_CHANNEL_IDS']);
+    const lists = [
+      ...[...decl.matchAll(/listOf\(([^)]*)\)/g)].map((m) => m[1]),
+      ...appended.map(
+        (name) =>
+          incomingRingKt.match(new RegExp(`${name}: List<String> = listOf\\(([^)]*)\\)`))?.[1] ?? ''
+      ),
+    ];
+    const old = lists.flatMap((list) => [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+    expect(old.sort()).toEqual([
+      'canari_calls',
+      'canari_mentions',
+      'canari_messages',
+      'canari_reactions',
+    ]);
     for (const c of ['CHANNEL_MESSAGES', 'CHANNEL_MENTIONS', 'CHANNEL_REACTIONS']) {
       expect(old).not.toContain(ktId(c));
     }
+    expect(old).not.toContain(CHANNEL_CALLS);
     expect(applicationKt).toContain('deleteSupersededChannels(manager)');
   });
 

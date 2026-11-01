@@ -3575,11 +3575,12 @@ static void CanariEnsureCallProvider(void) {
   // the bundle lacks makes CallKit ring the system tone without a word, so the absence is logged.
   if ([[NSBundle mainBundle] pathForResource:@"canari_ring_callkit" ofType:@"wav"] != nil) {
     config.ringtoneSound = kCanariRingtoneSound;
+    NSLog(@"[CanariCallKit] ringtone set to %@ (the Canari ring)", kCanariRingtoneSound);
   } else {
     NSLog(@"[CanariCallKit] ERROR %@ is not in the bundle - CallKit rings the system tone",
           kCanariRingtoneSound);
   }
-  g_callProvider =[[CXProvider alloc] initWithConfiguration:config];
+  g_callProvider = [[CXProvider alloc] initWithConfiguration:config];
   g_callProviderDelegate = [[CanariCallProviderDelegate alloc] init];
   [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
 }

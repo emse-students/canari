@@ -9,7 +9,7 @@
  * app's sounds setting is carried, and that the ring comes back with the app on screen.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { AndroidCallBridge } from '$lib/mobile/androidCallService';
+import type { AndroidCallBridge, NativeRingFacts } from '$lib/mobile/androidCallService';
 import {
   RING_IN_APP_GAIN,
   RING_SRC,
@@ -19,6 +19,19 @@ import {
   type CallRingHost,
 } from '$lib/utils/callRing';
 import { resetToneOutputForTest } from '$lib/utils/toneOutput';
+
+/** Whether the page runs in the Android app: a bridge-less Android build is a defect, not a path. */
+let android = false;
+vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
+
+/** One incoming call, as `ChatBackgroundService` describes it. */
+const call = (callId: string, appSounds = true): NativeRingFacts => ({
+  callId,
+  groupId: `group-of-${callId}`,
+  callerId: 'peer@example.org',
+  hasVideo: false,
+  appSounds,
+});
 
 class FakeSource extends EventTarget {
   buffer: unknown = null;
@@ -71,10 +84,15 @@ class FakeOfflineContext {
   decodeAudioData = vi.fn(() => Promise.resolve(DECODED));
 }
 
-function bridgeHost(): { host: CallRingHost; calls: string[] } {
+function bridgeHost(): { host: CallRingHost; calls: string[]; sent: NativeRingFacts[] } {
   const calls: string[] = [];
+  const sent: NativeRingFacts[] = [];
   const bridge = {
-    ringStart: (callId: string, appSounds: boolean) => calls.push(`start ${callId} ${appSounds}`),
+    ringStart: (json: string) => {
+      const facts = JSON.parse(json) as NativeRingFacts;
+      sent.push(facts);
+      calls.push(`start ${facts.callId} ${facts.appSounds}`);
+    },
     ringStop: (callId: string, reason: string) => calls.push(`stop ${callId} ${reason}`),
   } as unknown as AndroidCallBridge;
   return {
@@ -84,6 +102,7 @@ function bridgeHost(): { host: CallRingHost; calls: string[] } {
       removeEventListener: () => {},
     },
     calls,
+    sent,
   };
 }
 
@@ -99,6 +118,7 @@ beforeEach(() => {
   gains.length = 0;
   contexts.length = 0;
   resetCallRingForTest();
+  android = false;
   resetToneOutputForTest();
   vi.stubGlobal('AudioContext', FakeContext);
   vi.stubGlobal('OfflineAudioContext', FakeOfflineContext);
@@ -116,13 +136,17 @@ afterEach(() => {
   stopCallRing('test over');
   vi.unstubAllGlobals();
   Reflect.deleteProperty(document, 'visibilityState');
+  Reflect.deleteProperty(window, '__canariForeground');
+  vi.restoreAllMocks();
 });
 
 it('on Android, rings natively with the app sounds setting, and stops natively', async () => {
-  const { host, calls } = bridgeHost();
-  startCallRing('call-1', true, host);
+  const { host, calls, sent } = bridgeHost();
+  startCallRing(call('call-1'), host);
   await settle();
   expect(calls).toEqual(['start call-1 true']);
+  // What the native CallStyle ring posts if the app leaves the screen while it rings.
+  expect(sent[0]).toEqual(call('call-1'));
   expect(fetchMock, 'no web sound on Android').not.toHaveBeenCalled();
   stopCallRing('answered');
   expect(calls).toEqual(['start call-1 true', 'stop call-1 answered']);
@@ -130,9 +154,9 @@ it('on Android, rings natively with the app sounds setting, and stops natively',
 
 it('a second start for the same call rings nothing more; another call replaces the first', () => {
   const { host, calls } = bridgeHost();
-  startCallRing('call-1', false, host);
-  startCallRing('call-1', false, host);
-  startCallRing('call-2', false, host);
+  startCallRing(call('call-1', false), host);
+  startCallRing(call('call-1', false), host);
+  startCallRing(call('call-2', false), host);
   expect(calls).toEqual([
     'start call-1 false',
     'stop call-1 another call rings',
@@ -141,7 +165,7 @@ it('a second start for the same call rings nothing more; another call replaces t
 });
 
 it('elsewhere, loops the rendered ring on the tone output, with no timer', async () => {
-  startCallRing('call-1', true, noBridge);
+  startCallRing(call('call-1'), noBridge);
   await settle();
   expect(fetchMock).toHaveBeenCalledWith(RING_SRC);
   expect(sources).toHaveLength(1);
@@ -153,7 +177,7 @@ it('elsewhere, loops the rendered ring on the tone output, with no timer', async
 });
 
 it('a stop ends the loop, which releases the tone output', async () => {
-  startCallRing('call-1', true, noBridge);
+  startCallRing(call('call-1'), noBridge);
   await settle();
   stopCallRing('declined');
   expect(sources[0].stopped).toBe(true);
@@ -161,36 +185,66 @@ it('a stop ends the loop, which releases the tone output', async () => {
 });
 
 it('a ring stopped before its file is decoded never plays', async () => {
-  startCallRing('call-1', true, noBridge);
+  startCallRing(call('call-1'), noBridge);
   stopCallRing('cancelled');
   await settle();
   expect(sources).toHaveLength(0);
 });
 
 it('the app sounds off: nothing plays on the tone output', async () => {
-  startCallRing('call-1', false, noBridge);
+  startCallRing(call('call-1', false), noBridge);
   await settle();
   expect(fetchMock).not.toHaveBeenCalled();
   expect(sources).toHaveLength(0);
 });
 
-it('a ring still up when the app comes back on screen starts again', async () => {
+/** Android's foreground transition: its visibility API never changes, this event does. */
+function androidForeground(foreground: boolean) {
+  Reflect.set(window, '__canariForeground', foreground);
+  window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+}
+
+it('on Android, a ring still up when the app comes back on screen asks the native ring again', () => {
+  android = true;
   const { host, calls } = bridgeHost();
-  startCallRing('call-1', true, host);
+  startCallRing(call('call-1'), host);
+  // `onStop` stops the player and hands the call to the native ring; the page sends nothing.
+  androidForeground(false);
+  expect(calls).toEqual(['start call-1 true']);
+  androidForeground(true);
+  expect(calls).toEqual(['start call-1 true', 'start call-1 true']);
+  stopCallRing('answered');
+  androidForeground(false);
+  androidForeground(true);
+  expect(calls.filter((c) => c.startsWith('start'))).toHaveLength(2);
+});
+
+it('on the web, a ring still up when the tab comes back starts the tone again', async () => {
+  startCallRing(call('call-1'), noBridge);
+  await settle();
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
   document.dispatchEvent(new Event('visibilitychange'));
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
   document.dispatchEvent(new Event('visibilitychange'));
-  expect(calls).toEqual(['start call-1 true', 'start call-1 true']);
-  stopCallRing('answered');
-  document.dispatchEvent(new Event('visibilitychange'));
-  expect(calls.filter((c) => c.startsWith('start'))).toHaveLength(2);
+  await settle();
+  expect(sources).toHaveLength(2);
+  expect(sources[1].loop).toBe(true);
+});
+
+it('an Android build without the bridge rings nothing, and says so at error level', async () => {
+  android = true;
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  startCallRing(call('call-1'), noBridge);
+  await settle();
+  expect(fetchMock, 'no media-volume ring in its place').not.toHaveBeenCalled();
+  expect(sources).toHaveLength(0);
+  expect(error).toHaveBeenCalledWith(expect.stringContaining('no canariCall bridge'));
 });
 
 it('a stop with nothing ringing does nothing', () => {
   const { host, calls } = bridgeHost();
   stopCallRing('idle at startup');
-  startCallRing('call-1', true, host);
+  startCallRing(call('call-1'), host);
   stopCallRing('answered');
   stopCallRing('again');
   expect(calls).toEqual(['start call-1 true', 'stop call-1 answered']);

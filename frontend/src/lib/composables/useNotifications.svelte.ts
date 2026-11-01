@@ -248,11 +248,17 @@ export function useNotifications() {
   }
 
   /**
-   * Rings the incoming call `callId` - Canari's own ring, looped until {@link stopIncomingCallRingtone}
-   * (`utils/callRing.ts`: natively on Android, on the tone output elsewhere).
+   * Rings the incoming call - Canari's own ring, looped until {@link stopIncomingCallRingtone}
+   * (`utils/callRing.ts`: natively on Android, on the tone output elsewhere). The conversation, the
+   * caller and the video flag are what Android's native ring posts if the app leaves the screen.
    */
-  function startIncomingCallRingtone(callId: string) {
-    startCallRing(callId, settings.soundsEnabled);
+  function startIncomingCallRingtone(call: {
+    callId: string;
+    groupId: string;
+    callerId: string;
+    hasVideo: boolean;
+  }) {
+    startCallRing({ ...call, appSounds: settings.soundsEnabled });
   }
 
   /**

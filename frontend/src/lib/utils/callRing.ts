@@ -1,4 +1,4 @@
-import type { AndroidCallHost } from '$lib/mobile/androidCallService';
+import type { AndroidCallHost, NativeRingFacts } from '$lib/mobile/androidCallService';
 import { onAppScreenChange } from '$lib/utils/appForeground';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import { appendLog } from '$lib/utils/sessionLog';
@@ -14,17 +14,23 @@ import { playTone } from '$lib/utils/toneOutput';
  * - ANDROID: natively, `window.canariCall.ringStart` (`CallRingPlayer.kt`) - the RINGTONE stream at
  *   the ringer volume, the ringer mode honoured (silent / vibrate), a vibration that repeats. A
  *   WebView's own sound is MEDIA: silent with the media volume down, loud in silent mode (the owner's
- *   first production call, 2026-10-30). A build without the bridge says so at ERROR level and rings
- *   on the tone output instead - the build and the page disagree, and the log names it.
+ *   first production call, 2026-10-30). A build without the bridge rings NOTHING here and says so at
+ *   error level: the build and the page disagree, and a media-volume beep in its place would hide
+ *   that (the server's `call_ring` still rings it natively).
  * - EVERYWHERE ELSE (web, desktop, the iPhone's open app): the shared tone output (`toneOutput`), the
  *   file decoded once and looped by its `AudioBufferSourceNode` - the loop is the node's own, no
  *   timer paces it - as a `call` tone, exempt from the gate that silences the app during a call.
  *
  * WHEN. {@link startCallRing} / {@link stopCallRing} follow the incoming state (the caller is
- * `ChatBackgroundService`). The app leaving the screen releases the output (the tone output closes,
- * Android stops its player in `onStop`) and the OS notification takes over; its return, while the
- * call still rings, starts the ring again. Both are events, so the ring never outlives its call nor
- * its screen.
+ * `ChatBackgroundService`). Leaving the screen releases the output, and what rings then depends on
+ * the platform:
+ * - Android: `MainActivity.onStop` stops the player and posts the native CallStyle ring from the
+ *   facts `ringStart` carried (`CallRingPlayer.handOverOffScreen`) - it rings on, with Answer and
+ *   Decline, until answered, declined or ended;
+ * - web, desktop and the iPhone's open app: the tone output closes, and `useNotifications` posts ONE
+ *   OS notification (`notifyIncomingCall`'s deferred notice) - one sound, not a repeating ring;
+ * its return, while the call still rings, starts the ring again (Android cancels its native ring
+ * first). Both are events, so the ring never outlives its call nor its screen.
  */
 
 /** The rendered loop, served from `static/sounds/`. */
@@ -40,10 +46,7 @@ export const RING_IN_APP_GAIN = 0.35;
 /** The window as this module reads it, so a test hands in its own. */
 export type CallRingHost = AndroidCallHost;
 
-interface Ringing {
-  callId: string;
-  appSounds: boolean;
-}
+type Ringing = NativeRingFacts;
 
 let ringing: Ringing | null = null;
 /** Stops what the tone output plays for the current ring; null when nothing plays there. */
@@ -123,13 +126,14 @@ function sound(ring: Ringing, why: string): void {
   const bridge = host?.canariCall;
   if (bridge) {
     appendLog(`[Call] in-app ring of ${ring.callId.slice(0, 8)} on the native ringtone (${why})`);
-    bridge.ringStart(ring.callId, ring.appSounds);
+    bridge.ringStart(JSON.stringify(ring));
     return;
   }
   if (isAndroidTauriRuntime()) {
-    appendLog(
-      '[Call] ERROR this Android build has no canariCall bridge - the in-app ring plays on the media volume'
+    console.error(
+      '[Call] this Android build has no canariCall bridge - the open app rings nothing (the native ring still does)'
     );
+    return;
   }
   playOnToneOutput(ring);
   // A browser that vibrates (Chrome on Android): one pattern per ring start, as before the native ring.
@@ -168,8 +172,8 @@ function armScreenWatch(): void {
   onAppScreenChange((onScreen) => {
     if (!ringing) return;
     if (!onScreen) {
-      // The tone output is closed by `toneOutput` itself, the native player by `onStop`: forget the
-      // handle, the OS notification rings off screen.
+      // The tone output is closed by `toneOutput` itself, the native player by `onStop` (which hands
+      // the call to the native ring): forget the handle.
       stopTone = null;
       return;
     }
@@ -178,22 +182,20 @@ function armScreenWatch(): void {
 }
 
 /**
- * Rings the incoming call `callId` until {@link stopCallRing}. A ring already up for the same call is
- * left alone; one of another call is stopped first.
- *
- * @param appSounds the app's own "sounds" setting: off, the tone is silent (Android still vibrates).
+ * Rings the incoming call `ring.callId` until {@link stopCallRing}. A ring already up for the same
+ * call is left alone; one of another call is stopped first. `ring.appSounds` is the app's own
+ * "sounds" setting: off, the tone is silent (Android still vibrates).
  */
 export function startCallRing(
-  callId: string,
-  appSounds: boolean,
+  ring: NativeRingFacts,
   win: CallRingHost = window as unknown as CallRingHost
 ): void {
   if (typeof window === 'undefined') return;
-  if (ringing?.callId === callId) return;
+  if (ringing?.callId === ring.callId) return;
   if (ringing) stopCallRing('another call rings');
   host = win;
   armScreenWatch();
-  ringing = { callId, appSounds };
+  ringing = { ...ring };
   sound(ringing, 'the call rings in');
 }
 

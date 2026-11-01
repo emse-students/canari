@@ -184,7 +184,12 @@
       if (lastIncomingRingCallId !== callId) {
         lastIncomingRingCallId = callId;
         const callerName = getUserDisplayNameSync(callerId ?? '');
-        globalNotifs.startIncomingCallRingtone(callId);
+        globalNotifs.startIncomingCallRingtone({
+          callId,
+          groupId,
+          callerId: callerId ?? '',
+          hasVideo: globalSession.callService?.incomingHasVideo ?? false,
+        });
         globalNotifs.startBlinkingTitle();
         void globalNotifs.notifyIncomingCall(callerName, groupId);
       }

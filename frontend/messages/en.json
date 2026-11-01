@@ -554,6 +554,8 @@
   "call_earpiece_label": "Earpiece",
   "call_route_unavailable_label": "Audio output unavailable for now",
   "call_ringing_label": "Calling…",
+  "call_dnd_regrant_message": "Canari has a new call ringtone. For a call to still ring in Do Not Disturb, allow it again in the call settings.",
+  "call_dnd_regrant_action": "Settings",
   "call_ended_with_duration": "Call ended · {duration}",
   "call_accept_short_label": "Accept",
   "call_banner_region_label": "Call in progress",

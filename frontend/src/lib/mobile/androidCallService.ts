@@ -85,10 +85,51 @@ export interface AndroidCallBridge {
   update(json: string): void;
   stop(callId: string, reason: string): void;
   pageLoaded(): void;
-  /** Rings the incoming call natively, Canari's ring on the RINGTONE stream (`utils/callRing.ts`). */
-  ringStart(callId: string, appSounds: boolean): void;
-  /** Stops that ring. */
+  /**
+   * Rings the incoming call natively, Canari's ring on the RINGTONE stream (`utils/callRing.ts`).
+   * Takes {@link NativeRingFacts} as JSON: what the native CallStyle ring needs off screen.
+   */
+  ringStart(json: string): void;
+  /** Stops that ring, and the native ring it was handed over to off screen. */
   ringStop(callId: string, reason: string): void;
+  /** True once when the old calls channel had Do Not Disturb, which the user must grant again. */
+  takeDndRegrantOwed(): boolean;
+  /** Opens the calls channel's system settings. */
+  openCallChannelSettings(): void;
+}
+
+/** What `ringStart` carries: the call, and what the native ring posts off screen. */
+export interface NativeRingFacts {
+  callId: string;
+  groupId: string;
+  callerId: string;
+  hasVideo: boolean;
+  /** The app's own "sounds" setting: off, the phone only vibrates. */
+  appSounds: boolean;
+}
+
+/** How long the Do Not Disturb ask stays up: it asks for a trip to the settings, not a glance. */
+export const DND_REGRANT_TOAST_MS = 15_000;
+
+/**
+ * Called ONCE per page load on Android. Canari's ring moved to a new channel (`canari_calls_v2`), and
+ * the "override Do Not Disturb" a user had granted the old one cannot be carried by the app - only
+ * the user grants it. Native records that the grant is owed when it deletes the old channel; this
+ * asks once, with a button to the channel's settings.
+ */
+export function askCallChannelDndIfOwed(
+  host: AndroidCallHost,
+  show: (message: string, action: { label: string; run: () => void }) => void
+): void {
+  const bridge = host.canariCall;
+  if (!bridge?.takeDndRegrantOwed()) return;
+  appendLog(
+    '[Call] the old calls channel overrode Do Not Disturb - asking the user to grant it again'
+  );
+  show(m.call_dnd_regrant_message(), {
+    label: m.call_dnd_regrant_action(),
+    run: () => bridge.openCallChannelSettings(),
+  });
 }
 
 /**

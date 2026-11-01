@@ -38,15 +38,29 @@ object IncomingRing {
     data class Plan(val sound: Boolean, val vibrate: Boolean)
 
     /**
-     * What the in-app ring does under the phone's ringer mode, as the system's own ring would: SILENT
-     * neither sounds nor vibrates, VIBRATE only vibrates, NORMAL does both. [appSounds] is the app's
-     * own "sounds" setting: off, the tone is not played, the vibration still says a call is there. An
-     * unknown mode (a newer platform) rings normally - a call must never be missed for a value this
+     * What the in-app ring does under the phone's state, as the system's own ring would: SILENT
+     * neither sounds nor vibrates, VIBRATE only vibrates, NORMAL does both - and [inAnotherCall] (the
+     * audio mode is not `MODE_NORMAL`: a phone or VoIP call is up) only vibrates, as a call waiting
+     * does, so the tone never plays into the other call. [appSounds] is the app's own "sounds"
+     * setting: off, the tone is not played, the vibration still says a call is there. An unknown
+     * ringer mode (a newer platform) rings normally - a call must never be missed for a value this
      * code has not met, and the decision is logged with the raw value.
      */
-    fun plan(ringerMode: Int, appSounds: Boolean): Plan = when (ringerMode) {
+    fun plan(ringerMode: Int, appSounds: Boolean, inAnotherCall: Boolean): Plan = when (ringerMode) {
         RINGER_MODE_SILENT -> Plan(sound = false, vibrate = false)
         RINGER_MODE_VIBRATE -> Plan(sound = false, vibrate = true)
-        else -> Plan(sound = appSounds, vibrate = true)
+        else -> Plan(sound = appSounds && !inAnotherCall, vibrate = true)
     }
+
+    /** `NotificationManager.IMPORTANCE_*`, spelled here for the same reason. */
+    const val IMPORTANCE_UNSPECIFIED = -1000
+    const val IMPORTANCE_HIGH = 4
+
+    /**
+     * The importance `canari_calls_v2` is created with: the one the user left on `canari_calls`, so
+     * the new id does not undo their choice - a channel they turned off (`NONE`) stays off. A phone
+     * with no old channel (a fresh install) gets [IMPORTANCE_HIGH].
+     */
+    fun inheritedImportance(oldImportance: Int?): Int =
+        if (oldImportance == null || oldImportance == IMPORTANCE_UNSPECIFIED) IMPORTANCE_HIGH else oldImportance
 }

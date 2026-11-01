@@ -125,6 +125,8 @@ beforeEach(() => {
     pageLoaded: () => {},
     ringStart: () => {},
     ringStop: () => {},
+    takeDndRegrantOwed: () => false,
+    openCallChannelSettings: () => {},
   };
 });
 
