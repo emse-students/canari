@@ -89,6 +89,12 @@ export interface AddMessageToChatOptions {
    * a ledger that repairs a race is a witness to it, not a fix.
    */
   outboxEntry?: OutboxEntry;
+  /**
+   * Called once the message and its `outboxEntry` are on disk together - the ONE report that the
+   * pair was written (review of #2843, M1). A pair write that failed throws `MessagePairWriteError`
+   * instead; with no storage neither happens.
+   */
+  onPairWritten?: () => void;
   /** Monotonic catch-up index (MLS queue / history replay order); used for in-session ordering only. */
   ingestSequence?: number;
   /**

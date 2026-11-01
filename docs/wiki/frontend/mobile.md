@@ -821,6 +821,231 @@ dead would produce, and the third row proves the claim is the thing holding the 
 an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
 introuvable", so the assertion is about ROUTING and touches nobody's data.
 
+#### One notification delegate, and a tap that waits for the page (2026-11-01)
+
+**Measured on `v1.5.4-alpha.1` (iPhone 12, TestFlight build 100500401).** A tap on a push banner opened
+the conversation with the app in the FOREGROUND, resumed the previous page from the BACKGROUND, and
+cold-started onto the feed from a KILLED app. In both failures iOS logged `Received response ...
+UNNotificationDefaultActionIdentifier` then `Reply (error: empty-response)`; the app never logged
+`[CanariPush] notification tap`, and logged `[CanariDeepLink] scene connected with 0 launch url(s)`. iOS
+also logged `Received response 7 for willPresentNotification` - 7 is badge|sound|alert, the answer of
+`tauri-plugin-notification`'s handler.
+
+**The cause, read from the code.** `UNUserNotificationCenter.delegate` is ONE weak slot and its last
+writer owns it. `CanariPushSetup` writes it from `canari_ios_bootstrap()` in `main()`; then
+`ffi::start_app()` builds the Tauri app, whose plugin setup calls `register_ios_plugin` ->
+`init_plugin_notification()` -> `NotificationPlugin.init` -> `NotificationManager.init()`, which
+writes `center.delegate = self` (`tauri-plugin-notification` 2.7.0, `ios/Sources/NotificationManager.swift`).
+That runs before `UIApplicationMain`, so before any notification is delivered, on every launch. The
+manager's `didReceive` forwards a response to its handler only when the trigger is NOT a
+`UNPushNotificationTrigger`; for a remote push it calls `completionHandler()` and nothing else. So
+`CanariNotificationDelegate` never ran on a phone - not its tap, not its reply and mark-as-read
+actions. The foreground PASS was the page's own path: a message arriving over the socket is posted
+by the page through the plugin (`useNotifications.svelte.ts`), and its tap comes back through the
+plugin's `actionPerformed` to `onAction`.
+
+**The fix: one delegate, taken back with public API.** `CanariPushSetup` still sets Canari's delegate
+from `main()`. In the `UIApplicationDidFinishLaunching` observer, `CanariTakeNotificationDelegate`
+reads `center.delegate`. Every plugin has registered by then, and iOS delivers a cold start's
+response after that point. If the slot is not Canari's, the function keeps the holder (weakly) as
+the FORWARD TARGET, says at INFO who held it, and sets Canari's delegate again.
+`CanariCheckNotificationDelegate` accuses, at ERROR, a slot Canari does not hold at every
+`didBecomeActive`, which is the moment before a background tap is delivered. That check catches a
+writer later than the launch. It is an event, never a poll. (The first version replaced
+`-[UNUserNotificationCenter setDelegate:]` instead; the review of #2843 dropped that replacement.
+The SLOT is taken with public API, but the fix is not swizzle-free: one method of
+`UNUserNotificationCenter` IS replaced, `addNotificationRequest:withCompletionHandler:`, below.)
+
+**Who answers a notification is decided by its POSTER** (`CanariNotificationPosterOf`, read from the
+request):
+
+- **Remote push** (`UNPushNotificationTrigger`): Canari's.
+- **The Share Extension's banner:** Canari's.
+- **`canari_push.mm`'s own local notifications** (`canari-<n>` or a UUID): Canari's.
+- **A decimal identifier the plugin posted IN THIS PROCESS:** the plugin's. The plugin always writes
+  `"\(notification.id)"` as the identifier. Both callbacks hand it to the forward target, so the
+  page's `onAction` path is unchanged.
+
+**The plugin's memory, mirrored rather than guessed.** The plugin answers from what it saved in memory
+when posting, and it force-unwraps that entry (`notificationsMap[request.identifier]!`, in both
+`willPresent` and `didReceive`). A decimal-id notification from an EARLIER process (posted, app
+killed, then tapped) would trap the app inside the plugin. That is what happened whenever the plugin
+held the slot.
+
+- So this process records the identifier of every request added through
+  `-[UNUserNotificationCenter addNotificationRequest:withCompletionHandler:]`
+  (`CanariRecordNotificationsPostedThisProcess`, installed in `main()` before any plugin exists).
+- It is a pass-through: the request is unchanged and never refused. It is a method replacement
+  (`class_replaceMethod`), the one this fix keeps, because no public API reports what the plugin
+  posts. It is installed ONCE per process (`dispatch_once`): a second install would read the
+  recorder itself as the "original" and recurse for ever (review A4).
+- A decimal id outside that set is said in the log and answered by Canari. Its tap takes Canari's
+  path, and a payload that names no link opens the app where it was. The page's own map of targets
+  died with the earlier process.
+- No clock is involved. The first version compared the delivery date with the process start; the
+  review removed it.
+
+**`willPresent`: only a remote push is an arrival (review of #2843, F1).** Canari's own local
+notifications were also handed to `CanariHandleFcmData`. Their type-less `userInfo` fell to a "new
+message" re-post, which came back to `willPresent`. While the app was inactive, that loop played a
+sound on every pass, beside the extension's banner. Now each poster gets one answer:
+
+- **A Canari local notification:** answered, never handled again (`CanariOwnLocalPresentation`).
+  "In front" is `canari_ios_is_in_foreground()`, which means ACTIVE: it turns false at
+  `willResignActive`. Three threads are always shown, because the page does not show their content:
+  the two `CanariHandleFcmData` posts while foreground (`canari_social`, `canari_forms`, the
+  `showsWhileForeground` posts that were invisible before) and the "reply not sent" notice
+  (`canari_quick_reply`). A message notification answers None while ACTIVE only. While INACTIVE
+  (Notification Center down, a system alert up) the page is not what the user sees, so it is shown,
+  like a push (review A5); answered None there, a message a background frame decrypted was
+  swallowed. The pending-sync notice never reaches this answer while ACTIVE: its poster refuses the
+  `canari_messages` thread in front (round-3 correction of the A5 note, L4).
+- **A remote push while ACTIVE:** handled (the page shows a message, `social`/`form_reminder` is
+  re-posted locally and shown, and CallKit rings what the page cannot), and NOT presented itself.
+- **A remote push while INACTIVE:** presented as the banner the extension drew, and NOT handled. This
+  removes the in-process decrypt, the second post, and the CallKit ring beside the FCM banner.
+
+**The tap waits in durable state.** A killed app's tap is delivered before the WebView exists, so the
+delegate no longer `openURL`s its own scheme.
+
+- `CanariQueueNotificationTap` writes `pending_notification_tap.json` (`{"deepLink","tappedAt"}`; a
+  newer tap replaces an untaken one).
+- It then dispatches `canari:notification-tap` to a live page, on the main queue (`CanariTellPage`).
+- The page takes the file through `read_and_clear_pending_notification_tap` (the claim-by-rename
+  handoff of `commands/handoff.rs`, so exactly once). It routes the link through the same
+  `processUrls` as a deep link (`$lib/mobile/notificationTapDrain.ts`, wired in `hooks.client.ts`).
+  That wiring sits outside the deep-link plugin's import chain, so a failed import cannot take the
+  tap down.
+- **NOTHING IS TAKEN BEFORE THE ROUTER IS MOUNTED** (`$lib/navigation/routerReady`, resolved by the
+  root layout's `onMount`; review F4). The take deletes the file, and a page link's `goto`
+  (post, form, agenda, proposals) issued before the router exists does nothing. So a cold-start
+  tap on one of them used to be read and lost. Waiting keeps ONE path for every link.
+- No clock is involved. The file is written before the event, and the listener is registered before
+  the first take. Tests: `notificationTapDrain.test.ts`.
+
+**A tap is not an arrival.** The tap handler no longer hands the payload to `CanariHandleFcmData`.
+From a backgrounded or killed app, `canari_ios_is_in_foreground()` is still false at that point, so
+the handler would have decrypted the message in the app process and posted it a second time. It
+follows that **a tap no longer calls `[FIRMessaging appDidReceiveMessage:]`: FCM records no
+notification open** for iOS.
+
+**A quick reply over a page that holds the MLS state goes to the page (review F7).** With a manager
+loaded, the native encrypt is refused by the foreground guard. The entry the native side left in
+`outbox_pending.ndjson` was then erased by the page's next `store_outbox_mirror`, so a reply typed in
+Notification Center over an open app was lost. The fix:
+
+- `CanariHandleQuickReplyAction` asks the fact first (`canari_ios_page_holds_mls`, Rust
+  `live_manager_in_process`).
+- When a manager is loaded, `CanariHandQuickReplyToPage` APPENDS the reply to
+  `pending_quick_replies.ndjson` (one `O_APPEND` line) and dispatches `canari:quick-reply`.
+- **The line is SEALED and names the ACCOUNT THE NOTIFICATION WAS ADDRESSED TO (reviews A2, M3).**
+  Its plaintext is `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`, sealed under
+  the install's cache key with its own purpose (`native_cache::Purpose::QuickReply`, through
+  `canari_native_seal_quick_reply_line`); with no key, nothing is written and the reply is LOST, said.
+  `accountId` is the notification's own `recipientId`, stamped into its `userInfo` by both posters
+  (`CanariShowLocalNotification` from the push context that decrypted it, the extension's
+  `applyMessageContent` from its `ctx.userId`). It is never read from `push_context.json` at reply
+  time, which named whoever was signed in THEN, and which is absent for a session whose device key
+  was empty (`TauriMlsService`, L2): the page path needs no push context at all. A notification that
+  names no recipient (posted before this build, or decrypted with no context) is refused, and the
+  user is told the reply is not sent. The native path sends only when its push context IS that
+  recipient; otherwise it refuses, and says so.
+- A take hands over only the signed-in account's lines. Another account's are DROPPED, and the native
+  side is told each is LOST at once (its notice shows), rather than when the background time ends. A
+  put-back of them would have been re-taken by the next account for ever.
+- **When a line goes (L3).** When it is taken; when another account takes the file; and when ITS
+  account is DELETED: `delete_user_quick_replies` (a step of `wipeDeletedAccountLocalData`) removes
+  that account's lines and re-appends every other one, still sealed - a line whose owner cannot be
+  read is kept, since an unknown owner is never a licence to delete. The file is NOT in
+  `ACCOUNT_PUSH_FILES`: deleting it whole dropped other accounts' replies. A sign-out leaves the
+  lines, like the outbox: the reply is still that account's, and its next sign-in sends it.
+- **A sign-out removes every delivered notification** (`endForSignOut`,
+  `removeAllDeliveredNotifications`). This install holds one push registration at a time, so all of
+  them were addressed to the account leaving. Left in the tray, they showed its messages to the next
+  account, and offered a reply on them.
+- The page (`$lib/mobile/quickReplyDrain.ts`, registered by `ChatBackgroundService` once signed in)
+  takes the lines (`read_and_clear_pending_quick_replies`, with its account id) when the native side
+  says one waits, when a session registers, and whenever the app comes back to the front
+  (`visibilitychange`, M2). It sends each one through the composer's path (`useMessaging.sendTextTo`
+  -> `sendChatMessage`).
+- A line the page cannot queue (for example, its conversation is not loaded yet) is APPENDED BACK,
+  sealed again (`return_pending_quick_replies`), and the page shows "your reply is waiting" once
+  (M2). The next take sends it. A conversation STORED and not loaded yet is that case, and so is one
+  with NO row here: a notification proves its conversation exists on the server, so a missing row is
+  a Welcome this device has not installed yet (a first contact), never a gone conversation. Only a
+  REMOVED conversation will never take the reply, so `sendTextTo` answers `gone` for it alone (read
+  from the row in memory, else the stored row - never a refusal's wording) and the reply is
+  acknowledged LOST, which shows the "reply not sent" notice. It used to be put back for ever
+  (round 4).
+- **A send that throws AFTER its message was written is owned, never put back (review A3).** The
+  classification is made where the write is KNOWN (M1). `addMessageToChat` REPORTS the pair write:
+  `onPairWritten` once the echo and its outbox entry are on disk, `MessagePairWriteError` when that
+  one write failed (it used to be swallowed into a log line, and the send then told the outbox the
+  row was durable when nothing was). `sendChatMessage` passes `alreadyDurable` only after
+  `onPairWritten`; otherwise the outbox writes the row itself. The OUTBOX types its own failures at
+  the throw: `OutboxEnqueueError` for a refusal before any write (no storage layer, the write
+  failed), `MessageWrittenError` (`$lib/utils/chat/messageWrittenError.ts`) once the row is on disk.
+  The drain answers a `MessageWrittenError` "pending". Putting it back sent it twice.
+- **A SUSPENDED PAGE GETS THE TIME TO SEND THE REPLY (reviews A1, H1).** The decision cannot move to
+  "the app is active": `canari_ios_page_holds_mls()` stays true while the app is in the background
+  with its manager warm, and a native write under a warm manager is persisted over. What changed is
+  the WAIT. `CanariHoldQuickReply` begins a background task and keeps the response's completion
+  handler, BEFORE the line is written. The page acknowledges each reply with how its OUTBOX SETTLED
+  it, never merely that it queued it: `OutboxController.awaitSettled` answers `sent`, `failed` (a
+  failed row the page shows) or `pending` (still queued, and no running flush can move it before a
+  retry). It is decided by events - the attempt's outcome, the end of the last running flush - and by
+  the queue and the row as they stand when the caller asks; no clock. **It provably ends (round 4):**
+  everything that can be running when a waiter registers answers the waiters in a `finally` of its
+  own - a flush, a lane (which can outlive its flush when a sibling lane threw), the lane an exit
+  claims (`drainForExit`) - and the last to end answers them `pending`; `dispose()` (a sign-out)
+  answers every waiter left, and a waiter after it at once. A running flush or lane ends because an
+  explicit deadline bounds every POST it awaits (the `write` class of `requestDeadline.ts`, a typed
+  `RequestDeadlineError`; the key package round's `DeliveryDeadlineError`), not the transport. The JSDoc of `awaitSettled` carries the
+  proof; `outbox.test.ts` holds a sign-out during a settle and a waiter behind an exit lane alone.
+- The acknowledgement (`acknowledge_quick_reply(replyId, outcome)` -> the registered native listener,
+  a `QuickReplyOutcome` code: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost) releases the hold, and
+  the user is told on ONE surface (`CanariTellQuickReplyOutcome`): sent, nothing; pending, what the
+  native path does with an undelivered reply (`CanariMaybeNotifyPendingSync`: the pending-sync notice
+  in the background, and the outbox retry task); put back, the pending-sync notice in the background;
+  failed, the "reply not sent" notice in the background (the page shows the failed row in front);
+  lost, the "reply not sent" notice ALWAYS, in front too, since nothing else would say it. The page
+  shows a lost reply itself only when the native side could not be told (a line naming no id, an
+  acknowledgement that failed). A line the page cannot read is acknowledged lost at once, not left
+  to the expiry.
+- **The expiry always ends its own task (L1).** The task is begun, its id stored in the hold, and the
+  hold published in ONE block on the main thread, where iOS runs the expiration handler - so the
+  handler can never run before the id is stored. The id is taken out of the hold, and the task ended,
+  ON THE MAIN THREAD ONLY (`CanariEndQuickReplyTaskOnMain`): a release off main queues a block that
+  takes it there. So the expiry handler, which calls that function synchronously, either takes the
+  id and ends the task before it returns, or finds it already ended by an earlier block on the same
+  thread - an end is never left queued behind a handler that saw the id gone (round 4). Each task is
+  ended exactly once. The expiry is iOS's own end
+  of the background time, not a clock of ours: it logs an ERROR naming the reply and reads it as
+  pending; the reply is in the page's queue or in its file. Whether a suspended WebView's JavaScript
+  runs inside that background time is a reading owed on the iPhone.
+- **One loss is left, and it is named:** the take CLAIMS the file (a rename) before the page sends.
+  A process that dies between that claim and the send's durable write (the echo plus outbox entry)
+  loses the replies of that take. A take-then-acknowledge file, as the push cache has
+  (`take_fcm_cache` / `ack_fcm_cache`), would close it.
+- Tests: `quickReplyDrain.test.ts` (each outcome acknowledged once settled, the put-back told once,
+  the lost line, the visibility drain), `outbox.test.ts` (`awaitSettled`, and the enqueue's typed
+  failures on the real controller), `messagingDurability.test.ts`,
+  `useMessaging.pairWrite.svelte.test.ts` (the pair write reported, never swallowed),
+  `accountLocalWipe.test.ts` (the deletion step), and `quick_reply_tests` in `commands/push.rs`
+  (sealed on disk, another account's line dropped and told lost, a deleted account losing only its
+  own lines, the outcome codes reaching the listener).
+- **Mark-as-read from the banner over an open app is still native.** Its watermark goes through the
+  same outbox mirror, so the same refusal and erasure apply to it. It is OPEN
+  ([backlog](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)).
+
+Source-shape tests: `iosNotificationDelegate.test.ts`.
+
+**What this makes reachable for the first time, and so owes a reading:**
+
+- the remote-push `willPresentNotification` (foreground arrival handling and its presentation answer);
+- the reply and mark-as-read quick actions from the banner;
+- the share banner's tap.
+
 #### What each notification names as its tap target, and who routes it (2026-10-05)
 
 **Reported by the user: on an iPhone a tap on a push opens the app and nothing else.** The tap handler
@@ -3883,6 +4108,8 @@ network, the tab's registration marker and the app shell.
 | push secret | `pending_push_secret.txt`, Android Keystore-wrapped prefs, iOS Keychain, App Group `push_secret.txt` | all four erased |
 | `push_context.json` (`baseUrl`, bearer `pushToken`) | data dir, App Group copy | reduced to `userId`, `deviceId`, `locale` (allowlist); App Group copy removed |
 | `mls.bin`, device key, `graine_seeds.json`, FCM cache | data dir / Keystore / App Group | kept - a sign-out keeps the local state; without a `baseUrl` no background reader loads a context, so nothing decrypts with them |
+| delivered notifications (iOS) | Notification Center | all removed (`removeAllDeliveredNotifications` in `endForSignOut`, badge zeroed): every one was addressed to the account leaving ([quick replies](#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)) |
+| quick replies waiting for the page (iOS) | `pending_quick_replies.ndjson` | kept, sealed and tied to their account, sent by its next sign-in; only that account's DELETION removes them |
 
 **Two durable marks** (`push_registration.rs` writes both; names shared with
 `PushRegistrationEnd.kt` and `canari_push.mm`):

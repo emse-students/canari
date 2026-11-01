@@ -608,6 +608,54 @@ pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
     crate::page_ring::page_rings_in_app()
 }
 
+/// Whether the page holds a loaded MLS manager in this process - the fact that makes it the one that
+/// sends. A notification quick reply is then handed to the page (`pending_quick_replies.ndjson`)
+/// instead of being encrypted natively, which the foreground guard would refuse and the page's next
+/// outbox mirror would erase.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_holds_mls() -> bool {
+    crate::concurrency::live_manager_in_process()
+}
+
+/// Seals one `pending_quick_replies.ndjson` line (`native_cache`, purpose `QuickReply`) and returns
+/// it as a heap C string to free with `canari_free_string`, or NULL when there is no usable key - in
+/// which case the caller writes NOTHING. Never a reply in the clear.
+///
+/// # Safety
+/// Both arguments must be null or valid null-terminated C strings for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_seal_quick_reply_line(
+    cache_key_b64: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if cache_key_b64.is_null() || line.is_null() {
+        log::error!("[QUICK_REPLY] ffi: null argument");
+        return std::ptr::null_mut();
+    }
+    let Some(key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        return std::ptr::null_mut();
+    };
+    let sealed = crate::native_cache::seal_line(
+        &key,
+        crate::native_cache::Purpose::QuickReply,
+        &str_from_c_str(line),
+    );
+    match std::ffi::CString::new(sealed) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Registers the native listener told what became of a quick reply the page was handed - its
+/// `QuickReplyOutcome` code (`commands::push::acknowledge_quick_reply`). Registered by
+/// `CanariPushSetup` rather than linked, since this crate is linked into the notification extension.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
+    listener: Option<crate::commands::push::QuickReplyAckListener>,
+) {
+    crate::commands::push::set_quick_reply_ack_listener(listener);
+}
+
 /// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
 /// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
 /// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.

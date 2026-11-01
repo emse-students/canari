@@ -342,6 +342,8 @@
   "chat_message_placeholder": "Écrire…",
   "chat_send_message_label": "Envoyer le message",
   "chat_send_error_generic": "Échec de l'envoi. Réessayez dans un instant.",
+  "chat_quick_reply_waiting": "Votre réponse depuis la notification partira dès que la conversation sera chargée.",
+  "chat_quick_reply_lost": "Votre réponse depuis la notification n'a pas pu être envoyée. Écrivez-la à nouveau dans la conversation.",
   "chat_send_held": "Envoi dès que la conversation est prête ({count} en attente)",
   "chat_send_held_not_sent": [
     {
