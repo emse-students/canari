@@ -77,9 +77,39 @@ pub fn owner_alert_keys_of(
     keys
 }
 
-/// The marker file name of `key`: its bytes in hex, so `:` and `|` never reach a path.
+/// The longest file name the filesystems the ledger lives on accept (ext4/f2fs on Android, APFS on
+/// iOS): 255 bytes.
+const MAX_FILE_NAME_BYTES: usize = 255;
+
+/// The marker file name of `key`: the SHA-256 of its bytes, in hex - 64 characters whatever the
+/// key, so `:` and `|` never reach a path and no key can name a file the filesystem refuses.
+///
+/// Before 1.6.1 the name was the whole key in hex ([`legacy_marker_name`]), twice the key's length:
+/// a production key (`userId:deviceId|fingerprint`) runs to ~160 bytes, its name to ~320, and
+/// every claim failed with `File name too long (os error 36)` - so no background engine announced
+/// a new device, and no key the app showed was claimed, from 1.4.1-alpha.2 on.
 fn marker_name(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(key.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The marker name builds before 1.6.1 wrote: the key's bytes in hex. Read, never written - see
+/// [`announced_by_an_older_build`].
+fn legacy_marker_name(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether a build before 1.6.1 already announced `key`. Such a marker can exist only for a key of
+/// at most 127 bytes: a longer key's hex name was refused by the filesystem, so it was NEVER
+/// written and there is nothing to read. A short key's marker is honoured so the upgrade announces
+/// nothing twice (`docs/wiki/legacy-compatibility.md`, "a device-notice marker named by the key in
+/// hex").
+fn announced_by_an_older_build(dir: &Path, key: &str) -> bool {
+    let name = legacy_marker_name(key);
+    name.len() <= MAX_FILE_NAME_BYTES && dir.join(name).exists()
 }
 
 /// Claims each key in the ledger under `data_dir` and returns the keys THIS call claimed - the ones
@@ -97,6 +127,10 @@ pub fn claim_device_notices(data_dir: &Path, keys: &[String]) -> Vec<String> {
     }
     let mut claimed = Vec::new();
     for key in keys {
+        if announced_by_an_older_build(&dir, key) {
+            log::debug!("[DEVICE_NOTICE] already announced by an older build: {key}");
+            continue;
+        }
         let path = dir.join(marker_name(key));
         match std::fs::OpenOptions::new()
             .write(true)
@@ -107,9 +141,10 @@ pub fn claim_device_notices(data_dir: &Path, keys: &[String]) -> Vec<String> {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 log::debug!("[DEVICE_NOTICE] already announced: {key}");
             }
-            Err(e) => {
-                log::error!("[DEVICE_NOTICE] marker for {key} not written, not announced: {e}")
-            }
+            Err(e) => log::error!(
+                "[DEVICE_NOTICE] marker {} for {key} not written, not announced: {e}",
+                path.display()
+            ),
         }
     }
     if !claimed.is_empty() {
@@ -203,6 +238,56 @@ mod tests {
             .unwrap()
             .count();
         assert_eq!(count, MAX_DEVICE_NOTICE_MARKERS);
+    }
+
+    /// A production-shaped key: a 36-byte user id, a long device id, a 16-hex fingerprint - the
+    /// shape whose hex name (~320 bytes) the Mi 9T refused at every start.
+    fn long_key(device: &str) -> String {
+        format!(
+            "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0:android-{device}-{}|00112233aabbccdd",
+            "7".repeat(100)
+        )
+    }
+
+    #[test]
+    fn a_long_key_names_a_short_stable_distinct_marker() {
+        let (a, b) = (long_key("a"), long_key("b"));
+        assert!(
+            legacy_marker_name(&a).len() > MAX_FILE_NAME_BYTES,
+            "the shape that failed"
+        );
+        assert_eq!(marker_name(&a).len(), 64);
+        assert_eq!(marker_name(&a), marker_name(&a), "deterministic");
+        assert_ne!(marker_name(&a), marker_name(&b), "one marker per key");
+    }
+
+    #[test]
+    fn a_long_key_is_claimed_and_then_reads_announced() {
+        let dir = temp_dir("long");
+        let keys = vec![long_key("a")];
+        assert_eq!(
+            claim_device_notices(&dir, &keys),
+            keys,
+            "the marker is written"
+        );
+        assert!(dir
+            .join(DEVICE_NOTICES_DIR)
+            .join(marker_name(&keys[0]))
+            .exists());
+        assert!(
+            claim_device_notices(&dir, &keys).is_empty(),
+            "the second claim reads it announced"
+        );
+    }
+
+    #[test]
+    fn a_marker_written_by_an_older_build_still_reads_announced() {
+        let dir = temp_dir("legacy");
+        let key = "bob:web-2|00ff".to_string();
+        let ledger = dir.join(DEVICE_NOTICES_DIR);
+        std::fs::create_dir_all(&ledger).unwrap();
+        std::fs::write(ledger.join(legacy_marker_name(&key)), b"").unwrap();
+        assert!(claim_device_notices(&dir, std::slice::from_ref(&key)).is_empty());
     }
 
     /// The background engine's half end to end: a commit that gives this account another device,

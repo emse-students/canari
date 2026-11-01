@@ -1113,7 +1113,15 @@ that consumes them next.
   is closed learns of the device at the next message push or when the app opens). Each push-decrypt
   answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
   one marker file per key (`create_new`, atomic across the app and the extension), in the app data
-  directory on Android and the App Group on iOS. The app claims the keys it showed
+  directory on Android and the App Group on iOS. **A marker is named by the SHA-256 of its key, in
+  hex (64 characters), since 1.6.1.** From 1.4.1-alpha.2 to 1.6.0 it was named by the whole key in
+  hex: a production key (`userId:deviceId|fingerprint`, ~160 bytes) gave a ~320-byte name, over the
+  255-byte limit, so every claim failed with `File name too long (os error 36)`, logged at ERROR
+  five times a start on the Mi 9T, and NO background engine ever posted the alert. A marker an older
+  build did write (a key of at most 127 bytes) is still read as "already announced"
+  ([legacy-compatibility](../legacy-compatibility.md)). A marker that cannot be written is an ERROR
+  naming its path, and its key is NOT announced, since nothing would then stop a second post. The
+  app claims the keys it showed
   (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
   foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
   the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).

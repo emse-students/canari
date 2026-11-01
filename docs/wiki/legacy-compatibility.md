@@ -576,6 +576,20 @@ estates, with both stores serving it. No floor client writes plaintext then, and
 that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
 refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
 
+### No date yet - a device-notice marker named by the key in hex, written by a build before 1.6.1
+
+**Site:** `announced_by_an_older_build` and `legacy_marker_name` in
+`frontend/src-tauri/src/mobile/device_notice.rs`.
+**Shim (2026-11-01):** the device-notice ledger names a marker by the SHA-256 of its key since 1.6.1;
+before, by the whole key in hex, which the filesystem refused for any key over 127 bytes
+([mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
+So an old marker exists only for a SHORT key, and the claim reads it as "already announced" so the
+upgrade posts nothing twice. It is read, never written.
+**Removal condition:** `minClientVersion` at or above 1.6.1, on both estates, with both stores
+serving it, and every installed build has registered once since: the registration pre-claims every
+old key of the account under its digest name, so a short key's legacy marker answers nothing the new
+one does not. Data at rest, so the floor alone does not retire it - the pre-claim does.
+
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
