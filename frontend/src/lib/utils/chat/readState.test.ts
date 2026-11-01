@@ -410,23 +410,26 @@ describe('withOwnReadAdvanced - the count follows my own read point', () => {
   });
 });
 
+/** A server statement far in the future: the ceiling's own bound is out of the way. */
+const SEEN = Number.MAX_SAFE_INTEGER;
+
 describe('readMarkTarget - the sender says only what is new', () => {
   it("does not move a DM mark over the reader's own send, so sending emits no watermark", () => {
     // Read the peer up to 2000, then reply at 3000: before this rule the mark became 3000 and a
     // frame went out 2 s later carrying nothing a receiver did not already know.
     const msgs = [msg('a', 1000), msg('b', 2000), msg('mine', 3000, ME)];
-    expect(readMarkTarget(msgs, 2000, false)).toBe(2000);
+    expect(readMarkTarget(msgs, 2000, false, SEEN)).toBe(2000);
     expect(watermarkAfterReading(msgs, 2000)).toBe(3000);
   });
 
   it("still moves a DM mark over a foreign message that arrives after the reader's own", () => {
     const msgs = [dated('mine', 3000, 3000, ME), dated('late', 2500, 2500)];
-    expect(readMarkTarget(msgs, 2000, false)).toBe(2500);
+    expect(readMarkTarget(msgs, 2000, false, SEEN)).toBe(2500);
   });
 
   it('counts unread exactly as before: an own message never was unread', () => {
     const msgs = [dated('a', 1000, 1000), dated('mine', 3000, 3000, ME)];
-    expect(countUnreadForUser(msgs, 0, readMarkTarget(msgs, 0, false))).toBe(0);
+    expect(countUnreadForUser(msgs, 0, readMarkTarget(msgs, 0, false, SEEN))).toBe(0);
   });
 
   it('leaves a salon unchanged - own and system rows still move its server mark (#1619, #1820)', () => {
@@ -435,8 +438,8 @@ describe('readMarkTarget - the sender says only what is new', () => {
       msg('mine', 3000, ME),
       msg('notice', 4000, 'system', { isSystem: true }),
     ];
-    expect(readMarkTarget(msgs, 0, true)).toBe(watermarkAfterReading(msgs, 0, true));
-    expect(readMarkTarget(msgs, 0, true)).toBe(4000);
+    expect(readMarkTarget(msgs, 0, true, SEEN)).toBe(watermarkAfterReading(msgs, 0, true));
+    expect(readMarkTarget(msgs, 0, true, SEEN)).toBe(4000);
   });
 });
 
@@ -466,13 +469,26 @@ describe('readMarkTarget - bounded by the server times held and seen', () => {
   it('a row claiming 2100 moves no mark past the newest server time held', () => {
     const y2100 = Date.UTC(2100, 0, 1);
     const msgs = [dated('a', 1000, 1_500), msg('forged', y2100)];
-    expect(readMarkTarget(msgs, 0, false)).toBe(1_500);
+    expect(readMarkTarget(msgs, 0, false, SEEN)).toBe(1_500);
   });
 
-  it('never above what the server said this session, even over a held time', () => {
+  it('never above what the server said on this device, even over a held time', () => {
     const msgs = [dated('a', 1000, 1_500), dated('relayed', 1000, 9_000)];
     expect(readMarkTarget(msgs, 0, false, 2_000)).toBe(2_000);
-    expect(serverMarkCeiling(msgs, 0)).toBe(9_000);
+    expect(serverMarkCeiling(msgs, SEEN)).toBe(9_000);
+  });
+
+  it('moves NOTHING while the server has said nothing on this device, dated rows or not', () => {
+    // An offline first boot: the rows held are the only bound, and they are what is not trusted.
+    const msgs = [dated('a', 1000, 1_500), dated('b', 2000, 2_500)];
+    expect(serverMarkCeiling(msgs, 0)).toBe(0);
+    expect(readMarkTarget(msgs, 700, false, 0)).toBe(700);
+  });
+
+  it('a session whose only statement is OLD moves the mark no further than that statement', () => {
+    const msgs = [dated('a', 1000, 1_500), dated('b', 2000, 9_000)];
+    expect(readMarkTarget(msgs, 0, false, 1_200)).toBe(1_200);
+    expect(readMarkTarget(msgs, 1_300, false, 1_200)).toBe(1_300);
   });
 
   it('a conversation with no dated row moves only once the server has said something', () => {
@@ -514,7 +530,7 @@ describe('read marks on the server clock', () => {
 
   it('readMarkTarget answers on the server clock', () => {
     const msgs = [dated('a', 1_000, 1_100), dated('late', 900, 3_000)];
-    expect(readMarkTarget(msgs, 0, false)).toBe(3_000);
+    expect(readMarkTarget(msgs, 0, false, SEEN)).toBe(3_000);
   });
 
   it('places a reader by whichever of their two marks reaches further', () => {

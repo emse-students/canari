@@ -58,7 +58,7 @@ import {
   withOwnReadAdvanced,
   withReadMark,
 } from '$lib/utils/chat/readState';
-import { withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
+import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -1116,19 +1116,33 @@ export async function handleSystemEvent(
         //    carry reactions/tombstones, so that metadata is merged in step 4 for new AND existing
         //    messages alike. A signed message is taken from the signed bytes - content and time -
         //    whatever the relayer wrote beside them.
-        const toAdd = vettedBundle.fresh.map(({ entry: m, verdict }) => ({
-          senderId: canonicalUserId(m.senderId),
-          content: verdict.kind === 'verified' ? verdict.content : m.content,
-          messageId: m.id,
-          timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
-          // The secondary sort key. Dropping it here - the replay path keeps it - left two
-          // messages sharing a client timestamp in an order that changed on every reload.
-          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
-          // Kept whenever it was not refused - also when it could not be checked NOW - so this
-          // device relays it on and a later reader can still prove it.
-          ...(m.authorship ? { authorship: m.authorship } : {}),
-          ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
-        }));
+        let belowSigned = 0;
+        const toAdd = vettedBundle.fresh.map(({ entry: m, verdict }) => {
+          // The relayed server time checked once more, against the SIGNED sentAt: the first check
+          // could only read the relayer's own `timestamp` (`boundedByVerifiedSentAt`).
+          const serverTimestamp =
+            verdict.kind === 'verified'
+              ? boundedByVerifiedSentAt(m.serverTimestamp, verdict.timestamp)
+              : m.serverTimestamp;
+          if (serverTimestamp === undefined && m.serverTimestamp !== undefined) belowSigned++;
+          return {
+            senderId: canonicalUserId(m.senderId),
+            content: verdict.kind === 'verified' ? verdict.content : m.content,
+            messageId: m.id,
+            timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
+            // The order key: the relayed server time that survived both checks, or none.
+            ...(typeof serverTimestamp === 'number' ? { serverTimestamp } : {}),
+            // Kept whenever it was not refused - also when it could not be checked NOW - so this
+            // device relays it on and a later reader can still prove it.
+            ...(m.authorship ? { authorship: m.authorship } : {}),
+            ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
+          };
+        });
+        if (belowSigned > 0) {
+          console.error(
+            `[HISTORY_BUNDLE] ${belowSigned} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie below the SIGNED sentAt - dropped, those rows keep their sentAt`
+          );
+        }
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty

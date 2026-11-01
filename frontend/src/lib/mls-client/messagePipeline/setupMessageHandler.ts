@@ -240,8 +240,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit, deliveryMeta) => {
       // The ONE canonical user id (leafIdentity.ts): ASCII letters folded, as MLS and the replay do.
       const senderNorm = canonicalUserId(sender);
-      // What the server says of every frame bounds the read marks this session may take (serverClock.ts).
-      noteServerTime(deliveryMeta?.queuedCreatedAt);
+      // What the server says of every frame bounds the read marks this account may take (serverClock.ts).
+      noteServerTime(deps.userId, deliveryMeta?.queuedCreatedAt);
 
       // ── Welcome ──────────────────────────────────────────────────────────────
       if (isWelcome) {

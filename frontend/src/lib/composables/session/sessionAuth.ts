@@ -2210,6 +2210,7 @@ export async function loginImpl(
       // statuses (otherwise an already-sent message would be shown as pending again).
       await reconcileOutboxSent(ctx.getStorage()!, {
         deviceKeyB64: ctx.getDeviceKey(),
+        userId: ctx.getUserId(),
         onDated: (id, receivedAt) => dateBackgroundSentRow(cb.conversations, id, receivedAt),
       }).catch((e) => cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`));
       stopIfSignedOut('outbox-reconcile');

@@ -120,30 +120,59 @@ export async function deriveOrderKeysInChunks(
 }
 
 /**
- * ONE derivation in flight per conversation: a second page read while a run is going joins it
- * instead of decrypting the same rows twice. The entry is dropped when the run settles, so the next
- * read that still finds a pending row (a deferred one, or a backup imported since) starts a new run.
+ * ONE derivation in flight per conversation, and ONE LANE for all of them: a run starts only when
+ * the previous one - whatever its conversation - has settled, so a first boot opening many
+ * conversations decrypts one chunk at a time instead of competing with the writes the boot itself
+ * makes (review of #2824, E). A second page read of a conversation joins its run instead of
+ * decrypting the same rows twice. The entry is dropped when the run settles, so the next read that
+ * still finds a pending row (a backup imported since) starts a new run.
+ *
+ * A RUN THAT DEFERRED A ROW ENDS THE WAITING for its conversation, this session: the row stays
+ * flagged for the next session's run, and until then the conversation's pages are read as keyed
+ * ({@link gaveUp}) - a load-older does not wait for, and re-read behind, a derivation that would
+ * defer the same row again. `rearm` takes it back when new rows arrive to be keyed.
  */
 export class OrderKeyDerivations {
   private readonly inFlight = new Map<string, Promise<OrderKeyDerivation>>();
+  /** The tail of the one lane every run is queued on. Never rejects. */
+  private lane: Promise<unknown> = Promise.resolve();
+  /** The conversations whose last run deferred a row, this session. */
+  private readonly deferred = new Set<string>();
 
-  /** The run in flight for `conversationId`, or a new one started with `start`. */
+  /** The run in flight for `conversationId`, or a new one queued on the lane with `start`. */
   run(
     conversationId: string,
     start: () => Promise<OrderKeyDerivation>
   ): Promise<OrderKeyDerivation> {
     const running = this.inFlight.get(conversationId);
     if (running) return running;
-    const run = start().finally(() => {
-      if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
-    });
+    const run = this.lane
+      .then(start)
+      .then((done) => {
+        if (done.deferred > 0) {
+          this.deferred.add(conversationId);
+          console.warn(
+            `[STORE] order keys of ${conversationId.slice(0, 8)}: ${done.deferred} row(s) deferred - its pages are read as keyed until the next session retries them`
+          );
+        }
+        return done;
+      })
+      .finally(() => {
+        if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
+      });
+    this.lane = run.catch(() => undefined);
     this.inFlight.set(conversationId, run);
     return run;
   }
 
-  /** The run in flight for `conversationId`, if any - what a load-older read waits for. */
-  current(conversationId: string): Promise<OrderKeyDerivation> | undefined {
-    return this.inFlight.get(conversationId);
+  /** Whether the last run of `conversationId` this session deferred a row - see the class doc. */
+  gaveUp(conversationId: string): boolean {
+    return this.deferred.has(conversationId);
+  }
+
+  /** New rows to key in `conversationId` (a backup import): its next page read derives again. */
+  rearm(conversationId: string): void {
+    this.deferred.delete(conversationId);
   }
 
   /**

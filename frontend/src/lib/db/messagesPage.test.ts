@@ -453,6 +453,10 @@ describe('SqliteStorage.getMessagesPage', () => {
         'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES (?, ?, ?, ?, ?)'
       )
       .run('older-build', 'conv', T0 + 1000, toBase64(sealed.iv), toBase64(sealed.cipherText));
+    // ...and recreated its own page index, unconditionally, as it does on every open.
+    engine.exec(
+      'CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, timestamp)'
+    );
 
     const { storage, positional } = await initialisedSqlite(engine);
     const plan = (
@@ -463,6 +467,12 @@ describe('SqliteStorage.getMessagesPage', () => {
       .map((p) => p.detail)
       .join(' | ');
     expect(plan).toMatch(/idx_messages_order_missing/);
+    const indexes = (
+      engine.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as Array<{
+        name: string;
+      }>
+    ).map((r) => r.name);
+    expect(indexes).not.toContain('idx_messages_conv_time');
     expect((await storage.getMessagesPage('conv', KEY, 50)).map((m) => m.id)).toEqual([
       'older-build',
       'kept',
@@ -557,6 +567,62 @@ describe('SqliteStorage.getMessagesPage', () => {
     expect(
       engine.prepare("SELECT order_at, order_pending FROM messages WHERE id = 'foreign'").get()
     ).toEqual({ order_at: T0 + 500, order_pending: null });
+  });
+
+  it('ONE lane: a second conversation is not derived while the first one runs (review of #2824, E)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { storage, engine, selects } = await initialisedSqlite(newEngine(), {
+      // Conversation A's chunk reads are held; B's are not.
+      beforeSelect: (sql) =>
+        sql.includes('ORDER BY id LIMIT') && selects.filter((s) => s === sql).length === 1
+          ? gate
+          : undefined,
+    });
+    engine.exec("INSERT INTO conversations (id, name) VALUES ('a', 'A'), ('b', 'B')");
+    const sealed = await encryptData({ senderId: 'peer', content: 'row' }, KEY);
+    for (const conversationId of ['a', 'b']) {
+      await storage.importEncryptedRow({
+        id: `${conversationId}-1`,
+        conversationId,
+        timestamp: T0,
+        ...sealed,
+      });
+    }
+    const chunkReads = () => selects.filter((s) => s.includes('ORDER BY id LIMIT')).length;
+
+    const first = storage.orderKeysDerived('a', KEY);
+    const second = storage.orderKeysDerived('b', KEY);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A is held in its first chunk read; B has not started.
+    expect(chunkReads()).toBe(1);
+    release();
+    expect((await first).derived).toBe(1);
+    expect((await second).derived).toBe(1);
+  });
+
+  it('a run that DEFERRED a row ends the waiting: pages read as keyed, load-older derives nothing again', async () => {
+    const { storage, engine, selects } = await initialisedSqlite();
+    engine.exec("INSERT INTO conversations (id, name) VALUES ('conv', 'Conversation')");
+    await importRisingConversation(storage);
+    // The engine fails for a reason that may pass, every time this run asks: every row deferred.
+    const decrypt = vi
+      .spyOn(crypto.subtle, 'decrypt')
+      .mockRejectedValue(new TypeError('the engine went away'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+      derived: 0,
+      unreadable: 0,
+      deferred: 60,
+    });
+    decrypt.mockRestore();
+    warn.mockRestore();
+
+    const page = await storage.getMessagesPage('conv', KEY, 50);
+    expect(page.every((m) => m.pageKey?.provisional === false)).toBe(true);
+    const before = selects.filter((s) => s.includes('ORDER BY id LIMIT')).length;
+    await storage.getMessagesPage('conv', KEY, 50, { ...oldestPageKey(page)!, provisional: true });
+    expect(selects.filter((s) => s.includes('ORDER BY id LIMIT')).length).toBe(before);
   });
 
   it('pages on the pair (orderAt, id): rows tied with the boundary are neither lost nor read twice', async () => {

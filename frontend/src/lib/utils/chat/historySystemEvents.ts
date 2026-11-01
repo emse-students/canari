@@ -10,7 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
+import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
@@ -700,6 +700,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         // The new messages, each merged with what its entry may change before it is queued.
         for (const { entry: m, verdict } of vetted.fresh) {
           const verified = verdict.kind === 'verified';
+          // The relayed server time checked once more, against the SIGNED sentAt
+          // (`boundedByVerifiedSentAt`): the first check could only read the relayer's `timestamp`.
+          const serverTimestamp = verified
+            ? boundedByVerifiedSentAt(m.serverTimestamp, verdict.timestamp)
+            : m.serverTimestamp;
+          if (serverTimestamp === undefined && m.serverTimestamp !== undefined) {
+            console.error(
+              `[HISTORY_REPLAY] the server time relayed by ${senderNorm.slice(0, 8)} for ${m.id.slice(0, 8)} lies below the SIGNED sentAt - dropped, the row keeps its sentAt`
+            );
+          }
           const merged = mergeVettedRow<MergeableRow>(
             {
               id: m.id,
@@ -730,9 +740,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             // bundle frame's time, which is when the bundle was sent, not when the message was:
             // an exclusion window placed by it would release a message from inside the window or
             // withhold one from before it. An undated copy stays undated, as on the live path.
-            ...(typeof m.serverTimestamp === 'number'
-              ? { serverTimestamp: m.serverTimestamp }
-              : {}),
+            ...(typeof serverTimestamp === 'number' ? { serverTimestamp } : {}),
             ...(m.authorship ? { authorship: m.authorship } : {}),
             ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
           };

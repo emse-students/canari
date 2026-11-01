@@ -725,9 +725,17 @@ Then the stamped map is read for salons only (whose two clocks are one) and the 
   with none - and a row it rewrites (`INSERT OR REPLACE`) loses its key. **Back on this build** the v16
   step does not run again (`user_version` is still 16); the open-time fill re-keys those rows
   provisionally through the partial index `idx_messages_order_missing`, and the page reads derive them
-  (`messagesPage.test.ts`, "a row written by an older build that opened the v16 file"). Server read
-  marks it never wrote stay where they were; its own reads in the meantime land in the stamped map,
-  covered by the rule above.
+  (`messagesPage.test.ts`, "a row written by an older build that opened the v16 file"); the
+  `idx_messages_conv_time` it recreated is dropped again on the same open.
+  **The `server_read_watermarks` residue:** the older build writes a conversation row with
+  `INSERT OR REPLACE` naming no `server_read_watermarks`, so every conversation it saves comes back
+  with that column NULL - the server marks of EVERY reader of it, this device's and its peers', are
+  gone. Its own reads in the meantime land in the stamped map, covered by the rule above, so nothing
+  it read turns unread; what is lost is the server-clock part: a peer's "seen" head falls back to
+  their stamped mark (or disappears) until their next `read_watermark` frame or a history bundle
+  carries the server map again, and a late message this device had read only by its server mark
+  reads as unread until it reads the conversation again. Nothing repairs it on open: the values are
+  not anywhere on the device to restore from.
 - **IndexedDB, a v12 database opened by an older web build** (a web rollback). `indexedDB.open` with
   the older version number fails with `VersionError` - IndexedDB never opens a database below its
   version - so the older build cannot open the store at all, as with every earlier version bump. **A web

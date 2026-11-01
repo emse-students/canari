@@ -3314,12 +3314,17 @@ skew), and the last index whose suffix minimum is under a mark is exactly the la
 is trusted from the server only: the delivery's `createdAt`, the send's `receivedAt`, a salon row's
 `createdAt`. A HISTORY BUNDLE is written by a peer, so a server time it relays is kept only inside
 `[sentAt - 24 h, the bundle frame's own server time]` (`vettedBundleServerTime`, `messageTime.ts`) and
-dropped otherwise (logged `[HISTORY_BUNDLE]`); the bundle's server read marks and a received
+dropped otherwise (logged `[HISTORY_BUNDLE]`) - and checked a second time once the row's signature is
+verified, against the SIGNED `sentAt` (`boundedByVerifiedSentAt`), since the first check could only
+read the relayer's own unsigned `timestamp`; the bundle's server read marks and a received
 `read_watermark`'s `serverAt` are refused above their frame's own server time
 (`boundedServerMarks`, `receivedReadWatermarkMark`). And the target of this device's own server mark is
-clamped to the newest server time HELD in the conversation, and below the newest one this session
-received from the server (`serverMarkCeiling`, `serverClock.ts`): no row, however it arrived, can lift
-the mark past what the server has said. DM marks owed in `localStorage` are kept per clock - the key
+clamped to the newest server time HELD in the conversation, and below the newest one the server
+stated to this account on this device (`serverMarkCeiling`, `serverClock.ts`): a live frame's
+`createdAt`, a send's `receivedAt`, a background send's line, a push cached by the native side, a
+frame the leader tab relays. That value is durable (`ACCOUNT_KEY.serverClock`), shared by the tabs of
+one origin, and while it is 0 - nothing stated yet, an offline first boot - the server mark does not
+move at all. No row, however it arrived, can lift the mark past what the server has said. DM marks owed in `localStorage` are kept per clock - the key
 written before the upgrade (`canari.dmReadMarks.*`) is now the STAMPED ledger and goes out as `{ at }`
 alone; the server ledger is `canari.dmServerReadMarks.*` (`salonReadMarkQueue.ts`).
 
@@ -3354,9 +3359,12 @@ read" (still `sentAt`-keyed, see below) or a mark from before the change can pro
   keyed and provisional rows together, so the first page costs a page whatever the conversation
   holds - and starts the derivation behind it (`$lib/db/orderKeyDerivation`): 500 rows per chunk, in
   id order, each chunk WRITTEN before the next is read, one run per conversation; the flag is the
-  durable progress, so a kill loses one chunk and the next run reads only what is still flagged. A
-  row this key can never read (`PayloadUnreadableError`, a type thrown by `decryptData`) is keyed on
-  its `timestamp` for good; any other failure leaves it flagged for the next run. Only the store's
+  durable progress, so a kill loses one chunk and the next run reads only what is still flagged. ONE
+  lane for every conversation: a run starts when the previous one settled, so a first boot does not
+  decrypt in parallel with its own writes. A row this key can never read (`PayloadUnreadableError`,
+  thrown by `decryptData` for WebCrypto's `OperationError` and a non-JSON plaintext only) is keyed on
+  its `timestamp` for good; any other failure leaves it flagged for the next SESSION - a run that
+  deferred a row ends the waiting, and its conversation's pages read as keyed until then. Only the store's
   BOUNDARY was provisional - the screen sorts on the decrypted `messageTime` - so a page's `pageKey`
   says `provisional`, and a load-older below such a boundary waits for the derivation and re-reads
   what lies above it too: a row whose real key rose past the boundary is in neither page otherwise.

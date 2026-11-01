@@ -4895,6 +4895,32 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     outbox.dispose();
   });
 
+  it('a queued control entry is no message to put back, and reads nothing for it', async () => {
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [])]]);
+    const storage = makeStorage([
+      {
+        id: 'ctl',
+        conversationId: 'g1',
+        sentAt: 7,
+        kind: 'control',
+        controlProto: new Uint8Array([1]),
+        status: 'pending',
+        attempts: 0,
+        createdAt: 7,
+      },
+    ]);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.applyPendingStatuses();
+
+    expect(storage.getMessage).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.messages).toEqual([]);
+    error.mockRestore();
+    outbox.dispose();
+  });
+
   it('the retry resets the count durably and sends again', async () => {
     const mls = scripted(['5xx', '5xx', '5xx', '5xx', '5xx', 'ok']);
     const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);

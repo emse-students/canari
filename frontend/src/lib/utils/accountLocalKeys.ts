@@ -94,6 +94,11 @@ export const ACCOUNT_KEY = {
    */
   dmServerReadMarks: (userId: string) => `canari.dmServerReadMarks.${userId.toLowerCase()}`,
   /**
+   * `serverClock.ts`: the newest instant the server stated to this account on this device - one
+   * number, the ceiling of its own server-clock read marks (lower-cased).
+   */
+  serverClock: (userId: string) => `canari.serverClock.${userId.toLowerCase()}`,
+  /**
    * `controlRefusals.svelte.ts`: the reactions, edits, pins and deletes the outbox refused, still
    * offered for Retry - message and group ids, an emoji and instants, never a message's text.
    */
@@ -203,6 +208,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
     ACCOUNT_KEY.dmServerReadMarks(userId),
+    ACCOUNT_KEY.serverClock(userId),
     ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.deviceNotices(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
@@ -243,7 +249,7 @@ const ID_NAMING_KEYS = [
  * The OTHER account ids this device holds data for that differ from `userId` only by letter case.
  *
  * TWO IDS THAT CASE-FOLD TOGETHER SHARE STORAGE. Four keys lower-case the id (`archivedConversations`,
- * `salonUnsent`, `salonReadMarks`, `dmReadMarks`, `dmServerReadMarks`), and the native database file `canari_<id>.db`
+ * `salonUnsent`, `salonReadMarks`, `dmReadMarks`, `dmServerReadMarks`, `serverClock`), and the native database file `canari_<id>.db`
  * lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` there would remove
  * `abc`'s unsent texts and its database. MiConnect subjects are not promised to be case-distinct-safe, so a deletion
  * asks this first and REFUSES when it is not empty - never a guess at which rows are whose.

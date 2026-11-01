@@ -904,7 +904,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * accepted before (`messageOrder.ts`, owner 2026-10-31).
    */
   function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
-    noteServerTime(serverTimestamp);
+    noteServerTime(deps.userId, serverTimestamp);
     const found = findMessage(messageId);
     if (!found) return;
     const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
@@ -1756,7 +1756,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * with its page later, and this runs again then. Status is applied by the caller.
    */
   async function restoreQueuedRow(entry: OutboxEntry): Promise<void> {
-    if (!storage) return;
+    // A control entry (reaction, edit, deletion, read mark) is no message of its own: its id is a
+    // fresh one, never a row, and what it mutates is restored as that row's own entry.
+    if (!storage || entry.kind === 'control') return;
     const holder = [...conversations].find(([, convo]) => convo.id === entry.conversationId);
     if (!holder) return;
     let stored: Awaited<ReturnType<IStorage['getMessage']>>;

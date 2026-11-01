@@ -963,7 +963,11 @@ export class IndexedDbStorage implements IStorage {
     before?: PageKey
   ): Promise<StoredMessage[]> {
     const derive = () => this.deriveOrderKeys(conversationId, deviceKeyB64);
-    let provisional = await this.hasProvisionalOrderKeys(conversationId);
+    // A conversation whose run deferred a row this session reads as keyed (`OrderKeyDerivations`).
+    const provisionalNow = async () =>
+      !this.orderKeyDerivations.gaveUp(conversationId) &&
+      (await this.hasProvisionalOrderKeys(conversationId));
+    let provisional = await provisionalNow();
     if (provisional && before?.provisional) {
       try {
         await this.orderKeyDerivations.run(conversationId, derive);
@@ -972,7 +976,7 @@ export class IndexedDbStorage implements IStorage {
           `[IDB] load-older of ${conversationId.slice(0, 8)} read over provisional keys - the derivation failed: ${String(e)}`
         );
       }
-      provisional = await this.hasProvisionalOrderKeys(conversationId);
+      provisional = await provisionalNow();
     } else if (provisional) {
       this.orderKeyDerivations.startInBackground(conversationId, derive);
     }
@@ -1157,6 +1161,7 @@ export class IndexedDbStorage implements IStorage {
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
     invalidateHistoryStateKey(row.conversationId);
+    this.orderKeyDerivations.rearm(row.conversationId);
     // A backup is INPUT, and one taken on a phone before 2026-10-17 carries the timestamp as the
     // SQLite plugin returned it - a string on Android. Stored as a string it would sort after every
     // number in the page index and no page would place it (see `conversationOrderRange`).

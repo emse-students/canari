@@ -116,6 +116,38 @@ describe('a history_bundle replayed from the archive', () => {
     expect(pushed[0].restoredUnverified).toBeUndefined();
   });
 
+  it('drops a relayed server time below the SIGNED sentAt, though the relayer wrote both as 1 (review of #2824, C)', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const { pushed } = await replayBundle(keys, 'mallory', [
+      {
+        id: 'm1',
+        senderId: 'alice',
+        content: helloContent,
+        timestamp: 1,
+        serverTimestamp: 1,
+        authorship,
+      },
+    ]);
+    expect(pushed).toEqual([
+      expect.objectContaining({ messageId: 'm1', timestamp: new Date(SENT_AT) }),
+    ]);
+    expect(pushed[0].serverTimestamp).toBeUndefined();
+
+    // An honest one, at the signed sentAt plus the delivery, is kept.
+    const honest = await replayBundle(keys, 'mallory', [
+      {
+        id: 'm1',
+        senderId: 'alice',
+        content: helloContent,
+        timestamp: SENT_AT,
+        serverTimestamp: SENT_AT + 500,
+        authorship,
+      },
+    ]);
+    expect(honest.pushed[0].serverTimestamp).toBe(SENT_AT + 500);
+  });
+
   it('REFUSES a message whose proof is malformed, and records the finding', async () => {
     const { alice, keys } = await cast();
     const signed = await signedBy(alice, GROUP, HELLO);

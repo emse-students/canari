@@ -139,6 +139,8 @@ export async function reconcileOutboxSent(
   storage: IStorage,
   dating?: {
     deviceKeyB64: string;
+    /** The account the receive times are noted for (`serverClock.ts`). */
+    userId: string;
     onDated?: (messageId: string, receivedAt: number) => void;
   }
 ): Promise<void> {
@@ -158,7 +160,7 @@ export async function reconcileOutboxSent(
     `[OUTBOX_MIRROR] ${sent.length} message(s) sent in the background to reconcile, ${dated} with the server's receive time`
   );
   for (const { id, receivedAt } of sent) {
-    noteServerTime(receivedAt);
+    if (dating) noteServerTime(dating.userId, receivedAt);
     await storage
       .deleteOutboxEntry(id)
       .catch((e) =>

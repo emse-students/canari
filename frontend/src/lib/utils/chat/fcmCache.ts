@@ -30,6 +30,7 @@ import type { ConversationIdentity } from '$lib/utils/chat/conversations';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 
 /**
  * Shape of one entry in fcm_message_cache.ndjson (written by Android Kotlin and the
@@ -308,6 +309,10 @@ async function consumeFcmCacheOnce(
       );
       continue;
     }
+    // The push's `createdAt` (or a quick reply's `receivedAt`) is the SERVER's word: it bounds this
+    // account's server read marks as a live frame does (serverClock.ts) - on a boot with no network
+    // it may be the only statement there is.
+    noteServerTime(userId, entry.serverTimestamp);
     const msg: StoredMessage = {
       id: entry.messageId,
       conversationId: entry.groupId,

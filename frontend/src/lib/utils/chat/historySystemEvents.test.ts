@@ -461,7 +461,7 @@ describe('replaying a frame that claims a server time after its own', () => {
       timestamp: r.timestamp ?? new Date(0),
       ...(r.serverTimestamp ? { serverTimestamp: r.serverTimestamp } : {}),
     }));
-    expect(readMarkTarget(asChat, 0, false)).toBeLessThanOrEqual(ROW_AT);
+    expect(readMarkTarget(asChat, 0, false, Number.MAX_SAFE_INTEGER)).toBeLessThanOrEqual(ROW_AT);
   });
 });
 

@@ -83,6 +83,23 @@ export function vettedBundleServerTime(
 }
 
 /**
+ * The second half of the vetting, once a row's signed bytes are VERIFIED: the lower bound again, on
+ * the `sentAt` the author signed. {@link withVettedBundleServerTimes} can only read the relayer's
+ * `timestamp`, which is as unsigned as the server time beside it - a relayer writing `1` in both
+ * passed the first check (review of #2824, C). `undefined` when the claim falls below the signed
+ * `sentAt` by more than {@link BUNDLE_SERVER_TIME_SKEW_MS}; the claim itself otherwise.
+ */
+export function boundedByVerifiedSentAt(
+  serverTimestamp: number | undefined,
+  verifiedSentAt: number
+): number | undefined {
+  if (serverTimestamp === undefined) return undefined;
+  return serverTimestamp < verifiedSentAt - BUNDLE_SERVER_TIME_SKEW_MS
+    ? undefined
+    : serverTimestamp;
+}
+
+/**
  * Every row of a bundle through {@link vettedBundleServerTime}: a row whose claim cannot be believed
  * loses its `serverTimestamp` (and only that), a row with none is untouched. `dropped` counts the
  * claims refused, for the caller's log line.

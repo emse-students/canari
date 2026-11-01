@@ -418,7 +418,7 @@ export function readMarkTarget(
   >,
   current: number,
   isSalon: boolean,
-  serverSeen = 0
+  serverSeen: number
 ): number {
   if (isSalon) return watermarkAfterReading(msgs, current, true);
   const target = watermarkAfterReading(
@@ -430,8 +430,8 @@ export function readMarkTarget(
 
 /**
  * THE HIGHEST A SERVER-CLOCK MARK MAY GO: the newest `serverTimestamp` the conversation holds, and
- * never above what the server itself said this session (`serverSeen`, serverClock.ts) when it has
- * said anything.
+ * never above what the server itself has said to this account on this device (`serverSeen`,
+ * serverClock.ts, durable). 0 - the mark does not move - while the server has said nothing.
  *
  * WHY. The target is the newest key read, and a row's key falls back on its `sentAt` - the AUTHOR's
  * clock - when the row has no server time, while a bundle row's server time was written by the
@@ -440,8 +440,7 @@ export function readMarkTarget(
  * before they arrive. An undated row newer than every server time held therefore stays unread until
  * a dated row catches up with it, which is the cost of never over-reading.
  *
- * A conversation holding no dated row at all is bounded by `serverSeen` alone, and does not move
- * while the server has said nothing this session.
+ * A conversation holding no dated row at all is bounded by `serverSeen` alone.
  */
 export function serverMarkCeiling(
   msgs: ReadonlyArray<Pick<ChatMessage, 'serverTimestamp'>>,
@@ -452,8 +451,10 @@ export function serverMarkCeiling(
     const at = msg.serverTimestamp;
     if (typeof at === 'number' && Number.isFinite(at) && at > held) held = at;
   }
-  if (held === 0) return serverSeen > 0 ? serverSeen : 0;
-  return serverSeen > 0 ? Math.min(held, serverSeen) : held;
+  // NOTHING KNOWN, NOTHING MOVED: with no server statement on this device yet (a first boot with no
+  // network) the rows held are the only bound, and they are exactly what is not trusted.
+  if (serverSeen <= 0) return 0;
+  return held === 0 ? serverSeen : Math.min(held, serverSeen);
 }
 
 /**

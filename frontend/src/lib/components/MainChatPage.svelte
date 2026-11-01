@@ -742,7 +742,12 @@
     // A DM or group mark moves over FOREIGN messages only: one moved over this reader's own send
     // told nobody anything and cost every member a decrypt and a checkpoint (`readMarkTarget`).
     // Bounded by what the server itself said this session (`serverMarkCeiling`).
-    const target = readMarkTarget(convo.messages, held, isSelectedChannel, serverTimeSeen());
+    const target = readMarkTarget(
+      convo.messages,
+      held,
+      isSelectedChannel,
+      serverTimeSeen(session.userId)
+    );
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
