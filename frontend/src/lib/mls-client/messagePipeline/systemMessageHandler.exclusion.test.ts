@@ -26,6 +26,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     log: vi.fn(),
     convo: { id: 'g1', lifecycle: 'active', messages: [] },
     convoKey: 'g1',
+    // The server's acceptance of the frame: a notice is dated by it, never by this device's clock.
+    deliveryMeta: { queuedCreatedAt: 1_700_000_000_000 },
     senderNorm: 'admin',
     ...overrides,
   };

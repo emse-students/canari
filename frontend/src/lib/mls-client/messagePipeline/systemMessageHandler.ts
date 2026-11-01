@@ -9,7 +9,7 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
@@ -86,6 +86,12 @@ export interface SystemEventContext extends MessageHandlerDeps {
    * duplicate-prone row this build cannot repair: see `docs/wiki/legacy-compatibility.md`.
    */
   messageId?: string;
+  /**
+   * The frame's own `sentAt` (Unix ms) as the sender minted it (`mkVisibleSystem`), or undefined for
+   * a frame that carries none. With `deliveryMeta.queuedCreatedAt` it dates the notice this event
+   * draws ({@link receivedNoticeTime}) - when the event happened, never when this device learnt of it.
+   */
+  sentAt?: number;
   /**
    * The event frame's own author proof, as mls-core verified it (`recordAuthorship`). Kept on the
    * row an `edit_message` or `delete_message` changes, so a history bundle can prove the change to a
@@ -203,9 +209,34 @@ export async function handleSystemEvent(
     convoKey,
     senderNorm,
     messageId,
+    sentAt,
     deliveryMeta,
     authorship,
   } = ctx;
+
+  /**
+   * Writes the notice this event draws, DATED BY THE FRAME ({@link receivedNoticeTime}): its `sentAt`
+   * and the server's acceptance, exactly as a received text row is. Every notice branch below writes
+   * through here, so none of them can fall back to this device's clock again - which is what put
+   * "X added A, B" below the whole conversation on a device that drained the frame late.
+   *
+   * With neither time the row is NOT drawn, and that is refused at ERROR: no delivery route of this
+   * build omits the server time, so reaching it means a route lost it, and the fix belongs there.
+   */
+  const writeNotice = async (content: string, id: string | undefined): Promise<void> => {
+    const dated = receivedNoticeTime(sentAt, deliveryMeta?.queuedCreatedAt);
+    if (!dated) {
+      console.error(
+        `[NOTICE] REFUSED to draw '${event}' from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… (id ${id?.slice(0, 8) ?? 'none'}): the frame carries no sentAt and its delivery no server time - no durable instant dates it, and this device's clock is not one`
+      );
+      return;
+    }
+    await addMessageToChat('system', content, convoKey, {
+      isSystem: true,
+      messageId: id,
+      ...dated,
+    });
+  };
 
   // `decrypt_failed` was the narrow repair: a peer that could not decrypt asked every member to
   // re-send whatever it had sent in the last two minutes. It is gone, and this branch stays only to
@@ -537,8 +568,7 @@ export async function handleSystemEvent(
       // this branch is only ever reached on a second device. The sending device inserts the same
       // card locally in `inviteMemberToChannel`.
       const inviteeDisplayName = String(data.inviteeName || data.inviteeId || '');
-      await addMessageToChat(
-        'system',
+      await writeNotice(
         serializeEnvelope(
           mkChannelInviteSentEnvelope(
             channelId,
@@ -548,8 +578,7 @@ export async function handleSystemEvent(
             workspaceImageMediaId
           )
         ),
-        convoKey,
-        { isSystem: true, messageId: inviteMessageId }
+        inviteMessageId
       );
       log(
         `[CHANNEL_INVITE] our own invitation of ${inviteeId.slice(0, 8)} to ${channelId.slice(0, 8)}, seen from another device - card ${inviteMessageId} into ${convoKey.slice(0, 8)}…`
@@ -566,10 +595,7 @@ export async function handleSystemEvent(
           workspaceImageMediaId
         )
       );
-      await addMessageToChat('system', inviteEnvelope, convoKey, {
-        isSystem: true,
-        messageId: inviteMessageId,
-      });
+      await writeNotice(inviteEnvelope, inviteMessageId);
       // THE ONLY THING THE INVITEE IS EVER TOLD. A direct invitation makes them a member with no
       // gesture of their own, so this card is the whole notification - and one line saying it was
       // written, naming the conversation it went into, is what separates "never delivered" from
@@ -586,7 +612,7 @@ export async function handleSystemEvent(
     conversations.set(convoKey, { ...convo, name: data.newName });
     if (storage) await saveConversation(convoKey);
     const text = await renderVisibleNotice('groupRenamed', data, senderNorm);
-    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
+    if (text) await writeNotice(text, messageId);
     log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
@@ -597,7 +623,7 @@ export async function handleSystemEvent(
     conversations.set(convoKey, { ...convo, imageMediaId });
     if (storage) await saveConversation(convoKey);
     const text = await renderVisibleNotice('groupImageChanged', data, senderNorm);
-    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
+    if (text) await writeNotice(text, messageId);
     log(`🖼️ Group photo changed by ${senderNorm} (media=${imageMediaId ?? 'null'})`);
     return true;
   }
@@ -630,7 +656,7 @@ export async function handleSystemEvent(
       log(`[INFO] Excluded from group "${convoKey}" by ${senderNorm} - marked removed`);
     } else {
       const text = await renderVisibleNotice('memberRemoved', data, senderNorm);
-      if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
+      if (text) await writeNotice(text, messageId);
     }
     return true;
   }
@@ -668,15 +694,7 @@ export async function handleSystemEvent(
     }
 
     const getName = await resolveDisplayNames([leaver]);
-    await addMessageToChat(
-      'system',
-      m.chat_system_member_left({ user: getName(leaver) }),
-      convoKey,
-      {
-        isSystem: true,
-        messageId,
-      }
-    );
+    await writeNotice(m.chat_system_member_left({ user: getName(leaver) }), messageId);
     log(`[INFO] ${leaver} left group "${convoKey}"`);
     return true;
   }
@@ -685,7 +703,7 @@ export async function handleSystemEvent(
     // The ONE rendering (`visibleNotices.ts`): the adder's device writes the same row under the
     // same id itself, since MLS never hands it this frame.
     const text = await renderVisibleNotice('memberAdded', data, senderNorm);
-    if (text) await addMessageToChat('system', text, convoKey, { isSystem: true, messageId });
+    if (text) await writeNotice(text, messageId);
     return true;
   }
 
@@ -716,12 +734,7 @@ export async function handleSystemEvent(
     } else {
       // Deleted by another participant: add a visible message and set the
       // conversation to `removed` so the user can read the history before closing.
-      await addMessageToChat(
-        'system',
-        m.chat_system_conversation_deleted({ sender: senderName }),
-        convoKey,
-        { isSystem: true, messageId }
-      );
+      await writeNotice(m.chat_system_conversation_deleted({ sender: senderName }), messageId);
       await retireConversation({
         conversations,
         key: convoKey,
