@@ -111,7 +111,6 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
   beforeEach(() => localStorage.clear());
 
   it('renders a readable frame of the group', async () => {
-    storeLegacyFreeze();
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
@@ -119,6 +118,8 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
       .fn()
       .mockResolvedValue({ plaintext: new Uint8Array([1]), author: 'unsigned' });
     setupMessageHandler(deps as any);
+    // Written AFTER the setup, which removes it: the key is THERE while the frame is handled.
+    storeLegacyFreeze();
     const cb = mls.onMessage.mock.calls[0][0];
 
     const acked = await cb('peer', new Uint8Array([6, 6, 6]), groupId, false, undefined, false);
@@ -143,7 +144,6 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
   });
 
   it('climbs the epoch-gap ladder instead of acknowledging the frame away', async () => {
-    storeLegacyFreeze();
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
@@ -151,7 +151,8 @@ describe('setupMessageHandler - a freeze stored by an earlier build', () => {
       .fn()
       .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=5, group_epoch=4]'));
     setupMessageHandler(deps as any);
-    // The setup's own removal line is the test above; what is read here is the frame's handling.
+    // Written AFTER the setup, which removes it: the key is THERE while the frame is handled.
+    storeLegacyFreeze();
     (deps.log as any).mockClear();
     const cb = mls.onMessage.mock.calls[0][0];
 

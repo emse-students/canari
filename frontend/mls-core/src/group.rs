@@ -191,7 +191,8 @@ impl MlsManager {
         // departures are bounded at load, past their cap only (`load_or_create`).
         self.drop_graine_run(group_id);
         // The admission classification IS pruned: unlike a pin it carries nothing a re-Welcome could
-        // get wrong, and a key group healed this way is opened again where it is registered.
+        // get wrong, and a key group healed this way is unclassified until its next registration opens it
+        // again - which, while the rule is disarmed, merges exactly the commits `open` would.
         self.forget_admission_policy(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs

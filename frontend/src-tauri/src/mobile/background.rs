@@ -2169,11 +2169,13 @@ mod tests {
     }
 
     /// THE ADMISSION RULE IS DISARMED ON THE PUSH PATH TOO (owner, 2026-10-31): an external commit
-    /// by a user holding no leaf of a CLOSED group is applied like any control frame. Refusing it
-    /// for good is what froze a conversation for every legitimate self-rejoin (`mls-core`
-    /// `admission.rs`).
+    /// by a user holding no leaf is applied like any control frame. The group was closed by a dev
+    /// build and SAVED that way, which is the state such a phone actually holds - and the push path
+    /// LOADS it, so the load drops the `closed` leftover (review of #2817) and the group is judged
+    /// unclassified. That a refusal never reaches the push path even IN MEMORY is pinned by
+    /// `mls-core/tests/admission_policy.rs`, which keeps the state live.
     #[test]
-    fn an_uninvited_external_commit_in_a_closed_group_is_not_refused_for_good() {
+    fn an_uninvited_external_commit_in_a_group_a_dev_build_closed_is_applied_after_the_load() {
         let _fg = quiet_foreground();
         let tag = "uninvited";
         let (mut alice, _bob, group_id) = joined_pair(tag);

@@ -46,7 +46,8 @@
 //!
 //! - **`forget_group` prunes the group's entry** ([`MlsManager::forget_admission_policy`]), so the map
 //!   is bounded by the groups held, not by every group ever held. A key group forgotten for a heal is
-//!   opened again where it is registered; unclassified and open merge the same commits.
+//!   unclassified until its NEXT REGISTRATION opens it again (`openAdmissionOfKeyGroup`, the next
+//!   session at the latest); until then, unclassified and open merge the same commits.
 //! - **A persisted `closed` is dropped at load** ([`MlsManager::drop_closed_admission_policies`]): no
 //!   build classifies a conversation closed any more, so a `closed` entry is a dev build's leftover,
 //!   and the verdict it produced would WARN on every legitimate join.
@@ -88,7 +89,7 @@ impl AdmissionPolicy {
 
 impl MlsManager {
     /// Classifies `group_id`. Keyed by id and independent of whether the group is held, so it may be
-    /// set before a join and outlives a `forget_group`. Logged, because a policy change is the one
+    /// set before a join; `forget_group` removes it. Logged, because a policy change is the one
     /// thing that decides whether an entry is refused.
     pub fn set_admission_policy(&mut self, group_id: &str, policy: AdmissionPolicy) {
         let previous = self.admission.insert(group_id.to_string(), policy);
