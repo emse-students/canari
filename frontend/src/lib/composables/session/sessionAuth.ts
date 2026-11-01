@@ -235,6 +235,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
@@ -1739,6 +1740,10 @@ export async function loginImpl(
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
+    // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
+    // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
+    // depends on it, and a log line must never hold a login.
+    void drainNseOutcomes(appendLog);
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()

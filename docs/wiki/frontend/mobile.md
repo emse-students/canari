@@ -1059,6 +1059,45 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
+#### What the extension did, in the app's log (2026-11-01)
+
+**Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the
+user's exported log held nothing about it** - the extension logged through `NSLog` only, which a
+tethered Mac's Console.app sees and nothing else. Three changes, one pull request
+([backlog](../backlog.d/p1-ios-notifications-show-no-content.md) holds the readings owed):
+
+- **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
+  notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,
+  `server-content`, `call-blank`, `expired`), the first `cause` found (`no-push-context`,
+  `no-device-key`, `no-proto`, `proto-fetch-failed`, `state-absent`, `refused-for-good`,
+  `locality-unknown;direct=<token>`, `catchup-failed;direct=<token>`, `group-absent;direct=<token>`,
+  `no-seed`, `no-ciphertext`, `not-opened`, where `<token>` is Rust's refusal reason of the direct
+  decrypt), the last `stage` reached, `ms`, `peakMB` (the physical footprint, which jetsam holds an
+  extension to) and `stateKB` (the size of `mls.bin`). Rotated to `nse_outcomes.1.ndjson` past
+  32 KiB, so the pair stays bounded. Both sides `flock` `nse_outcomes.lock`.
+- **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
+  `nse_inflight.<pid>.<n>.json`, rewritten at every stage, removed with its line. The app turns the
+  marker of a process PROVEN gone (`kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying
+  the stage and footprint it reached; a live or unknowable process keeps its marker - no clock.
+- **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files and the dead
+  markers under the lock and re-serialises each line through a key ALLOWLIST, so nothing but codes
+  and numbers can reach a log; `nseOutcomes.ts` writes them as `[NSE_OUTCOME] {...}` plus a
+  per-outcome summary line, at login and at every resume. No text, name or id is ever written.
+
+**The extension's deployment target was 18.2 since it was created (2026-07-21)**, while the app
+installs from 16.0: iOS does not run an extension whose minimum is above its own version, and says
+so nowhere, so every iPhone on 16.0-18.1 showed the server's generic banner. All targets are 16.0
+now, and `csp.test.ts` refuses any other value. **And the tap no longer depends on the extension:**
+the server's message and salon pushes carry no `deepLink` (the extension writes it), so a tap on a
+banner the extension never rewrote opened the app on nothing. `CanariTapDeepLink`
+(`canari_push.mm`) derives `chat/<groupId>` / `chat/channel_<id>` from the clear fields when the
+payload has no link (`iosTapTarget.test.ts`).
+
+**Which banner says what.** `Nouveau message` exactly (the server's `APNS_FALLBACK_BODY`) means the
+extension never handed content back: not loaded, killed or crashed. `Nouveau message de <name>` or
+`Vous avez reçu un message chiffré` means it ran and fell back (`fallbackText`) - and its line now
+says why.
+
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
 `mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app.
 So `channel_read` — the frame that clears a salon's notification after it was read on another device
@@ -1429,7 +1468,7 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 - **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
   with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
   engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
-  project and the app target, both configurations; the NSE keeps its own higher value), `project.yml`,
+  project and every target, extensions included - an extension above the phone's iOS is never run), `project.yml`,
   the `Podfile`, and `bundle.iOS.minimumSystemVersion` in `tauri.conf.json` - plus the Rust prebuild's
   `IPHONEOS_DEPLOYMENT_TARGET` in `ios.yml`. `csp.test.ts` asserts them
   ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).

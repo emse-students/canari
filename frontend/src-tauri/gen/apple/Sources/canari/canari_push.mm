@@ -68,6 +68,40 @@ static NSString *CanariDescribeDeepLink(NSString *deepLink) {
   return out;
 }
 
+/// The link a tap on a notification opens: the payload's own `deepLink`, else the conversation its
+/// CLEARTEXT fields name.
+///
+/// THE TAP TARGET MUST NOT SIT BEHIND THE DECRYPT. A message or salon push carries no `deepLink`
+/// from the server; the Notification Service Extension writes `chat/<groupId>` (or
+/// `chat/channel_<id>`) when it runs. When it does not - killed for memory, out of time, or not
+/// loadable on the phone's iOS - the banner is the server's generic one AND the tap opened the app
+/// on nothing, though `groupId` / `channelId` were in the payload all along (P1 of 2026-11-01). The
+/// same strings as the extension's, so both paths land identically. Nil when nothing names a target.
+static NSString *_Nullable CanariTapDeepLink(NSDictionary *userInfo) {
+  id link = userInfo[@"deepLink"];
+  if ([link isKindOfClass:[NSString class]] && [(NSString *)link length] > 0) {
+    return link;
+  }
+  NSString *type = [userInfo[@"type"] isKindOfClass:[NSString class]] ? userInfo[@"type"] : @"message";
+  if ([type isEqualToString:@"channel"]) {
+    NSString *channelId =
+        [userInfo[@"channelId"] isKindOfClass:[NSString class]] ? userInfo[@"channelId"] : @"";
+    if (channelId.length > 0) {
+      NSLog(@"[CanariPush] notification tap: no deepLink - the salon named in clear is opened");
+      return [NSString stringWithFormat:@"fr.emse.canari://chat/channel_%@", channelId];
+    }
+  } else if ([type isEqualToString:@"message"]) {
+    NSString *groupId =
+        [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
+    if (groupId.length > 0) {
+      NSLog(@"[CanariPush] notification tap: no deepLink - the conversation named in clear is opened");
+      return [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
+    }
+  }
+  return nil;
+}
+
+
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 // How many queued messages one drain ATTEMPTS. The cap is on the ENCRYPT, deliberately: encrypting
 // consumes a ratchet generation whether or not the frame is ever POSTed, so encrypting a backlog
@@ -1335,7 +1369,7 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
     content.subtitle = subtitle;
   }
   // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
-  // iOS 15.0 and is ignored by the system, and the deployment target is 18.2 - so there is no
+  // iOS 15.0 and is ignored by the system, and the deployment target is 16.0 - so there is no
   // reachable version where setting it would do anything. iOS stacks by threadIdentifier and
   // writes the summary line itself. The Android twin (GROUP_KEY_MESSAGES, refreshBadgeSummary)
   // has no iOS counterpart; giving iOS a real summary line is a separate, unbuilt feature.
@@ -4402,13 +4436,11 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     return;
   }
 
-  NSString *deepLink = nil;
-  if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
-    deepLink = userInfo[@"deepLink"];
-  }
-  // THE TAP OPENS WHAT THE PAYLOAD NAMES AND NOTHING ELSE, so an absent link is a payload that lost
-  // its field and says so: a post, form or agenda push used to arrive with none (the server sent
-  // only postId / formId) and the tap launched the app and stayed put, with nothing in the log.
+  NSString *deepLink = CanariTapDeepLink(userInfo);
+  // THE TAP OPENS WHAT THE PAYLOAD NAMES (its `deepLink`, else the conversation its clear fields name,
+  // `CanariTapDeepLink`), so an absent link is a payload that lost its field and says so: a post,
+  // form or agenda push used to arrive with none (the server sent only postId / formId) and the tap
+  // launched the app and stayed put, with nothing in the log.
   // A deep link carries ids, tokens and query parameters: the log names its SHAPE only (scheme +
   // host, and whether a query was present), never the path or the values.
   NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",

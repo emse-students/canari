@@ -91,16 +91,24 @@ class NotificationService: UNNotificationServiceExtension {
 
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
+  /// This run's outcome record (`NseOutcomeLog`), written once by `finish` or the expiry.
+  private var trace: NseOutcomeLog.Trace?
+  /// Orders `finish` against `serviceExtensionTimeWillExpire`, which iOS calls on ANOTHER thread
+  /// while the decrypt may still be running: the content is handed back exactly once.
+  private let deliveryLock = NSLock()
 
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
     self.contentHandler = contentHandler
+    let trace = NseOutcomeLog.Trace(kind: Self.string(request.content.userInfo["type"]) ?? "message")
+    self.trace = trace
     let mutable = request.content.mutableCopy() as? UNMutableNotificationContent
     self.bestAttemptContent = mutable
 
     guard let content = mutable else {
+      trace.end(outcome: "fallback", cause: "content-not-mutable")
       contentHandler(request.content)
       return
     }
@@ -118,6 +126,7 @@ class NotificationService: UNNotificationServiceExtension {
       // chat-delivery-service. Its server-composed body is a French fallback for exactly those
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
+      trace.outcome = "server-content"
       finish()
     case "call_ring":
       // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
@@ -125,6 +134,7 @@ class NotificationService: UNNotificationServiceExtension {
       // branch would overwrite the server's "Appel entrant" with the encrypted-message fallback and
       // add message buttons. The server's title and body are KEPT; only the filing is set here.
       applyGenericCallRing(userInfo: userInfo, content: content)
+      trace.outcome = "server-content"
       finish()
     case "social", "form_reminder":
       // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
@@ -138,7 +148,9 @@ class NotificationService: UNNotificationServiceExtension {
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       applyServerContent(userInfo: userInfo, content: content)
+      trace.mark("attach")
       attachSocialIcon(userInfo: userInfo, content: content)
+      trace.outcome = "server-content"
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
@@ -432,18 +444,39 @@ class NotificationService: UNNotificationServiceExtension {
     // The OS is about to kill the extension: deliver whatever we have (decrypted if
     // we got there, otherwise the server fallback) rather than losing the notification.
     NSLog("[CanariNSE] time expired - delivering best attempt")
-    if let handler = contentHandler, let content = bestAttemptContent {
+    // RECORDED BEFORE THE HANDOFF: iOS may end the process the moment the content is handed back.
+    trace?.end(outcome: "expired", cause: trace?.stage)
+    deliveryLock.lock()
+    let handler = contentHandler
+    contentHandler = nil
+    deliveryLock.unlock()
+    // `contentHandler` is cleared HERE as well: the decrypt is still running on the other thread,
+    // and its own `finish` would otherwise hand a second content to a handler already answered.
+    if let handler = handler, let content = bestAttemptContent {
       Self.logFiling(content, via: "expired")
       handler(content)
     }
   }
 
-  /// Delivers the current best-attempt content exactly once.
+  /// Delivers the current best-attempt content exactly once, after writing the run's outcome.
   private func finish() {
-    guard let handler = contentHandler, let content = bestAttemptContent else { return }
+    deliveryLock.lock()
+    let handler = contentHandler
     contentHandler = nil
+    deliveryLock.unlock()
+    guard let handler = handler, let content = bestAttemptContent else { return }
+    if let trace = trace {
+      trace.end(
+        outcome: trace.outcome ?? "fallback", cause: trace.outcome == nil ? "no-outcome-set" : nil)
+    }
     Self.logFiling(content, via: "finish")
     handler(content)
+  }
+
+  /// Records why this run falls back - the FIRST cause found is the one kept, since every later
+  /// branch is a consequence of it.
+  private func noteCause(_ cause: String) {
+    if trace?.cause == nil { trace?.cause = cause }
   }
 
   /// HOW THE NOTIFICATION IS FILED, for the cross-client rig on a BENCH build only (observable O13,
@@ -469,6 +502,182 @@ class NotificationService: UNNotificationServiceExtension {
     #endif
   }
 
+  // MARK: - Outcome log ------------------------------------------------------
+
+  /// THE OUTCOME OF EVERY RUN, WHERE THE APP CAN READ IT (P1 of 2026-11-01: iPhone notifications
+  /// showing no content, and a user log that could say nothing about why). `NSLog` reaches only
+  /// Console.app on a tethered Mac; this writes into the App Group, and the app carries it into its
+  /// own log (`take_nse_outcomes`, `commands/nse_outcomes.rs` - the contract is written there).
+  ///
+  /// One line per notification: `decrypted`, `fallback` with its `cause`, `server-content`,
+  /// `call-blank`, or `expired` (iOS asked the run to stop) - plus `killed`, which no run can write
+  /// about itself: each run leaves an in-flight marker naming its pid and its last stage, and the
+  /// app turns the marker of a process proven gone into that line. Every stage also samples the
+  /// physical footprint, the number jetsam holds an extension to, so a kill for memory shows the
+  /// footprint it reached. CODES AND NUMBERS ONLY: no text, no name, no user, device, group or
+  /// message id is ever written, and the reader drops any key outside its allowlist.
+  enum NseOutcomeLog {
+    static let outcomesFile = "nse_outcomes.ndjson"
+    static let rotatedFile = "nse_outcomes.1.ndjson"
+    static let lockFile = "nse_outcomes.lock"
+    static let inflightPrefix = "nse_inflight."
+    /// The writer rotates past this many bytes, so the pair of files stays bounded (~64 KiB).
+    static let rotateBytes = 32 * 1024
+
+    private static let sequenceLock = NSLock()
+    private static var sequence = 0
+
+    /// The process's physical footprint in MiB - what jetsam compares with the extension's limit.
+    static func footprintMB() -> Int {
+      var info = task_vm_info_data_t()
+      var count = mach_msg_type_number_t(
+        MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+      let kr = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+          task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+        }
+      }
+      return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+
+    /// One run's record: what it is, how far it got, and what it decided.
+    final class Trace {
+      let kind: String
+      let startedAtMs: Int64
+      private let started = Date()
+      private let markerName: String
+      private let lock = NSLock()
+      private(set) var stage = "start"
+      private(set) var peakMB: Int
+      /// Why a run fell back - a code, set by the branch that decided it.
+      var cause: String?
+      /// What the run produced, set by its handler; `end` writes it.
+      var outcome: String?
+      /// Size of the MLS state the run loaded, in KiB.
+      var stateKB: Int?
+      private var written = false
+
+      init(kind: String) {
+        self.kind = kind
+        startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        peakMB = NseOutcomeLog.footprintMB()
+        NseOutcomeLog.sequenceLock.lock()
+        NseOutcomeLog.sequence += 1
+        let n = NseOutcomeLog.sequence
+        NseOutcomeLog.sequenceLock.unlock()
+        markerName = "\(NseOutcomeLog.inflightPrefix)\(getpid()).\(n).json"
+        writeMarker()
+      }
+
+      /// Enters a stage: samples the footprint and rewrites the in-flight marker, so a kill in this
+      /// stage is reported with it.
+      func mark(_ stage: String) {
+        lock.lock()
+        self.stage = stage
+        peakMB = max(peakMB, NseOutcomeLog.footprintMB())
+        lock.unlock()
+        writeMarker()
+      }
+
+      /// Writes this run's one line and removes its marker. Only the first call writes.
+      func end(outcome final: String, cause finalCause: String? = nil) {
+        lock.lock()
+        if written {
+          lock.unlock()
+          return
+        }
+        written = true
+        peakMB = max(peakMB, NseOutcomeLog.footprintMB())
+        let why = finalCause ?? cause
+        let record = NseOutcomeLog.record(self, outcome: final, cause: why)
+        let reached = stage
+        let peak = peakMB
+        lock.unlock()
+        NSLog("[CanariNSE] outcome=\(final) cause=\(why ?? "-") stage=\(reached) peakMB=\(peak)")
+        guard let dir = NotificationService.appGroupDir() else {
+          NSLog("[CanariNSE] outcome: App Group unavailable - not recorded")
+          return
+        }
+        NseOutcomeLog.append(record, dir: dir)
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(markerName))
+      }
+
+      var elapsedMs: Int { Int(Date().timeIntervalSince(started) * 1000) }
+
+      private func writeMarker() {
+        guard let dir = NotificationService.appGroupDir() else { return }
+        lock.lock()
+        let record = NseOutcomeLog.record(self, outcome: nil, cause: cause)
+        lock.unlock()
+        guard let data = try? JSONSerialization.data(withJSONObject: record) else { return }
+        do {
+          try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
+        } catch {
+          NSLog("[CanariNSE] outcome: in-flight marker not written: \(errorReason(error))")
+        }
+      }
+    }
+
+    /// The record of a run, the ONLY place its keys are named (the reader's allowlist must hold
+    /// every one - `nseOutcomes.test.ts`). `outcome` is nil for an in-flight marker.
+    static func record(_ trace: Trace, outcome: String?, cause: String?) -> [String: Any] {
+      var record: [String: Any] = [:]
+      record["v"] = 1
+      record["at"] = trace.startedAtMs
+      record["kind"] = trace.kind
+      if let outcome = outcome { record["outcome"] = outcome }
+      if let cause = cause { record["cause"] = cause }
+      record["stage"] = trace.stage
+      record["ms"] = trace.elapsedMs
+      record["peakMB"] = trace.peakMB
+      if let kb = trace.stateKB { record["stateKB"] = kb }
+      record["pid"] = Int(getpid())
+      return record
+    }
+
+    /// Appends one line under the cross-process lock the app's reader takes too, rotating first
+    /// when the file is past `rotateBytes`.
+    static func append(_ record: [String: Any], dir: URL) {
+      guard let data = try? JSONSerialization.data(withJSONObject: record) else {
+        NSLog("[CanariNSE] outcome: line not encoded")
+        return
+      }
+      let lockFd = open(dir.appendingPathComponent(lockFile).path, O_WRONLY | O_CREAT, 0o644)
+      guard lockFd >= 0 else {
+        NSLog("[CanariNSE] outcome: lock file not opened errno=\(errno)")
+        return
+      }
+      defer { close(lockFd) }
+      guard flock(lockFd, LOCK_EX) == 0 else {
+        NSLog("[CanariNSE] outcome: lock not taken errno=\(errno)")
+        return
+      }
+      defer { flock(lockFd, LOCK_UN) }
+      let path = dir.appendingPathComponent(outcomesFile).path
+      if let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int,
+        size >= rotateBytes
+      {
+        let rotated = dir.appendingPathComponent(rotatedFile).path
+        unlink(rotated)
+        if rename(path, rotated) != 0 {
+          NSLog("[CanariNSE] outcome: rotation failed errno=\(errno)")
+        }
+      }
+      let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+      guard fd >= 0 else {
+        NSLog("[CanariNSE] outcome: log not opened errno=\(errno)")
+        return
+      }
+      defer { close(fd) }
+      var bytes = [UInt8](data)
+      bytes.append(0x0A)
+      let wrote = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+      if wrote != bytes.count {
+        NSLog("[CanariNSE] outcome: short write \(wrote)/\(bytes.count) errno=\(errno)")
+      }
+    }
+  }
+
   // MARK: - MLS (direct message / group) --------------------------------------
 
   private func handleMlsMessage(userInfo: [AnyHashable: Any], content: UNMutableNotificationContent) {
@@ -486,8 +695,11 @@ class NotificationService: UNNotificationServiceExtension {
     // The member's level for this conversation, when it is `mentions` - see `levelDecision`.
     let notifLevel = Self.string(userInfo["notifLevel"])
 
+    trace?.mark("push-context")
     guard let ctx = loadPushContext() else {
       NSLog("[CanariNSE] push_context absent - fallback")
+      noteCause("no-push-context")
+      trace?.outcome = "fallback"
       applyMessageContent(
         content: content, senderName: senderName, groupName: groupName,
         // No context means no mirrored locale either, so this one sentence falls back to the main
@@ -499,14 +711,18 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     // Resolve the ciphertext: inline when it fit in the payload, else fetch it by id.
+    if ctx.deviceKeyB64.isEmpty { noteCause("no-device-key") }
     var protoB64 = inlineProto
     if protoB64.isEmpty, !queuedMessageId.isEmpty {
+      trace?.mark("fetch-proto")
       protoB64 = fetchProtoFromBackend(queuedMessageId: queuedMessageId, ctx: ctx) ?? ""
     }
 
     var decrypted: DecryptResult?
     if !protoB64.isEmpty {
       decrypted = runDecryptLadder(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64)
+    } else {
+      noteCause(queuedMessageId.isEmpty ? "no-proto" : "proto-fetch-failed")
     }
 
     // Call signaling over MLS (WP-XP-5, killed-app path). Current callers send it silent, so it never
@@ -517,13 +733,16 @@ class NotificationService: UNNotificationServiceExtension {
     // so both deliver blank; a control event that ended the call also clears its ring banner.
     if let call = decrypted, call.type == "call_invite" {
       NSLog("[CanariNSE] call_invite over MLS: not a ring - delivered blank, the server's call_ring is the only one")
+      trace?.outcome = "call-blank"
       applyCallControlContent(content: content, callId: call.callId ?? "", ended: false)
       return
     }
     if let call = decrypted, call.type == "call_control" {
+      trace?.outcome = "call-blank"
       applyCallControlContent(content: content, callId: call.callId ?? "", ended: call.callEnded)
       return
     }
+    trace?.outcome = decrypted != nil ? "decrypted" : "fallback"
 
     let body = decrypted?.text ?? Self.fallbackText(senderName: senderName, locale: ctx.locale)
 
@@ -591,23 +810,34 @@ class NotificationService: UNNotificationServiceExtension {
   private func runDecryptLadder(
     ctx: PushContext, groupId: String, senderId: String, protoB64: String
   ) -> DecryptResult? {
+    trace?.mark("load-state")
     guard let state = loadMlsState() else {
       NSLog("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8))")
+      noteCause("state-absent")
       return nil
     }
+    trace?.stateKB = state.count / 1024
+    trace?.mark("decrypt")
 
     let directJson = decryptProtoJson(
       ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64, state: state)
     var decrypted = Self.parseDecrypted(directJson)
+    // The refusal token Rust gave the direct decrypt (`background.rs` `refused`), carried into the
+    // cause of whichever branch below ends the run.
+    let direct =
+      Self.refusalReason(directJson) ?? (directJson == nil ? "not-attempted" : "unrenderable")
+    if decrypted == nil, groupId.isEmpty { noteCause("no-group-id;direct=\(direct)") }
     guard decrypted == nil, !groupId.isEmpty else { return decrypted }
 
     // REFUSED AT AN EPOCH THIS DEVICE HOLDS: a catch-up builds the NEXT epoch and cannot read it, so
     // none is fetched (`background.rs` `refused_by_mls`). Android twin: `PushDecrypt.RefusedForGood`.
     if Self.refusalReason(directJson) == "mls-refused-for-good" {
       NSLog("[CanariNSE] MLS refused it at an epoch this device holds group=\(groupId.prefix(8)) -> generic fallback, no catch-up")
+      noteCause("refused-for-good")
       return nil
     }
 
+    trace?.mark("locality")
     let locality = groupLocality(groupId: groupId, ctx: ctx)
     NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) locality=\(locality)")
 
@@ -615,11 +845,14 @@ class NotificationService: UNNotificationServiceExtension {
       // Nothing was established, so nothing is retried: the catch-up answers an epoch gap, and
       // none has been diagnosed here.
       NSLog("[CanariNSE] locality unknown group=\(groupId.prefix(8)) -> generic fallback")
+      noteCause("locality-unknown;direct=\(direct)")
       return nil
     }
 
     if locality == .local {
+      trace?.mark("catchup")
       decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, senderId: senderId, protoB64: protoB64)
+      if decrypted == nil { noteCause("catchup-failed;direct=\(direct)") }
       return decrypted
     }
 
@@ -627,6 +860,7 @@ class NotificationService: UNNotificationServiceExtension {
     // app's to process. The ladder used to sleep 3 x 1.8 s betting that the app joined meanwhile, a
     // race nobody observed; removed with its Android twin (user, 2026-09-28: "Supprime ce delai").
     NSLog("[CanariNSE] group not joined here group=\(groupId.prefix(8)) -> generic fallback")
+    noteCause("group-absent;direct=\(direct)")
     return nil
   }
 
@@ -986,7 +1220,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
     // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
-    // iOS 15.0 and is ignored by the system, and the deployment target is 18.2 - so there is no
+    // iOS 15.0 and is ignored by the system, and the deployment target is 16.0 - so there is no
     // reachable version where setting it would do anything. iOS stacks by threadIdentifier and
     // writes the summary line itself. Twin of the same removal in canari_push.mm.
     content.userInfo["deepLink"] =
@@ -1009,6 +1243,7 @@ class NotificationService: UNNotificationServiceExtension {
     // A `mentions` frame arrives soundless from the server; a proven mention rings with the trill
     // set just above, which is also how it is raised (`levelDecision` logs that).
 
+    trace?.mark("attach")
     // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
     // only the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
     var attached = false
@@ -1091,6 +1326,8 @@ class NotificationService: UNNotificationServiceExtension {
 
     guard !channelId.isEmpty else {
       NSLog("[CanariNSE] handleChannelMessage: channelId missing")
+      noteCause("no-channel-id")
+      trace?.outcome = "fallback"
       finish()
       return
     }
@@ -1135,6 +1372,13 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
     }
 
+    if body != nil {
+      trace?.outcome = "decrypted"
+    } else {
+      trace?.outcome = "fallback"
+      noteCause(!openable ? "no-ciphertext" : (!seedHeld ? "no-seed" : "not-opened"))
+    }
+    trace?.mark("attach")
     // COUNTED, NOT ONLY LOGGED - the Android twin is `reportBlindBanner`. Never `held` here: nothing
     // redraws a banner once `finish()` runs, so a seed absent now is a blind banner for good.
     if !seedHeld, let ctx = ctx {
