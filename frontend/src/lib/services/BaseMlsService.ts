@@ -3521,13 +3521,27 @@ export abstract class BaseMlsService implements IMlsService {
         return 'unverified';
       }
       const settledBefore = this.keyPackageRoundsSettled;
-      const answer = await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
-      const publication = keyPackagePublication(answer);
+      // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: this device's id was MINTED in this
+      // process (`stateWasExpected` false - no id was stored before this boot, read from durable
+      // state by `resolveDeviceId`), so its whole life is this process, no round of it has settled
+      // yet and one is running: its FIRST publication is in flight and the server cannot hold a
+      // package of it. A RETURNING device (an id stored before this boot) is never skipped - its
+      // package may well be published already, and waiting on its boot round would make a failed
+      // round fail a join that a read would have let through. The read is made when the round settles.
+      const firstPublicationRunning =
+        pass === 1 &&
+        !this.stateWasExpected &&
+        this.keyPackageRoundsActive > 0 &&
+        this.keyPackageRoundsSettled === 0;
+      const answer = firstPublicationRunning
+        ? null
+        : await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+      const publication = answer ? keyPackagePublication(answer) : 'absent';
       if (publication === 'published') {
         this.ownKeyPackageUnverifiedReported = null;
         return 'published';
       }
-      if (answer.kind === 'unanswered') {
+      if (answer?.kind === 'unanswered') {
         console.warn(
           `[MLS] externalJoin ${short}... could not read this device's KeyPackage publication: ${sanitizeForLog(answer.detail)}`
         );
@@ -3545,7 +3559,7 @@ export abstract class BaseMlsService implements IMlsService {
       }
       if (this.keyPackageRoundsActive > 0) {
         console.log(
-          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${publication}, a round is running): the commit gate refuses an activation without one`
+          `[MLS] externalJoin ${short}... waits for the server to hold this device's KeyPackage (${answer ? publication : 'first publication running, not read'}, a round is running): the commit gate refuses an activation without one`
         );
         const tornDown = await new Promise<boolean>((resolve) => {
           this.keyPackageRoundWaiters.push(resolve);
