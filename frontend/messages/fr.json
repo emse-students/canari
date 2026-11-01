@@ -342,7 +342,7 @@
   "chat_message_placeholder": "Écrire…",
   "chat_send_message_label": "Envoyer le message",
   "chat_send_error_generic": "Échec de l'envoi. Réessayez dans un instant.",
-  "chat_send_held": "Envoi dès que la session est prête ({count} en attente)",
+  "chat_send_held": "Envoi dès que la conversation est prête ({count} en attente)",
   "chat_send_held_not_sent": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -3584,6 +3584,11 @@
   "join_request_declined_line": "Vous avez refusé la demande de {user}",
   "join_request_failed": "La réponse n'a pas pu être enregistrée. Réessayez.",
   "join_request_row_text": "{user} veut rejoindre la conversation",
+  "join_request_other_member_answering": "Un autre membre est en train de répondre à cette demande.",
+  "join_request_other_member_answered": "Un autre membre a déjà répondu à cette demande.",
+  "join_request_pending_badge_label": "Demandes pour rejoindre : {count}",
+  "chat_awaiting_admission_notice": "Votre demande a été transmise. Vous pourrez écrire ici dès qu'un membre vous aura ajouté.",
+  "chat_admission_ended_toast": "Votre demande pour rejoindre une conversation n'a pas été acceptée, ou elle a expiré.",
   "chat_system_conversation_deleted": "{sender} a supprimé cette conversation.",
   "chat_system_message_deleted": "Ce message a été supprimé.",
   "chat_system_removed_from_group": "Vous avez été retiré de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.",

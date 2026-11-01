@@ -1,7 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { In, type EntityManager } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
-import { GroupMember } from '../entities/group-member.entity';
+import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
+import { Group } from '../entities/group.entity';
+import { readGroupNotificationLevel } from '../services/notification-preferences';
+import { resolveUserDisplayName } from './display-name';
 import {
   type EvalCapable,
   JOIN_ASK_CAPABILITY,
@@ -290,4 +293,107 @@ async function settleAsks(
       );
     }
   }
+}
+
+/** The one push implementation (`MessagingService.sendPushToUser`), passed in so this file stays free of it. */
+export type JoinAskPushSender = (
+  userId: string,
+  title: string,
+  body: string,
+  data: Record<string, string>
+) => Promise<{ sent: number; failed: number }>;
+
+/** The sentence key a device composes the push from (`composeServerNotification`, the NSE). */
+export const JOIN_ASK_CONTENT_KEY = 'chat_join_ask';
+
+/**
+ * SENDS THE ONE ORDINARY, USER-VISIBLE PUSH PER ASK to the members already admitted: "X veut
+ * rejoindre {group}" (owner, 2026-11-01). It is NOT the background-add wake, which an awaiting seat
+ * suppresses on purpose (`notifyWelcomeRequest`): that wake lets a phone answer by itself, and no
+ * push answers an ask. This one only tells a person, who answers by opening the app.
+ *
+ * ONE PER ASK, FROM DURABLE STATE: the ask's identity is the seat's id, and the push is CLAIMED by a
+ * conditional UPDATE on that row (`joinAskNotified`, migration 043) - only the caller that flipped it
+ * sends, so a second replica, a retried request or a re-follow of the link sends nothing. A fresh ask
+ * after a Decline is a new seat, so a new row, so a new push. At-most-once by construction: a send
+ * that fails after the claim is logged, not retried (the card and the conversation badge stand).
+ *
+ * NEVER TO THE JOINER, nor to a seat that itself awaits a member ({@link ADMITTED_SEAT}). A member
+ * who muted the conversation (`none`) is not pushed; the account's category switch is applied by the
+ * sender. Started, never awaited ({@link dispatch}).
+ */
+export function pushJoinAsk(
+  m: EntityManager,
+  groupId: string,
+  ask: AnsweredAsk,
+  push: JoinAskPushSender
+): void {
+  dispatch(async () => {
+    const claimed = await m.getRepository(GroupMember).update(
+      {
+        id: ask.askId,
+        groupId,
+        userId: ask.userId,
+        awaitingAdmission: true,
+        joinAskNotified: false,
+      },
+      { joinAskNotified: true }
+    );
+    if (!claimed.affected) {
+      logger.log(
+        `[JOIN_ASK] push for ask=${ask.askId.slice(0, 8)} not sent - already sent, or the ask was answered`
+      );
+      return;
+    }
+    const seats = await m.getRepository(GroupMember).find({
+      where: { groupId, ...ADMITTED_SEAT },
+      select: { userId: true },
+    });
+    const recipients = [...new Set(seats.map((s) => s.userId))].filter((u) => u !== ask.userId);
+    if (recipients.length === 0) return;
+    const [asker, group] = await Promise.all([
+      resolveUserDisplayName(m, ask.userId),
+      m
+        .getRepository(Group)
+        .findOne({ where: { id: groupId }, select: { name: true, isGroup: true } }),
+    ]);
+    const groupName = group?.isGroup ? (group.name ?? '') : '';
+    const actor = asker || ask.userId;
+    let sent = 0;
+    for (const userId of recipients) {
+      try {
+        if (
+          isGroupUuid(groupId) &&
+          (await readGroupNotificationLevel(m, groupId, userId)) === 'none'
+        ) {
+          continue;
+        }
+        const result = await push(
+          userId,
+          actor,
+          // Old clients, with no table for the key, show this; the device's own wording replaces it.
+          `${actor} veut rejoindre ${groupName || 'la conversation'}`,
+          {
+            type: 'social',
+            contentKey: JOIN_ASK_CONTENT_KEY,
+            actorName: actor,
+            contentArg: groupName,
+            deepLink: `fr.emse.canari://chat/${groupId}`,
+            groupId,
+            // The asker, so the device can fetch their avatar.
+            senderId: ask.userId,
+          }
+        );
+        sent += result.sent;
+      } catch (e) {
+        // Per recipient: one member's failure never costs another their push.
+        logger.warn(
+          `[JOIN_ASK] push to user=${cutUserId(userId)} failed ask=${ask.askId.slice(0, 8)}: ${String(e)}`
+        );
+      }
+    }
+    logger.log(
+      `[JOIN_ASK] PUSHED group=${groupId} asker=${cutUserId(ask.userId)} ask=${ask.askId.slice(0, 8)} devices=${sent}`
+    );
+  });
 }

@@ -106,6 +106,8 @@
     <string name="notif_social_live_started_body">Appuyez pour regarder</string>
     <string name="notif_social_follow_request_title">%1$s demande à vous suivre</string>
     <string name="notif_social_follow_request_body">Appuyez pour répondre</string>
+    <string name="notif_chat_join_ask_title">%1$s veut rejoindre</string>
+    <string name="notif_chat_join_ask_body">cette conversation</string>
     <string name="notif_social_follow_accepted_title">%1$s a accepté votre demande</string>
     <string name="notif_social_follow_accepted_body">Votre demande a été acceptée</string>
     <string name="notif_social_live_cut_title">Votre live a été interrompu</string>

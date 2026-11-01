@@ -24,6 +24,7 @@ import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
 import {
   answerJoinRequest,
+  answerJoinRequestOutcome,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -262,6 +263,7 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
     expect(await admitJoinRequest(request, m.deps)).toEqual({
       done: false,
       reason: 'the Add did not happen (add-lock-busy)',
+      kind: 'busy',
     });
   });
 
@@ -456,6 +458,30 @@ describe('a join by invitation link, end to end', () => {
 
       expect(pendingJoinRequests()).toHaveLength(1);
       expect(m.leaves).not.toContain(`${JOINER}:${JOINER_DEVICE}`);
+    }
+  });
+
+  it('classifies a refusal caused by another member by TYPE, and every other as a failure', async () => {
+    const expected = {
+      'add-lock-busy': 'busy',
+      'removed-meanwhile': 'raced',
+      'commit-race-lost': 'raced',
+      failed: 'failed',
+      'no-device-added': 'failed',
+    } as const;
+    for (const [reason, outcome] of Object.entries(expected)) {
+      resetJoinRequests();
+      resetReAddCooldowns();
+      const m = memberSide({
+        addOutcome: { kind: 'not-added', reason: reason as keyof typeof expected },
+      });
+      register(m);
+      await joinByLink(m);
+
+      const [ask] = pendingJoinRequests();
+      expect(await answerJoinRequestOutcome(ask, 'approve')).toBe(outcome);
+      // Whatever the cause, the ask stays until the server's settlement frame clears it.
+      expect(pendingJoinRequests()).toHaveLength(1);
     }
   });
 });

@@ -217,6 +217,9 @@ class NotificationService: UNNotificationServiceExtension {
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     case "social_follow_request": composed = actorTitled("follow_request")
     case "social_follow_accepted": composed = actorTitled("follow_accepted")
+    // A new person asks to join a conversation the reader is in: the person names the title, the
+    // conversation's name is the body (a fixed phrase when it has none).
+    case "chat_join_ask": composed = actorTitled("join_ask")
     // The bookings' notices (WP-N): who acted names the title, the place (or the organiser's
     // word) is the body, a fixed sentence on a link-only space (Q-R5).
     case "social_booking_cancelled": composed = actorTitled("booking_cancelled")

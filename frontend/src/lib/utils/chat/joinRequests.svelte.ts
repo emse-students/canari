@@ -35,7 +35,21 @@ export interface JoinRequest {
  * device is in the tree (approve), or their roster row is gone (decline). Anything else names why,
  * and the ask stays on screen.
  */
-export type JoinAnswerResult = { done: true } | { done: false; reason: string };
+export type JoinAnswerResult =
+  | { done: true }
+  | { done: false; reason: string; kind?: JoinRefusalKind };
+
+/**
+ * WHY AN ANSWER DID NOT HAPPEN WHEN ANOTHER MEMBER IS THE CAUSE, classified where it is known
+ * (`admitJoinRequest`, from the Add's typed refusal) and never read back from the `reason` prose:
+ * `busy` - another device holds the group's add lock, so someone is answering now; `raced` - the
+ * ask was settled under this member's tap (the Add lost to a Decline or to another Add). Either way
+ * the settlement frame clears the card, so the member is told who answered, not that something broke.
+ */
+export type JoinRefusalKind = 'busy' | 'raced';
+
+/** What running a member's answer came to, for the caller that tells the member. */
+export type JoinAnswerOutcome = 'done' | 'failed' | JoinRefusalKind;
 
 /** What a member's answer runs, registered by the page holding a conversation context. */
 export interface JoinRequestHandlers {
@@ -283,17 +297,28 @@ export async function answerJoinRequest(
   request: JoinRequest,
   answer: 'approve' | 'decline'
 ): Promise<boolean> {
+  return (await answerJoinRequestOutcome(request, answer)) === 'done';
+}
+
+/**
+ * {@link answerJoinRequest} with the cause of a refusal kept: `done` when nothing is left to answer,
+ * `busy` / `raced` ({@link JoinRefusalKind}) when another member is the cause, `failed` otherwise.
+ */
+export async function answerJoinRequestOutcome(
+  request: JoinRequest,
+  answer: 'approve' | 'decline'
+): Promise<JoinAnswerOutcome> {
   const settledBefore = request.askId !== undefined && settledAsks.has(request.askId);
   if (settledBefore) {
     forget(request);
     console.log(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} not run - the server already settled this ask`
     );
-    return true;
+    return 'done';
   }
   if (!handlers) {
     console.error(`[JOIN_REQUEST] no handler registered - the ${answer} of an ask was not run`);
-    return false;
+    return 'failed';
   }
   let result: JoinAnswerResult;
   try {
@@ -303,21 +328,21 @@ export async function answerJoinRequest(
     console.error(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} threw, the ask stays: ${String(e)}`
     );
-    return false;
+    return 'failed';
   }
   if (!result.done) {
     if (request.askId !== undefined && settledAsks.has(request.askId)) {
       console.log(
         `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen - the server settled the ask meanwhile (${result.reason})`
       );
-      return true;
+      return 'done';
     }
     // An answer that did not happen is a known outcome (another device holds the add lock, the
     // network is down), named by its reason and retried by the member - a warning, not an error.
     console.warn(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen, the ask stays: ${result.reason}`
     );
-    return false;
+    return result.kind ?? 'failed';
   }
   forget(request);
   if (answer === 'decline') {
@@ -330,7 +355,7 @@ export async function answerJoinRequest(
   console.log(
     `[JOIN_REQUEST] ${request.userId} ${answer === 'approve' ? 'admitted' : 'declined'} in ${short(request.groupId)}`
   );
-  return true;
+  return 'done';
 }
 
 /** Forgets every ask (sign-out, tests): they belong to the account that was signed in. */

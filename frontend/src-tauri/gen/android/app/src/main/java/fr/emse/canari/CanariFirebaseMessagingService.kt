@@ -5003,6 +5003,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_follow_request_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_follow_request_body) }
             )
+            // A new person asks to join a conversation the reader is in: the person names the
+            // title, the conversation's name is the body (a fixed phrase when it has none).
+            "chat_join_ask" -> Pair(
+                res.getString(R.string.notif_chat_join_ask_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_chat_join_ask_body) }
+            )
             "social_follow_accepted" -> Pair(
                 res.getString(R.string.notif_social_follow_accepted_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_follow_accepted_body) }

@@ -10,8 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
+// `resolveUserDisplayName` answers nothing by default, so the synchronous name stays on screen.
+const resolveName = vi.hoisted(() => vi.fn(async (_id: string): Promise<string | null> => null));
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `Name(${id})`,
+  resolveUserDisplayName: resolveName,
 }));
 
 import JoinRequestRow from './JoinRequestRow.svelte';
@@ -126,6 +129,69 @@ describe('JoinRequestRow', () => {
 
     expect(target.querySelector('[data-join-request="carol"]')).not.toBeNull();
     expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the real name of an asker no cache held, once it resolves, and links their profile', async () => {
+    let resolveIt: (name: string) => void = () => {};
+    resolveName.mockImplementationOnce(
+      () => new Promise<string | null>((r) => (resolveIt = (n) => r(n)))
+    );
+    setJoinRequestHandlers({ approve: vi.fn(), decline: vi.fn() });
+    raiseJoinRequest(ask('carol'));
+    render();
+    expect(target.textContent).toContain('Name(carol)');
+
+    resolveIt('Carol Dupont');
+    await tick();
+    await tick();
+
+    expect(resolveName).toHaveBeenCalledWith('carol');
+    expect(target.textContent).toContain('Carol Dupont veut rejoindre la conversation');
+    expect(target.textContent).not.toContain('Name(carol)');
+    expect(target.querySelector('a[data-join-profile="carol"]')!.getAttribute('href')).toBe(
+      '/profile/carol'
+    );
+  });
+
+  it('says another member is answering, not that something broke, when the add lock is busy', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const approve = vi.fn(async () => ({
+      done: false as const,
+      reason: 'the Add did not happen (add-lock-busy)',
+      kind: 'busy' as const,
+    }));
+    setJoinRequestHandlers({ approve, decline: vi.fn() });
+    raiseJoinRequest(ask('carol'));
+    render();
+
+    (button('Accepter') ?? button('Accept'))!.click();
+    await tick();
+    await tick();
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const [text, type] = vi.mocked(showToast).mock.calls[0]!;
+    expect(type).toBe('info');
+    expect(text).toMatch(/autre membre est en train|Another member is answering/);
+  });
+
+  it('says another member already answered when the answer lost a race', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const approve = vi.fn(async () => ({
+      done: false as const,
+      reason: 'the Add did not happen (removed-meanwhile)',
+      kind: 'raced' as const,
+    }));
+    setJoinRequestHandlers({ approve, decline: vi.fn() });
+    raiseJoinRequest(ask('carol'));
+    render();
+
+    (button('Accepter') ?? button('Accept'))!.click();
+    await tick();
+    await tick();
+
+    const [text, type] = vi.mocked(showToast).mock.calls[0]!;
+    expect(type).toBe('info');
+    expect(text).toMatch(/déjà répondu|already answered/);
   });
 
   it('folds two devices of one person into one card', () => {
