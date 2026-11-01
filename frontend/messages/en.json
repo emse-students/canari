@@ -567,7 +567,6 @@
   "call_tap_to_hear": "Tap to hear",
   "call_mute_short_label": "Mute",
   "call_camera_short_label": "Camera",
-  "call_incoming_video_label": "Incoming video call",
   "call_switch_camera_label": "Switch camera",
   "call_noise_suppression_disable_label": "Turn noise reduction off (for music, say)",
   "call_noise_suppression_enable_label": "Turn noise reduction on",

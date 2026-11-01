@@ -599,7 +599,6 @@
   "call_tap_to_hear": "Toucher pour entendre",
   "call_mute_short_label": "Muet",
   "call_camera_short_label": "Caméra",
-  "call_incoming_video_label": "Appel vidéo entrant",
   "call_switch_camera_label": "Changer de caméra",
   "call_noise_suppression_disable_label": "Couper la réduction du bruit (pour la musique, par exemple)",
   "call_noise_suppression_enable_label": "Activer la réduction du bruit",
