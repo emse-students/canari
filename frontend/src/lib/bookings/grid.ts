@@ -335,18 +335,21 @@ export function weekLayout(
 }
 
 /**
- * Where the grid OPENS, as a minute from midnight: the hour of the earliest free unit a booker may
- * take now among the days shown, else of the earliest unit of any kind, else 08:00. A scroll
- * position only - the axis itself never moves - so it is read once, when the grid appears.
+ * Where the grid OPENS, as a minute from midnight: the hour of the earliest free unit that can be
+ * acted on among the days shown, else of the earliest unit of any kind, else 08:00. For a booker
+ * "acted on" is what the booking window takes now; for the organiser (`blockMode`) every free unit
+ * can be blocked, the window does not apply. A scroll position only - the axis itself never moves.
  */
 export function firstUsefulMin(
   layout: Pick<WeekLayout, 'days'>,
   space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
-  nowMs: number
+  nowMs: number,
+  blockMode = false
 ): number {
   const placed = layout.days.flatMap((d) => d.placed);
   const useful = placed.filter(
-    (p) => p.unit.state === 'free' && windowRefusal(space, p.unit.startMs, nowMs) === null
+    (p) =>
+      p.unit.state === 'free' && (blockMode || windowRefusal(space, p.unit.startMs, nowMs) === null)
   );
   const pool = useful.length > 0 ? useful : placed;
   if (pool.length === 0) return 8 * 60;

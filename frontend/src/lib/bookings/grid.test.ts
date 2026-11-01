@@ -202,6 +202,16 @@ describe('the week (WP-R2, D46; rolling since 2026-11-01)', () => {
     expect(firstUsefulMin(weekLayout([], weekDates('2026-11-04'), paris, 0), paris, 0)).toBe(480);
   });
 
+  it('opens on the first FREE unit for the organiser, whom the booking window does not bind', () => {
+    const notice = { ...paris, minNoticeMinutes: 24 * 60 };
+    const now = at('2026-11-04T06:00:00Z');
+    const units = [parisUnit('2026-11-04T09:00', 30), parisUnit('2026-11-06T15:00', 30)];
+    const layout = weekLayout(units, weekDates('2026-11-04'), notice, now);
+    // The booker's notice refuses the 4 November unit; the organiser may still block it.
+    expect(firstUsefulMin(layout, notice, now)).toBe(15 * 60);
+    expect(firstUsefulMin(layout, notice, now, true)).toBe(9 * 60);
+  });
+
   it('places each unit by the wall time of its start, the same hour on every day', () => {
     const units = [parisUnit('2026-11-02T10:00', 30), parisUnit('2026-11-03T10:00', 30)];
     const layout = weekLayout(units, weekDates('2026-11-02'), paris, at('2026-11-01T00:00:00Z'));

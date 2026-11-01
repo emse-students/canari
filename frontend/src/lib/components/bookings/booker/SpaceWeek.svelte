@@ -101,6 +101,8 @@
    * It holds for the life of this view, whatever the device's clock says.
    */
   let lastRefusedStart = $state<number | null>(null);
+  /** The grid's scroll, kept here so a week with nothing offered (which unmounts the grid) does not lose it. */
+  let gridScroll = $state<number | null>(null);
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
@@ -325,6 +327,7 @@
             blockMode={mode === 'block'}
             {nowMs}
             {lastRefusedStart}
+            bind:scrollTop={gridScroll}
             onPick={pick}
           />
         {/if}
