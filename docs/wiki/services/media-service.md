@@ -82,14 +82,16 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
 | GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
 | DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
-| DELETE | `/api/media/chat-reel/:id`             | JWT               | The SENDER takes back a reel sent in a conversation: allowed only for the caller's OWN `chat-reel` object (class AND owner), `403` otherwise, `410` on the next read ([chat-reel](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)) |
+| POST   | `/api/media/chat-reel/:id/hold`        | JWT               | The take's CHAT HOLD before its first send: owner-only, idempotent, on the caller's own `reel-pending`, `chat-reel` or `reel`; `{dueAt}`, `403` not theirs or not a reel file, `404` unknown, `410` gone or past its window, `429` past the daily budget ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
+| DELETE | `/api/media/chat-reel/:id`             | JWT               | The SENDER takes back a reel sent in conversations: RELEASES the caller's OWN chat hold (a hold AND the owner), deleting the file when no post holds it; `403` otherwise, `410` on the next read once deleted ([chat-reel](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09), [holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
 | POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
 | GET | `/api/media/internal/poster-list` | `INTERNAL_SECRET` | every claimed poster and its space, for social-service's hourly reconciliation |
-| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
+| POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}], reason}` - on the owner's say-so, one outcome per id (`deleted`/`released`/`absent`/`refused`/`failed`); `reason` REQUIRED: `moderation` purges every hold, `author`/`retention` release the post's ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
+| POST   | `/api/media/internal/chat-reel-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - a salon moderator's purge: deleted only when `ownerId` (the row's author) uploaded it AND a chat holds it; every hold ends, tombstone `reel_moderated` (`410`) |
 | POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
 | POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
 | GET    | `/api/media/internal/form-file/:id`    | `INTERNAL_SECRET` | The ONE read of a form file, for social-service's manager-gated download; serves nothing else |
@@ -105,7 +107,9 @@ Neither `DELETE` is reachable by a client. `:id` is called by
 `FormsService`; `internal/users/:userId` by core-service's erasure queue ([account-erasure](../account-erasure.md)), which retries until a 2xx - so the route answers **503 while any delete failed**, and a failed object keeps its live entry for the retry. That route
 carries **no JWT on purpose** - the account is already being destroyed, so there is no token left to
 present - and it is declared BEFORE the catch-all `:id` for the same reason `internal/:id` precedes
-`GET :id`. **Nothing in the chat or channel paths deletes a blob** - see retention below.
+`GET :id`. **Nothing in the chat or channel paths deletes an ordinary blob** - see retention below;
+the one exception is a REEL file, on its sender's release or a salon moderator's purge
+([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)).
 
 ## The upload ceiling is ONE number, and the box publishes it (2026-09-24)
 
@@ -235,9 +239,9 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `ephemeral`    | the client, for chat and channel media; social-service on a post release                                                    | **takes it**                                 | takes it         |
 | `archive`      | the client, for feed media and avatars; social-service's boot backfill                                                      | keeps                                        | takes it         |
 | `association`  | the client, for a vault upload; social-service on `createDocument` and at boot                                              | keeps                                        | **keeps**        |
-| `reel`         | social-service's CLAIM, proven by `ownerId` ([reels](reels.md)); a client older than `reel-pending` at upload               | keeps                                        | takes it         |
+| `reel`         | social-service's CLAIM, proven by `ownerId` ([reels](reels.md)); a client older than `reel-pending` at upload; DERIVED from the holds while a post holds a file ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) | keeps                                        | takes it         |
 | `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
-| `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
+| `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09)); DERIVED from the holds when only a chat holds a file (the chat-hold route moves a `reel-pending` here) | **by AGE: 30 days from upload**, or from its written chat hold | takes it         |
 | `form-file`    | social-service only, at `internal/form-file` ([below](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15))   | keeps - social-service's purge deletes it    | takes it         |
 | `poster-pending` | the client at upload of a booking space's POSTER, and nothing else ([bookings-chantier](../bookings-chantier.md#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)) | **by AGE: 48 h from upload**, unless claimed | takes it |
 | `poster` | social-service's `internal/poster-claim`, proven by `ownerId`, bound to ONE space; moved out by `internal/poster-release` alone | keeps | takes it |
@@ -401,24 +405,98 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   early) and heal on the roll-forward; the cost is a wrong status while rolled back. A meta version was
   considered and not added: an old build rewrites the file without the field, so it could not protect
   against the very build it is meant to warn about.
-- **The sender's delete is an ownership allowlist**: `DELETE /api/media/chat-reel/:id` removes an object
-  only when its class is `chat-reel` AND its `ownerId` is the caller. A feed photo, a vault document, a
-  feed reel, an unclassified blob, an object with no recorded owner or somebody else's reel are `403`.
-  Allowed here and refused for ordinary media because a reel message cannot be forwarded, so no other
-  conversation can cite the blob. **Since the owner's decision of 2026-10-30 one take may be sent to
-  several conversations - and published on the feed - as ONE file**, so the reason now reads "no
-  other PERSON's message cites it": every citation is the sender's own. The object then carries
-  reference-counted holds (`post`, `chat`) and this `DELETE` releases the `chat` hold; the salon purge
-  must also prove the moderator's salon names the file ([reels-in-chat section 15](../frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built), RC-14, not built).
+- **The sender's delete is an ownership allowlist, and since RC-14 it releases a HOLD**:
+  `DELETE /api/media/chat-reel/:id` acts only on an object that a conversation holds (a `chat`
+  hold, which every `chat-reel` upload has) AND whose `ownerId` is the caller. A feed photo, a vault
+  document, a feed reel nobody sent, an unclassified blob, an object with no recorded owner or
+  somebody else's reel are `403`. **Why the sender may delete a file at all, when ordinary chat media
+  is never deleted on a message's deletion: no other PERSON's message cites it.** Ordinary media is
+  forwarded - the `MediaRef` is copied into conversations the deleter cannot see - so the server
+  cannot count its citations. A reel message cannot be forwarded, and when one take reaches several
+  conversations and the feed as ONE file (D-oneblob, D-onefile, the owner, 2026-10-30) every citation
+  is the SENDER's own fan-out. So the delete releases the sender's `chat` hold: the file goes when that
+  was its last hold (a chats-only take - exactly RC-2's behaviour), and stays when a post still holds
+  it (`released`, the post's own end then takes it). A repeat after a release answers success.
+  Which conversations a take reached is known only to the sending device (reels-in-chat 15.7).
+  [Holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01) has the whole model.
 - **Account deletion takes it** (not `survivesAccountDeletion`).
 - **Stats**: `GET internal/storage-stats` gains `chatReelCount`, `chatReelBytes`,
   `chatReelOverdueCount`, `chatReelOverdueBytes` and `chatReelRetentionMs`; an overdue figure that does
   not fall back within a sweep interval says the sweep stopped.
-- **NOT DONE, owed**: salons' moderator purge (social-service calls an internal `chat-reel-purge` with the
-  author the row proves, RC-8), the `/admin/storage` panel line in the frontend, the client's
+- **NOT DONE, owed**: the salon SEND of a reel (RC-8: the server half - the declaration and the
+  moderator's purge - is RC-14's, [holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)),
+  the `/admin/storage` panel line in the frontend, the client's
   `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
   forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
   against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
+
+## Holds: one file for the feed and the chats (RC-14, 2026-11-01)
+
+**Why.** The owner decided on 2026-10-30 that a take sent to several conversations is ONE stored file
+(D-oneblob) and that a take published on CanaReels AND sent to conversations is ONE file too
+(D-onefile, [reels-in-chat 15.3-15.5](../frontend/modules/reels-in-chat.md#153-retention---the-file-lives-as-long-as-its-longest-hold)).
+A published reel ends when social-service's `reel-purge` says so; a chat reel ends by AGE. Letting
+either clock delete the object would pull it from under the other, so each object carries HOLDS and
+goes only with the last one.
+
+**The model** (`MediaHolds` in `media.service.ts`, read by ONE function, `holdsOf`):
+
+| Hold | Placed by | Released by |
+| --- | --- | --- |
+| `post` | social-service's claim at post creation (`internal/reel-claim`) | `internal/reel-purge` with reason `author` or `retention` |
+| `chat` `{heldAt, dueAt}` | the take, `POST /api/media/chat-reel/:id/hold`, before its first send (or the upload itself, for a `chat-reel`) | the age sweep at `dueAt`; the sender's `DELETE /api/media/chat-reel/:id` |
+
+- **Ends every hold at once**: `reel-purge` with reason `moderation` (a feed moderator, an admin),
+  `internal/chat-reel-purge` (a salon moderator) and the account deletion.
+- **No migration of the index.** An entry with no `holds` field reads them from its class: a `reel`
+  is one post hold, a `chat-reel` one chat hold due 30 days after its upload - exactly what every
+  build since RC-2 wrote. `holds` is written the first time a hold changes, and never left empty: the
+  last release deletes the object.
+- **The class is DERIVED and still written** (`writeHolds`): `reel` while a post holds the file,
+  `chat-reel` otherwise. An older build reading the same index keeps a `reel` by omission and sweeps a
+  `chat-reel` 30 days after its upload. **That is why the hold route moves a `reel-pending` to
+  `chat-reel`**: a rolled-back build would sweep a held `reel-pending` at 24 h, under live messages.
+  Rolled back, such a file is swept 30 days after its UPLOAD rather than its hold - earlier by the
+  minutes between the two, and still after every message's hint, which counts from the press that
+  precedes the upload. A file a post also holds is `reel` and kept by omission there. No client
+  creates a hold before this build is on both estates.
+- **The sweep and the stats read the holds** (`isSweepable`, `isDue`): a written hold set is
+  sweepable only when no post holds it and a chat hold remains, due at that hold's `dueAt`. A held
+  `reel-pending` is therefore not swept at 24 h. `getStorageStats` adds `sharedReelCount/Bytes` (files
+  a post AND a chat hold, counted inside `reel*` too): a `reel*` line that stays up after the reel
+  worker ran is read against it before it is called a fault.
+- **The hold route** (`holdForChat`): owner-only, idempotent (a repeat answers the existing `dueAt`),
+  on the caller's own `reel-pending`, `chat-reel` or `reel` and nothing else. It charges the file's
+  size (read from the store) against the 500 MB daily budget ONCE, at the hold - a `chat-reel` upload
+  was charged at its upload and is not charged again. The budget now sums every entry whose chat hold
+  was placed in the last 24 h, whatever its class. A `reel-pending` past its 24 h window is `410`:
+  the sweep may be deleting it, and the take uploads its own file. The check, the charge and the
+  write share one synchronous run after the store's answer, judged again from the index as it is
+  then.
+- **The claim** (`claimReels`) accepts a held file (`chat-reel` -> `reel`): it adds the post hold
+  and keeps the chat hold and its due time. One whose chat hold already lapsed is refused, as an
+  overdue `reel-pending` is.
+- **`reel-purge` carries its reason**, required (`400` without it): `moderation` deletes; `author` and
+  `retention` answer `released` for a file whose chat hold is still live (the author's post delete
+  leaves the chats their 30 days, D-postdelete), and delete otherwise. Tombstones: `reel_moderated`
+  for a moderated file a chat held, `reel_expired` for one whose chat hold had lapsed, the old
+  `manual_delete` for a reel no conversation ever held. `reel_moderated` is answered `410` like the
+  other reel tombstones; no client is told the reason (a DM is not told that a salon was moderated).
+- **`internal/chat-reel-purge`** (`purgeChatReels`) is the salon half. social-service proves what it
+  owns - the caller holds `channel.moderate` in the community of the salon whose row it deletes, and
+  that row (found by its id AND its salon) declares the file (`channel_messages."reelMediaId"`,
+  migration 122, approved by the owner 2026-10-30). This service proves the rest: the file's
+  uploader is the ROW's author (a row declaring another member's file is refused - a lying author can
+  only offer up a file of their own), and a chat holds it (a feed reel nobody sent, a photo, a
+  document are refused). The purge runs after the message delete committed and never gates it.
+- **`setRetentionClass` on a held file**: `ephemeral` (the post's release fallback when `reel-purge`
+  was unreachable) ends the post hold only; any other class drops the holds and keeps the file
+  longer, the safe direction.
+- Pinned by `media.service.chat-holds.spec.ts` (each of the above over a stubbed store),
+  `media.controller.reel-purge.spec.ts` (the required reason), and on the social side
+  `channel-reel-purge.integration.spec.ts` (real PostgreSQL: salon S's moderator and salon T's file,
+  the lying declaration, the deploy's window before 122). **Not run against a real media-service over
+  HTTP**: that bench run is owed with RC-2's.
 
 ## Live segments: outside the index, deleted by prefix (WP-L3, 2026-10-18)
 

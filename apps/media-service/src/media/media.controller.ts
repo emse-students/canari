@@ -15,7 +15,9 @@
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
  *   POST /media/internal/reel-claim - claim a CanaReel's blob for its author (X-Internal-Secret)
- *   POST /media/internal/reel-purge - delete expired reels' blobs, per owner (X-Internal-Secret)
+ *   POST /media/internal/reel-purge - end reels' blobs, per owner, with the reason (X-Internal-Secret)
+ *   POST /media/internal/chat-reel-purge - a salon moderator's purge of a sent reel (X-Internal-Secret)
+ *   POST /media/chat-reel/:id/hold - the sender's chat hold on a reel file (JWT, owner only)
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
@@ -76,7 +78,9 @@ import {
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
   type MediaStorageStats,
+  REEL_PURGE_REASONS,
   type ReelPurgeOutcome,
+  type ReelPurgeReason,
   type RetentionClass,
 } from './media.service';
 import { UploadSessionService } from './upload-session.service';
@@ -724,39 +728,84 @@ export class MediaController {
   // POST /media/internal/reel-purge - delete the blobs of expired or deleted reels
   // ---------------------------------------------------------------------------
   /**
-   * Deletes blobs on their owner's say-so and answers one outcome per id. Sole consumer:
-   * social-service's `ReelRetentionScheduler` and the delete of a reel. The allowlist (ownership,
-   * never a class) and the meaning of each outcome are on {@link MediaService.purgeReels}.
+   * Ends reels' blobs on their owner's say-so, for the REASON named, and answers one outcome per id.
+   * Sole consumer: social-service's `ReelRetentionScheduler` (`retention`) and the delete of a reel
+   * (`author` or `moderation`). The reason is REQUIRED: `moderation` purges every hold, the other two
+   * release the post's alone (reels-in-chat 15.4), and a body that forgot it must not get either by
+   * default. The allowlist (ownership, never a class) and each outcome are on
+   * {@link MediaService.purgeReels}.
    */
   @Post('internal/reel-purge')
   async purgeReels(
+    @Body() body: { items?: unknown; reason?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
+    assertInternalSecret(internalSecret);
+    if (typeof body?.reason !== 'string' || !REEL_PURGE_REASONS.has(body.reason)) {
+      this.logger.warn(
+        `Reel purge refused: reason ${JSON.stringify(body?.reason)} is not one of moderation, author, retention`
+      );
+      throw new BadRequestException("reason must be 'moderation', 'author' or 'retention'");
+    }
+    const reason = body.reason as ReelPurgeReason;
+    const items = this.purgeItems(body.items);
+    const results = await this.mediaService.purgeReels(items, reason);
+    this.logPurgeCounts(`Reel purge (${reason})`, results);
+    return { results };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/chat-reel-purge - a salon moderator's purge of a reel sent there
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes reel files a moderated salon message names, each for the row's proven author. Sole
+   * consumer: social-service's moderator delete of a salon message (reels-in-chat 15.4), which has
+   * checked the moderator's permission in THAT salon and that the row declares the id. This side
+   * checks the owner and the chat hold: {@link MediaService.purgeChatReels}.
+   */
+  @Post('internal/chat-reel-purge')
+  async purgeChatReels(
     @Body() body: { items?: unknown },
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
     assertInternalSecret(internalSecret);
-    const raw = body?.items;
+    const results = await this.mediaService.purgeChatReels(this.purgeItems(body?.items));
+    this.logPurgeCounts('Chat-reel purge', results);
+    return { results };
+  }
+
+  /** The `{items: [{mediaId, ownerId}]}` body both purges take, bounded and typed - or a 400. */
+  private purgeItems(raw: unknown): Array<{ mediaId: string; ownerId: string }> {
     if (!Array.isArray(raw)) {
       throw new BadRequestException('items must be an array');
     }
     if (raw.length > RETENTION_CLASS_MAX_IDS) {
       throw new BadRequestException(`items must hold at most ${RETENTION_CLASS_MAX_IDS} entries`);
     }
-    const items = raw.map((item) => {
+    return raw.map((item) => {
       const { mediaId, ownerId } = (item ?? {}) as { mediaId?: unknown; ownerId?: unknown };
       if (typeof mediaId !== 'string' || typeof ownerId !== 'string') {
         throw new BadRequestException('each item needs a string mediaId and ownerId');
       }
       return { mediaId, ownerId };
     });
-    const results = await this.mediaService.purgeReels(items);
-    const counts = { deleted: 0, absent: 0, refused: 0, failed: 0 };
+  }
+
+  /** One summary line per purge that did anything; a run of `absent` only is a retry and silent. */
+  private logPurgeCounts(label: string, results: Record<string, ReelPurgeOutcome>): void {
+    const counts: Record<ReelPurgeOutcome, number> = {
+      deleted: 0,
+      released: 0,
+      absent: 0,
+      refused: 0,
+      failed: 0,
+    };
     for (const outcome of Object.values(results)) counts[outcome] += 1;
-    if (counts.deleted + counts.refused + counts.failed > 0) {
+    if (counts.deleted + counts.released + counts.refused + counts.failed > 0) {
       this.logger.log(
-        `Reel purge: ${counts.deleted} deleted, ${counts.absent} absent, ${counts.refused} refused, ${counts.failed} failed`
+        `${label}: ${counts.deleted} deleted, ${counts.released} released, ${counts.absent} absent, ${counts.refused} refused, ${counts.failed} failed`
       );
     }
-    return { results };
   }
 
   // ---------------------------------------------------------------------------
@@ -1142,12 +1191,36 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in a conversation
+  // POST /media/chat-reel/:id/hold - the take's chat hold on its file, before its first send
+  //
+  // A user route (JWT), OWNER-ONLY and IDEMPOTENT (`holdForChat`): a repeat answers the hold that
+  // exists. `dueAt` is when the chat hold lapses - never earlier than the hint the take's messages
+  // carry, which is computed from the press (reels-in-chat 15.3).
+  // ---------------------------------------------------------------------------
+  @Post('chat-reel/:id/hold')
+  async holdForChat(@Param('id') id: string, @Req() req: Request): Promise<{ dueAt: number }> {
+    const ownerId = this.verifyToken(req);
+    const outcome = await this.mediaService.holdForChat(id, ownerId);
+    switch (outcome.status) {
+      case 'held':
+        return { dueAt: outcome.dueAt };
+      case 'absent':
+        throw new NotFoundException('No such reel');
+      case 'gone':
+        throw new GoneException('This reel is no longer stored');
+      case 'refused':
+        throw new ForbiddenException('Not a reel you uploaded');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in conversations
   //
   // A user route (JWT, no internal secret), unlike `DELETE /media/:id`: it is safe to expose because
-  // the service allows exactly one thing - the caller's OWN object of class `chat-reel`
-  // (`removeChatReel`). A reel message cannot be forwarded, so no other conversation can cite the
-  // blob. Two segments, so it never collides with the catch-all `@Delete(':id')` below.
+  // the service allows exactly one thing - releasing the caller's OWN chat hold (`removeChatReel`),
+  // which deletes the file when no post holds it. No other PERSON's message cites the file: a reel
+  // message cannot be forwarded, and a take sent to several conversations is the sender's own
+  // fan-out (reels-in-chat 15.7). Two segments, so it never collides with `@Delete(':id')` below.
   // ---------------------------------------------------------------------------
   @Delete('chat-reel/:id')
   async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {

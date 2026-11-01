@@ -101,6 +101,27 @@ export class ChannelMessage {
   @Column({ type: 'varchar', length: 36, nullable: true, select: false, update: false })
   clientMessageId?: string | null;
 
+  /**
+   * The reel file this message carries, as its SENDER declared it beside the ciphertext (migration
+   * 122, approved by the owner 2026-10-30; reels-in-chat 15.4). Read by ONE path: a moderator's
+   * delete of this row, which may purge that file (`chat-reel-purge`) because the row names it. Null
+   * on every message that carries no reel and on every row older than 122.
+   *
+   * `insert: false`, `select: false`, `update: false`: the deploy starts the services BEFORE it
+   * applies 122, and TypeORM names every insertable column in its INSERT - so a declared column would
+   * fail EVERY salon send in that window, the cost `clientMessageId` pays. Instead the send writes it
+   * with its own UPDATE inside the send's transaction, only when a message declares one, and the
+   * delete reads it with its own SELECT (`readDeclaredReelMediaId`).
+   */
+  @Column({
+    type: 'uuid',
+    nullable: true,
+    insert: false,
+    select: false,
+    update: false,
+  })
+  reelMediaId?: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   replyTo: string;
 

@@ -175,6 +175,13 @@ export interface MediaStorageStats {
   /** The window the sweep applies to them, echoed so the reader need not know the constant. */
   chatReelRetentionMs: number;
   /**
+   * Reel files a post AND a conversation both hold (reels-in-chat 15.3/15.5) - counted in `reel*`
+   * above too, and here on their own: they outlive their post by their chat hold, so a `reel*` line
+   * that stays up after the reel worker ran is read against this one before it is called a fault.
+   */
+  sharedReelCount: number;
+  sharedReelBytes: number;
+  /**
    * Feed reel uploads no post has claimed yet (`reel-pending`): a publish in progress, or one that
    * failed after its upload. Swept {@link PENDING_REEL_TTL_MS} after upload; a count that does not
    * fall back, or an `overdue` pair that is not zero after a sweep, is the sweep or the claim broken.
@@ -217,11 +224,18 @@ export interface MediaStorageStats {
 }
 
 /**
- * Why an object is gone. `reel_expired` (a `chat-reel` swept by age) and `reel_deleted` (its sender
- * took it back) are answered `410` like `retention_expired`: the member is told the video is gone,
- * not that it never existed ({@link isGoneTombstone}).
+ * Why an object is gone. `reel_expired` (a `chat-reel` swept by age), `reel_deleted` (its sender
+ * took it back) and `reel_moderated` (a moderator purged a file a conversation cites, every hold at
+ * once - reels-in-chat 15.4) are answered `410` like `retention_expired`: the member is told the
+ * video is gone, not that it never existed ({@link isGoneTombstone}). The reason is recorded for the
+ * operator only; no client is told it (a DM is not told that a salon was moderated).
  */
-type PurgeReason = 'retention_expired' | 'manual_delete' | 'reel_expired' | 'reel_deleted';
+type PurgeReason =
+  | 'retention_expired'
+  | 'manual_delete'
+  | 'reel_expired'
+  | 'reel_deleted'
+  | 'reel_moderated';
 
 /** The tombstones a download answers `410` to. `manual_delete` keeps its older `404`. */
 function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason } | undefined) {
@@ -229,9 +243,60 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
     !!entry?.purgedAt &&
     (entry.purgeReason === 'retention_expired' ||
       entry.purgeReason === 'reel_expired' ||
-      entry.purgeReason === 'reel_deleted')
+      entry.purgeReason === 'reel_deleted' ||
+      entry.purgeReason === 'reel_moderated')
   );
 }
+
+/**
+ * A conversation's claim on a reel file (reels-in-chat 15.3): placed once per take, by its sender,
+ * before the take's first send. `heldAt` is the daily budget's clock (the bytes are charged when the
+ * hold is placed, or at the upload for a file uploaded as `chat-reel`); `dueAt` is when the age sweep
+ * releases it - fixed when it is placed, so a later change of the window never moves a hold the
+ * messages' hint was already computed against.
+ */
+export interface ChatHold {
+  heldAt: number;
+  dueAt: number;
+}
+
+/**
+ * The holds that keep ONE stored reel file alive when a take is published on CanaReels AND sent to
+ * conversations (D-onefile, reels-in-chat 15.3): the object goes only when the last hold goes, and
+ * a moderation purge or the account deletion ends every hold at once.
+ *
+ * - `post` - placed by social-service's claim at post creation; released by `reel-purge` with
+ *   reason `author` or `retention`.
+ * - `chat` - placed by the sender (`POST /media/chat-reel/:id/hold`); released by the age sweep at
+ *   its `dueAt` or by the sender's `DELETE /media/chat-reel/:id`.
+ *
+ * An entry with NO `holds` field reads them from its class ({@link holdsOf}): a `reel` is one post
+ * hold, a `chat-reel` one chat hold due 30 days after its upload - exactly the objects every build
+ * since RC-2 wrote, so nothing is migrated. Once written, `holds` is never left empty: the last
+ * release deletes the object.
+ */
+export interface MediaHolds {
+  post: boolean;
+  chat: ChatHold | null;
+}
+
+/** The classes a chat hold may be placed on: a reel file, and nothing else (15.3). */
+const CHAT_HOLDABLE_CLASSES: ReadonlySet<string> = new Set(['reel-pending', 'chat-reel', 'reel']);
+
+/**
+ * Why social-service ends a feed reel's life (`POST /media/internal/reel-purge`, reels-in-chat
+ * 15.4): `moderation` purges the file with every hold on it; `author` (the post's own delete) and
+ * `retention` (its 30 days) release the `post` hold alone, so a file the take also sent to
+ * conversations stays until its chat hold lapses (D-postdelete).
+ */
+export type ReelPurgeReason = 'moderation' | 'author' | 'retention';
+
+/** The three reasons, for the request body's runtime check. */
+export const REEL_PURGE_REASONS: ReadonlySet<string> = new Set<ReelPurgeReason>([
+  'moderation',
+  'author',
+  'retention',
+]);
 
 /**
  * Which retention an object gets. The service holds ciphertext and cannot tell one surface's blob
@@ -437,8 +502,21 @@ export async function stripImageMetadata(
   );
 }
 
-/** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
-export type ReelPurgeOutcome = 'deleted' | 'absent' | 'refused' | 'failed';
+/**
+ * What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. `released` is a
+ * success: the post's hold is gone and the file is kept by a conversation's live chat hold.
+ */
+export type ReelPurgeOutcome = 'deleted' | 'released' | 'absent' | 'refused' | 'failed';
+
+/** What the chat-hold route answers - see {@link MediaService.holdForChat}. */
+export type ChatHoldOutcome =
+  | { status: 'held'; dueAt: number }
+  | { status: 'absent' }
+  | { status: 'gone' }
+  | { status: 'refused' };
+
+/** What the sender's delete answers - see {@link MediaService.removeChatReel}. */
+export type ChatReelRemoveOutcome = 'deleted' | 'released' | 'absent' | 'refused' | 'failed';
 
 /** Runtime guard for the class name arriving from a request body. */
 export function isRetentionClass(value: unknown): value is RetentionClass {
@@ -467,10 +545,42 @@ interface MediaMetaEntry {
   /** The booking space a CLAIMED poster (`poster`, `poster-association`) belongs to. */
   claimedFor?: string;
   /**
-   * Ciphertext size in bytes, recorded for `chat-reel` uploads ONLY: the daily cap sums it per
-   * owner, and nothing else in the index needs a size (the listing of the store has them).
+   * Ciphertext size in bytes, recorded for `chat-reel` uploads and when a chat hold is placed: the
+   * daily cap sums it per owner, and nothing else in the index needs a size (the listing of the store
+   * has them).
    */
   size?: number;
+  /** The holds on a shared reel file; absent means "read them from the class" ({@link holdsOf}). */
+  holds?: MediaHolds;
+}
+
+/**
+ * The holds an entry carries: its own `holds` once one was written, else the one its class implies
+ * (a `reel` is a post hold, a `chat-reel` a chat hold due {@link CHAT_REEL_RETENTION_MS} after its
+ * upload), else none. ONE reader, used by the sweep, the stats, the budget, the claim, the purges and
+ * the sender's delete, so no two of them can disagree on what keeps a file.
+ */
+function holdsOf(entry: MediaMetaEntry): MediaHolds | null {
+  if (entry.holds) return entry.holds;
+  if (entry.retentionClass === 'reel') return { post: true, chat: null };
+  if (entry.retentionClass === 'chat-reel') {
+    return {
+      post: false,
+      chat: { heldAt: entry.createdAt, dueAt: entry.createdAt + CHAT_REEL_RETENTION_MS },
+    };
+  }
+  return null;
+}
+
+/**
+ * Writes an entry's holds AND the class derived from them (`reel` while a post hold exists,
+ * `chat-reel` otherwise) - the class a build older than RC-14 reads from the same index: it keeps a
+ * `reel` by omission, and sweeps a `chat-reel` 30 days after its upload, never a held file at 24 h
+ * as it would a `reel-pending` (the rollback hazard of reels-in-chat 15.3).
+ */
+function writeHolds(entry: MediaMetaEntry, holds: MediaHolds): void {
+  entry.holds = holds;
+  entry.retentionClass = holds.post ? 'reel' : 'chat-reel';
 }
 
 interface MediaMetadataStore {
@@ -879,6 +989,27 @@ export class MediaService {
         );
         continue;
       }
+      // A file under written HOLDS is ruled by them (reels-in-chat 15.3). `ephemeral` is a post's
+      // RELEASE (`PostMediaRetentionService.release`, the fallback when a reel purge could not be
+      // reached): it ends the post hold and nothing else, so a chat hold keeps the file. Any other
+      // class keeps the file longer than the holds would, the safe direction: they are dropped.
+      if (entry.holds) {
+        const chat = entry.holds.chat;
+        if (retentionClass === 'ephemeral' && chat) {
+          if (entry.holds.post) {
+            writeHolds(entry, { post: false, chat });
+            changed += 1;
+          }
+          this.logger.warn(
+            `media ${mediaId}: ${retentionClass} asked of a file a chat holds - post hold released, the chat hold rules it`
+          );
+          continue;
+        }
+        this.logger.warn(
+          `media ${mediaId}: ${retentionClass} asked of a held file - its holds are dropped, the class rules it`
+        );
+        delete entry.holds;
+      }
 
       entry.retentionClass = retentionClass;
       changed += 1;
@@ -958,6 +1089,11 @@ export class MediaService {
    *
    * Idempotent: an entry already `reel` is claimed again as a no-op.
    *
+   * A FILE A CONVERSATION HOLDS (a `chat-reel`, or a `reel-pending` the take put its chat hold on -
+   * reels-in-chat 15.3/15.5) is accepted: the claim adds the `post` hold beside the chat hold, so the
+   * file lives as long as the longer of the two. One whose chat hold has already lapsed is refused,
+   * as an overdue `reel-pending` is.
+   *
    * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
    */
   async claimReels(
@@ -982,15 +1118,29 @@ export class MediaService {
         refused.push(mediaId);
         continue;
       }
-      if (entry.retentionClass === 'reel-pending' && this.isDue(entry, Date.now())) {
+      const holds = holdsOf(entry);
+      if (
+        (entry.retentionClass === 'reel-pending' || holds?.chat) &&
+        this.isDue(entry, Date.now())
+      ) {
         this.logger.warn(
-          `Reel claim by ${ownerId}: ${mediaId} is a pending upload past its ${PENDING_REEL_TTL_MS} ms window - refused, not promoted`
+          `Reel claim by ${ownerId}: ${mediaId} is a ${entry.retentionClass ?? 'unclassified'} object past its window - refused, not promoted`
         );
         refused.push(mediaId);
         pastWindow += 1;
         continue;
       }
-      if (entry.retentionClass !== 'reel') {
+      if (holds?.chat) {
+        // A take's file a conversation already holds (15.5): the post ADDS its hold, the chat hold
+        // and its due time stay - `chat-reel` -> `reel`, and the chats keep the file past the post.
+        if (!entry.holds || !entry.holds.post) {
+          writeHolds(entry, { post: true, chat: holds.chat });
+          changed = true;
+          this.logger.log(
+            `Reel claim by ${ownerId}: ${mediaId} also held by a chat until ${new Date(holds.chat.dueAt).toISOString()} - post hold added`
+          );
+        }
+      } else if (entry.retentionClass !== 'reel') {
         entry.retentionClass = 'reel';
         changed = true;
       }
@@ -1118,16 +1268,24 @@ export class MediaService {
   }
 
   /**
-   * Deletes the blobs of expired (or deleted) CanaReels, each on its OWNER's say-so.
+   * Ends the lives of expired, deleted or moderated CanaReels' blobs, each on its OWNER's say-so.
    *
-   * THE ALLOWLIST IS OWNERSHIP: an object is deleted only when its entry's `ownerId` equals the
+   * THE ALLOWLIST IS OWNERSHIP: an object is touched only when its entry's `ownerId` equals the
    * `ownerId` the caller names, and it is neither a public asset nor an `association` document. A
    * comment's media on a reel is deleted too - under the commenter's id, which is how the worker
    * names it - so a blob a member merely cited cannot be taken by citing it. Not "class is
    * `reel`": a comment's media carries another class and must be reachable.
    *
+   * THE REASON DECIDES WHAT ENDS (reels-in-chat 15.3/15.4). `moderation` purges the file and every
+   * hold on it: a moderator's delete of the post erases the copies the take sent to conversations
+   * too, which the owner accepted. `author` and `retention` release the `post` hold ALONE: a file a
+   * conversation's chat hold still keeps is `released` (class `chat-reel`, swept at that hold's due
+   * time) rather than deleted (D-postdelete); one with no live chat hold is deleted as before.
+   *
    * One outcome per id, because the caller decides what a reel's row does next:
-   * - `deleted` - removed now (and tombstoned `manual_delete`);
+   * - `deleted` - removed now. Tombstoned `manual_delete` as before, or - for a file conversations
+   *   held - `reel_moderated` / `reel_expired`, which every later reader is answered `410` to;
+   * - `released` - the post's hold is gone, the file stays for the chats. SUCCESS for the caller;
    * - `absent` - no entry, or already purged. SUCCESS: the object is gone as far as this service can
    *   tell, and a retry after a crash lands here - the idempotence the worker relies on;
    * - `refused` - an entry exists and is not the named owner's (or is protected). Terminal and
@@ -1137,7 +1295,9 @@ export class MediaService {
    * Per id, a `try`: one object the store will not delete never blocks the rest.
    */
   async purgeReels(
-    items: Array<{ mediaId: string; ownerId: string }>
+    items: Array<{ mediaId: string; ownerId: string }>,
+    reason: ReelPurgeReason,
+    now = Date.now()
   ): Promise<Record<string, ReelPurgeOutcome>> {
     // A Map, not an object: `mediaId` is caller-supplied and may be refused precisely because it is
     // not a UUID, so it must never be a property name.
@@ -1163,7 +1323,18 @@ export class MediaService {
       ) {
         results.set(mediaId, 'refused');
         this.logger.warn(
-          `Reel purge refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
+          `Reel purge (${reason}) refused for ${mediaId}: not owned by ${ownerId || '(none)'}, or protected`
+        );
+        continue;
+      }
+      const chat = holdsOf(entry)?.chat ?? null;
+      if (reason !== 'moderation' && chat && chat.dueAt >= now) {
+        // The post's end is a statement about the FEED (D-postdelete): the chats keep their file.
+        writeHolds(entry, { post: false, chat });
+        changed = true;
+        results.set(mediaId, 'released');
+        this.logger.log(
+          `Reel purge (${reason}) of ${mediaId}: post hold released, kept by a chat hold until ${new Date(chat.dueAt).toISOString()}`
         );
         continue;
       }
@@ -1172,20 +1343,98 @@ export class MediaService {
       } catch (err) {
         results.set(mediaId, 'failed');
         this.logger.warn(
-          `Reel purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+          `Reel purge (${reason}) could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      // A file conversations held reads `410` everywhere, so their tiles draw the tombstone (15.4);
+      // one no conversation ever held keeps the reel purge's old `manual_delete`.
+      const purgeReason: PurgeReason = !chat
+        ? 'manual_delete'
+        : reason === 'moderation'
+          ? 'reel_moderated'
+          : 'reel_expired';
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt,
+        lastAccessAt: entry.lastAccessAt,
+        purgedAt: now,
+        purgeReason,
+      };
+      changed = true;
+      results.set(mediaId, 'deleted');
+      if (chat) {
+        this.logger.log(
+          `Reel purge (${reason}) deleted ${mediaId}, a file chats held (${purgeReason})`
+        );
+      }
+    }
+
+    if (changed) await this.persistMetadata();
+    return Object.fromEntries(results);
+  }
+
+  /**
+   * A salon MODERATOR's purge of a reel file a message of their salon names (reels-in-chat 15.4,
+   * `POST /media/internal/chat-reel-purge`). social-service has already checked the two facts it
+   * owns - the caller moderates the salon of that row, and the row declares this `mediaId` - and
+   * names the row's PROVEN author as `ownerId`. This service checks the two it owns:
+   *
+   * - the entry's recorded uploader IS that author (a row declaring another member's id is refused:
+   *   a lying author can only offer up a file of their own);
+   * - the file carries a `chat` hold - it was sent in a conversation. A feed reel nobody sent, a
+   *   photo, a document, an unclassified blob is refused, whatever the row declared.
+   *
+   * Allowed, it ends EVERY hold at once: the file is deleted, tombstoned `reel_moderated`, and every
+   * later reader - the salon, the DMs and groups it was also sent to, the feed - is answered `410`.
+   *
+   * Outcomes per id as {@link purgeReels}: `deleted`, `absent` (success: a retry, or already gone),
+   * `refused` (terminal, logged), `failed` (the store refused; the entry is kept for a retry).
+   */
+  async purgeChatReels(
+    items: Array<{ mediaId: string; ownerId: string }>,
+    now = Date.now()
+  ): Promise<Record<string, ReelPurgeOutcome>> {
+    const results = new Map<string, ReelPurgeOutcome>();
+    let changed = false;
+    for (const { mediaId, ownerId } of items) {
+      if (!UUID_REGEX.test(mediaId)) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(`Chat-reel purge refused: ${JSON.stringify(mediaId)} is not a media id`);
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) {
+        results.set(mediaId, 'absent');
+        continue;
+      }
+      const ownedByAuthor = !!ownerId && entry.ownerId === ownerId;
+      if (!ownedByAuthor || !holdsOf(entry)?.chat) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(
+          `Chat-reel purge refused for ${mediaId}: class ${entry.retentionClass ?? 'none'}, ` +
+            `${ownedByAuthor ? 'no chat hold' : 'not uploaded by the row author'} - left in place`
+        );
+        continue;
+      }
+      try {
+        await this.storage.delete(mediaId);
+      } catch (err) {
+        results.set(mediaId, 'failed');
+        this.logger.warn(
+          `Chat-reel purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
         );
         continue;
       }
       this.meta.items[mediaId] = {
         createdAt: entry.createdAt,
         lastAccessAt: entry.lastAccessAt,
-        purgedAt: Date.now(),
-        purgeReason: 'manual_delete',
+        purgedAt: now,
+        purgeReason: 'reel_moderated',
       };
       changed = true;
       results.set(mediaId, 'deleted');
+      this.logger.log(`Chat-reel purge deleted ${mediaId} (moderation, every hold ended)`);
     }
-
     if (changed) await this.persistMetadata();
     return Object.fromEntries(results);
   }
@@ -1256,34 +1505,48 @@ export class MediaService {
   }
 
   /**
-   * The SENDER takes back a reel they sent in a conversation (delete for everyone).
+   * The SENDER takes back a reel they sent in conversations: RELEASES their `chat` hold.
    *
-   * Allowed here and refused for ordinary media ({@link remove} is service-to-service) because a reel
-   * message cannot be forwarded: the reason ordinary chat media is never deleted on a message's
-   * deletion - one blob cited from conversations the deleter cannot see - does not apply. THE
-   * ALLOWLIST IS TWO FACTS, both required: the object's class is `chat-reel` AND its `ownerId` is the
-   * caller. Anything else is `refused`, so this route cannot be aimed at a feed photo, a vault
-   * document or somebody else's reel.
+   * Allowed here and refused for ordinary media ({@link remove} is service-to-service) because no
+   * other PERSON's message cites the file: a reel message cannot be forwarded, and when one take
+   * reaches several conversations (D-oneblob) every citation is the sender's own fan-out
+   * (reels-in-chat 15.7). THE ALLOWLIST IS TWO FACTS, both required: the object carries a `chat`
+   * hold AND its `ownerId` is the caller. Anything else is `refused`, so this route cannot be aimed
+   * at a feed photo, a feed reel nobody sent, a vault document or somebody else's reel.
    *
-   * - `deleted` - removed now and tombstoned `reel_deleted` (the next read answers `410`);
-   * - `absent` - no entry, or already purged: SUCCESS, so a retry after a crash lands here;
-   * - `refused` - an entry exists and is not the caller's chat-reel;
+   * - `deleted` - the chat hold was the last: removed now, tombstoned `reel_deleted` (`410` next);
+   * - `released` - the take was also published: the post keeps the file (D-postdelete's mirror),
+   *   which loses its chat hold and is `reel` alone again;
+   * - `absent` - no entry, already purged, or a file whose chat hold this sender already released:
+   *   SUCCESS, so a retry after a lost answer lands here;
+   * - `refused` - an entry exists and is not the caller's held reel;
    * - `failed` - the store refused or threw; the entry is kept so the delete can be retried.
    */
-  async removeChatReel(
-    mediaId: string,
-    ownerId: string
-  ): Promise<'deleted' | 'absent' | 'refused' | 'failed'> {
+  async removeChatReel(mediaId: string, ownerId: string): Promise<ChatReelRemoveOutcome> {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
     const entry = this.meta.items[mediaId];
     if (!entry || entry.purgedAt) return 'absent';
-    if (!ownerId || entry.ownerId !== ownerId || entry.retentionClass !== 'chat-reel') {
+    const owned = !!ownerId && entry.ownerId === ownerId;
+    const holds = holdsOf(entry);
+    // A WRITTEN hold set with no chat hold left is a release already done - a repeat, answered as
+    // one. Only a written set can say so: a plain `reel` was never sent and stays refused.
+    if (owned && entry.holds && !entry.holds.chat) {
+      this.logger.log(`Chat-reel ${mediaId}: chat hold already released - nothing to do`);
+      return 'absent';
+    }
+    if (!owned || !holds?.chat) {
       this.logger.warn(
-        `Chat-reel delete refused for ${mediaId}: not a chat-reel owned by ${ownerId || '(none)'}`
+        `Chat-reel delete refused for ${mediaId}: not a held reel owned by ${ownerId || '(none)'}`
       );
       return 'refused';
+    }
+    if (holds.post) {
+      writeHolds(entry, { post: true, chat: null });
+      await this.persistMetadata();
+      this.logger.log(`Chat-reel ${mediaId}: chat hold released by its sender, the post keeps it`);
+      return 'released';
     }
     try {
       await this.storage.delete(mediaId);
@@ -1302,6 +1565,123 @@ export class MediaService {
     await this.persistMetadata();
     this.logger.log(`Chat-reel ${mediaId} deleted by its sender`);
     return 'deleted';
+  }
+
+  /**
+   * The take puts its CHAT HOLD on its file before its first send (reels-in-chat 15.2/15.3) -
+   * `POST /media/chat-reel/:id/hold`. OWNER-ONLY and IDEMPOTENT.
+   *
+   * Placed on the caller's own reel file only: a `chat-reel` upload (already held by its class: the
+   * hold is written down with its upload's due time, nothing charged twice), a `reel-pending` (the
+   * publish step's upload the take adopted, 15.5) or a `reel` (that upload already claimed by the
+   * post). The hold lasts {@link CHAT_REEL_RETENTION_MS} from NOW, and is charged against the daily
+   * `chat-reel` budget ONCE, here, with the file's size (429 past it) - whatever the number of sends.
+   *
+   * THE ROLLBACK HAZARD IS WHY THE CLASS MOVES (15.3): a `reel-pending` the take holds becomes
+   * `chat-reel`, so even a build older than the holds sweeps it 30 days after its upload rather than
+   * at 24 h. A `reel-pending` already past its window is `gone`: the sweep may be deleting it now,
+   * and the take uploads its own file.
+   *
+   * - `held` - the hold exists, with its due time (an existing one is answered unchanged);
+   * - `absent` - no such object; `gone` - purged, or past its window;
+   * - `refused` - not the caller's, or not a reel file.
+   */
+  async holdForChat(mediaId: string, ownerId: string, now = Date.now()): Promise<ChatHoldOutcome> {
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
+    const judged = this.judgeChatHold(mediaId, ownerId, now);
+    if (judged.status === 'answered') {
+      if (judged.dirty) await this.persistMetadata();
+      return judged.outcome;
+    }
+
+    // The budget needs the file's size, which the index holds for a `chat-reel` upload only.
+    let size: number | null;
+    try {
+      size = await this.storage.size(mediaId);
+    } catch (err) {
+      this.logger.warn(
+        `Chat hold on ${mediaId}: the store could not size it - ${err instanceof Error ? err.message : String(err)}`
+      );
+      throw new InternalServerErrorException('The reel could not be held. Try again.');
+    }
+    if (size === null) {
+      this.logger.error(`Chat hold on ${mediaId}: the index has a live entry, the store no object`);
+      return { status: 'absent' };
+    }
+
+    // Judged AGAIN after the await, from the index as it is now: a concurrent hold, a claim, a sweep
+    // or a purge may have changed the entry meanwhile. The check, the charge and the write share one
+    // synchronous run, as the upload budget's do.
+    const again = this.judgeChatHold(mediaId, ownerId, now);
+    if (again.status === 'answered') {
+      if (again.dirty) await this.persistMetadata();
+      return again.outcome;
+    }
+    const entry = again.entry;
+    const release = this.reserveChatReelBudget('chat-reel', ownerId, size);
+    const dueAt = now + CHAT_REEL_RETENTION_MS;
+    try {
+      entry.size = size;
+      writeHolds(entry, { post: holdsOf(entry)?.post ?? false, chat: { heldAt: now, dueAt } });
+    } finally {
+      release();
+    }
+    await this.persistMetadata();
+    this.logger.log(
+      `Chat hold on ${mediaId} by its owner: ${size} bytes charged, due ${new Date(dueAt).toISOString()}, class ${entry.retentionClass}`
+    );
+    return { status: 'held', dueAt };
+  }
+
+  /**
+   * The synchronous half of {@link holdForChat}: an outcome when the answer is already known (an
+   * existing hold included, written down if it was only implied by the class), or the entry a new
+   * hold is to be placed on.
+   */
+  private judgeChatHold(
+    mediaId: string,
+    ownerId: string,
+    now: number
+  ):
+    | { status: 'answered'; outcome: ChatHoldOutcome; dirty?: boolean }
+    | { status: 'to-place'; entry: MediaMetaEntry } {
+    const entry = this.meta.items[mediaId];
+    if (!entry) return { status: 'answered', outcome: { status: 'absent' } };
+    if (entry.purgedAt) return { status: 'answered', outcome: { status: 'gone' } };
+    if (
+      !ownerId ||
+      entry.ownerId !== ownerId ||
+      this.isPublicAssetEntry(entry) ||
+      !CHAT_HOLDABLE_CLASSES.has(entry.retentionClass ?? '')
+    ) {
+      this.logger.warn(
+        `Chat hold refused on ${mediaId}: class ${entry.retentionClass ?? 'none'}, ${entry.ownerId === ownerId ? 'not a reel file' : `not owned by ${ownerId || '(none)'}`}`
+      );
+      return { status: 'answered', outcome: { status: 'refused' } };
+    }
+    const holds = holdsOf(entry);
+    if (holds?.chat) {
+      if (holds.chat.dueAt < now) {
+        this.logger.warn(
+          `Chat hold refused on ${mediaId}: its chat hold lapsed, the sweep takes it`
+        );
+        return { status: 'answered', outcome: { status: 'gone' } };
+      }
+      // A `chat-reel` upload: its class already held it, from its upload. Written down unchanged.
+      const dirty = !entry.holds;
+      if (dirty) writeHolds(entry, holds);
+      this.logger.debug(
+        `Chat hold on ${mediaId}: already held until ${holds.chat.dueAt} - unchanged`
+      );
+      return { status: 'answered', outcome: { status: 'held', dueAt: holds.chat.dueAt }, dirty };
+    }
+    if (entry.retentionClass === 'reel-pending' && this.isDue(entry, now)) {
+      this.logger.warn(`Chat hold refused on ${mediaId}: a pending upload past its window`);
+      return { status: 'answered', outcome: { status: 'gone' } };
+    }
+    return { status: 'to-place', entry };
   }
 
   /**
@@ -1336,10 +1716,11 @@ export class MediaService {
     const since = Date.now() - DAY_MS;
     let used = reservations.get(ownerId) ?? 0;
     for (const entry of Object.values(this.meta.items)) {
-      if (entry.purgedAt || entry.retentionClass !== 'chat-reel' || entry.ownerId !== ownerId) {
-        continue;
-      }
-      if (entry.createdAt >= since) used += entry.size ?? 0;
+      if (entry.purgedAt || entry.ownerId !== ownerId) continue;
+      // Charged where the chat hold was placed: at the upload of a `chat-reel`, or when a take put
+      // its hold on the publish step's file (15.2: ONCE per take, whatever its number of targets).
+      const chat = holdsOf(entry)?.chat;
+      if (chat && chat.heldAt >= since) used += entry.size ?? 0;
     }
     // `restore`: a reservation granted before a restart is being put back, not requested - it was
     // already within the cap when granted, and refusing it now would strand a session the member
@@ -1559,6 +1940,8 @@ export class MediaService {
       chatReelOverdueCount: 0,
       chatReelOverdueBytes: 0,
       chatReelRetentionMs: CHAT_REEL_RETENTION_MS,
+      sharedReelCount: 0,
+      sharedReelBytes: 0,
       pendingReelCount: 0,
       pendingReelBytes: 0,
       pendingReelOverdueCount: 0,
@@ -1624,6 +2007,10 @@ export class MediaService {
       if (entry.retentionClass === 'reel') {
         stats.reelCount += 1;
         stats.reelBytes += object.size;
+        if (entry.holds?.chat) {
+          stats.sharedReelCount += 1;
+          stats.sharedReelBytes += object.size;
+        }
         continue;
       }
       if (entry.retentionClass === 'chat-reel') {
@@ -2084,6 +2471,8 @@ export class MediaService {
   /**
    * THE ALLOWLIST: true only for what the sweep may delete - `ephemeral` by idleness, `chat-reel`
    * and an unclaimed `reel-pending` by age ({@link isDue}). A claimed reel is `reel`, never here.
+   * A file under written HOLDS ({@link MediaHolds}) is read from them: sweepable only when no post
+   * holds it and a chat hold remains to lapse - so a `reel-pending` a take holds is not swept at 24 h.
    *
    * Everything else is kept - every other class, an unclassified entry, a public asset - so a new
    * surface that forgets to name its class costs storage rather than a member's file. That
@@ -2095,6 +2484,11 @@ export class MediaService {
    */
   private isSweepable(entry: MediaMetaEntry | undefined): boolean {
     if (!entry) return false;
+    // A file under WRITTEN holds is swept only when its post hold is gone and a chat hold remains
+    // to lapse (reels-in-chat 15.3): never while a post keeps it, whatever its class says.
+    if (entry.holds) {
+      return !entry.holds.post && entry.holds.chat !== null && !this.isPublicAssetEntry(entry);
+    }
     return (
       (entry.retentionClass === 'ephemeral' ||
         entry.retentionClass === 'chat-reel' ||
@@ -2113,6 +2507,8 @@ export class MediaService {
    */
   private isDue(entry: MediaMetaEntry, now: number): boolean {
     if (!this.isSweepable(entry)) return false;
+    // A written chat hold carries its own due time, fixed when it was placed.
+    if (entry.holds?.chat) return entry.holds.chat.dueAt < now;
     if (entry.retentionClass === 'chat-reel') {
       return entry.createdAt + CHAT_REEL_RETENTION_MS < now;
     }

@@ -16,6 +16,7 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 | Number | Value | Lives in | Clients read it from |
 | --- | --- | --- | --- |
 | Longest reel sent in a chat | 60 000 ms (D-size, 2026-10-09; served as `chatMaxDurationMs`, absent from an older server) | `CHAT_REEL_MAX_DURATION_MS`, same file | `GET /api/posts/reel-limits` |
+| Conversations one "Envoyer à..." press may reach | 15 ([reels-in-chat 15.2](../frontend/modules/reels-in-chat.md#152-the-outbox-one-take-n-sends); served as `chatReelMaxTargets` since RC-14, absent from an older server) | `CHAT_REEL_MAX_TARGETS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
 | Kept for | 30 days (C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
@@ -30,7 +31,7 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "retentionDays": 30, "warningWindowDays": 7 }
+{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "retentionDays": 30, "warningWindowDays": 7 }
 ```
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
@@ -178,13 +179,18 @@ Two internal routes (`X-Internal-Secret`, never reachable by a client), both bat
 - `POST /api/media/internal/reel-claim` `{ mediaIds, ownerId }` -> `{ claimed, refused }`. Sets
   `retentionClass = 'reel'` on every entry that exists, is not purged, is not a public asset, and
   whose recorded `ownerId` (the JWT `sub` of its uploader) equals `ownerId`. Idempotent.
-- `POST /api/media/internal/reel-purge` `{ items: [{ mediaId, ownerId }] }` ->
-  `{ results: { <mediaId>: 'deleted' | 'absent' | 'refused' | 'failed' } }`. **THE ALLOWLIST OF THIS
-  DELETE IS OWNERSHIP**: it deletes an object only if the entry's `ownerId` equals the `ownerId` the
-  caller names, and it is neither a public asset nor an `association` document. `absent` (no entry,
-  or already purged) is success; `refused` (not the named owner) is a terminal "not ours", left
-  alone and logged at `warn`; `failed` (the store refused, or threw) is the only outcome that keeps
-  a reel's row for the next tick.
+- `POST /api/media/internal/reel-purge` `{ items: [{ mediaId, ownerId }], reason }` ->
+  `{ results: { <mediaId>: 'deleted' | 'released' | 'absent' | 'refused' | 'failed' } }`. **THE
+  ALLOWLIST OF THIS DELETE IS OWNERSHIP**: it touches an object only if the entry's `ownerId` equals
+  the `ownerId` the caller names, and it is neither a public asset nor an `association` document.
+  **`reason` is REQUIRED since RC-14** (a body without it is a `400`): `moderation` (a moderator's or
+  an admin's delete of someone else's reel) purges the file with every hold on it; `author` (the
+  publisher's own delete) and `retention` (this worker) release the post's hold alone, so a file the
+  take also sent to conversations is `released` and stays until its chat hold lapses
+  ([media-service holds](media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)).
+  `absent` (no entry, or already purged) and `released` are success; `refused` (not the named owner)
+  is a terminal "not ours", left alone and logged at `warn`; `failed` (the store refused, or threw)
+  is the only outcome that keeps a reel's row for the next tick.
 
 **Why ownership and not "class is `reel`"**: a comment on a reel may carry a media, uploaded by the
 commenter under another class. The worker deletes those too (nothing dead stays), naming the
