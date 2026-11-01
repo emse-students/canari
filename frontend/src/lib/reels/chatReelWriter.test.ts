@@ -14,9 +14,10 @@ import {
 import { destinationRules } from './reelCapture';
 
 describe('the chat reel writer', () => {
-  it('is OFF in the shipped code: nothing reaches a member until RC-5 and RC-7', () => {
-    expect(CHAT_REEL_WRITER_ENABLED).toBe(false);
-    expect(chatReelAllowed(false)).toBe(false);
+  it('is ON in the shipped code: a DM or a group films, a salon never does', () => {
+    expect(CHAT_REEL_WRITER_ENABLED).toBe(true);
+    expect(chatReelAllowed(false)).toBe(true);
+    expect(chatReelAllowed(true)).toBe(false);
   });
 
   it('writes a DM or a group when on, never a salon', () => {

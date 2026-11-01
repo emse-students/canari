@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-5 and RC-7 merged, the writer OFF; "Envoyer à..." to several targets designed in section 15, not built)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-5 and RC-7 merged, the writer switched ON by `feat/chat-reel-writer-on` once its phone readings pass; "Envoyer à..." to several targets designed in section 15, not built)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -534,6 +534,12 @@ server class (#1661, RC-2) shipped in `v1.2.2`, RC-7 (native push, #2112) in `v1
 release yet. Owed before the switch moves: the chat profile and the 60 s cap wired into the queued
 reel, the durable release of an upload session an offline device leaked, the RC-0 re-run and the
 readings on both phones (the pull requests' own "Owed" lists).
+**The flip (2026-11-01, draft `feat/chat-reel-writer-on`, HELD)**: `CHAT_REEL_WRITER_ENABLED = true`, the
+test pinning it `true` (a DM or a group films, a salon never does). It lands only after the chat
+profile (`fix/chat-reel-chat-profile`) and the durable release (`fix/chat-reel-session-release`) are
+merged, AND the phone readings in that pull request pass on the Mi 9T and the iPhone 12, AND the
+owner has decided the ordering question this list raises: RC-14 then RC-13 are marked "before the
+switch, not after", and neither is built.
 RC-2's `chat-reel` class is server-side and safe to ship first (nothing sets it yet). The stable follows
 the usual two-release sequence ([CLAUDE.md](../../../../CLAUDE.md) "gesture two") with a pre-release on dev
 and the testers.
